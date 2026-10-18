@@ -464,8 +464,8 @@ impl I18nStrings {
         strings.ai_panel_save = "保存".into();
         strings.ai_panel_related = "关联修改需一起接受".into();
         strings.ai_panel_stale = "依据已变化，请重新生成".into();
-        strings.ai_panel_history = "历史会话".into();
-        strings.ai_panel_new_chat = "新会话".into();
+        strings.ai_panel_history = "历史任务".into();
+        strings.ai_panel_new_chat = "新任务".into();
         strings.ai_panel_copy = "复制".into();
         strings.ai_panel_insert = "插入正文".into();
         strings.ai_panel_sources = "来源".into();
@@ -474,7 +474,20 @@ impl I18nStrings {
         strings.ai_panel_instruction_name = "指令名称".into();
         strings.ai_panel_context_budget = "上下文预算".into();
         strings.ai_panel_pending = "待审阅".into();
-        strings.ai_panel_ask = "询问 AI…".into();
+        strings.ai_review_title = "修改审阅".into();
+        strings.ai_review_changes = "处修改".into();
+        strings.ai_review_compare = "对比".into();
+        strings.ai_review_original = "原文".into();
+        strings.ai_review_proposed = "修改后".into();
+        strings.ai_task_details = "任务详情".into();
+        strings.ai_task_result = "结果".into();
+        strings.ai_task_return = "返回正文".into();
+        strings.ai_task_scope_selection = "选区".into();
+        strings.ai_task_scope_document = "当前文档".into();
+        strings.ai_task_models = "模型".into();
+        strings.ai_task_done = "完成".into();
+        strings.ai_task_pending_first = "当前任务尚未结束。可继续调整或审阅，也可在任务详情中开始新任务。".into();
+        strings.ai_panel_ask = "用 AI 处理…".into();
         strings.ai_panel_more = "更多 AI…".into();
         strings.ai_panel_add_context = "添加资料".into();
         strings.ai_panel_clear_key = "清除密钥".into();
@@ -496,7 +509,7 @@ impl I18nStrings {
         strings.ai_action_translate = "翻译…".into();
         strings.ai_action_summarize = "总结".into();
         strings.ai_action_continue = "续写".into();
-        strings.ai_custom_placeholder = "输入自定义指令，回车执行…".into();
+        strings.ai_custom_placeholder = "描述要做的修改，可用 @ 引用资料…".into();
         strings.ai_panel_retry = "重试".into();
         strings.ai_panel_stop = "停止".into();
         strings.ai_panel_running = "生成中…".into();
@@ -973,7 +986,7 @@ impl I18nStrings {
             ai_panel_related: "Accept related changes together".into(),
             ai_panel_stale: "Source changed; regenerate this proposal".into(),
             ai_panel_history: "History".into(),
-            ai_panel_new_chat: "New chat".into(),
+            ai_panel_new_chat: "New task".into(),
             ai_panel_copy: "Copy".into(),
             ai_panel_insert: "Insert into document".into(),
             ai_panel_sources: "Sources".into(),
@@ -982,7 +995,20 @@ impl I18nStrings {
             ai_panel_instruction_name: "Instruction name".into(),
             ai_panel_context_budget: "Context budget".into(),
             ai_panel_pending: "Pending review".into(),
-            ai_panel_ask: "Ask AI…".into(),
+            ai_review_title: "Review changes".into(),
+            ai_review_changes: "changes".into(),
+            ai_review_compare: "Compare".into(),
+            ai_review_original: "Original".into(),
+            ai_review_proposed: "Revised".into(),
+            ai_task_details: "Task details".into(),
+            ai_task_result: "Result".into(),
+            ai_task_return: "Back to document".into(),
+            ai_task_scope_selection: "Selection".into(),
+            ai_task_scope_document: "Current document".into(),
+            ai_task_models: "Model".into(),
+            ai_task_done: "Done".into(),
+            ai_task_pending_first: "Finish reviewing or refining this task, or start a new one from task details.".into(),
+            ai_panel_ask: "Work with AI…".into(),
             ai_panel_more: "More AI…".into(),
             ai_panel_add_context: "Add context".into(),
             ai_panel_clear_key: "Clear key".into(),
@@ -1004,7 +1030,7 @@ impl I18nStrings {
             ai_action_translate: "Translate…".into(),
             ai_action_summarize: "Summarize".into(),
             ai_action_continue: "Continue writing".into(),
-            ai_custom_placeholder: "Custom instruction; press Enter to run…".into(),
+            ai_custom_placeholder: "Describe a change, use @ to reference notes…".into(),
             ai_panel_retry: "Retry".into(),
             ai_panel_stop: "Stop".into(),
             ai_panel_running: "Generating…".into(),

@@ -654,6 +654,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.leave_ai_review_for_document_navigation(cx);
         if let Some(group) = self.active_split_editor() {
             let handle = window.window_handle();
             cx.defer(move |cx| {

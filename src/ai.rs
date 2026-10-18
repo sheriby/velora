@@ -110,10 +110,16 @@ impl Proposal {
         }
     }
 
+    fn cached_edits(&self) -> &Vec<ProposedEdit> {
+        self.edits_cache.get_or_init(|| self.compute_edits())
+    }
+
     pub fn edits(&self) -> Vec<ProposedEdit> {
-        self.edits_cache
-            .get_or_init(|| self.compute_edits())
-            .clone()
+        self.cached_edits().clone()
+    }
+
+    pub fn edit_count(&self) -> usize {
+        self.cached_edits().len()
     }
 
     fn compute_edits(&self) -> Vec<ProposedEdit> {

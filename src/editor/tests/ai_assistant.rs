@@ -531,7 +531,7 @@ fn ai_task_keeps_the_original_selection_when_the_user_continues_editing(cx: &mut
 }
 
 #[gpui::test]
-fn ai_floating_panel_preserves_the_writing_width_and_expanding_keeps_the_same_task(
+fn ai_command_entry_preserves_writing_width_and_task_details_keep_the_same_task(
     cx: &mut TestAppContext,
 ) {
     init_editor_test_app(cx);
@@ -554,7 +554,18 @@ fn ai_floating_panel_preserves_the_writing_width_and_expanding_keeps_the_same_ta
     let viewport = cx.update(|window, _| window.viewport_size());
     assert!(panel.left() >= gpui::px(0.0) && panel.right() <= viewport.width);
     assert!(panel.top() >= gpui::px(0.0) && panel.bottom() <= viewport.height);
-    let expand = cx.debug_bounds("ai-expand").unwrap().center();
+    if let Some(back) = cx.debug_bounds("ai-back") {
+        cx.simulate_click(back.center(), gpui::Modifiers::none());
+    }
+    editor.update(cx, |editor, cx| {
+        editor.ai_session.as_mut().unwrap().saved.messages.push(crate::ai::session::ChatMessage {
+            role: "user".into(), text: "整理当前文档".into(),
+        });
+        cx.notify();
+    });
+    redraw(cx);
+    redraw(cx);
+    let expand = cx.debug_bounds("ai-task-details").unwrap().center();
     cx.simulate_click(expand, gpui::Modifiers::none());
     redraw(cx);
     redraw(cx);
@@ -562,7 +573,7 @@ fn ai_floating_panel_preserves_the_writing_width_and_expanding_keeps_the_same_ta
     editor.read_with(cx, |editor, _| {
         assert_eq!(editor.ai_session.as_ref().unwrap().saved.id, id)
     });
-    let collapse = cx.debug_bounds("ai-expand").unwrap().center();
+    let collapse = cx.debug_bounds("ai-details-hide").unwrap().center();
     cx.simulate_click(collapse, gpui::Modifiers::none());
     redraw(cx);
     redraw(cx);

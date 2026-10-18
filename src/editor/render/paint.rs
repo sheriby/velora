@@ -8,7 +8,7 @@ use crate::components::{
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.modal_key_interceptor.is_none() {
+        if !self.ai_result_preview && self.modal_key_interceptor.is_none() {
             // C13：模态的 Enter/Esc 在 keymap 绑定解析之前拦截（绑定先于
             // 元素监听，回车会被焦点块的 Newline 绑定消费）。拦截器全局
             // 注册、按窗口过滤；stop_propagation 阻断 action 派发。
@@ -24,7 +24,8 @@ impl Render for Editor {
                     // 时这里只有三次布尔检查，打字热路径无感。
                     let _ = editor.update(cx, |editor, cx| {
                         if editor.split_parent.is_some() && !editor.split_active { return; }
-                        let mut consumed = editor.mermaid_preview_key_down(keystroke, cx);
+                        let mut consumed = editor.ai_review_key_down(keystroke, window, cx);
+                        consumed = consumed || editor.mermaid_preview_key_down(keystroke, cx);
                         consumed = consumed || editor.modal_handle_keystroke(keystroke, window, cx);
                         consumed = consumed || editor.file_history_key_down(keystroke, cx);
                         if !consumed {
@@ -39,9 +40,10 @@ impl Render for Editor {
         }
 
         self.window_handle = Some(window.window_handle());
+        self.sync_ai_surface_visibility(cx);
         #[cfg(not(test))]
-        if self.split_parent.is_none() { self.maybe_check_updates_on_startup(window, cx); }
-        if self.system_appearance_subscription.is_none() {
+        if !self.ai_result_preview && self.split_parent.is_none() { self.maybe_check_updates_on_startup(window, cx); }
+        if !self.ai_result_preview && self.system_appearance_subscription.is_none() {
             self.system_appearance_subscription =
                 Some(cx.observe_window_appearance(window, |_editor, window, cx| {
                     let appearance = window.appearance();
@@ -51,7 +53,8 @@ impl Render for Editor {
                     cx.refresh_windows();
                 }));
         }
-        if self.split_parent.is_none() { self.install_close_guard(cx, window); }
+        if !self.ai_result_preview && self.split_parent.is_none() { self.install_close_guard(cx, window); }
+        self.sync_ai_review_document(cx);
         if self.split_workspace.is_some() {
             return self.render_split_workspace(window, cx);
         }
@@ -64,7 +67,7 @@ impl Render for Editor {
         self.sync_pending_save(window, cx);
         self.sync_pending_save_as(window, cx);
         self.sync_pending_workspace_tab_activation(window, cx);
-        if self.split_parent.is_none() { self.sync_window_edited_state(window); }
+        if !self.ai_result_preview && self.split_parent.is_none() { self.sync_window_edited_state(window); }
 
         let viewport_bounds = self.scroll_handle.bounds();
         let viewport_size = viewport_bounds.size;
@@ -85,7 +88,7 @@ impl Render for Editor {
             &fonts.markdown_family
         };
         let strings = cx.global::<I18nManager>().strings_arc();
-        if self.split_parent.is_none() { self.sync_window_title(window, &strings); }
+        if !self.ai_result_preview && self.split_parent.is_none() { self.sync_window_title(window, &strings); }
 
         let d = &theme.dimensions;
         // P4b：键命中时整帧复用行结构计划；未命中（行元数据/折叠/大纲/模式
@@ -173,12 +176,12 @@ impl Render for Editor {
         let editor = cx.entity().downgrade();
         // 菜单树一帧一份缓存（get_menus 在平台层深拷整棵树）；macOS 原生
         // 菜单栏下 has_menus 本就不参与行高，直接 false，不再每帧取树。
-        let window_menus = self.window_menus(cx);
+        let window_menus = if self.ai_result_preview { None } else { self.window_menus(cx) };
         let has_menus = window_menus
             .as_ref()
             .is_some_and(|menus| !menus.is_empty());
-        let titlebar_height = if self.split_parent.is_some() { 0.0 } else { custom_titlebar_height(window, d) };
-        let menu_bar_height = if self.split_parent.is_some() { 0.0 } else {
+        let titlebar_height = if self.ai_result_preview || self.split_parent.is_some() { 0.0 } else { custom_titlebar_height(window, d) };
+        let menu_bar_height = if self.ai_result_preview || self.split_parent.is_some() { 0.0 } else {
             in_window_menu_bar_height_for_target_os(std::env::consts::OS, has_menus, d)
         };
         let scroll_trigger_padding = (d.block_min_height * 0.75).max(16.0);
@@ -391,7 +394,17 @@ impl Render for Editor {
         // P4b：行元素只在挂载时从计划构建（旧实现在扫描期为所有组行
         // 预构建元素再丢弃，是超大文档的每帧浪费）。
         let build_row_element = |row: usize| -> AnyElement {
-            match &rows[row].body {
+            let review_changed = !self.ai_review_ranges.is_empty() && {
+                let start = rows[row].visible_start;
+                let end = rows[row].visible_end;
+                self.document.visible_blocks().get(start..end).is_some_and(|blocks| blocks.iter().any(|block| {
+                    self.document.source_span_of(block.entity.entity_id()).is_some_and(|span| self.ai_review_ranges.iter().any(|range| {
+                        if range.is_empty() { span.start <= range.start && range.start <= span.end }
+                        else { span.start < range.end && range.start < span.end }
+                    }))
+                }))
+            };
+            let element = match &rows[row].body {
                 RenderedRowBody::Ordinary { entity, .. } => {
                     let index = rows[row].visible_start;
                     let element = div()
@@ -585,7 +598,13 @@ impl Render for Editor {
                             .into_any_element()
                     }
                 }
-            }
+            };
+            if review_changed {
+                div().relative().w(px(centered_width)).max_w(relative(1.0)).flex_shrink_0()
+                    .child(element)
+                    .child(div().absolute().top_0().bottom_0().left(px(-8.0)).w(px(2.0)).rounded(px(1.0)).bg(theme.colors.dialog_primary_button_bg))
+                    .into_any_element()
+            } else { element }
         };
         let take_row = |rows: &mut Vec<AnyElement>, row: usize| {
             rows.push(build_row_element(row));
@@ -847,6 +866,15 @@ impl Render for Editor {
         } else {
             content_area
         };
+        if self.ai_result_preview {
+            return div().size_full().flex().min_h_0().min_w_0()
+                .capture_action(Self::document_listener(cx, Self::on_copy_capture))
+                .capture_action(Self::document_listener(cx, Self::on_cut_capture))
+                .capture_action(Self::document_listener(cx, Self::on_delete_capture))
+                .capture_action(Self::document_listener(cx, Self::on_delete_back_capture))
+                .capture_key_down(Self::document_listener(cx, Self::on_editor_key_down_capture))
+                .child(content_area).into_any_element();
+        }
         let document_tabs = if self.split_parent.is_none() { self.render_document_tabs(&theme, cx) } else { None };
         // Document tabs live inside the custom titlebar when it is visible;
         // without one (macOS fullscreen, server-side decorations) they fall
@@ -928,7 +956,7 @@ impl Render for Editor {
                 MouseButton::Left,
                 cx.listener(Self::on_workspace_resize_mouse_up),
             )
-            .capture_action(cx.listener(Self::on_copy_capture))
+            .capture_action(Self::document_listener(cx, Self::on_copy_capture))
             .on_action(cx.listener(Self::on_registered_menu_action::<SplitEditorLeft>))
             .on_action(cx.listener(Self::on_registered_menu_action::<SplitEditorRight>))
             .on_action(cx.listener(Self::on_registered_menu_action::<SplitEditorUp>))
@@ -936,59 +964,59 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::ToggleReadingMode>))
             .on_action(cx.listener(Self::on_registered_menu_action::<FormatDocument>))
             .on_action(cx.listener(Self::on_registered_menu_action::<FileHistory>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<MoveLeft>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<MoveRight>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<WordMoveLeft>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<WordMoveRight>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<Home>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<End>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<BlockUp>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<BlockDown>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<PageUp>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<PageDown>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<JumpToTop>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<JumpToBottom>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<SelectLeft>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<SelectRight>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<WordSelectLeft>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<WordSelectRight>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<SelectHome>))
-            .capture_action(cx.listener(Self::on_cursor_motion_capture::<SelectEnd>))
-            .capture_action(cx.listener(Self::on_cut_capture))
-            .capture_action(cx.listener(Self::on_paste_as_plain_text_capture))
-            .capture_action(cx.listener(Self::on_delete_capture))
-            .capture_action(cx.listener(Self::on_delete_back_capture))
-            .capture_action(cx.listener(Self::on_bold_capture))
-            .capture_action(cx.listener(Self::on_italic_capture))
-            .capture_action(cx.listener(Self::on_underline_capture))
-            .capture_action(cx.listener(Self::on_strikethrough_capture))
-            .capture_action(cx.listener(Self::on_highlight_capture))
-            .capture_action(cx.listener(Self::on_code_capture))
-            .capture_action(cx.listener(Self::on_superscript_capture))
-            .capture_action(cx.listener(Self::on_subscript_capture))
-            .capture_action(cx.listener(Self::on_clear_format_capture))
-            .capture_action(cx.listener(Self::on_link_selection_capture))
-            .capture_action(cx.listener(Self::on_insert_image_capture))
-            .capture_action(cx.listener(Self::on_heading1_capture))
-            .capture_action(cx.listener(Self::on_heading2_capture))
-            .capture_action(cx.listener(Self::on_heading3_capture))
-            .capture_action(cx.listener(Self::on_heading4_capture))
-            .capture_action(cx.listener(Self::on_heading5_capture))
-            .capture_action(cx.listener(Self::on_heading6_capture))
-            .capture_action(cx.listener(Self::on_paragraph_text_capture))
-            .capture_key_down(cx.listener(Self::on_editor_key_down_capture))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<MoveLeft>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<MoveRight>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<WordMoveLeft>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<WordMoveRight>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<Home>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<End>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<BlockUp>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<BlockDown>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<PageUp>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<PageDown>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<JumpToTop>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<JumpToBottom>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<SelectLeft>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<SelectRight>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<WordSelectLeft>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<WordSelectRight>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<SelectHome>))
+            .capture_action(Self::document_listener(cx, Self::on_cursor_motion_capture::<SelectEnd>))
+            .capture_action(Self::document_listener(cx, Self::on_cut_capture))
+            .capture_action(Self::document_listener(cx, Self::on_paste_as_plain_text_capture))
+            .capture_action(Self::document_listener(cx, Self::on_delete_capture))
+            .capture_action(Self::document_listener(cx, Self::on_delete_back_capture))
+            .capture_action(Self::document_listener(cx, Self::on_bold_capture))
+            .capture_action(Self::document_listener(cx, Self::on_italic_capture))
+            .capture_action(Self::document_listener(cx, Self::on_underline_capture))
+            .capture_action(Self::document_listener(cx, Self::on_strikethrough_capture))
+            .capture_action(Self::document_listener(cx, Self::on_highlight_capture))
+            .capture_action(Self::document_listener(cx, Self::on_code_capture))
+            .capture_action(Self::document_listener(cx, Self::on_superscript_capture))
+            .capture_action(Self::document_listener(cx, Self::on_subscript_capture))
+            .capture_action(Self::document_listener(cx, Self::on_clear_format_capture))
+            .capture_action(Self::document_listener(cx, Self::on_link_selection_capture))
+            .capture_action(Self::document_listener(cx, Self::on_insert_image_capture))
+            .capture_action(Self::document_listener(cx, Self::on_heading1_capture))
+            .capture_action(Self::document_listener(cx, Self::on_heading2_capture))
+            .capture_action(Self::document_listener(cx, Self::on_heading3_capture))
+            .capture_action(Self::document_listener(cx, Self::on_heading4_capture))
+            .capture_action(Self::document_listener(cx, Self::on_heading5_capture))
+            .capture_action(Self::document_listener(cx, Self::on_heading6_capture))
+            .capture_action(Self::document_listener(cx, Self::on_paragraph_text_capture))
+            .capture_key_down(Self::document_listener(cx, Self::on_editor_key_down_capture))
             .can_drop(|dragged, _window, _cx| dragged.is::<ExternalPaths>())
             .on_drop::<ExternalPaths>(cx.listener(Self::on_external_paths_drop))
-            .on_action(cx.listener(Self::on_undo))
-            .on_action(cx.listener(Self::on_redo))
-            .on_action(cx.listener(Self::on_save_document))
+            .on_action(Self::document_listener(cx, Self::on_undo))
+            .on_action(Self::document_listener(cx, Self::on_redo))
+            .on_action(Self::document_listener(cx, Self::on_save_document))
             .on_action(cx.listener(Self::on_file_history_action))
             .on_action(cx.listener(Self::on_open_ai_assistant))
             .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiPolish>))
             .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiTranslate>))
             .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiSummarize>))
             .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiContinue>))
-            .on_action(cx.listener(Self::on_save_document_as))
+            .on_action(Self::document_listener(cx, Self::on_save_document_as))
             .on_action(cx.listener(Self::on_export_html))
             .on_action(cx.listener(Self::on_export_pdf))
             .on_action(cx.listener(Self::on_export_png))
@@ -1081,7 +1109,7 @@ impl Render for Editor {
                 main_content = main_content.child(workspace_panel);
             }
         }
-        main_content = main_content.child(content_area);
+        main_content = main_content.child(self.render_ai_workspace(content_area, &theme, window, cx));
         if let Some(sidebar) = self.render_ai_sidebar(&theme, window, cx) { main_content = main_content.child(sidebar); }
         let base = base.child(main_content);
         let status_bar = if self.split_parent.is_none() { self.render_status_bar(&theme, &strings, window, cx) } else { None };

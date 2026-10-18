@@ -93,7 +93,7 @@ impl Editor {
     }
 
     /// 选区在屏幕上的外接框（窗口绝对坐标）。跨块时逐块量再并起来。
-    fn selection_screen_bounds(&self, cx: &App) -> Option<Bounds<Pixels>> {
+    pub(super) fn selection_screen_bounds(&self, cx: &App) -> Option<Bounds<Pixels>> {
         if self.cross_block_selection.is_some() {
             let mut union: Option<Bounds<Pixels>> = None;
             for entry in self.document.visible_blocks() {
@@ -127,7 +127,7 @@ impl Editor {
     /// 「别的浮层」这一条不看层级只看状态：工具栏画在窗口根上，比画在正文区里的
     /// 面板与快速打开更靠后，收不掉就会浮在它们之上。
     fn selection_toolbar_anchor(&self, cx: &App) -> Option<Bounds<Pixels>> {
-        if self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
+        if self.ai_surface_visible.get() || self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
             return None;
         }
         if self.cross_block_drag.is_some()

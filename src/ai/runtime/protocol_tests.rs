@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
-fn read_request(stream: &mut TcpStream) -> (String, Value) {
+pub(crate) fn read_request(stream: &mut TcpStream) -> (String, Value) {
     stream.set_nonblocking(false).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))

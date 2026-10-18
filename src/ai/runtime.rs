@@ -322,4 +322,4 @@ impl AgentTool for DocumentTool {
 mod tests;
 
 #[cfg(test)]
-mod protocol_tests;
+pub(crate) mod protocol_tests;

@@ -77,6 +77,8 @@ use self::workspace::WorkspaceState;
 pub struct Editor {
     ai_session: Option<ai_assistant::AiSession>,
     ai_result_preview: bool,
+    ai_surface_visible: std::rc::Rc<std::cell::Cell<bool>>,
+    ai_review_ranges: Vec<std::ops::Range<usize>>,
     document: DocumentTree,
     /// 文档文本的**唯一事实源**：块树是它上面的一份投影，保存写的是它。
     buffer: buffer::TextBuffer,
@@ -824,6 +826,8 @@ impl Editor {
             reading_mode: std::rc::Rc::new(std::cell::Cell::new(false)),
             ai_session: None,
             ai_result_preview: false,
+            ai_surface_visible: Default::default(),
+            ai_review_ranges: Vec::new(),
             source_mode_fallback_required,
             code_document: false,
             pending_focus,

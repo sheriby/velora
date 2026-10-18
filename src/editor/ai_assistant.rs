@@ -15,10 +15,13 @@ use crate::components::TextField;
 
 mod apply;
 mod render;
+mod experience;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PanelMode {
-    Chat,
+    Task,
+    Models,
+    Commands,
     Settings,
     History,
     Skills,
@@ -59,6 +62,7 @@ pub(super) struct AiSession {
     task: Option<Task<()>>,
     stream_index: Option<usize>,
     scroll: ScrollHandle,
+    review_focus: FocusHandle,
     history_files: Vec<(PathBuf, String)>,
     skills: crate::ai::skills::SkillCatalog,
     input_tokens: u64,
@@ -67,6 +71,9 @@ pub(super) struct AiSession {
     settings_saving: bool,
     // 连接编辑独立于任务代数，避免改配置干扰正在运行的文档任务。
     settings_revision: u64,
+    review: Option<experience::ReviewDocument>,
+    review_dirty: bool,
+    show_result: bool,
 }
 
 impl AiSession {
@@ -121,26 +128,7 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let focused = self.ai_session.as_ref().is_some_and(|session| {
-            session.visible
-                && (session.input.read(cx).is_focused(window)
-                    || session.language.read(cx).is_focused(window)
-                    || session.instruction_body.read(cx).is_focused(window)
-                    || session.excluded_input.read(cx).is_focused(window)
-                    || session.context_input.read(cx).is_focused(window)
-                    || session.instruction_name.read(cx).is_focused(window)
-                    || session.draft.as_ref().is_some_and(|draft| {
-                        [
-                            &draft.name,
-                            &draft.address,
-                            &draft.model,
-                            &draft.secret,
-                            &draft.context,
-                        ]
-                        .iter()
-                        .any(|field| field.read(cx).is_focused(window))
-                    }))
-        });
+        let focused = self.ai_interaction_has_focus(window, cx);
         if focused {
             self.hide_ai_panel(cx);
         }
@@ -161,6 +149,17 @@ impl Editor {
         }
         cx.notify();
     }
+    pub(in crate::editor) fn leave_ai_review_for_document_navigation(&mut self, cx: &mut Context<Self>) {
+        if self.ai_session.as_ref().is_some_and(|session| session.visible) { self.hide_ai_panel(cx); }
+        if !self.split_initializing && let Some(parent) = self.split_parent.clone() {
+            cx.defer(move |cx| {
+                if let Err(error) = parent.update(cx, |editor, cx| {
+                    if editor.ai_session.as_ref().is_some_and(|session| session.visible) { editor.hide_ai_panel(cx); }
+                }) { eprintln!("收起宿主 AI 审阅失败：{error}"); }
+            });
+        }
+    }
+
     fn show_ai_context(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self
             .ai_session
@@ -214,6 +213,11 @@ impl Editor {
         };
         let typed = session.context_input.read(cx).value().trim().to_owned();
         let paths = if let Some(path) = path {
+            if session.saved.references.contains(&path) {
+                session.saved.references.retain(|selected| selected != &path);
+                cx.notify();
+                return;
+            }
             Ok(vec![path])
         } else {
             crate::ai::context::explicit_references(&if typed.starts_with('@') {
@@ -232,7 +236,6 @@ impl Editor {
                 session
                     .context_input
                     .update(cx, |input, cx| input.set_value("", cx));
-                session.mode = PanelMode::Chat;
             }
             Err(error) => session.error = Some(error.to_string()),
         }
@@ -255,6 +258,8 @@ impl Editor {
             if session.saved.running {
                 return;
             }
+            session.review_dirty = true;
+            session.show_result = false;
             if let Some(index) = edit {
                 if let Err(error) = session.saved.workspace.changes.reject_edit(id, index) {
                     session.error = Some(error.to_string());
@@ -268,6 +273,9 @@ impl Editor {
             {
                 session.saved.workspace.documents.remove(id);
             }
+        }
+        if self.ai_session.as_ref().is_some_and(|session| session.saved.workspace.changes.proposals.is_empty()) {
+            self.hide_ai_panel(cx);
         }
         self.persist_ai_session(cx);
         cx.notify();
@@ -313,6 +321,7 @@ impl Editor {
                 );
             }
         }
+        if let Some(session) = self.ai_session.as_mut() { session.review_dirty = true; session.show_result = false; }
         self.persist_ai_session(cx);
         cx.notify();
     }
@@ -345,6 +354,7 @@ impl Editor {
             return;
         };
         let root = session.saved.workspace.root.clone();
+        self.hide_ai_panel(cx);
         if let Some(group) = self.active_split_editor() {
             let handle = window.window_handle();
             cx.defer(move |cx| {
@@ -407,7 +417,7 @@ impl Editor {
             .as_ref()
             == Some(&path)
         {
-            self.new_ai_chat(window, cx);
+            self.new_ai_task(window, cx);
         }
         let delete = cx.background_spawn(async move { SavedSession::delete_at(&path) });
         cx.spawn(async move |owner, cx| {
@@ -427,7 +437,7 @@ impl Editor {
         .detach();
     }
 
-    fn new_ai_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn new_ai_task(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let expanded = self
             .ai_session
             .as_ref()
@@ -529,10 +539,13 @@ impl Editor {
                         match loaded {
                             Ok(saved) => {
                                 session.saved = saved;
-                                session.mode = PanelMode::Chat;
+                                session.mode = PanelMode::Task;
                                 session.error = None;
                                 session.stream_index = None;
                                 session.previews.clear();
+                                session.review = None;
+                                session.review_dirty = true;
+                                session.show_result = session.saved.workspace.changes.proposals.is_empty();
                             }
                             Err(error) => session.error = Some(error.to_string()),
                         }
@@ -662,7 +675,9 @@ impl Editor {
             id: target.document_id.clone(),
             source,
         };
-        let origin = window.mouse_position();
+        let origin = self.selection_screen_bounds(cx)
+            .map(|bounds| point(bounds.left(), bounds.bottom()))
+            .unwrap_or_else(|| window.mouse_position());
         self.context_menu = None;
         self.selection_toolbar = None;
         if let Some(parent) = self.split_parent.clone() {
@@ -703,6 +718,16 @@ impl Editor {
                         && previous.version == target.version
                 })
         });
+        if !same_target && let Some(session) = self.ai_session.as_mut().filter(|session| {
+            session.saved.running || !session.saved.workspace.changes.proposals.is_empty()
+        }) {
+            session.visible = true;
+            session.mode = PanelMode::Task;
+            session.error = Some(cx.global::<crate::i18n::I18nManager>().strings().ai_task_pending_first.clone());
+            session.input.update(cx, |input, cx| input.focus(window, cx));
+            cx.notify();
+            return;
+        }
         if !same_target {
             self.stop_ai_task(cx);
             let mut workspace = match AiWorkspace::new(root.clone(), vec![document]) {
@@ -770,7 +795,7 @@ impl Editor {
                 draft: None,
                 visible: true,
                 expanded: false,
-                mode: PanelMode::Chat,
+                mode: PanelMode::Task,
                 command,
                 origin,
                 error,
@@ -780,6 +805,7 @@ impl Editor {
                 task: None,
                 stream_index: None,
                 scroll: ScrollHandle::new(),
+                review_focus: cx.focus_handle(),
                 history_files: Vec::new(),
                 skills: crate::ai::skills::SkillCatalog::load(&directories),
                 input_tokens: 0,
@@ -787,6 +813,9 @@ impl Editor {
                 context_candidates: Vec::new(),
                 settings_saving: false,
                 settings_revision: 0,
+                review: None,
+                review_dirty: true,
+                show_result: false,
             });
         }
         let Some(session) = self.ai_session.as_mut() else {
@@ -795,7 +824,7 @@ impl Editor {
         session.visible = true;
         session.command = command;
         session.origin = origin;
-        session.mode = PanelMode::Chat;
+        session.mode = PanelMode::Task;
         let input = session.input.clone();
         input.update(cx, |input, cx| {
             if command != AiCommand::Ask {
@@ -887,7 +916,7 @@ impl Editor {
         if self
             .ai_session
             .as_ref()
-            .is_some_and(|session| session.mode != PanelMode::Chat || session.settings_saving)
+            .is_some_and(|session| session.mode != PanelMode::Task || session.settings_saving)
         {
             return;
         }
@@ -1241,11 +1270,13 @@ impl Editor {
                 WorkerEvent::Runtime(RunEvent::Activity(activity)) => session.activity = activity,
                 WorkerEvent::Runtime(RunEvent::Checkpoint { workspace, history }) => {
                     session.saved.workspace = *workspace;
+                    session.review_dirty = true;
                     session.saved.history = history;
                     checkpoint = true;
                 }
                 WorkerEvent::Finished(result) => {
                     session.saved.running = false;
+                    session.show_result = session.saved.workspace.changes.proposals.is_empty();
                     match result {
                         Ok(output) => {
                             session.saved.history = output.history;
@@ -1275,9 +1306,11 @@ impl Editor {
             session.control.cancel.cancel();
             session.saved.interrupted |= session.saved.running;
             session.saved.running = false;
+            session.show_result = session.saved.workspace.changes.proposals.is_empty();
             session.generation = session.generation.wrapping_add(1);
             session.task = None;
         }
+        self.refresh_ai_preview(cx);
         self.persist_ai_session(cx);
         cx.notify();
     }
@@ -1316,6 +1349,9 @@ impl Editor {
     }
 
     pub(in crate::editor) fn refresh_ai_preview(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = self.ai_session.as_mut() {
+            session.review_dirty = true;
+        }
         let answers = self
             .ai_session
             .as_ref()
@@ -1464,7 +1500,7 @@ impl Editor {
                             session.settings = settings;
                             if session.settings_revision == revision {
                                 session.saved.endpoint_id = id;
-                                session.mode = PanelMode::Chat;
+                                session.mode = PanelMode::Task;
                                 session.draft = None;
                             }
                             session.error = None;

@@ -844,9 +844,11 @@ impl Editor {
         let root = self.workspace.root.clone();
         let sidebar_open = self.workspace.is_open;
         let reading_mode = self.reading_mode.clone();
+        let ai_surface_visible = self.ai_surface_visible.clone();
         let group = cx.new(move |cx| {
             let mut editor = Editor::from_markdown(cx, String::new(), None);
             editor.reading_mode = reading_mode;
+            editor.ai_surface_visible = ai_surface_visible;
             editor.rebuild_image_runtimes(cx);
             editor.split_parent = Some(parent);
             editor.split_active = false;

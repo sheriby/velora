@@ -315,6 +315,8 @@ impl Editor {
         }
         if let Some(session) = self.ai_session.as_mut() {
             session.saved.workspace.changes = staged;
+            session.review_dirty = true;
+            session.show_result = false;
             session.saved.bindings = bindings;
             for (id, source) in accepted {
                 session.saved.workspace.new_documents.remove(&id);
@@ -323,6 +325,9 @@ impl Editor {
                     snapshot.source = source;
                 }
             }
+        }
+        if self.ai_session.as_ref().is_some_and(|session| session.saved.workspace.changes.proposals.is_empty()) {
+            self.hide_ai_panel(cx);
         }
         self.schedule_autosave(cx);
         self.persist_ai_session(cx);

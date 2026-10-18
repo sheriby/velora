@@ -84,14 +84,10 @@ impl Editor {
         if let Some(sidebar) = sidebar {
             main = main.child(sidebar);
         }
-        if let Some(workspace) = &self.split_workspace {
+        if let Some(layout) = self.split_workspace.as_ref().map(|workspace| workspace.layout.clone()) {
             let mut index = 0;
-            main = main.child(self.render_group_node(
-                &workspace.layout.clone(),
-                &theme,
-                &mut index,
-                cx,
-            ));
+            let groups = self.render_group_node(&layout, &theme, &mut index, cx);
+            main = main.child(self.render_ai_workspace(groups, &theme, window, cx));
         }
         if let Some(sidebar) = self.render_ai_sidebar(&theme, window, cx) { main = main.child(sidebar); }
         let menus = self.window_menus(cx).filter(|menus| !menus.is_empty());
