@@ -45,7 +45,7 @@ impl Editor {
             let rail = editor
                 .workspace
                 .is_open
-                .then(|| editor.render_activity_rail(&theme, cx));
+                .then(|| editor.render_activity_rail(cx));
             let panel = if editor.workspace.is_open {
                 panel
             } else {

@@ -32,9 +32,7 @@ pub(crate) fn untitled_document_path(id: uuid::Uuid, number: usize) -> PathBuf {
 }
 
 const FOLDER_ICON: &str = "icon/workspace/folder.svg";
-const ACTIVITY_FILES_ICON: &str = "icon/workspace/activity-files.svg";
-const ACTIVITY_SEARCH_ICON: &str = "icon/workspace/activity-search.svg";
-const ACTIVITY_OUTLINE_ICON: &str = "icon/workspace/activity-outline.svg";
+pub(super) const WORKSPACE_ACTIVITY_WIDTH: Rems = rems(3.0);
 const MARKDOWN_ICON: &str = "icon/workspace/markdown.svg";
 const CODE_ICON: &str = "icon/workspace/code.svg";
 const CHEVRON_RIGHT_ICON: &str = "icon/workspace/chevron-right.svg";
@@ -466,6 +464,7 @@ pub(super) struct WorkspaceState {
     pending_wikilink_open: Option<(String, AnyWindowHandle)>,
     context_menu: Option<WorkspaceContextMenu>,
     name_edit: Option<WorkspaceNameEdit>,
+    navigation_focus: Option<FocusHandle>,
     tree_focus: Option<FocusHandle>,
     tab_context_menu: Option<TabContextMenu>,
     panel_width: Option<f32>,
@@ -543,6 +542,7 @@ impl Default for WorkspaceState {
             pending_wikilink_open: None,
             context_menu: None,
             name_edit: None,
+            navigation_focus: None,
             tree_focus: None,
             tab_context_menu: None,
             panel_width: None,

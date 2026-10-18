@@ -118,6 +118,24 @@ impl Editor {
         }
     }
 
+    pub(in crate::editor) fn refocus_visible_ai_review(&self, cx: &mut Context<Self>) -> bool {
+        let Some(review) = self
+            .ai_session
+            .as_ref()
+            .filter(|session| session.review_open)
+            .and_then(|session| session.review.as_ref())
+        else {
+            return false;
+        };
+        review.tracked.update(cx, |editor, cx| {
+            if let Some(entity_id) = editor.current_edit_target_entity_id_from_state(cx) {
+                editor.focus_block(entity_id);
+                cx.notify();
+            }
+        });
+        true
+    }
+
     pub(in crate::editor) fn ai_interaction_has_focus(&self, window: &Window, cx: &App) -> bool {
         self.ai_session.as_ref().is_some_and(|session| {
             (session.review_open && session.review_focus.contains_focused(window, cx))

@@ -233,6 +233,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) preferences_shortcut_toggle_fullscreen: Option<String>,
     pub(crate) workspace_panel_title: Option<String>,
     pub(crate) workspace_tab_files: Option<String>,
+    pub(crate) workspace_tab_search: Option<String>,
     pub(crate) workspace_tab_outline: Option<String>,
     pub(crate) workspace_tab_recent: Option<String>,
     pub(crate) workspace_search_placeholder: Option<String>,

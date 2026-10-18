@@ -570,3 +570,98 @@ async fn opening_a_file_directly_restores_the_remembered_sidebar_state(
     let _ = fs::remove_dir_all(root);
     let _ = fs::remove_dir_all(config_root);
 }
+
+#[gpui::test]
+fn kit_workspace_navigation_exposes_named_buttons_and_keyboard_activation(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    init_sidebar_test_app(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "正文".into(), None))
+        })
+        .unwrap()
+    });
+    let editor = handle
+        .update(cx, |_, window, cx| {
+            window.activate_window();
+            cx.entity()
+        })
+        .unwrap();
+    let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+    for _ in 0..2 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    cx.update(|window, _| {
+        for id in ["activity-files", "activity-search", "activity-outline"] {
+            let button = window.try_find(id);
+            assert_eq!(
+                button.as_ref().and_then(|button| button.role()),
+                Some(gpui::Role::Button),
+                "导航必须提供标准控件语义：{id}"
+            );
+            assert!(button.unwrap().label().is_some(), "图标入口需要名称");
+        }
+        assert_eq!(window.find("activity-files").checked(), Some(true));
+        assert_eq!(window.find("activity-search").checked(), Some(false));
+    });
+    cx.update(|window, cx| {
+        for _ in 0..12 {
+            if window.find("activity-files").focused() == Some(true) {
+                break;
+            }
+            window.focus_next(cx);
+            window.render_frame(cx);
+        }
+        assert_eq!(window.find("activity-files").focused(), Some(true));
+    });
+    cx.update(|window, cx| window.press("tab", cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, _| assert_eq!(window.find("activity-search").focused(), Some(true)));
+    // 原生按钮在抬键时激活，必须发送完整按键对。
+    cx.update(|window, cx| window.press("enter", cx));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.workspace.active_tab, WorkspaceTab::Search)
+    });
+    cx.update(|window, cx| window.press("enter", cx));
+    for _ in 0..2 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    editor.read_with(cx, |editor, _| assert!(!editor.workspace.is_open));
+    cx.simulate_input("继续输入");
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.buffer.text().contains("继续输入"),
+            "导航关闭后必须可以直接继续编辑正文"
+        )
+    });
+}
+
+#[gpui::test]
+fn workspace_navigation_icons_resolve_through_the_production_asset_source(cx: &mut TestAppContext) {
+    use gpui::AssetSource as _;
+    for path in [
+        "icons/file-text.svg",
+        "icons/search.svg",
+        "icons/list-tree.svg",
+    ] {
+        let bytes = crate::VeloraAssets.load(path).unwrap();
+        assert!(bytes.is_some(), "导航图标必须随产品嵌入：{path}");
+        let icon = gpui::Image::from_bytes(gpui::ImageFormat::Svg, bytes.unwrap().into_owned());
+        let pixels = cx
+            .update(|cx| icon.to_image_data(cx.svg_renderer()))
+            .unwrap();
+        assert!(
+            pixels
+                .as_bytes(0)
+                .unwrap()
+                .chunks_exact(4)
+                .any(|pixel| pixel[3] > 0),
+            "导航图标必须实际绘制像素：{path}"
+        );
+    }
+}

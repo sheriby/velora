@@ -803,11 +803,19 @@ mod tests {
 #[test]
 fn kit_ui_icons_are_available_without_loading_the_full_catalog() {
     use gpui::AssetSource;
-    for path in ["icons/image.svg", "icons/keyboard.svg", "icons/sparkles.svg", "icons/app-window.svg", "icons/trash.svg"] {
+    let extra_icons = [
+        "icons/image.svg",
+        "icons/keyboard.svg",
+        "icons/sparkles.svg",
+        "icons/app-window.svg",
+        "icons/trash.svg",
+        "icons/list-tree.svg",
+    ];
+    for path in extra_icons {
         assert!(matches!(crate::VeloraAssets.load(path), Ok(Some(_))), "界面图标应可加载：{path}");
     }
     assert_eq!(crate::VeloraAssets.list("icons").unwrap().len(),
-        gpui_kit::assets::Assets.list("icons").unwrap().len() + 5,
+        gpui_kit::assets::Assets.list("icons").unwrap().len() + extra_icons.len(),
         "只嵌入实际使用的补充图标");
 }
 }

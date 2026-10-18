@@ -1,4 +1,9 @@
 use super::*;
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{
+    ActiveTheme as _, Selectable as _,
+    button::{Button, ButtonVariants},
+};
 
 impl Editor {
     pub(crate) fn toggle_workspace_drawer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -19,7 +24,7 @@ impl Editor {
         cx.notify();
     }
 
-    /// 收起侧栏后，若焦点还留在侧栏自己的控件上（文件树、搜索/替换输入、改名
+    /// 收起侧栏后，若焦点还留在侧栏自己的控件上（导航按钮、文件树、搜索/替换输入、改名
     /// 输入），把焦点交还正文：面板一收这些控件就不再渲染，悬空的焦点会让之后
     /// 的键盘事件静默丢失——再按 cmd/ctrl-b 也唤不出侧栏（派发回退到根节点，
     /// 挂在编辑器根部的那组监听全收不到）。
@@ -30,9 +35,14 @@ impl Editor {
     ) {
         let sidebar_owns_focus = self
             .workspace
-            .tree_focus
+            .navigation_focus
             .as_ref()
-            .is_some_and(|handle| handle.is_focused(window))
+            .is_some_and(|handle| handle.contains_focused(window, cx))
+            || self
+                .workspace
+                .tree_focus
+                .as_ref()
+                .is_some_and(|handle| handle.is_focused(window))
             || self
                 .workspace
                 .search_focus
@@ -51,8 +61,39 @@ impl Editor {
         if !sidebar_owns_focus {
             return;
         }
-        if let Some(entity_id) = self.current_edit_target_entity_id_from_state(cx) {
-            self.focus_block(entity_id);
+        self.refocus_workspace_content(window, cx);
+    }
+
+    fn refocus_workspace_content(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(parent) = self.split_parent.clone() {
+            // 分屏命令可能仍在宿主的更新栈内，先退出当前事件再更新宿主。
+            window.defer(cx, move |window, cx| {
+                if let Err(error) = parent.update(cx, |editor, cx| {
+                    editor.refocus_workspace_document(cx);
+                }) {
+                    eprintln!("归还工作区正文焦点失败：{error}");
+                }
+                window.refresh();
+            });
+        } else {
+            self.refocus_workspace_document(cx);
+        }
+    }
+
+    fn refocus_workspace_document(&mut self, cx: &mut Context<Self>) {
+        if self.refocus_visible_ai_review(cx) {
+            return;
+        }
+        let focus = |editor: &mut Editor, cx: &mut Context<Editor>| {
+            if let Some(entity_id) = editor.current_edit_target_entity_id_from_state(cx) {
+                editor.focus_block(entity_id);
+                cx.notify();
+            }
+        };
+        if let Some(active) = self.active_split_editor() {
+            active.update(cx, focus);
+        } else {
+            focus(self, cx);
         }
     }
 
@@ -159,102 +200,72 @@ impl Editor {
             cx.notify();
         }
     }
-    pub(crate) fn render_activity_rail(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let c = &theme.colors;
-        let editor = cx.entity().downgrade();
-        let button = |id: &'static str,
-                      icon_path: &'static str,
-                      label: &'static str,
-                      selected: bool,
-                      tab: WorkspaceTab,
-                      editor: WeakEntity<Self>| {
-            div()
-                .id(id)
-                .debug_selector(move || id.to_string())
-                .w(px(34.0))
-                .h(px(34.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(8.0))
-                .bg(if selected {
-                    c.selection
-                } else {
-                    c.dialog_secondary_button_bg
-                })
-                .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                .cursor_pointer()
-                .child(
-                    svg()
-                        .path(icon_path)
-                        .size(px(18.0))
-                        .text_color(if selected {
-                            c.dialog_primary_button_bg
-                        } else {
-                            c.dialog_muted
-                        }),
-                )
-                .tooltip(move |_, cx| {
-                    cx.new(|_| WorkspaceTooltip {
-                        label: label.into(),
-                    })
-                    .into()
-                })
-                .on_click(move |_, window, cx| {
-                    let _ = editor.update(cx, |editor, cx| {
-                        // 三个按钮一致：已经开在这一页时再点一次就收起侧边栏
-                        // （之前只有文件和搜索会收，大纲那个参数写的是 false）。
-                        if editor.workspace.is_open && editor.workspace.active_tab == tab {
-                            editor.workspace.is_open = false;
-                            editor.refocus_document_after_sidebar_collapse(window, cx);
-                            editor.persist_session(cx);
-                            cx.notify();
-                            return;
-                        }
-                        editor.workspace.is_open = true;
-                        editor.set_workspace_tab(tab, cx);
-                        // set_workspace_tab 在面板没变时早退，这里的开也要落一次。
+    pub(crate) fn render_activity_rail(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let navigation_focus = self
+            .workspace
+            .navigation_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        let strings = cx.global::<I18nManager>().strings_arc();
+        let button = |id: &'static str, icon, label: &str, tab, cx: &mut Context<Self>| {
+            let selected = self.workspace.is_open && self.workspace.active_tab == tab;
+            Button::new(id)
+                .debug_selector(move || id.to_owned())
+                .ghost()
+                .icon(icon)
+                .selected(selected)
+                .toggled(selected)
+                .accessibility_label(label.to_owned())
+                .tooltip(label.to_owned())
+                .on_click(cx.listener(move |editor, _, window, cx| {
+                    if editor.workspace.is_open && editor.workspace.active_tab == tab {
+                        editor.workspace.is_open = false;
+                        editor.refocus_workspace_content(window, cx);
                         editor.persist_session(cx);
                         cx.notify();
-                    });
-                })
+                        return;
+                    }
+                    editor.workspace.is_open = true;
+                    editor.set_workspace_tab(tab, cx);
+                    editor.persist_session(cx);
+                    cx.notify();
+                }))
         };
         div()
             .id("workspace-activity-rail")
-            .w(px(50.0))
+            .track_focus(&navigation_focus)
+            .tab_stop(false)
+            .w(WORKSPACE_ACTIVITY_WIDTH)
             .h_full()
             .flex_shrink_0()
             .flex()
             .flex_col()
             .items_center()
-            .gap(px(10.0))
-            .pt(px(12.0))
-            .bg(c.dialog_secondary_button_bg)
-            .border_r(px(1.0))
-            .border_color(c.dialog_border)
+            .gap_2()
+            .pt_3()
+            .bg(cx.theme().sidebar)
+            .border_r_1()
+            .border_color(cx.theme().sidebar_border)
             .child(button(
                 "activity-files",
-                ACTIVITY_FILES_ICON,
-                "文件",
-                self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Files,
+                IconName::FileText,
+                &strings.workspace_tab_files,
                 WorkspaceTab::Files,
-                editor.clone(),
+                cx,
             ))
             .child(button(
                 "activity-search",
-                ACTIVITY_SEARCH_ICON,
-                "搜索",
-                self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Search,
+                IconName::Search,
+                &strings.workspace_tab_search,
                 WorkspaceTab::Search,
-                editor.clone(),
+                cx,
             ))
             .child(button(
                 "activity-outline",
-                ACTIVITY_OUTLINE_ICON,
-                "大纲",
-                self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Outline,
+                IconName::ListTree,
+                &strings.workspace_tab_outline,
                 WorkspaceTab::Outline,
-                editor,
+                cx,
             ))
             .into_any_element()
     }

@@ -85,7 +85,7 @@ fn apply_dock_icon() {
     }
 }
 
-gpui_kit::assets::icon_assets!(VeloraUiIcons, [Image, Keyboard, Sparkles, AppWindow, Trash]);
+gpui_kit::assets::icon_assets!(VeloraUiIcons, [Image, Keyboard, Sparkles, AppWindow, Trash, ListTree]);
 
 struct VeloraAssets;
 
@@ -212,12 +212,6 @@ impl AssetSource for VeloraAssets {
             )))),
             "icon/workspace/activity-files.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/activity-files.svg"
-            )))),
-            "icon/workspace/activity-search.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icon/workspace/activity-search.svg"
-            )))),
-            "icon/workspace/activity-outline.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icon/workspace/activity-outline.svg"
             )))),
             "icon/workspace/chevron-right.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/chevron-right.svg"

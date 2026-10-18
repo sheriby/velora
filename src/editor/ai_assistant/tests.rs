@@ -3959,3 +3959,88 @@ fn ai_split_workspace_uses_the_same_resizable_sidebar_and_menu_escape_scope(
     );
     cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
 }
+
+fn navigation_returns_focus_to_ai_review(cx: &mut TestAppContext, split: bool) {
+    let (editor, cx, directory, _, _) = tab_review_fixture(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        if split {
+            editor.split_active_document(
+                crate::editor::workspace::split::SplitDirection::Right,
+                window,
+                cx,
+            );
+        }
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+    });
+    cx.run_until_parked();
+    cx.simulate_resize(gpui::size(gpui::px(1400.0), gpui::px(600.0)));
+    propose_tab_changes(&editor, cx);
+    draw(cx);
+    draw(cx);
+    let review = editor.read_with(cx, |editor, _| {
+        editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .review
+            .as_ref()
+            .unwrap()
+            .tracked
+            .clone()
+    });
+    let handles = review.read_with(cx, |review, cx| {
+        review
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|block| block.entity.read(cx).focus_handle.clone())
+            .collect::<Vec<_>>()
+    });
+    review.update(cx, |review, cx| {
+        assert!(
+            review.scroll_handle.max_offset().y > gpui::px(100.0),
+            "夹具需要可滚动的审阅正文"
+        );
+        review
+            .scroll_handle
+            .set_offset(gpui::point(gpui::px(0.0), gpui::px(-100.0)));
+        cx.notify();
+    });
+    for _ in 0..3 {
+        draw(cx);
+    }
+    let reading_offset = review.read_with(cx, |review, _| review.scroll_handle.offset());
+    let files = cx.debug_bounds("activity-files").unwrap().center();
+    cx.simulate_click(files, gpui::Modifiers::none());
+    for _ in 0..3 {
+        draw(cx);
+    }
+    assert!(cx.debug_bounds("workspace-panel").is_none());
+    let focused = cx.update(|window, cx| window.focused(cx));
+    assert!(
+        focused
+            .as_ref()
+            .is_some_and(|focus| handles.contains(focus)),
+        "当前显示 AI 审阅时，应归还审阅正文焦点：{focused:?}"
+    );
+    assert!(cx.debug_bounds("ai-review-workspace").is_some());
+    assert_eq!(
+        review.read_with(cx, |review, _| review.scroll_handle.offset()),
+        reading_offset,
+        "归还焦点不应把审阅滚回修改位置"
+    );
+    cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
+}
+
+#[gpui::test]
+fn kit_workspace_navigation_closing_returns_focus_to_visible_ai_review(cx: &mut TestAppContext) {
+    navigation_returns_focus_to_ai_review(cx, false);
+}
+
+#[gpui::test]
+fn kit_workspace_navigation_closing_in_split_returns_focus_to_visible_ai_review(
+    cx: &mut TestAppContext,
+) {
+    navigation_returns_focus_to_ai_review(cx, true);
+}

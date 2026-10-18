@@ -1094,7 +1094,7 @@ impl Render for Editor {
             .min_w(px(0.0));
         if self.workspace.is_open && self.split_parent.is_none() {
             // 展开：图标列与面板占位，正文被挤到右边。
-            main_content = main_content.child(self.render_activity_rail(&theme, cx));
+            main_content = main_content.child(self.render_activity_rail(cx));
             if let Some(workspace_panel) = workspace_panel {
                 main_content = main_content.child(workspace_panel);
             }

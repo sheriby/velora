@@ -563,6 +563,7 @@ impl I18nStringsDe {
             workspace_tab_files: self
                 .workspace_tab_files
                 .unwrap_or(defaults.workspace_tab_files),
+            workspace_tab_search: self.workspace_tab_search.unwrap_or(defaults.workspace_tab_search),
             workspace_tab_outline: self
                 .workspace_tab_outline
                 .unwrap_or(defaults.workspace_tab_outline),

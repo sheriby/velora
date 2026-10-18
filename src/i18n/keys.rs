@@ -230,6 +230,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "preferences_shortcut_toggle_fullscreen",
     "workspace_panel_title",
     "workspace_tab_files",
+    "workspace_tab_search",
     "workspace_tab_outline",
     "workspace_tab_recent",
     "workspace_search_placeholder",

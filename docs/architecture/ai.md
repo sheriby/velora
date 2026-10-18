@@ -22,6 +22,8 @@
 
 普通窗口与分屏宿主共用 `render.rs:render_ai_sidebar_layout`，由 Kit `ResizablePanelGroup` 管理正文区域和 AI 侧栏的宽度与指针拖动。`AiSidebarLayout` 属于窗口宿主，保留运行期间的布局状态，切换任务、隐藏或回浮窗不重置侧栏宽度；窗口缩放按当前可用空间约束尺寸。0.7.3 的分隔条没有键盘入口，应用只补充可聚焦的 `Splitter` 语义与左右箭头、Home／End，尺寸仍调用 Kit `ResizableState:resize_panel`，不另写一套拖动或边界算法。
 
+`experience.rs:refocus_visible_ai_review` 在工作区导航关闭后把焦点交回当前显示的审阅正文，分屏由宿主统一调度。
+
 `experience.rs` 管理原位审阅。`inline_review.rs:tracked_document` 从正式原文与待接受版本生成包含删除和新增块的只读投影；块边界取自两份文档的既有解析树，不重新猜测 Markdown 语法。删除为红色、新增为绿色，当前修改的底部操作区提供接受与拒绝，使用 Kit `Button` 并参与正常行布局，不悬浮遮住正文。跨文档导航、重试和批量接受留在浮窗中。
 
 阅读结果与对话使用 Kit `Message`、`MessageScroller` 和 `TextViewState`，由 `messages.rs:MessageTranscript` 持有会话内的展示状态。消息按会话身份与源序号保持身份，只在进入可见区或预绘区时创建富文本状态；流式追加与完成共用同一视图，不拼接整段对话或创建新 `Editor`。停靠、回浮窗及追加内容保留选区和滚动；正在跟随时显示最新内容，向上阅读后不抢位置。快捷指令不重复展示用户指令，且没有追问输入。

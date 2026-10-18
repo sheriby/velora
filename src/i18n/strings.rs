@@ -334,6 +334,7 @@ pub struct I18nStrings {
     /// Workspace drawer Files tab.
     pub workspace_panel_title: String,
     pub workspace_tab_files: String,
+    pub workspace_tab_search: String,
     /// Workspace drawer Outline tab.
     pub workspace_tab_outline: String,
     /// Workspace drawer recent roots tab.
