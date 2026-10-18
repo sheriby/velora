@@ -566,7 +566,7 @@ fn ai_completed_answers_all_keep_their_markdown_previews(cx: &mut TestAppContext
             );
         editor.refresh_ai_preview(cx);
         let conversation=editor.ai_session.as_ref().unwrap().conversation.as_ref().unwrap().read(cx);
-        assert_eq!(conversation.buffer.text(),"**第一条**\n\n---\n\n`第二条`");
+        assert_eq!(conversation.buffer.text(),"**第一条**\n\n`第二条`");
         assert!(conversation.is_read_only());
     });
 }

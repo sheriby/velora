@@ -268,6 +268,30 @@ impl AssetSource for VeloraAssets {
             "icon/workspace/image.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/image.svg"
             )))),
+            "icon/editor/ai.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/ai.svg"
+            )))),
+            "icon/editor/ai-back.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/ai-back.svg"
+            )))),
+            "icon/editor/ai-dock.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/ai-dock.svg"
+            )))),
+            "icon/editor/ai-float.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/ai-float.svg"
+            )))),
+            "icon/editor/ai-more.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/ai-more.svg"
+            )))),
+            "icon/editor/ai-retry.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/ai-retry.svg"
+            )))),
+            "icon/editor/ai-send.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/ai-send.svg"
+            )))),
+            "icon/editor/ai-stop.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/ai-stop.svg"
+            )))),
             "icon/editor/paragraph.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/editor/paragraph.svg"
             )))),

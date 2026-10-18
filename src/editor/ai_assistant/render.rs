@@ -39,10 +39,15 @@ impl Editor {
         }
         let viewport = window.viewport_size();
         let compact = session.mode == PanelMode::Task;
-        let menu = matches!(session.mode, PanelMode::Options | PanelMode::Models);
+        let menu = session.mode == PanelMode::Options;
         let width =
             (f32::from(viewport.width) - 32.0).clamp(180.0, if menu { 300.0 } else { 620.0 });
         let height = (f32::from(viewport.height) - 120.0).clamp(180.0, 720.0);
+        let task_height = height.min(if session.saved.workspace.changes.proposals.is_empty() {
+            520.0
+        } else {
+            320.0
+        });
         let origin = if compact {
             session.origin
         } else if menu {
@@ -59,7 +64,7 @@ impl Editor {
             point((viewport.width - px(width)) * 0.5, px(82.0))
         };
         let panel = if compact {
-            self.render_ai_workbench(theme, height.min(520.0), false, cx)
+            self.render_ai_workbench(theme, task_height, false, cx)
         } else {
             self.render_ai_panel(theme, height, cx)
                 .w(px(width))
@@ -77,7 +82,11 @@ impl Editor {
                     - px(if compact && session.saved.messages.is_empty() {
                         180.0
                     } else {
-                        height.min(520.0)
+                        if compact {
+                            task_height
+                        } else {
+                            height.min(520.0)
+                        }
                     })
                     - px(36.0))
                 .max(px(65.0)),
@@ -151,7 +160,6 @@ impl Editor {
             PanelMode::Skills => &strings.ai_panel_skills,
             PanelMode::Instruction => &strings.ai_panel_instructions,
             PanelMode::Context => &strings.ai_panel_add_context,
-            PanelMode::Models => &strings.ai_task_models,
             _ => &strings.ai_panel_more,
         };
         let header = div()
@@ -829,26 +837,6 @@ impl Editor {
                     },
                 ));
             }
-            PanelMode::Models => {
-                for endpoint in &session.settings.endpoints {
-                    let id = endpoint.id.clone();
-                    content = content.child(self.ai_button(
-                        SharedString::from(format!("ai-model-{}", endpoint.id)),
-                        format!("{} · {}", endpoint.name, endpoint.model),
-                        session.saved.endpoint_id == endpoint.id,
-                        !session.saved.running,
-                        theme,
-                        cx,
-                        move |editor, _, cx| {
-                            if let Some(session) = editor.ai_session.as_mut() {
-                                session.saved.endpoint_id = id.clone();
-                                session.mode = PanelMode::Task;
-                            }
-                            cx.notify();
-                        },
-                    ));
-                }
-            }
             PanelMode::Task => {}
         }
 
@@ -953,10 +941,10 @@ impl Editor {
             ),
             _ => None,
         };
+        let send_button = selector == "ai-send";
         let opens_menu = matches!(
             selector.as_str(),
             "ai-options"
-                | "ai-models"
                 | "ai-context"
                 | "ai-settings"
                 | "ai-options-history"
@@ -996,15 +984,19 @@ impl Editor {
                 })
             })
             .when(!enabled, |button| button.opacity(0.4).cursor_default())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .when(icon.is_none(), |button| button.child(label.into()))
             .when_some(icon, |button, path| {
                 button
                     .flex()
                     .items_center()
                     .justify_center()
-                    .min_w(px(28.0))
-                    .child(svg().path(path).size(px(14.0)).text_color(color))
+                    .size(px(28.0))
+                    .p_0()
+                    .rounded(px(6.0))
+                    .child(svg().path(path).size(px(15.0)).text_color(color))
             })
+            .when(send_button, |button| button.size(px(30.0)).rounded_full())
             .when_some(tooltip, |button, label| {
                 button.tooltip(move |_, cx| {
                     cx.new(|_| crate::components::HoverPreviewTooltip {

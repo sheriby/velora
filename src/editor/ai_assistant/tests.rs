@@ -1497,3 +1497,135 @@ fn ai_discard_menu_removes_pending_revisions_and_preserves_the_document(cx: &mut
         );
     });
 }
+
+#[gpui::test]
+fn ai_visible_controls_resolve_through_the_production_asset_source(cx: &mut TestAppContext) {
+    use gpui::AssetSource;
+    for path in [
+        "icon/editor/ai.svg",
+        "icon/editor/ai-back.svg",
+        "icon/editor/ai-dock.svg",
+        "icon/editor/ai-float.svg",
+        "icon/editor/ai-more.svg",
+        "icon/editor/ai-retry.svg",
+        "icon/editor/ai-send.svg",
+        "icon/editor/ai-stop.svg",
+    ] {
+        let bytes = crate::VeloraAssets.load(path).unwrap();
+        assert!(bytes.is_some(), "产品资源中缺少图标：{path}");
+        let image = gpui::Image::from_bytes(gpui::ImageFormat::Svg, bytes.unwrap().into_owned());
+        let pixels = cx
+            .update(|cx| image.to_image_data(cx.svg_renderer()))
+            .unwrap();
+        assert!(
+            pixels
+                .as_bytes(0)
+                .unwrap()
+                .chunks_exact(4)
+                .any(|pixel| pixel[3] > 0),
+            "图标必须实际绘制可见像素：{path}"
+        );
+    }
+}
+
+fn writing_dialog(cx: &mut TestAppContext) -> (gpui::Entity<Editor>, &mut VisualTestContext) {
+    initialize(cx);
+    let source = "# 标题\n\n需要润色的原始段落。\n\n保留的下文。";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        let id = session.saved.target.as_ref().unwrap().document_id.clone();
+        let base = session.saved.workspace.documents[&id].clone();
+        session
+            .saved
+            .workspace
+            .changes
+            .propose(base, "需要润色的原始段落。", "润色后的段落。")
+            .unwrap();
+        session.saved.messages.extend([
+            crate::ai::session::ChatMessage {
+                role: "user".into(),
+                text: "润色".into(),
+            },
+            crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: "已提出一处修改。".into(),
+            },
+        ]);
+        editor.refresh_ai_preview(cx);
+    });
+    draw(cx);
+    draw(cx);
+    (editor, cx)
+}
+
+#[gpui::test]
+fn ai_writing_dialog_can_be_dragged_from_the_top_padding_through_multiple_frames(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx) = writing_dialog(cx);
+    let before = cx.debug_bounds("ai-floating-workbench").unwrap();
+    let start = before.origin + gpui::point(gpui::px(100.0), gpui::px(6.0));
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::none());
+    for (horizontal, vertical) in [(35.0, 70.0), (80.0, 90.0), (120.0, 60.0)] {
+        let delta = gpui::point(gpui::px(horizontal), gpui::px(vertical));
+        cx.simulate_mouse_move(
+            start + delta,
+            Some(gpui::MouseButton::Left),
+            gpui::Modifiers::none(),
+        );
+        draw(cx);
+        draw(cx);
+        assert_eq!(
+            cx.debug_bounds("ai-floating-workbench").unwrap().origin,
+            before.origin + delta,
+            "整个顶部应可抓取，正文或对话编辑器不能截断拖动"
+        );
+    }
+    let end = start + gpui::point(gpui::px(120.0), gpui::px(60.0));
+    cx.simulate_mouse_up(end, gpui::MouseButton::Left, gpui::Modifiers::none());
+    draw(cx);
+    let released = cx.debug_bounds("ai-floating-workbench").unwrap();
+    cx.simulate_mouse_move(
+        end + gpui::point(gpui::px(40.0), gpui::px(40.0)),
+        None,
+        gpui::Modifiers::none(),
+    );
+    draw(cx);
+    assert_eq!(cx.debug_bounds("ai-floating-workbench").unwrap(), released);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.buffer.text(),
+            "# 标题\n\n需要润色的原始段落。\n\n保留的下文。"
+        )
+    });
+}
+
+#[gpui::test]
+fn ai_writing_dialog_keeps_model_selection_in_settings_and_omits_single_change_navigation(
+    cx: &mut TestAppContext,
+) {
+    let (_editor, cx) = writing_dialog(cx);
+    assert!(
+        cx.debug_bounds("ai-models").is_none(),
+        "模型选择只放在设置里"
+    );
+    assert!(
+        cx.debug_bounds("ai-review-files").is_none(),
+        "单篇文件不重复显示文件列表"
+    );
+    assert!(cx.debug_bounds("ai-review-previous").is_none());
+    assert!(cx.debug_bounds("ai-review-next").is_none());
+    assert!(
+        f32::from(
+            cx.debug_bounds("ai-floating-workbench")
+                .unwrap()
+                .size
+                .height
+        ) <= 360.0,
+        "正文已有差异时，浮窗应保留阅读空间"
+    );
+}

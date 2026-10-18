@@ -26,35 +26,19 @@ impl Editor {
             || self.has_text_selection(cx),
             |group| group.read(cx).has_text_selection(cx),
         );
-        let model = session
-            .settings
-            .endpoints
-            .iter()
-            .find(|endpoint| endpoint.id == session.saved.endpoint_id)
-            .or_else(|| session.settings.active_endpoint())
-            .map(|endpoint| endpoint.name.clone())
-            .unwrap_or_else(|| strings.ai_task_models.clone());
         let header = div()
             .w_full()
             .flex()
             .items_center()
             .gap(px(4.0))
+            .h(px(28.0))
             .child(
                 div()
-                    .id("ai-float-titlebar")
-                    .debug_selector(|| "ai-float-titlebar".into())
                     .flex_1()
                     .min_w_0()
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    .cursor(if sidebar {
-                        CursorStyle::Arrow
-                    } else if session.panel_drag.is_some() {
-                        CursorStyle::ClosedHand
-                    } else {
-                        CursorStyle::OpenHand
-                    })
                     .child(div().font_weight(FontWeight::SEMIBOLD).child("AI"))
                     .child(
                         div()
@@ -62,38 +46,7 @@ impl Editor {
                             .text_size(px(11.0))
                             .text_color(theme.colors.dialog_muted)
                             .child(caption),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |editor, event: &MouseDownEvent, _, cx| {
-                            if sidebar {
-                                return;
-                            }
-                            if let Some(session) = editor.ai_session.as_mut() {
-                                session.panel_drag =
-                                    Some(event.position - session.panel_bounds.get().origin);
-                            }
-                            cx.stop_propagation();
-                        }),
                     ),
-            )
-            .child(
-                self.ai_button(
-                    "ai-models",
-                    model,
-                    false,
-                    !session.saved.running,
-                    theme,
-                    cx,
-                    |editor, _, cx| {
-                        if let Some(session) = editor.ai_session.as_mut() {
-                            session.mode = PanelMode::Models;
-                        }
-                        cx.notify();
-                    },
-                )
-                .max_w(px(140.0))
-                .truncate(),
             )
             .when(
                 session.review.is_some()
@@ -165,6 +118,30 @@ impl Editor {
                 move |editor, window, cx| editor.open_ai_assistant(command, window, cx),
             ));
         }
+        let titlebar = div()
+            .id("ai-float-titlebar")
+            .debug_selector(|| "ai-float-titlebar".into())
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .h(px(40.0))
+            .occlude()
+            .cursor(if session.panel_drag.is_some() {
+                CursorStyle::ClosedHand
+            } else {
+                CursorStyle::OpenHand
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|editor, event: &MouseDownEvent, _, cx| {
+                    if let Some(session) = editor.ai_session.as_mut() {
+                        session.panel_drag =
+                            Some(event.position - session.panel_bounds.get().origin);
+                    }
+                    cx.stop_propagation();
+                }),
+            );
         let has_messages = !session.saved.messages.is_empty();
         let mut panel = div()
             .id("ai-assistant-panel")
@@ -196,6 +173,7 @@ impl Editor {
             })
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .when(!sidebar, |panel| panel.child(titlebar))
             .child(header)
             .when(!has_messages, |panel| panel.child(quick));
         if let Some(error) = &session.error {
@@ -288,7 +266,7 @@ impl Editor {
                 move |_, _, window, _| {
                     let moving = owner.clone();
                     window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-                        if !phase.bubble() {
+                        if !phase.capture() {
                             return;
                         }
                         if let Err(error) = moving.update(cx, |editor, cx| {
@@ -309,12 +287,14 @@ impl Editor {
                     });
                     let stopped = owner.clone();
                     window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
-                        if !phase.bubble() {
+                        if !phase.capture() {
                             return;
                         }
-                        if let Err(error) = stopped.update(cx, |editor, _| {
-                            if let Some(session) = editor.ai_session.as_mut() {
-                                session.panel_drag = None;
+                        if let Err(error) = stopped.update(cx, |editor, cx| {
+                            if let Some(session) = editor.ai_session.as_mut()
+                                && session.panel_drag.take().is_some()
+                            {
+                                cx.stop_propagation();
                             }
                         }) {
                             eprintln!("结束 AI 浮窗拖动失败：{error}");
@@ -455,45 +435,51 @@ impl Editor {
                 },
             ));
         }
-        let mut actions = div().flex().items_center().gap(px(4.0));
+        let mut actions = div().w_full().flex().items_center().gap(px(6.0));
         if let Some(review) = &session.review {
+            if review.edits.len() > 1 {
+                actions = actions
+                    .child(self.ai_button(
+                        "ai-review-previous",
+                        "↑",
+                        false,
+                        true,
+                        theme,
+                        cx,
+                        |editor, _, cx| editor.move_ai_review_change(false, cx),
+                    ))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme.colors.dialog_muted)
+                            .child(format!("{}/{}", review.index + 1, review.edits.len())),
+                    )
+                    .child(self.ai_button(
+                        "ai-review-next",
+                        "↓",
+                        false,
+                        true,
+                        theme,
+                        cx,
+                        |editor, _, cx| editor.move_ai_review_change(true, cx),
+                    ));
+            }
             let id = review.id.clone();
-            actions = actions
-                .child(self.ai_button(
-                    "ai-review-previous",
-                    "↑",
-                    false,
-                    review.edits.len() > 1,
-                    theme,
-                    cx,
-                    |editor, _, cx| editor.move_ai_review_change(false, cx),
-                ))
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(theme.colors.dialog_muted)
-                        .child(format!("{}/{}", review.index + 1, review.edits.len())),
-                )
-                .child(self.ai_button(
-                    "ai-review-next",
-                    "↓",
-                    false,
-                    review.edits.len() > 1,
-                    theme,
-                    cx,
-                    |editor, _, cx| editor.move_ai_review_change(true, cx),
-                ))
-                .child(self.ai_button(
+            actions = actions.child(
+                self.ai_button(
                     "ai-review-file-accept",
                     strings.ai_panel_accept_file.clone(),
-                    false,
+                    true,
                     self.ai_review_can_accept(Some(&id), false),
                     theme,
                     cx,
                     move |editor, window, cx| {
                         editor.apply_ai_review(Some(id.clone()), None, window, cx)
                     },
-                ));
+                )
+                .min_w(px(64.0))
+                .text_align(TextAlign::Center),
+            );
         }
         if session.saved.workspace.changes.proposals.len() > 1 {
             actions = actions.child(self.ai_button(
@@ -534,7 +520,24 @@ impl Editor {
             .flex()
             .flex_col()
             .gap(px(4.0))
-            .child(files)
+            .when(
+                session.saved.workspace.changes.proposals.len() > 1
+                    || session
+                        .saved
+                        .workspace
+                        .changes
+                        .proposals
+                        .keys()
+                        .next()
+                        .is_some_and(|id| {
+                            session
+                                .saved
+                                .target
+                                .as_ref()
+                                .is_none_or(|target| target.document_id != *id)
+                        }),
+                |panel| panel.child(files),
+            )
             .child(actions)
             .into_any_element()
     }

@@ -23,7 +23,6 @@ mod workbench;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PanelMode {
     Task,
-    Models,
     Settings,
     History,
     Skills,
@@ -1444,7 +1443,7 @@ impl Editor {
                 continue;
             }
             if !text.is_empty() {
-                text.push_str("\n\n---\n\n");
+                text.push_str("\n\n");
             }
             if message.role == "user" {
                 for line in message.text.lines() {

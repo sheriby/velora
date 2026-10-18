@@ -91,6 +91,7 @@ impl Render for Editor {
         if !self.ai_result_preview && self.split_parent.is_none() { self.sync_window_title(window, &strings); }
 
         let d = &theme.dimensions;
+        let editor_padding = if self.ai_compact_preview { 12.0 } else { d.editor_padding };
         // P4b：键命中时整帧复用行结构计划；未命中（行元数据/折叠/大纲/模式
         // 变化后的第一帧）才做一次全文档扫描。键用行元数据的版本而不是文档修订：
         // 打字只改块内文字时行元数据不动，计划就该照用。
@@ -189,7 +190,7 @@ impl Render for Editor {
         let viewport_height = f32::from(viewport_bounds.size.height.max(px(1.0)));
         // Extra room below the last block so the lowest line can be scrolled up
         // to the viewport center instead of being pinned to the bottom edge.
-        let scroll_beyond_bottom = viewport_height * 0.5;
+        let scroll_beyond_bottom = if self.ai_compact_preview { 0.0 } else { viewport_height * 0.5 };
         let viewport_width = f32::from(viewport_bounds.size.width.max(px(1.0)));
 
         // 行号视图（代码文件 / 切到源码的文档）：列宽吃满内容盒，不再居中留白。
@@ -197,7 +198,9 @@ impl Render for Editor {
         // （12），合计 24——原来 24+12+12=48，留白太大、整小一半。
         let source_view =
             self.code_document || self.view_mode == crate::editor::ViewMode::Source;
-        let centered_width = if source_view {
+        let centered_width = if self.ai_compact_preview {
+            (viewport_width - editor_padding * 2.0).max(1.0)
+        } else if source_view {
             (viewport_width - d.editor_padding * 1.5).max(1.0)
         } else {
             Self::writing_column_width(viewport_width, &theme.dimensions, cx)
@@ -654,11 +657,11 @@ impl Render for Editor {
             .on_scroll_wheel(cx.listener(Self::on_editor_scroll_wheel))
             // 行号视图左 padding 减半：行号贴窗口左缘。
             .pl(px(if source_view {
-                d.editor_padding * 0.5
+                editor_padding * 0.5
             } else {
-                d.editor_padding
+                editor_padding
             }))
-            .pr(px(d.editor_padding))
+            .pr(px(editor_padding))
             .pt(px(if self.ai_compact_preview {
                 12.0
             } else if self.code_tab_active() {
@@ -668,9 +671,8 @@ impl Render for Editor {
             } else {
                 52.0
             }))
-            .pb(px(d.editor_padding
-                + scroll_trigger_padding
-                + scroll_beyond_bottom))
+            .pb(px(editor_padding
+                + if self.ai_compact_preview { 0.0 } else { scroll_trigger_padding + scroll_beyond_bottom }))
             .children(block_rows);
         let scroll_content = if self.view_mode == crate::editor::ViewMode::Rendered {
             scroll_content.on_mouse_down(
