@@ -422,3 +422,171 @@ fn ai_discarding_proposals_removes_new_drafts_and_allows_the_same_task_to_start_
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn ai_reading_tasks_reject_all_proposal_tools_and_leave_content_unchanged() {
+    let root = fixture();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+    workspace.read_only = true;
+    assert!(
+        workspace
+            .call("read_document", &json!({"path":"first.md"}))
+            .is_ok()
+    );
+    for (name, arguments) in [
+        (
+            "propose_edit",
+            json!({"path":"first.md","before":"磁盘原文。","after":"不应写入"}),
+        ),
+        (
+            "propose_document",
+            json!({"path":"answer.md","content":"不应创建"}),
+        ),
+        ("reset_proposal", json!({"path":"first.md"})),
+    ] {
+        assert!(
+            workspace.call(name, &arguments).is_err(),
+            "阅读任务不能调用 {name}"
+        );
+        assert!(workspace.changes.proposals.is_empty());
+    }
+    assert!(!root.join("answer.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(root.join("first.md")).unwrap(),
+        "# 第一篇\n\n磁盘原文。\n"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+fn scoped_fixture() -> (PathBuf, AiWorkspace, std::ops::Range<usize>) {
+    let root = fixture();
+    let source = "前文保持不变。\n\n选中的框架🙂\n\n后文保持不变。\n";
+    std::fs::write(root.join("first.md"), source).unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+    let start = source.find("选中的框架🙂").unwrap();
+    let range = start..start + "选中的框架🙂".len();
+    workspace.selection_scope = Some(super::SelectionScope {
+        document_id: "first.md".into(),
+        range: range.clone(),
+        version: crate::editor::persistence::file_content_version(source),
+    });
+    (root, workspace, range)
+}
+
+#[test]
+fn ai_scoped_edit_cannot_touch_other_text_or_other_documents() {
+    let (root, mut workspace, range) = scoped_fixture();
+    workspace
+        .call(
+            "propose_edit",
+            &json!({"path":"first.md","before":"选中的框架🙂","after":"已经扩写的框架🙂"}),
+        )
+        .unwrap();
+    let approved = workspace.changes.proposals["first.md"].proposed.clone();
+    for (tool, args) in [
+        (
+            "propose_edit",
+            json!({"path":"first.md","before":"前文保持不变。","after":"越界修改"}),
+        ),
+        (
+            "propose_edit",
+            json!({"path":"first.md","before":"后文保持不变。","after":"越界修改"}),
+        ),
+        (
+            "propose_edit",
+            json!({"path":"second.md","before":"另一篇笔记。","after":"越界修改"}),
+        ),
+        (
+            "propose_document",
+            json!({"path":"new.md","content":"不允许新建"}),
+        ),
+    ] {
+        assert!(
+            workspace.call(tool, &args).is_err(),
+            "只能修改原选区：{tool}"
+        );
+        assert_eq!(workspace.changes.proposals["first.md"].proposed, approved);
+        assert_eq!(workspace.changes.proposals.len(), 1);
+    }
+    let original = std::fs::read_to_string(root.join("first.md")).unwrap();
+    assert_eq!(original.get(range).unwrap(), "选中的框架🙂");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn ai_scoped_edit_appends_at_the_selection_end_and_disambiguates_equal_text_outside_it() {
+    let (root, mut workspace, _) = scoped_fixture();
+    workspace
+        .call(
+            "propose_edit",
+            &json!({"path":"first.md","before":"","after":"，补充一条说明"}),
+        )
+        .unwrap();
+    assert!(
+        workspace.changes.proposals["first.md"]
+            .proposed
+            .contains("选中的框架🙂，补充一条说明\n\n后文")
+    );
+    let source = "同一句\n\n同一句\n\n结尾";
+    std::fs::write(root.join("second.md"), source).unwrap();
+    workspace.changes = Default::default();
+    let start = source.rfind("同一句").unwrap();
+    workspace.selection_scope = Some(super::SelectionScope {
+        document_id: "second.md".into(),
+        range: start..start + "同一句".len(),
+        version: crate::editor::persistence::file_content_version(source),
+    });
+    workspace
+        .call(
+            "propose_edit",
+            &json!({"path":"second.md","before":"同一句","after":"仅修改选中的一句"}),
+        )
+        .unwrap();
+    assert_eq!(
+        workspace.changes.proposals["second.md"].proposed,
+        "同一句\n\n仅修改选中的一句\n\n结尾"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn ai_insert_at_cursor_is_a_pending_edit_and_repeated_inserts_keep_the_document_unchanged() {
+    let source = "前文🙂｜后文";
+    let offset = source.find('｜').unwrap();
+    let mut workspace = AiWorkspace::new(
+        None,
+        vec![DocumentSnapshot {
+            id: "note.md".into(),
+            source: source.into(),
+        }],
+    )
+    .unwrap();
+    workspace.cursor_target = Some(super::CursorTarget {
+        document_id: "note.md".into(),
+        offset,
+        version: crate::editor::persistence::file_content_version(source),
+    });
+    let result = workspace.call("propose_insert_at_cursor", &json!({"content":"插入一"}));
+    assert!(result.is_ok(), "应在捕获的光标处生成插入提议：{result:?}");
+    assert_eq!(
+        workspace.changes.proposals["note.md"].proposed,
+        "前文🙂插入一｜后文"
+    );
+    workspace
+        .call("propose_insert_at_cursor", &json!({"content":"插入二"}))
+        .unwrap();
+    assert_eq!(
+        workspace.changes.proposals["note.md"].proposed,
+        "前文🙂插入一插入二｜后文"
+    );
+    assert_eq!(workspace.documents["note.md"].source, source);
+    workspace.read_only = true;
+    assert!(
+        workspace
+            .call(
+                "propose_insert_at_cursor",
+                &json!({"content":"阅读结果不应插入"})
+            )
+            .is_err()
+    );
+}

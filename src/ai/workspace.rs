@@ -53,7 +53,46 @@ impl SourceRecord {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct CursorTarget {
+    pub document_id: String,
+    pub offset: usize,
+    pub version: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct SelectionScope {
+    pub document_id: String,
+    pub range: std::ops::Range<usize>,
+    pub version: u64,
+}
+
+impl SelectionScope {
+    pub fn allowed_in(&self, original: &str, pending: &str) -> Result<std::ops::Range<usize>> {
+        if crate::editor::persistence::file_content_version(original) != self.version
+            || original.get(self.range.clone()).is_none()
+        {
+            bail!("选区所在文档已变化，请重新选中后执行");
+        }
+        let prefix = original.get(..self.range.start).context("选区起点无效")?;
+        let suffix = original.get(self.range.end..).context("选区终点无效")?;
+        if pending.len() < prefix.len().saturating_add(suffix.len())
+            || !pending.starts_with(prefix)
+            || !pending.ends_with(suffix)
+        {
+            bail!("修改超出允许的选区");
+        }
+        Ok(self.range.start..pending.len().saturating_sub(suffix.len()))
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct AiWorkspace {
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
+    pub selection_scope: Option<SelectionScope>,
+    #[serde(default)]
+    pub cursor_target: Option<CursorTarget>,
     pub root: Option<PathBuf>,
     pub documents: BTreeMap<String, DocumentSnapshot>,
     pub changes: ChangeSet,
@@ -82,6 +121,22 @@ pub(crate) struct AiWorkspace {
 }
 
 impl AiWorkspace {
+    pub fn is_excluded(&self, id: &str) -> bool {
+        self.excluded_paths
+            .iter()
+            .any(|excluded| path_matches(id, excluded))
+    }
+
+    pub fn tool_allowed(&self, name: &str) -> bool {
+        (!self.read_only
+            || !matches!(
+                name,
+                "propose_edit" | "propose_document" | "propose_insert_at_cursor" | "reset_proposal"
+            ))
+            && (self.selection_scope.is_none()
+                || !matches!(name, "propose_document" | "propose_insert_at_cursor"))
+    }
+
     pub fn discard_proposals(&mut self) {
         for id in std::mem::take(&mut self.new_documents) {
             self.documents.remove(&id);
@@ -135,6 +190,9 @@ impl AiWorkspace {
             .map(|document| document.id.clone())
             .collect();
         Ok(Self {
+            read_only: false,
+            selection_scope: None,
+            cursor_target: None,
             root: root.map(std::fs::canonicalize).transpose()?,
             documents: documents
                 .into_iter()
@@ -156,9 +214,19 @@ impl AiWorkspace {
     }
 
     pub fn call(&mut self, name: &str, arguments: &Value) -> Result<Value> {
+        if !self.tool_allowed(name) {
+            bail!("本任务不允许此写入方式：阅读任务不能生成修改，选区任务不能新建文档");
+        }
         match name {
             "reset_proposal" => {
                 let path = field(arguments, "path")?;
+                if self
+                    .selection_scope
+                    .as_ref()
+                    .is_some_and(|scope| scope.document_id != path)
+                {
+                    bail!("本任务只能重新生成选区所在文档的修改");
+                }
                 self.snapshot(path)?;
                 self.changes.invalidate_dependents(path);
                 self.changes.proposals.remove(path);
@@ -353,13 +421,58 @@ impl AiWorkspace {
                     "next_line":next_line,"next_offset":end,"total_bytes":source.len()}),
                 )
             }
+            "propose_insert_at_cursor" => {
+                let cursor = self.cursor_target.clone().context("请先在文档中放置光标")?;
+                let document = self.snapshot(&cursor.document_id)?;
+                if crate::editor::persistence::file_content_version(&document.source)
+                    != cursor.version
+                    || document.source.get(..cursor.offset).is_none()
+                {
+                    bail!("光标所在文档已变化，请重新指定插入位置");
+                }
+                let mut offset = cursor.offset;
+                if let Some(proposal) = self.changes.proposals.get(&cursor.document_id) {
+                    for edit in proposal.edits() {
+                        if edit.range.start < cursor.offset && cursor.offset < edit.range.end {
+                            bail!("光标位于其他待审阅修改中，请先审阅该修改");
+                        }
+                        if edit.range.end <= cursor.offset {
+                            offset = offset
+                                .saturating_sub(edit.range.len())
+                                .saturating_add(edit.replacement.len());
+                        }
+                    }
+                }
+                self.changes.propose_within(
+                    document,
+                    "",
+                    field(arguments, "content")?,
+                    Some(offset..offset),
+                )?;
+                self.changes.invalidate_dependents(&cursor.document_id);
+                self.attach_dependencies(&cursor.document_id);
+                Ok(json!({"path":cursor.document_id,"status":"pending_review","written":false}))
+            }
             "propose_edit" => {
                 let path = field(arguments, "path")?;
+                if self
+                    .selection_scope
+                    .as_ref()
+                    .is_some_and(|scope| scope.document_id != path)
+                {
+                    bail!("润色和扩写只能修改选区所在的文档");
+                }
                 let document = self.snapshot(path)?;
-                self.changes.propose(
+                let allowed = self
+                    .selection_scope
+                    .as_ref()
+                    .map(|scope| scope.allowed_in(&document.source, self.changes.read(&document)))
+                    .transpose()?;
+                self.changes.propose_within(
                     document,
                     field(arguments, "before")?,
                     field(arguments, "after")?,
+                    allowed,
                 )?;
                 self.changes.invalidate_dependents(path);
                 self.attach_dependencies(path);
@@ -367,11 +480,7 @@ impl AiWorkspace {
             }
             "propose_document" => {
                 let path = field(arguments, "path")?;
-                if self
-                    .excluded_paths
-                    .iter()
-                    .any(|excluded| path_matches(path, excluded))
-                {
+                if self.is_excluded(path) {
                     bail!("此路径已从 AI 资料中排除");
                 }
                 let destination = self.resolve(path, false)?;
@@ -440,11 +549,7 @@ impl AiWorkspace {
     }
 
     fn snapshot(&mut self, id: &str) -> Result<DocumentSnapshot> {
-        if self
-            .excluded_paths
-            .iter()
-            .any(|excluded| path_matches(id, excluded))
-        {
+        if self.is_excluded(id) {
             bail!("此文档已从 AI 资料中排除");
         }
         if !self.scope.is_empty()
@@ -533,10 +638,7 @@ impl AiWorkspace {
             }
         }
         files.retain(|id| {
-            !self
-                .excluded_paths
-                .iter()
-                .any(|excluded| path_matches(id, excluded))
+            !self.is_excluded(id)
                 && (self.scope.is_empty()
                     || self.scope.iter().any(|scope| path_matches(id, scope))
                     || self.new_documents.contains(id))
@@ -607,8 +709,13 @@ pub(crate) fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
         ),
         (
             "propose_edit",
-            "提出待审阅修改，不写正文。before 必须在已读取内容中唯一匹配；after 为替换内容；before 为空时追加。",
+            "提出待审阅修改，不写正文。before 必须在已读取内容中唯一匹配；after 为替换内容；before 为空时追加到本次允许修改范围的末尾。",
             json!({"type":"object","required":["path","before","after"],"properties":{"path":{"type":"string"},"before":{"type":"string"},"after":{"type":"string"}}}),
+        ),
+        (
+            "propose_insert_at_cursor",
+            "在本次请求捕获的光标处提出插入内容；接受前不改正文，不能自行指定其他坐标。",
+            json!({"type":"object","required":["content"],"properties":{"content":{"type":"string"}}}),
         ),
         (
             "propose_document",

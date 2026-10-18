@@ -95,7 +95,16 @@ pub(crate) async fn run_with_provider(
         .into_iter()
         .map(serde_json::from_value)
         .collect::<Result<_, _>>()?;
-    let tools = super::workspace::tool_definitions()
+    let definitions = {
+        let workspace = workspace
+            .lock()
+            .map_err(|_| anyhow::anyhow!("文档任务状态不可用"))?;
+        super::workspace::tool_definitions()
+            .into_iter()
+            .filter(|(name, _, _)| workspace.tool_allowed(name))
+            .collect::<Vec<_>>()
+    };
+    let tools = definitions
         .into_iter()
         .map(|(name, description, schema)| {
             Box::new(DocumentTool {

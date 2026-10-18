@@ -295,6 +295,16 @@ impl ChangeSet {
     }
 
     pub fn propose(&mut self, document: DocumentSnapshot, before: &str, after: &str) -> Result<()> {
+        self.propose_within(document, before, after, None)
+    }
+
+    pub fn propose_within(
+        &mut self,
+        document: DocumentSnapshot,
+        before: &str,
+        after: &str,
+        allowed: Option<Range<usize>>,
+    ) -> Result<()> {
         if self.invalid.contains(&document.id) {
             bail!("提议的依据已变化，请先重置并读取最新文档");
         }
@@ -302,17 +312,21 @@ impl ChangeSet {
             proposal.validate(&document.source)?;
         }
         let source = self.read(&document);
+        let allowed = allowed.unwrap_or(0..source.len());
+        let searchable = source
+            .get(allowed.clone())
+            .ok_or_else(|| anyhow::anyhow!("允许修改的选区已失效"))?;
         let range = if before.is_empty() {
-            source.len()..source.len()
+            allowed.end..allowed.end
         } else {
-            let mut matches = source.match_indices(before);
+            let mut matches = searchable.match_indices(before);
             let Some((start, _)) = matches.next() else {
                 bail!("原文未找到，请先读取最新内容");
             };
             if matches.next().is_some() {
                 bail!("原文有多处匹配，请提供更完整的上下文");
             }
-            start..start + before.len()
+            allowed.start + start..allowed.start + start + before.len()
         };
         let mut proposed = source.to_owned();
         proposed.replace_range(range, after);
