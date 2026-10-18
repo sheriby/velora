@@ -80,15 +80,13 @@ impl AiSession {
 impl Drop for AiSession {
     fn drop(&mut self) {
         self.control.cancel.cancel();
-        if self.saved.messages.is_empty() && self.saved.workspace.changes.proposals.is_empty() {
-            return;
-        }
-        self.saved.interrupted |= self.saved.running;
-        self.saved.running = false;
-        self.saved.sequence = self.saved.sequence.saturating_add(1);
-        if let Err(error) = self.saved.path().and_then(|path| self.saved.save_at(&path)) {
-            eprintln!("关闭窗口时保存 AI 会话失败：{error}");
-        }
+        // 会话可能带着全部文档快照，同步序列化+fsync 会把 UI 线程按体积卡住；
+        // 后台线程落盘，退出前由 flush_pending_saves 收尾。正文已 Arc 化，
+        // 这里的克隆只是句柄表。
+        crate::ai::session::SavedSession::save_in_background(
+            self.saved.clone(),
+            "关闭窗口时保存 AI 会话失败",
+        );
     }
 }
 
@@ -899,7 +897,7 @@ impl Editor {
         };
         let document = DocumentSnapshot {
             id: target.document_id.clone(),
-            source,
+            source: source.into(),
         };
         let origin = self
             .selection_screen_bounds(cx)
@@ -1156,7 +1154,7 @@ impl Editor {
                     })))
             .then(|| DocumentSnapshot {
                 id: id.to_owned(),
-                source: editor.buffer.text(),
+                source: editor.buffer.text().into(),
             })
         };
         if let Some(snapshot) = current(self) {
@@ -1172,14 +1170,14 @@ impl Editor {
             if let Some(source) = group.read(cx).ai_cached_source_for_id(id, root, bound) {
                 return Some(DocumentSnapshot {
                     id: id.to_owned(),
-                    source,
+                    source: source.into(),
                 });
             }
         }
         self.ai_cached_source_for_id(id, root, bound)
             .map(|source| DocumentSnapshot {
                 id: id.to_owned(),
-                source,
+                source: source.into(),
             })
     }
 
@@ -1324,7 +1322,7 @@ impl Editor {
             }
             session.saved.messages.push(ChatMessage {
                 role: "user".into(),
-                text: instruction,
+                text: instruction.into(),
             });
             session
                 .input
@@ -1450,7 +1448,7 @@ impl Editor {
         session.stream_index = None;
         session.saved.messages.push(ChatMessage {
             role: "user".into(),
-            text: instruction,
+            text: instruction.into(),
         });
         session
             .input
@@ -1617,23 +1615,18 @@ impl Editor {
         };
         let mut finished = false;
         let mut checkpoint = false;
+        // 文本增量先攒成本批再落进消息：Arc 正文逐事件重建会把流式回复放大成平方级拷贝。
+        let mut stream_delta = String::new();
         for event in remaining {
             match event {
                 WorkerEvent::Runtime(RunEvent::AssistantStart) => {
                     session.saved.messages.push(ChatMessage {
                         role: "assistant".into(),
-                        text: String::new(),
+                        text: String::new().into(),
                     });
                     session.stream_index = session.saved.messages.len().checked_sub(1);
                 }
-                WorkerEvent::Runtime(RunEvent::Text(text)) => {
-                    if let Some(message) = session
-                        .stream_index
-                        .and_then(|index| session.saved.messages.get_mut(index))
-                    {
-                        message.text.push_str(&text);
-                    }
-                }
+                WorkerEvent::Runtime(RunEvent::Text(text)) => stream_delta.push_str(&text),
                 WorkerEvent::Runtime(RunEvent::Activity(activity)) => session.activity = activity,
                 WorkerEvent::Runtime(RunEvent::Checkpoint { workspace, history }) => {
                     session.saved.workspace = *workspace;
@@ -1653,6 +1646,18 @@ impl Editor {
                     finished = true;
                 }
                 WorkerEvent::Refresh { .. } => {}
+            }
+        }
+        if !stream_delta.is_empty() {
+            if let Some(message) = session
+                .stream_index
+                .and_then(|index| session.saved.messages.get_mut(index))
+            {
+                let mut combined =
+                    String::with_capacity(message.text.len() + stream_delta.len());
+                combined.push_str(&message.text);
+                combined.push_str(&stream_delta);
+                message.text = combined.into();
             }
         }
         if finished {

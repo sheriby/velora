@@ -208,7 +208,7 @@ impl Editor {
                             .when(message.role == "user", |row| {
                                 row.text_color(theme.colors.dialog_muted)
                             })
-                            .child(message.text.clone()),
+                            .child(gpui::SharedString::new(message.text.clone())),
                     );
                 }
                 body = body
@@ -338,7 +338,7 @@ impl Editor {
                     .changes
                     .proposals
                     .get(&review.id)
-                    .map(|proposal| scope.allowed_in(&proposal.base.source, &source))
+                    .map(|proposal| scope.allowed_in(proposal.base.source.as_ref(), &source))
                     .transpose()
                 {
                     Ok(Some(range)) => source.get(range).unwrap_or_default().to_owned(),
@@ -358,7 +358,7 @@ impl Editor {
                 .iter()
                 .rev()
                 .find(|message| message.role == "assistant")
-                .map(|message| message.text.clone())
+                .map(|message| message.text.to_string())
                 .unwrap_or_default()
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));

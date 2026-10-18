@@ -482,6 +482,9 @@ fn main() {
         config::EditorSettings::init(cx, preferences.show_table_headers);
         ai::settings::AiFeature::init(cx);
         log_startup_phase(startup_start, "i18n/theme/settings ready");
+        // AI 会话的销毁路径在后台线程落盘；退出前等它们写完，别丢最后一轮状态。
+        cx.on_app_quit(|_| async move { ai::session::flush_pending_saves() })
+            .detach();
         net::install_http_client(cx);
         init_editor(cx, &preferences.keybindings);
         log_startup_phase(startup_start, "editor installed");

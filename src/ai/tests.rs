@@ -44,7 +44,7 @@ fn ai_independent_edits_can_be_reviewed_separately_and_keep_unicode_offsets() {
     let proposal = changes.proposals.get(&document.id).unwrap();
     let edits = proposal.edits();
     assert_eq!(edits.len(), 2);
-    let mut accepted = document.source.clone();
+    let mut accepted = document.source.to_string();
     for edit in edits.iter().rev() {
         accepted.replace_range(edit.range.clone(), &edit.replacement);
     }
@@ -67,7 +67,7 @@ fn ai_proposals_refuse_ambiguous_matches_and_stale_document_versions() {
     assert!(changes.propose(document.clone(), "段。", "错误").is_err());
     assert_eq!(changes.read(&document), before);
     let mut updated = document.clone();
-    updated.source.push_str("用户继续写作");
+    updated.source = format!("{}用户继续写作", updated.source).into();
     assert!(
         changes
             .propose(updated.clone(), "新第一段。", "覆盖")
@@ -90,10 +90,10 @@ fn ai_accepting_one_edit_updates_the_base_without_accepting_other_changes() {
     let accepted = changes.accept_edit(&document.id, 0, &document.source);
     assert!(accepted.is_ok(), "{accepted:?}");
     let accepted = accepted.unwrap();
-    let mut current = document.source.clone();
+    let mut current = document.source.to_string();
     current.replace_range(accepted.range, &accepted.replacement);
     let proposal = &changes.proposals[&document.id];
-    assert_eq!(proposal.base.source, current);
+    assert_eq!(proposal.base.source.as_ref(), current.as_str());
     assert_eq!(proposal.edits().len(), 1);
     assert!(proposal.proposed.contains("新第二段。"));
     assert!(
@@ -112,7 +112,7 @@ fn ai_small_changes_to_long_lines_do_not_duplicate_the_unchanged_line_in_edits()
     );
     let document = DocumentSnapshot {
         id: "large.md".into(),
-        source: source.clone(),
+        source: source.clone().into(),
     };
     let mut changes = ChangeSet::default();
     changes

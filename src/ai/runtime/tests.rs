@@ -72,8 +72,8 @@ fn ai_runtime_drives_multiple_tools_and_revises_pending_content_without_writing(
     assert!(result.history.len() > 5, "必须实际驱动多轮模型和工具调用");
     assert!(result.error.is_none(), "{result:?}");
     let workspace = workspace.lock().unwrap();
-    assert_eq!(workspace.documents["note.md"].source, "旧文字");
-    assert_eq!(workspace.changes.proposals["note.md"].proposed, "最终稿");
+    assert_eq!(&*workspace.documents["note.md"].source, "旧文字");
+    assert_eq!(&*workspace.changes.proposals["note.md"].proposed, "最终稿");
     assert!(
         events
             .iter()
@@ -176,11 +176,11 @@ fn ai_runtime_configured_backend_reads_proposes_and_verifies_an_exact_change() {
     assert!(output.error.is_none(), "{output:?}");
     let workspace = workspace.lock().unwrap();
     assert_eq!(
-        workspace.documents["fixture.md"].source,
+        &*workspace.documents["fixture.md"].source,
         "# Test\n\nsource-before-marker\n"
     );
     assert_eq!(
-        workspace.changes.proposals["fixture.md"].proposed,
+        &*workspace.changes.proposals["fixture.md"].proposed,
         "# Test\n\nsource-after-marker\n"
     );
     assert!(output.history.len() >= 5);

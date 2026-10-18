@@ -259,7 +259,7 @@ fn ai_unchanged_checkpoints_keep_the_review_document_and_its_reading_position(
             .workspace
             .changes
             .proposals
-            .insert(id, crate::ai::Proposal::new(baseline, "新文".into()));
+            .insert(id, crate::ai::Proposal::new(baseline, "新文"));
         editor.refresh_ai_preview(cx);
     });
     draw(cx);
@@ -311,7 +311,7 @@ fn ai_review_finishes_in_the_editor_without_leaving_the_old_selection_toolbar_or
         let baseline = session.saved.workspace.documents[&id].clone();
         session.saved.workspace.changes.proposals.insert(
             id,
-            crate::ai::Proposal::new(baseline, "修改后的内容".into()),
+            crate::ai::Proposal::new(baseline, "修改后的内容"),
         );
         editor.refresh_ai_preview(cx);
     });
@@ -348,7 +348,7 @@ fn ai_opening_another_selection_preserves_the_previous_task_for_explicit_resumpt
         let baseline = session.saved.workspace.documents[&id].clone();
         session.saved.workspace.changes.proposals.insert(
             id.clone(),
-            crate::ai::Proposal::new(baseline, "待审阅修改".into()),
+            crate::ai::Proposal::new(baseline, "待审阅修改"),
         );
         editor.select_document(cx);
         editor.open_ai_assistant(AiCommand::Ask, window, cx);
@@ -883,7 +883,7 @@ fn ai_review_acceptance_from_the_split_workspace_updates_both_views(cx: &mut Tes
         let baseline = session.saved.workspace.documents[&id].clone();
         session.saved.workspace.changes.proposals.insert(
             id,
-            crate::ai::Proposal::new(baseline, "修订后的文字".into()),
+            crate::ai::Proposal::new(baseline, "修订后的文字"),
         );
         editor.refresh_ai_preview(cx);
     });
@@ -918,7 +918,7 @@ fn ai_review_accepts_the_focused_change_with_the_platform_enter_shortcut(cx: &mu
         let baseline = session.saved.workspace.documents[&id].clone();
         session.saved.workspace.changes.proposals.insert(
             id,
-            crate::ai::Proposal::new(baseline, "改写后的文字".into()),
+            crate::ai::Proposal::new(baseline, "改写后的文字"),
         );
         editor.refresh_ai_preview(cx);
     });
@@ -1176,7 +1176,7 @@ fn ai_inline_review_keeps_deleted_and_inserted_blocks_at_their_document_position
     let proposal = crate::ai::Proposal::new(
         crate::ai::DocumentSnapshot {
             id: "note.md".into(),
-            source: before.clone(),
+            source: before.clone().into(),
         },
         after.clone(),
     );
@@ -1373,9 +1373,9 @@ fn ai_selected_writing_cannot_accept_an_out_of_scope_proposal(cx: &mut TestAppCo
             crate::ai::Proposal::new(
                 crate::ai::DocumentSnapshot {
                     id: "other.md".into(),
-                    source: "其他文档".into(),
+                    source: std::sync::Arc::from("其他文档"),
                 },
-                "越界修改".into(),
+                "越界修改",
             ),
         );
         let result = editor.accept_ai_proposals(None, None, window, cx);
@@ -1939,7 +1939,7 @@ fn ai_cmd_j_in_another_tab_starts_from_its_current_selection_and_preserves_both_
         let session = editor.ai_session.as_ref().unwrap();
         assert_eq!(session.saved.id, first_task);
         assert_eq!(session.input.read(cx).value(), "A 的草稿");
-        assert_eq!(session.saved.messages.first().unwrap().text, "A 的指令");
+        assert_eq!(&*session.saved.messages.first().unwrap().text, "A 的指令");
         assert_eq!(
             session.review.as_ref().unwrap().tracked.entity_id(),
             first_review
@@ -2142,7 +2142,7 @@ fn ai_late_events_and_snapshot_reads_belong_to_the_original_task_even_with_equal
         );
         assert!(done);
         assert_eq!(
-            receive.try_recv().unwrap().unwrap().unwrap().source,
+            &*receive.try_recv().unwrap().unwrap().unwrap().source,
             std::fs::read_to_string(&first).unwrap()
         );
         let session = editor.ai_session.as_ref().unwrap();
@@ -2159,7 +2159,7 @@ fn ai_late_events_and_snapshot_reads_belong_to_the_original_task_even_with_equal
             .find(|session| session.saved.id == first_task)
             .unwrap();
         assert!(!previous.saved.running);
-        assert_eq!(previous.saved.messages.last().unwrap().text, "A 的回答");
+        assert_eq!(&*previous.saved.messages.last().unwrap().text, "A 的回答");
     });
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -2261,7 +2261,7 @@ fn ai_user_conversation_accepts_cross_document_edits_and_keeps_its_history_when_
         assert_eq!(session.saved.id, task);
         assert_eq!(session.saved.history[0]["content"], "固定的上一轮");
         assert_eq!(
-            session.saved.workspace.changes.proposals["second.md"].proposed,
+            &*session.saved.workspace.changes.proposals["second.md"].proposed,
             "第二篇建议"
         );
     });
@@ -2316,6 +2316,8 @@ fn ai_opt_in_disabling_cancels_active_and_retained_tasks_and_preserves_pending_h
         assert!(editor.ai_session.is_none() && editor.ai_task_sessions.is_empty());
         assert_eq!(editor.buffer.text(), "原文");
     });
+    // 销毁路径的落盘是后台线程，先等它写完再读文件。
+    crate::ai::session::flush_pending_saves();
     let saved = crate::ai::session::SavedSession::load_at(&path, None).unwrap();
     assert_eq!(saved.workspace.changes.proposals.len(), 1);
     assert!(saved.interrupted);

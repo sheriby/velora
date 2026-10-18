@@ -249,14 +249,14 @@ impl Editor {
                 .as_ref()
                 .filter(|scope| scope.document_id == id)
             {
-                let mut pending = proposal.base.source.clone();
+                let mut pending = proposal.base.source.to_string();
                 for edit in edits.iter().rev() {
                     if pending.get(edit.range.clone()).is_none() {
                         bail!("修改范围已失效");
                     }
                     pending.replace_range(edit.range.clone(), &edit.replacement);
                 }
-                scope.allowed_in(&proposal.base.source, &pending)?;
+                scope.allowed_in(proposal.base.source.as_ref(), &pending)?;
             }
             prepared.push(PreparedDocument {
                 id,
@@ -366,7 +366,7 @@ impl Editor {
                 session.saved.workspace.new_documents.remove(&id);
                 session.saved.workspace.live_documents.insert(id.clone());
                 if let Some(snapshot) = session.saved.workspace.documents.get_mut(&id) {
-                    snapshot.source = source;
+                    snapshot.source = source.into();
                 }
             }
         }

@@ -203,8 +203,8 @@ impl Editor {
             .filter(|review| review.id == id)
             .map_or(0, |review| review.index);
         let opening = session.review.is_none();
-        let original = self.ai_document_preview(proposal.base.source.clone(), path.clone(), cx);
-        let proposed = self.ai_document_preview(proposal.proposed.clone(), path.clone(), cx);
+        let original = self.ai_document_preview(proposal.base.source.to_string(), path.clone(), cx);
+        let proposed = self.ai_document_preview(proposal.proposed.to_string(), path.clone(), cx);
         let spans = |editor: &mut Editor, cx: &mut Context<Editor>| {
             editor.flush_pending_materialization(cx);
             editor

@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -74,7 +75,9 @@ impl AiCommand {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct DocumentSnapshot {
     pub id: String,
-    pub source: String,
+    /// 全文用 `Arc<str>`：会话每轮检查点与持久化都要整体克隆，逐字节拷贝
+    /// 会把大工作区的成本放大到 UI 线程。
+    pub source: Arc<str>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -86,16 +89,17 @@ pub(crate) struct ProposedEdit {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Proposal {
     pub base: DocumentSnapshot,
-    pub proposed: String,
+    /// 待审阅全文同样用 `Arc<str>`，理由同 `DocumentSnapshot::source`。
+    pub proposed: Arc<str>,
     #[serde(skip)]
     edits_cache: std::sync::OnceLock<Vec<ProposedEdit>>,
 }
 
 impl Proposal {
-    pub fn new(base: DocumentSnapshot, proposed: String) -> Self {
+    pub fn new(base: DocumentSnapshot, proposed: impl Into<Arc<str>>) -> Self {
         Self {
             base,
-            proposed,
+            proposed: proposed.into(),
             edits_cache: Default::default(),
         }
     }
@@ -118,7 +122,7 @@ impl Proposal {
         let mut pending: Option<ProposedEdit> = None;
         let diff = similar::TextDiff::configure()
             .timeout(std::time::Duration::from_millis(100))
-            .diff_lines(&self.base.source, &self.proposed);
+            .diff_lines(self.base.source.as_ref(), self.proposed.as_ref());
         for change in diff.iter_all_changes() {
             match change.tag() {
                 similar::ChangeTag::Equal => {
@@ -190,7 +194,7 @@ impl Proposal {
     }
 
     pub fn validate(&self, current: &str) -> Result<()> {
-        if current != self.base.source {
+        if current != self.base.source.as_ref() {
             bail!("文档已经变化，请重新审阅修改");
         }
         Ok(())
@@ -267,10 +271,9 @@ impl ChangeSet {
         if proposal.base.source.get(edit.range.clone()).is_none() {
             bail!("修改区间无效");
         }
-        proposal
-            .base
-            .source
-            .replace_range(edit.range.clone(), &edit.replacement);
+        let mut source = proposal.base.source.to_string();
+        source.replace_range(edit.range.clone(), &edit.replacement);
+        proposal.base.source = source.into();
         proposal.edits_cache.take();
         if proposal.base.source == proposal.proposed {
             self.proposals.remove(id);
@@ -280,7 +283,7 @@ impl ChangeSet {
     pub fn read<'a>(&'a self, document: &'a DocumentSnapshot) -> &'a str {
         self.proposals
             .get(&document.id)
-            .map(|proposal| proposal.proposed.as_str())
+            .map(|proposal| proposal.proposed.as_ref())
             .unwrap_or(&document.source)
     }
 
@@ -313,14 +316,17 @@ impl ChangeSet {
             let Some((start, _)) = matches.next() else {
                 bail!("原文未找到，请先读取最新内容");
             };
-            if matches.next().is_some() {
+            // match_indices 只给不重叠的匹配："aa" 在 "aaa" 里语义上有两处候选。
+            // 把起点推进首字符再查一次，覆盖重叠出现。
+            let next = start + before.chars().next().map_or(0, char::len_utf8);
+            if searchable.get(next..).is_some_and(|rest| rest.contains(before)) {
                 bail!("原文有多处匹配，请提供更完整的上下文");
             }
             allowed.start + start..allowed.start + start + before.len()
         };
         let mut proposed = source.to_owned();
         proposed.replace_range(range, after);
-        if proposed == document.source {
+        if proposed == document.source.as_ref() {
             self.proposals.remove(&document.id);
         } else {
             let proposal = Proposal::new(document.clone(), proposed);
@@ -360,7 +366,9 @@ impl ChangeSet {
         if proposal.proposed.get(range.clone()).is_none() {
             bail!("修改区间无效");
         }
-        proposal.proposed.replace_range(range, original);
+        let mut text = proposal.proposed.to_string();
+        text.replace_range(range, original);
+        proposal.proposed = text.into();
         proposal.edits_cache.take();
         if proposal.proposed == proposal.base.source {
             self.proposals.remove(id);

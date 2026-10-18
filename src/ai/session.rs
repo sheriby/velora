@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct ChatMessage {
     pub role: String,
-    pub text: String,
+    /// 对话正文用 `Arc<str>`：渲染每帧引用历史消息，逐字节克隆会随轮数线性放大。
+    pub text: std::sync::Arc<str>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +76,12 @@ impl SavedSession {
         }
     }
     pub fn save_at(&self, path: &Path) -> Result<()> {
+        // 序列化与建目录在锁外：大会话的 JSON 组装不该占着全局写序锁阻塞
+        // 其他会话的写盘判定。锁内的检查+写入仍须成对，保住同路径写的顺序。
+        let contents = serde_json::to_string(self)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let mut writes = writes()
             .lock()
             .map_err(|_| anyhow::anyhow!("AI 会话写入状态不可用"))?;
@@ -84,12 +91,44 @@ impl SavedSession {
         {
             return Ok(());
         }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        crate::config::write_config_file_atomic(path, &serde_json::to_string(self)?)?;
+        crate::config::write_config_file_atomic(path, &contents)?;
         writes.insert(path.to_path_buf(), self.sequence);
         Ok(())
+    }
+
+    /// 销毁路径的后台落盘：Drop 里没有执行器可用，同步写会把整份 JSON 的
+    /// 序列化与 fsync 放到 UI 线程上。句柄登记进进程级表，应用退出时由
+    /// `flush_pending_saves` 等它写完。
+    pub fn save_in_background(mut saved: SavedSession, context: &'static str) {
+        if saved.messages.is_empty() && saved.workspace.changes.proposals.is_empty() {
+            return;
+        }
+        saved.interrupted |= saved.running;
+        saved.running = false;
+        saved.sequence = saved.sequence.saturating_add(1);
+        let path = match saved.path() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("{context}：确定会话文件路径失败：{error}");
+                return;
+            }
+        };
+        match std::thread::Builder::new()
+            .name("velora-ai-session-save".into())
+            .spawn(move || {
+                if let Err(error) = saved.save_at(&path) {
+                    eprintln!("{context}：{error}");
+                }
+            })
+        {
+            Ok(handle) => {
+                if let Ok(mut saves) = pending_saves().lock() {
+                    saves.retain(|handle: &std::thread::JoinHandle<()>| !handle.is_finished());
+                    saves.push(handle);
+                }
+            }
+            Err(error) => eprintln!("{context}：启动保存线程失败：{error}"),
+        }
     }
     pub fn delete_at(path: &Path) -> Result<()> {
         let mut writes = writes()
@@ -146,6 +185,21 @@ fn writes() -> &'static std::sync::Mutex<std::collections::BTreeMap<PathBuf, u64
     static WRITES: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<PathBuf, u64>>> =
         std::sync::OnceLock::new();
     WRITES.get_or_init(Default::default)
+}
+
+fn pending_saves() -> &'static std::sync::Mutex<Vec<std::thread::JoinHandle<()>>> {
+    static PENDING: std::sync::OnceLock<std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>> =
+        std::sync::OnceLock::new();
+    PENDING.get_or_init(Default::default)
+}
+
+/// 应用退出前等待所有后台会话写线程完成，避免最后一轮状态丢失。
+pub fn flush_pending_saves() {
+    if let Ok(mut saves) = pending_saves().lock() {
+        for handle in saves.drain(..) {
+            let _ = handle.join();
+        }
+    }
 }
 
 #[cfg(test)]

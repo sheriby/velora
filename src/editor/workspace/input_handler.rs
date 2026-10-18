@@ -638,6 +638,12 @@ pub(crate) fn build_outline_tree(markdown: &str) -> Vec<WorkspaceTreeNode> {
     nest_outline_headings(&headings)
 }
 
+/// 整篇文档的扁平大纲条目。AI 的 get_outline 与工作区侧栏共用这一份判据，
+/// 不允许第二套标题解析（行号 0 基，与 `outline_headings` 一致）。
+pub(crate) fn document_outline(markdown: &str) -> Vec<OutlineHeading> {
+    outline_headings(0, markdown, None).0
+}
+
 pub(crate) fn children_at_path_mut<'a>(
     nodes: &'a mut Vec<WorkspaceTreeNode>,
     path: &[usize],

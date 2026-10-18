@@ -452,10 +452,12 @@ fn ai_closing_the_window_preserves_partial_output_and_cancels_execution(cx: &mut
         drop(editor.ai_session.take());
     });
     assert!(control.cancel.is_cancelled());
+    // 销毁路径的落盘是后台线程，先等它写完再读文件。
+    crate::ai::session::flush_pending_saves();
     assert!(path.exists(), "窗口关闭不能丢失最后一轮的输出");
     let restored = crate::ai::session::SavedSession::load_at(&path, None).unwrap();
     assert!(restored.interrupted);
-    assert_eq!(restored.messages[0].text, "尚未完成的回答");
+    assert_eq!(&*restored.messages[0].text, "尚未完成的回答");
     std::fs::remove_file(path).unwrap();
 }
 

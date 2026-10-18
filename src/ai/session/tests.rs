@@ -27,9 +27,9 @@ fn ai_session_restores_pending_changes_and_marks_running_tasks_interrupted() {
     assert_eq!(restored.prompt_profile, session.prompt_profile, "历史恢复后沿用原指令快照");
     assert!(!restored.running);
     assert!(restored.interrupted);
-    assert_eq!(restored.messages[0].text, "请修订");
+    assert_eq!(&*restored.messages[0].text, "请修订");
     assert_eq!(
-        restored.workspace.changes.proposals["note.md"].proposed,
+        &*restored.workspace.changes.proposals["note.md"].proposed,
         "建议"
     );
     assert!(SavedSession::load_at(&path, Some(&root.join("different"))).is_err());
@@ -58,7 +58,7 @@ fn ai_session_older_background_checkpoints_cannot_replace_a_newer_record() {
     older.save_at(&path).unwrap();
     let restored = SavedSession::load_at(&path, None).unwrap();
     assert_eq!(restored.sequence, 2);
-    assert_eq!(restored.messages[0].text, "最新完成的结果");
+    assert_eq!(&*restored.messages[0].text, "最新完成的结果");
     assert!(!restored.interrupted);
     std::fs::remove_dir_all(root).unwrap();
 }

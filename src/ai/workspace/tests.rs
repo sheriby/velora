@@ -143,7 +143,7 @@ fn ai_tools_page_long_lines_without_skipping_text_and_reject_file_parent_paths()
     let source = "中文🙂".repeat(20_000);
     let document = DocumentSnapshot {
         id: "long.md".into(),
-        source: source.clone(),
+        source: source.clone().into(),
     };
     let mut workspace = AiWorkspace::new(Some(root.clone()), vec![document]).unwrap();
     let mut offset = 0;
@@ -193,7 +193,7 @@ fn ai_tools_refresh_live_buffers_and_distinguish_stale_proposals() {
         move |id| {
             Ok(Some(DocumentSnapshot {
                 id: id.into(),
-                source: source.lock().unwrap().clone(),
+                source: source.lock().unwrap().clone().into(),
             }))
         }
     }));
@@ -224,7 +224,7 @@ fn ai_tools_refresh_live_buffers_and_distinguish_stale_proposals() {
             &json!({"path":"note.md","before":"用户继续编辑","after":"重新生成"}),
         )
         .unwrap();
-    assert_eq!(workspace.changes.proposals["note.md"].proposed, "重新生成");
+    assert_eq!(&*workspace.changes.proposals["note.md"].proposed, "重新生成");
 }
 
 #[test]
@@ -505,7 +505,7 @@ fn ai_scoped_edit_cannot_touch_other_text_or_other_documents() {
             workspace.call(tool, &args).is_err(),
             "只能修改原选区：{tool}"
         );
-        assert_eq!(workspace.changes.proposals["first.md"].proposed, approved);
+        assert_eq!(workspace.changes.proposals["first.md"].proposed.as_ref(), approved.as_ref());
         assert_eq!(workspace.changes.proposals.len(), 1);
     }
     let original = std::fs::read_to_string(root.join("first.md")).unwrap();
@@ -543,7 +543,7 @@ fn ai_scoped_edit_appends_at_the_selection_end_and_disambiguates_equal_text_outs
         )
         .unwrap();
     assert_eq!(
-        workspace.changes.proposals["second.md"].proposed,
+        &*workspace.changes.proposals["second.md"].proposed,
         "同一句\n\n仅修改选中的一句\n\n结尾"
     );
     std::fs::remove_dir_all(root).unwrap();
@@ -569,17 +569,17 @@ fn ai_insert_at_cursor_is_a_pending_edit_and_repeated_inserts_keep_the_document_
     let result = workspace.call("propose_insert_at_cursor", &json!({"content":"插入一"}));
     assert!(result.is_ok(), "应在捕获的光标处生成插入提议：{result:?}");
     assert_eq!(
-        workspace.changes.proposals["note.md"].proposed,
+        &*workspace.changes.proposals["note.md"].proposed,
         "前文🙂插入一｜后文"
     );
     workspace
         .call("propose_insert_at_cursor", &json!({"content":"插入二"}))
         .unwrap();
     assert_eq!(
-        workspace.changes.proposals["note.md"].proposed,
+        &*workspace.changes.proposals["note.md"].proposed,
         "前文🙂插入一插入二｜后文"
     );
-    assert_eq!(workspace.documents["note.md"].source, source);
+    assert_eq!(&*workspace.documents["note.md"].source, source);
     workspace.read_only = true;
     assert!(
         workspace
@@ -588,5 +588,163 @@ fn ai_insert_at_cursor_is_a_pending_edit_and_repeated_inserts_keep_the_document_
                 &json!({"content":"阅读结果不应插入"})
             )
             .is_err()
+    );
+}
+
+#[test]
+fn ai_outline_skips_front_matter_and_quoted_headings_like_the_editor_outline() {
+    let mut workspace = AiWorkspace::new(
+        None,
+        vec![DocumentSnapshot {
+            id: "note.md".into(),
+            source: "---\ntitle: 元数据\n---\n\n# 正文标题\n\n> ## 引用块里的行\n"
+                .into(),
+        }],
+    )
+    .unwrap();
+    let outline = workspace.call("get_outline", &json!({"path":"note.md"})).unwrap();
+    let headings = outline["headings"].as_array().unwrap();
+    assert_eq!(
+        headings.len(),
+        1,
+        "front matter 的伪 setext 标题与引用块内标题不应进入大纲：{outline}"
+    );
+    assert_eq!(headings[0]["title"].as_str().unwrap(), "正文标题");
+    assert_eq!(headings[0]["line"].as_u64().unwrap(), 5);
+}
+
+#[test]
+fn ai_search_reading_pending_proposals_registers_dependencies() {
+    let mut workspace = AiWorkspace::new(
+        None,
+        vec![
+            DocumentSnapshot {
+                id: "a.md".into(),
+                source: "甲的旧文".into(),
+            },
+            DocumentSnapshot {
+                id: "b.md".into(),
+                source: "乙的正文".into(),
+            },
+        ],
+    )
+    .unwrap();
+    workspace
+        .call(
+            "propose_edit",
+            &json!({"path":"a.md","before":"甲的旧文","after":"甲的新句"}),
+        )
+        .unwrap();
+    let found = workspace.call("search_documents", &json!({"query":"甲的新句"}));
+    assert!(found.is_ok(), "{found:?}");
+    workspace
+        .call(
+            "propose_edit",
+            &json!({"path":"b.md","before":"乙的正文","after":"乙的改写"}),
+        )
+        .unwrap();
+    workspace
+        .call("reset_proposal", &json!({"path":"a.md"}))
+        .unwrap();
+    assert!(
+        workspace.changes.invalid.contains("b.md"),
+        "依据待审阅内容搜索后提出的修改，应在前置提议重置时一并失效"
+    );
+}
+
+#[test]
+fn ai_snapshot_rereads_disk_after_a_live_document_closes() {
+    let root = fixture();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+    let from_disk = workspace
+        .call("read_document", &json!({"path":"first.md"}))
+        .unwrap();
+    assert!(from_disk["content"].as_str().unwrap().contains("磁盘原文"));
+    let live = std::sync::Arc::new(std::sync::Mutex::new(Some(DocumentSnapshot {
+        id: "first.md".into(),
+        source: "# 第一篇\n\n未保存草稿。\n".into(),
+    })));
+    workspace.live_documents.insert("first.md".into());
+    let bridge = live.clone();
+    workspace.refresh.callback = Some(std::sync::Arc::new(move |id| {
+        if id == "first.md" {
+            Ok(bridge.lock().unwrap().clone())
+        } else {
+            Ok(None)
+        }
+    }));
+    let from_live = workspace
+        .call("read_document", &json!({"path":"first.md"}))
+        .unwrap();
+    assert!(from_live["content"].as_str().unwrap().contains("未保存草稿"));
+    *live.lock().unwrap() = None;
+    let after_close = workspace
+        .call("read_document", &json!({"path":"first.md"}))
+        .unwrap();
+    assert_eq!(
+        after_close["content"].as_str().unwrap(),
+        from_disk["content"].as_str().unwrap(),
+        "标签关闭后应回读磁盘，而不是返回已丢弃的草稿"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn ai_workspace_listing_tolerates_unreadable_entries() {
+    let root = fixture();
+    std::fs::write(root.join("open.md"), "# 开着的\n").unwrap();
+    std::fs::create_dir_all(root.join("locked")).unwrap();
+    std::fs::write(root.join("locked/inner.md"), "# 锁住的\n").unwrap();
+    let mut permissions = std::fs::metadata(root.join("locked")).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o000);
+    std::fs::set_permissions(root.join("locked"), permissions).unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+    let listed = workspace.call("list_documents", &json!({}));
+    assert!(
+        listed.is_ok(),
+        "单个不可读条目不应让整个名单失败：{listed:?}"
+    );
+    let documents = listed.unwrap()["documents"].as_array().unwrap().clone();
+    assert!(documents.iter().any(|file| file.as_str() == Some("open.md")));
+    let mut permissions = std::fs::metadata(root.join("locked")).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(root.join("locked"), permissions).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn ai_new_document_targets_must_not_be_dangling_symlinks() {
+    let root = fixture();
+    std::os::unix::fs::symlink(root.join("不存在.md"), root.join("evil.md")).unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+    let result = workspace.call(
+        "propose_document",
+        &json!({"path":"evil.md","content":"# 覆盖链接"}),
+    );
+    assert!(
+        result.is_err(),
+        "悬空符号链接不应当作可新建的文档目标"
+    );
+    std::fs::remove_file(root.join("evil.md")).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn ai_propose_within_reports_overlapping_occurrences() {
+    let mut workspace = AiWorkspace::new(
+        None,
+        vec![DocumentSnapshot {
+            id: "n.md".into(),
+            source: "aaa".into(),
+        }],
+    )
+    .unwrap();
+    let result = workspace.call("propose_edit", &json!({"path":"n.md","before":"aa","after":"bb"}));
+    let error = result.expect_err("重叠出现应按多处匹配处理");
+    assert!(
+        error.to_string().contains("多处匹配"),
+        "应报告多处匹配：{error}"
     );
 }

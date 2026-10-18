@@ -118,6 +118,10 @@ pub(crate) struct AiWorkspace {
     files: Option<Vec<String>>,
     #[serde(skip)]
     stamps: BTreeMap<String, (Option<std::time::SystemTime>, u64)>,
+    /// 运行时注入的取消令牌：超时/停止后正在执行的同步工具（全库搜索、
+    /// 大文件读盘）靠它在循环边界提前退出，否则 Finished 会被拖到工具跑完。
+    #[serde(skip)]
+    pub cancel: Option<tokio_util::sync::CancellationToken>,
 }
 
 impl AiWorkspace {
@@ -208,12 +212,25 @@ impl AiWorkspace {
             skills: Default::default(),
             files: None,
             stamps: BTreeMap::new(),
+            cancel: None,
             refresh: SnapshotBridge::default(),
             live_documents,
         })
     }
 
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|cancel| cancel.is_cancelled())
+    }
+
     pub fn call(&mut self, name: &str, arguments: &Value) -> Result<Value> {
+        if self.tool_allowed(name)
+            && matches!(name, "search_documents" | "list_documents" | "read_document" | "get_outline")
+            && self.cancelled()
+        {
+            bail!("任务已停止");
+        }
         if !self.tool_allowed(name) {
             bail!("本任务不允许此写入方式：阅读任务不能生成修改，选区任务不能新建文档");
         }
@@ -272,16 +289,25 @@ impl AiWorkspace {
                 let mut matches = Vec::new();
                 let mut errors = Vec::new();
                 for path in self.files()? {
+                    if self.cancelled() {
+                        bail!("任务已停止");
+                    }
                     match self.snapshot(&path) {
                         Ok(document) => {
-                            let source = if self.changes.invalid.contains(&path)
+                            let stale = self.changes.invalid.contains(&path)
                                 || self.changes.proposals.get(&path).is_some_and(|proposal| {
                                     proposal.validate(&document.source).is_err()
-                                }) {
-                                document.source.as_str()
+                                });
+                            let source = if stale {
+                                document.source.as_ref()
                             } else {
                                 self.changes.read(&document)
                             };
+                            // 搜索读到的是待审阅内容时同样登记依赖：据此提出的
+                            // 修改要随前置提议的重置一并失效。
+                            if !stale && self.changes.proposals.contains_key(&path) {
+                                self.pending_reads.insert(path.clone());
+                            }
                             for (index, line) in source.lines().enumerate() {
                                 if line.to_lowercase().contains(&query) {
                                     matches.push(json!({"path":path,"line":index + 1,"content": line.chars().take(500).collect::<String>()}));
@@ -316,7 +342,7 @@ impl AiWorkspace {
                         .get(path)
                         .is_some_and(|proposal| proposal.validate(&document.source).is_err());
                 let source = if stale {
-                    document.source.as_str()
+                    document.source.as_ref()
                 } else {
                     self.changes.read(&document)
                 };
@@ -324,38 +350,15 @@ impl AiWorkspace {
                     self.pending_reads.insert(path.to_owned());
                 }
                 if name == "get_outline" {
-                    let mut headings = Vec::new();
-                    let mut heading: Option<(String, usize)> = None;
-                    for (event, range) in pulldown_cmark::Parser::new(source).into_offset_iter() {
-                        match event {
-                            pulldown_cmark::Event::Start(pulldown_cmark::Tag::Heading {
-                                ..
-                            }) => {
-                                heading = Some((
-                                    String::new(),
-                                    source
-                                        .get(..range.start)
-                                        .unwrap_or_default()
-                                        .bytes()
-                                        .filter(|byte| *byte == b'\n')
-                                        .count()
-                                        + 1,
-                                ));
-                            }
-                            pulldown_cmark::Event::Text(text)
-                            | pulldown_cmark::Event::Code(text) => {
-                                if let Some((title, _)) = heading.as_mut() {
-                                    title.push_str(&text);
-                                }
-                            }
-                            pulldown_cmark::Event::End(pulldown_cmark::TagEnd::Heading(_)) => {
-                                if let Some((title, line)) = heading.take() {
-                                    headings.push(json!({"title":title,"line":line}));
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+                    // 大纲判据与侧栏同一份（outline_headings）：front matter 里的伪
+                    // setext 标题、引用块内的标题都不进大纲，另起解析器会在这些
+                    // 写法上与用户所见漂移。
+                    let headings = crate::editor::workspace::document_outline(source)
+                        .into_iter()
+                        .map(|heading| {
+                            json!({"title":heading.label,"line":heading.line + 1,"level":heading.level})
+                        })
+                        .collect::<Vec<_>>();
                     return Ok(json!({"path":path,"headings":headings}));
                 }
                 let start = arguments
@@ -484,7 +487,9 @@ impl AiWorkspace {
                     bail!("此路径已从 AI 资料中排除");
                 }
                 let destination = self.resolve(path, false)?;
-                if self.documents.contains_key(path) || destination.exists() {
+                // symlink_metadata 连悬空链接也算存在：接受端 rename 不穿透符号
+                // 链接，但会把用户自己的链接静默替换成普通文件。
+                if self.documents.contains_key(path) || destination.symlink_metadata().is_ok() {
                     bail!("文档已存在，请读取后提出修改");
                 }
                 let content = field(arguments, "content")?;
@@ -493,7 +498,7 @@ impl AiWorkspace {
                 }
                 let document = DocumentSnapshot {
                     id: path.to_owned(),
-                    source: String::new(),
+                    source: String::new().into(),
                 };
                 self.documents.insert(path.to_owned(), document.clone());
                 self.changes.propose(document, "", content)?;
@@ -562,6 +567,9 @@ impl AiWorkspace {
             if let Some(refresh) = &self.refresh.callback {
                 if let Some(document) = refresh(id)? {
                     self.documents.insert(id.to_owned(), document);
+                    // live 覆盖之后，磁盘 stamp 只证明磁盘没变，不再证明缓存
+                    // 就是磁盘内容；留着会让已关闭的草稿以 stamp 快速路径还魂。
+                    self.stamps.remove(id);
                 } else {
                     self.live_documents.remove(id);
                     if id.starts_with("untitled:") || self.new_documents.contains(id) {
@@ -586,6 +594,9 @@ impl AiWorkspace {
         if metadata.len() > 16 * 1024 * 1024 {
             bail!("文档超过单次载入预算，请先在编辑器中打开并指定选区");
         }
+        if self.cancelled() {
+            bail!("任务已停止");
+        }
         let total: usize = self
             .documents
             .values()
@@ -599,7 +610,7 @@ impl AiWorkspace {
         );
         let document = DocumentSnapshot {
             id: id.to_owned(),
-            source,
+            source: source.into(),
         };
         self.documents.insert(id.to_owned(), document.clone());
         self.stamps.insert(id.to_owned(), stamp);
@@ -613,7 +624,9 @@ impl AiWorkspace {
                 let (paths, skipped) =
                     crate::editor::workspace::collect_workspace_files_on_disk_reporting_skips(root);
                 if skipped > 0 {
-                    bail!("有 {skipped} 个工作区条目无法读取，请检查目录权限");
+                    // 单个条目读不了只影响它自己；整单 bail 会让一个受保护子目录
+                    // 废掉 list/search 对整个工作区的可用性（编辑器文件树同样容忍）。
+                    eprintln!("AI 工作区有 {skipped} 个条目无法读取，已在名单中跳过");
                 }
                 for path in paths {
                     if crate::file_url::is_markdown_document(&path) {

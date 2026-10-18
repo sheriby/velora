@@ -73,7 +73,16 @@ pub(crate) fn run_blocking(
             })
             .context("无法启动 AI 工作线程")?
             .join()
-            .map_err(|_| anyhow::anyhow!("AI 工作线程异常结束"))?
+            .map_err(|payload| {
+                // panic 的 payload 带着 true 原因；吞掉后持锁 panic 中毒的 Mutex
+                // 只会让后续工具报「状态不可用」，无从排查。
+                let reason = payload
+                    .downcast_ref::<&str>()
+                    .map(|text| (*text).to_string())
+                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "未知原因".into());
+                anyhow::anyhow!("AI 工作线程异常结束：{reason}")
+            })?
     })
 }
 
@@ -96,9 +105,11 @@ pub(crate) async fn run_with_provider(
         .map(serde_json::from_value)
         .collect::<Result<_, _>>()?;
     let definitions = {
-        let workspace = workspace
+        let mut workspace = workspace
             .lock()
             .map_err(|_| anyhow::anyhow!("文档任务状态不可用"))?;
+        // 把取消令牌注进工作区：超时/停止后，正在跑的同步工具在循环边界退出。
+        workspace.cancel = Some(control.cancel.clone());
         super::workspace::tool_definitions()
             .into_iter()
             .filter(|(name, _, _)| workspace.tool_allowed(name))
@@ -123,10 +134,13 @@ pub(crate) async fn run_with_provider(
     };
     let mut config = yoagent::agent_loop::AgentLoopConfig::new(provider, request.model.id.clone());
     let mut context_config = yoagent::context::ContextConfig::default();
+    // 0 或极小的窗口会让压缩立即触发；给一个非零下限，配置异常时不至于
+    // 每轮都被压缩打断。
     context_config.max_context_tokens = request
         .model
         .context_window
-        .saturating_sub(request.model.max_tokens) as usize;
+        .saturating_sub(request.model.max_tokens)
+        .max(4096) as usize;
     config.max_tokens = Some(request.model.max_tokens);
     config.model_config = Some(request.model);
     config.api_key = request.api_key;
@@ -183,18 +197,24 @@ pub(crate) async fn run_with_provider(
                         observed_history.push(message);
                     }
                     observed_history.extend(tool_results.into_iter().map(AgentMessage::from));
-                    if let Ok(snapshot) = workspace.try_lock() {
-                        match observed_history
-                            .iter()
-                            .map(serde_json::to_value)
-                            .collect::<Result<Vec<_>, _>>()
-                        {
-                            Ok(history) => emit(RunEvent::Checkpoint {
-                                workspace: Box::new(snapshot.clone()),
-                                history,
-                            }),
-                            Err(error) => output.error = Some(format!("保存任务进度失败：{error}")),
+                    // 锁忙时跳过本轮检查点要留痕：进度持久化的缺失事后无法排查。
+                    match workspace.try_lock() {
+                        Ok(snapshot) => {
+                            match observed_history
+                                .iter()
+                                .map(serde_json::to_value)
+                                .collect::<Result<Vec<_>, _>>()
+                            {
+                                Ok(history) => emit(RunEvent::Checkpoint {
+                                    workspace: Box::new(snapshot.clone()),
+                                    history,
+                                }),
+                                Err(error) => {
+                                    output.error = Some(format!("保存任务进度失败：{error}"))
+                                }
+                            }
                         }
+                        Err(error) => eprintln!("保存任务进度时读取文档状态失败，已跳过本轮检查点：{error}"),
                     }
                 }
                 AgentEvent::ProviderRetry { attempt, .. } => {
