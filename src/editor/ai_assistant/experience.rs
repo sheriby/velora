@@ -9,6 +9,10 @@ pub(super) struct ReviewDocument {
     pub(super) tracked: Entity<Editor>,
     pub(super) index: usize,
     pub(super) versions: (u64, u64),
+    /// 基准版的块边界与它的内容版本：部分接受之外基准不变，重建投影时
+    /// 复用这份缓存，省掉一次全文解析与物化。
+    pub(super) before_blocks: Vec<std::ops::Range<usize>>,
+    pub(super) base_version: u64,
 }
 
 impl ReviewDocument {
@@ -190,12 +194,10 @@ impl Editor {
             .filter(|target| target.document_id == id)
             .and_then(|target| target.path.clone())
             .or_else(|| {
-                session
-                    .saved
-                    .workspace
-                    .root
-                    .as_ref()
-                    .map(|root| root.join(id))
+                // untitled:/external: 前缀不是相对路径，拼进根目录只会得到
+                // 不存在的伪路径，反而干扰投影内相对资源解析。
+                (session.saved.workspace.root.is_some() && !id.contains(':'))
+                    .then(|| session.saved.workspace.root.as_ref().unwrap().join(id))
             });
         let previous = session
             .review
@@ -203,7 +205,6 @@ impl Editor {
             .filter(|review| review.id == id)
             .map_or(0, |review| review.index);
         let opening = session.review.is_none();
-        let original = self.ai_document_preview(proposal.base.source.to_string(), path.clone(), cx);
         let proposed = self.ai_document_preview(proposal.proposed.to_string(), path.clone(), cx);
         let spans = |editor: &mut Editor, cx: &mut Context<Editor>| {
             editor.flush_pending_materialization(cx);
@@ -214,7 +215,20 @@ impl Editor {
                 .filter_map(|block| editor.document.source_span_of(block.entity_id()))
                 .collect::<Vec<_>>()
         };
-        let before_blocks = original.update(cx, spans);
+        // 基准版没变时复用上一份块边界：每个 checkpoint 都重建原文编辑器，
+        // 大文档生成期间会反复整帧卡顿。
+        let (before_blocks, base_version) = match session
+            .review
+            .as_ref()
+            .filter(|review| review.id == id && review.base_version == versions.0)
+        {
+            Some(review) => (review.before_blocks.clone(), review.base_version),
+            None => {
+                let original =
+                    self.ai_document_preview(proposal.base.source.to_string(), path.clone(), cx);
+                (original.update(cx, spans), versions.0)
+            }
+        };
         let after_blocks = proposed.update(cx, spans);
         let edits = proposal.edits();
         let projected = super::inline_review::tracked_document(
@@ -227,7 +241,12 @@ impl Editor {
         let (source, marks) = match projected {
             Ok(projected) => projected,
             Err(error) => {
-                self.show_message_modal("AI", error.to_string(), cx);
+                // 不清脏标会在渲染入口每帧重试、每帧重弹模态。
+                if let Some(session) = self.ai_session.as_mut() {
+                    session.review_dirty = false;
+                    session.error = Some(error.to_string());
+                }
+                cx.notify();
                 return;
             }
         };
@@ -256,6 +275,8 @@ impl Editor {
             index,
             edits,
             versions,
+            before_blocks,
+            base_version,
         };
         review.focus_change(cx);
         if let Some(session) = self.ai_session.as_mut() {
@@ -269,6 +290,7 @@ impl Editor {
     }
 
     pub(in crate::editor) fn sync_ai_review_document(&mut self, cx: &mut Context<Self>) {
+        let origin = self.ai_review_navigation_origin(cx);
         let Some(session) = self.ai_session.as_ref() else {
             return;
         };
@@ -289,6 +311,12 @@ impl Editor {
             });
         }
         if !session.review_dirty {
+            self.sync_ai_review_navigation(cx);
+            return;
+        }
+        if !session.review_open && !session.visible && origin != session.document {
+            // 任务的文档不在屏上（切走标签/面板收起）时不重建投影：脏标记
+            // 留着，回到该文档或面板可见时再构建。
             self.sync_ai_review_navigation(cx);
             return;
         }

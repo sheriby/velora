@@ -125,22 +125,40 @@ impl Editor {
                     self.ai_verify_other_windows(path, window, cx)?;
                 }
                 Destination::Current
+            } else if bound_path.is_none()
+                && id.contains(':')
+                && let Some(group) = groups.iter().find(|group| {
+                    let editor = group.read(cx);
+                    editor.split_workspace.is_none()
+                        && !editor.code_document
+                        && super::super::ai_assistant::ai_document_id(
+                            editor.file_path.as_deref(),
+                            saved.workspace.root.as_deref(),
+                            editor.recovery_id,
+                        ) == id
+                })
+            {
+                // untitled:/external: 不落磁盘相对路径，指向窗口里打开的
+                // 编辑器组：找到持有它的组直接写缓冲区。已关闭时走不到这里，
+                // 由下方相对路径分支的可行动报错兜底。
+                if let Some(path) = id.strip_prefix("external:") {
+                    self.ai_verify_other_windows(Path::new(path), window, cx)?;
+                }
+                let group = group.clone();
+                group.read_with(cx, |editor, _| -> Result<()> {
+                    proposal.validate(&editor.buffer.text())?;
+                    editor.ai_verify_origin()
+                })?;
+                Destination::Live(group)
+            } else if bound_path.is_none() && id.contains(':') {
+                bail!("此修改对应的文档已关闭或不在当前窗口，请重新打开后再接受：{id}");
             } else {
                 let path = if let Some(path) = bound_path {
                     path
                 } else {
-                    saved.workspace.proposal_path(&id)?;
-                    let directory = self
-                        .workspace_root_path()
-                        .map(PathBuf::from)
-                        .or_else(|| {
-                            self.file_path
-                                .as_ref()
-                                .and_then(|path| path.parent().map(PathBuf::from))
-                        })
-                        .or_else(|| saved.workspace.root.clone())
-                        .context("请先打开工作区")?;
-                    directory.join(&id)
+                    // 写入路径直接用校验过的结果：取当前工作区根另算一份，
+                    // 任务发起后切换工作区会把新文档落到别的目录。
+                    saved.workspace.proposal_path(&id)?
                 };
                 self.ai_verify_other_windows(&path, window, cx)?;
                 if let Some(group) = groups.iter().find(|group| {
@@ -370,12 +388,12 @@ impl Editor {
                 }
             }
         }
-        if let Some(session) = self
+        if self
             .ai_session
-            .as_mut()
-            .filter(|session| session.saved.workspace.changes.proposals.is_empty())
+            .as_ref()
+            .is_some_and(|session| session.saved.workspace.changes.proposals.is_empty())
         {
-            session.review_open = false;
+            self.close_ai_review_surface(cx);
         }
         self.schedule_autosave(cx);
         self.persist_ai_session(cx);
@@ -442,11 +460,18 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+        let mut landmark = None;
         for edit in edits.iter().rev() {
             let applied = self.buffer.edit(edit.range.clone(), &edit.replacement);
+            // 逆序落笔，最后一轮是文档序最靠前的编辑：接受后光标落在首处
+            // 修改之后，而不是随整树重建退回文档开头。
+            landmark = Some(applied.new_range.end);
             self.record_buffer_edit(applied);
         }
         self.rebuild_document_from_buffer(cx);
+        if let Some(landmark) = landmark {
+            self.jump_to_document_search_range(landmark..landmark, cx);
+        }
         self.mark_dirty_written_back(cx);
         self.finalize_pending_undo_capture(cx);
     }

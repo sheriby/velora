@@ -64,6 +64,8 @@ pub(super) struct AiSession {
     skills: crate::ai::skills::SkillCatalog,
     context_candidates: Vec<String>,
     settings_saving: bool,
+    /// ai.json 读取失败后为真：面板可看不可写，防止默认配置覆盖原文件。
+    settings_readonly: bool,
     // 设置单独编辑，仅在配置版本变化时读盘，避免在每帧渲染里读取配置。
     settings_revision: u64,
     review: Option<experience::ReviewDocument>,
@@ -120,10 +122,14 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if let Some(session) = self
-            .ai_session
-            .as_mut()
-            .filter(|session| session.visible && session.mode != PanelMode::Task)
+        let focused = self.ai_interaction_has_focus(window, cx);
+        // 模式回切与关闭都要看焦点：右键菜单/命令面板等瞬态浮层开着时，
+        // Esc 应先关最上层浮层，而不是被面板抢先吃掉。
+        if focused
+            && let Some(session) = self
+                .ai_session
+                .as_mut()
+                .filter(|session| session.visible && session.mode != PanelMode::Task)
         {
             session.mode = PanelMode::Task;
             session
@@ -132,7 +138,6 @@ impl Editor {
             cx.notify();
             return true;
         }
-        let focused = self.ai_interaction_has_focus(window, cx);
         if focused {
             if self
                 .ai_session
@@ -140,12 +145,42 @@ impl Editor {
                 .is_some_and(|session| session.visible)
             {
                 self.hide_ai_panel(cx);
-            } else if let Some(session) = self.ai_session.as_mut() {
-                session.review_open = false;
-                cx.notify();
+            } else if self
+                .ai_session
+                .as_ref()
+                .is_some_and(|session| session.review_open)
+            {
+                self.close_ai_review_surface(cx);
             }
         }
         focused
+    }
+
+    /// 暂存任务设上限：每份都持有全文快照与输入/预览实体，只增不减会让
+    /// 长会话工作流的内存无界增长；淘汰即落盘（Drop 走后台保存）。
+    fn stash_ai_session(&mut self, previous: AiSession) {
+        const AI_TASK_SESSION_LIMIT: usize = 6;
+        self.ai_task_sessions.push(previous);
+        while self.ai_task_sessions.len() > AI_TASK_SESSION_LIMIT {
+            self.ai_task_sessions.remove(0);
+        }
+    }
+
+    /// 关闭原位审阅并把焦点归还正文：审阅面卸载后原聚焦句柄成为孤儿，
+    /// 按键既进不了正文也不再触发正文快捷键，直到用户手动点击。
+    fn close_ai_review_surface(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = self.ai_session.as_mut() {
+            session.review_open = false;
+        }
+        if let Some(group) = self.active_split_editor() {
+            group.update(cx, |editor, cx| {
+                editor.pending_focus = editor.active_entity_id;
+                cx.notify();
+            });
+        } else {
+            self.restore_focus_after_overlay(cx);
+        }
+        cx.notify();
     }
 
     fn hide_ai_panel(&mut self, cx: &mut Context<Self>) {
@@ -189,7 +224,7 @@ impl Editor {
         {
             let session = self.ai_task_sessions.remove(index);
             if let Some(previous) = self.ai_session.replace(session) {
-                self.ai_task_sessions.push(previous);
+                self.stash_ai_session(previous);
             }
         }
     }
@@ -410,12 +445,12 @@ impl Editor {
                 session.saved.workspace.documents.remove(id);
             }
         }
-        if let Some(session) = self
+        if self
             .ai_session
-            .as_mut()
-            .filter(|session| session.saved.workspace.changes.proposals.is_empty())
+            .as_ref()
+            .is_some_and(|session| session.saved.workspace.changes.proposals.is_empty())
         {
-            session.review_open = false;
+            self.close_ai_review_surface(cx);
         }
         self.persist_ai_session(cx);
         cx.notify();
@@ -436,12 +471,15 @@ impl Editor {
                     .update(cx, |input, cx| input.set_value(&prompt, cx));
             }
         }
-        if let Some(session) = self.ai_session.as_mut()
-            && session.saved.kind == SessionKind::QuickCommand
-        {
-            session.saved.history.clear();
-            session.saved.messages.clear();
-            session.saved.workspace.discard_proposals();
+        if let Some(session) = self.ai_session.as_mut() {
+            if session.saved.kind == SessionKind::QuickCommand {
+                session.saved.history.clear();
+                session.saved.messages.clear();
+                session.saved.workspace.discard_proposals();
+            } else {
+                // 对话重试前回滚失败轮，发送后恰好重新追加一次指令。
+                session.saved.rollback_failed_conversation_round();
+            }
         }
         self.send_ai_task(cx);
     }
@@ -681,7 +719,7 @@ impl Editor {
             session.panel_navigation = false;
             session.mode = PanelMode::Task;
             if let Some(previous) = self.ai_session.replace(session) {
-                self.ai_task_sessions.push(previous);
+                self.stash_ai_session(previous);
             }
             cx.notify();
             return;
@@ -698,9 +736,13 @@ impl Editor {
         cx.spawn(async move |owner, cx| {
             let loaded = load.await;
             if let Err(error) = owner.update(cx, |editor, cx| {
+                // 磁盘加载在途时会话可能已被新任务暂存；暂存会话不递增
+                // generation，按 id 回退搜索会命中它并把待审状态整体替换掉。
+                // 只认仍在前台的同一会话，否则丢弃这次加载。
                 if let Some(session) = editor
-                    .ai_session_mut(&id)
-                    .filter(|session| session.generation == generation)
+                    .ai_session
+                    .as_mut()
+                    .filter(|session| session.saved.id == id && session.generation == generation)
                 {
                     match loaded {
                         Ok(saved) => {
@@ -973,6 +1015,9 @@ impl Editor {
             .extend(self.ai_window_live_ids(root.as_deref(), cx));
         let loaded = AiSettings::load();
         let error = loaded.as_ref().err().map(ToString::to_string);
+        // 读取失败时面板以默认配置继续可用，但禁止一切写回：否则下一笔
+        // 保存会把损坏但可救的原文件整体重置成近空配置。
+        let settings_readonly = loaded.is_err();
         let settings = loaded.unwrap_or_default();
         workspace.excluded_paths = settings.excluded_paths.clone();
         let mut saved = SavedSession::new(workspace);
@@ -1027,7 +1072,7 @@ impl Editor {
             directories.push((root.join(".velora").join("skills"), "workspace"));
         }
         if let Some(previous) = self.ai_session.take() {
-            self.ai_task_sessions.push(previous);
+            self.stash_ai_session(previous);
         }
         self.ai_session = Some(AiSession {
             document: owner_document,
@@ -1049,6 +1094,7 @@ impl Editor {
             mode: PanelMode::Task,
             command,
             origin,
+            settings_readonly,
             error,
             activity: String::new(),
             generation: 0,
@@ -1812,6 +1858,12 @@ impl Editor {
         else {
             return;
         };
+        if session.settings_readonly {
+            session.error =
+                Some("AI 配置读取失败，已阻止修改写入，请先修复配置文件".into());
+            cx.notify();
+            return;
+        }
         let id = session.saved.id.clone();
         session.settings_saving = true;
         let save = cx.background_spawn(async move {

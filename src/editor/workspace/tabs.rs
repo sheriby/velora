@@ -472,13 +472,20 @@ impl Editor {
         path: &Path,
         _cx: &App,
     ) -> Option<(String, bool)> {
-        if self.file_path.as_deref() == Some(path) {
+        // AI 接受路径存的是规范化路径，标签与当前文档可能是原始写法；
+        // 与 1072 行的标签查找同一条 canonical_path 判据，不做字符串直等。
+        let target = crate::file_url::canonical_path(path);
+        if self
+            .file_path
+            .as_deref()
+            .is_some_and(|current| crate::file_url::canonical_path(current) == target)
+        {
             return Some((self.document_text_for_save(), self.document_dirty));
         }
         self.workspace
             .open_documents
             .iter()
-            .find(|tab| &tab.path == path)
+            .find(|tab| crate::file_url::canonical_path(&tab.path) == target)
             .map(|tab| (tab.markdown.clone(), tab.dirty))
     }
 

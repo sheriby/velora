@@ -163,6 +163,19 @@ impl SavedSession {
         Ok(session)
     }
 
+    /// 重试对话前回滚失败轮：去掉最后一组「用户消息起的尾巴」，让随后的
+    /// 发送恰好重新追加一次，而不是把同一句指令显示两遍。
+    pub fn rollback_failed_conversation_round(&mut self) {
+        let Some(last_user) = self
+            .messages
+            .iter()
+            .rposition(|message| message.role == "user")
+        else {
+            return;
+        };
+        self.messages.truncate(last_user);
+    }
+
     pub fn directory(workspace: Option<&Path>) -> Result<PathBuf> {
         use sha2::{Digest, Sha256};
         let key = workspace

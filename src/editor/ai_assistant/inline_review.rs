@@ -53,14 +53,15 @@ fn chunks<'a>(source: &'a str, blocks: &[Range<usize>]) -> Result<Vec<(Range<usi
         .collect()
 }
 
-fn covered_edits(edits: &[ProposedEdit], range: Range<usize>) -> Range<usize> {
+pub(super) fn covered_edits(edits: &[ProposedEdit], range: Range<usize>) -> Range<usize> {
     let first = edits.partition_point(|edit| edit.range.end < range.start);
     let last = edits.partition_point(|edit| edit.range.start <= range.end);
     if first < last {
         first..last
     } else {
-        let index = first.min(edits.len().saturating_sub(1));
-        index..index + 1
+        // 无重叠时宁可不归属：行级与块级两次差分对重复段落的对齐可能不同，
+        // 强行挂到邻近编辑会让行内按钮作用于错位的修改。
+        0..0
     }
 }
 
@@ -132,8 +133,35 @@ pub(super) fn tracked_document(
                 edits: indices,
             });
         } else if tag == similar::DiffTag::Equal {
-            for (_, chunk) in after_chunks.get(new).context("未修改块范围无效")? {
-                text.push_str(chunk);
+            // 块键只比 trim 掉收尾换行后的正文：仅块间空行的差异在这里归一成
+            // Equal。这类编辑也必须有可见标记，否则会以正文原样混入、被盲接受。
+            for old_index in old.clone() {
+                let new_index = new.start + (old_index - old.start);
+                let Some((before_span, before_chunk)) = before_chunks.get(old_index) else {
+                    bail!("未修改块范围无效");
+                };
+                let Some((_, after_chunk)) = after_chunks.get(new_index) else {
+                    bail!("未修改块范围无效");
+                };
+                if before_chunk == after_chunk {
+                    text.push_str(after_chunk);
+                    continue;
+                }
+                let indices = covered_edits(edits, before_span.clone());
+                let start = text.len();
+                text.push_str(before_chunk);
+                marks.push(ReviewMark {
+                    range: start..text.len(),
+                    kind: MarkKind::Removed,
+                    edits: indices.clone(),
+                });
+                let start = text.len();
+                text.push_str(after_chunk);
+                marks.push(ReviewMark {
+                    range: start..text.len(),
+                    kind: MarkKind::Added,
+                    edits: indices,
+                });
             }
         }
     }

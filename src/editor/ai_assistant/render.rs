@@ -87,7 +87,7 @@ impl Editor {
                         if compact {
                             task_height
                         } else {
-                            height.min(520.0)
+                            height
                         }
                     })
                     - px(36.0))
@@ -539,7 +539,7 @@ impl Editor {
                         "ai-instruction-save",
                         strings.ai_panel_save_instruction.clone(),
                         true,
-                        true,
+                        !session.settings_saving,
                         theme,
                         cx,
                         |editor, _, cx| editor.save_ai_instruction(cx),

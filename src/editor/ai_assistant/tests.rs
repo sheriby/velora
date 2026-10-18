@@ -1190,7 +1190,9 @@ fn ai_inline_review_keeps_deleted_and_inserted_blocks_at_their_document_position
     .unwrap();
     assert!(text.contains("旧段落。"), "删除部分必须留在原位置供审阅");
     assert!(text.find("旧段落。").unwrap() < text.find("新段落。").unwrap());
-    assert_eq!(text.matches("保留正文。").count(), 1);
+    // 保留正文的收尾空行在 after 里多了一个换行：仅空行的差异现在也以
+    // 红/绿对呈现，正文本身因此出现两份（删除份与新增份）。
+    assert_eq!(text.matches("保留正文。").count(), 2);
     assert!(marks.iter().any(|mark| mark.kind == MarkKind::Removed
         && text.get(mark.range.clone()).unwrap().contains("旧段落")));
     assert!(marks.iter().any(|mark| mark.kind == MarkKind::Added
@@ -2686,4 +2688,228 @@ fn ai_sidebar_keeps_the_composer_at_the_bottom_across_empty_conversation_and_err
     });
     draw(cx); draw(cx);
     assert_eq!(cx.debug_bounds("ai-composer"),Some(empty_composer),"错误和重试按钮不能挤占输入卡片的底部位置");
+}
+
+#[test]
+fn ai_inline_review_marks_whitespace_only_changes_between_blocks() {
+    use super::inline_review::{MarkKind, tracked_document};
+    // 只把块间空行从一行加到两行：行级 diff 有编辑，块键 trim 掉换行后
+    // 全部 Equal——投影必须给这条编辑可见的标记，不能零标记地混进正文。
+    let before = "甲段\n\n乙段\n";
+    let after = "甲段\n\n\n乙段\n";
+    let proposal = crate::ai::Proposal::new(
+        crate::ai::DocumentSnapshot {
+            id: "note.md".into(),
+            source: before.into(),
+        },
+        after,
+    );
+    let edits = proposal.edits();
+    assert!(!edits.is_empty(), "行级差异应产出待审编辑");
+    // 块边界取自两份文档的解析树：差异落在前一块的收尾换行上。
+    let (text, marks) = tracked_document(
+        before,
+        &[before.find("乙段").unwrap()..before.len()],
+        after,
+        &[after.find("乙段").unwrap()..after.len()],
+        &edits,
+    )
+    .unwrap();
+    assert!(
+        marks.iter().any(|mark| mark.kind == MarkKind::Added),
+        "仅空行的变化也要有可见标记：{text:?} / {marks:?}"
+    );
+    assert!(
+        marks.iter().all(|mark| !mark.edits.is_empty()),
+        "每条标记都要指向待审编辑"
+    );
+}
+
+#[test]
+fn ai_inline_review_does_not_attribute_unrelated_hunks_to_a_nearby_edit() {
+    use super::inline_review::covered_edits;
+    use crate::ai::ProposedEdit;
+    // hunk 覆盖 10..20，两条编辑分别在 0..4 与 30..34：无重叠时不得
+    // 强行归属到邻近编辑，否则重复段落下行内按钮会作用于错位的修改。
+    let edits = vec![
+        ProposedEdit {
+            range: 0..4,
+            replacement: "一".into(),
+        },
+        ProposedEdit {
+            range: 30..34,
+            replacement: "二".into(),
+        },
+    ];
+    let attributed = covered_edits(&edits, 10..20);
+    assert!(
+        attributed.is_empty(),
+        "无重叠的块差异不应归属到任何编辑：{attributed:?}"
+    );
+}
+
+#[test]
+fn ai_retry_rolls_back_the_failed_conversation_round_before_sending_again() {
+    use crate::ai::session::{ChatMessage, SavedSession, SessionKind};
+    let mut saved = SavedSession::new(
+        crate::ai::workspace::AiWorkspace::new(None, Vec::new()).unwrap(),
+    );
+    saved.kind = SessionKind::Conversation;
+    saved.messages = vec![
+        ChatMessage {
+            role: "user".into(),
+            text: "旧问题".into(),
+        },
+        ChatMessage {
+            role: "assistant".into(),
+            text: "旧回答".into(),
+        },
+        ChatMessage {
+            role: "user".into(),
+            text: "失败轮的指令".into(),
+        },
+        ChatMessage {
+            role: "assistant".into(),
+            text: String::new().into(),
+        },
+    ];
+    saved.rollback_failed_conversation_round();
+    assert_eq!(
+        saved
+            .messages
+            .iter()
+            .map(|message| message.text.to_string())
+            .collect::<Vec<_>>(),
+        vec!["旧问题".to_string(), "旧回答".to_string()],
+        "重试前应回滚失败轮的用户消息与空回复，发送后再追加一次"
+    );
+}
+
+#[gpui::test]
+fn ai_accepting_a_proposal_for_a_non_active_external_pane_updates_that_pane(cx: &mut TestAppContext) {
+    initialize(cx);
+    let workspace = std::env::temp_dir().join(format!("velora-ai-accept-ws-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("note.md"), "工作区原文").unwrap();
+    let external = std::env::temp_dir().join(format!("velora-ai-accept-ext-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&external).unwrap();
+    let outside = external.join("outside.md");
+    std::fs::write(&outside, "外部原文").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "工作区原文".into(), Some(workspace.join("note.md")))
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.split_active_document(
+            crate::editor::workspace::split::SplitDirection::Right,
+            window,
+            cx,
+        )
+    });
+    let panes = editor.read_with(cx, |editor, _| editor.split_groups());
+    assert_eq!(panes.len(), 2);
+    // 非活动面板换成工作区外的外部文档；活动面板仍是工作区文档。
+    panes[0].update_in(cx, |pane, window, cx| {
+        pane.open_workspace_file(outside.clone(), window, cx)
+    });
+    cx.run_until_parked();
+    let external_id = panes[0].read_with(cx, |pane, _| {
+        super::ai_document_id(
+            pane.file_path.as_deref(),
+            None,
+            pane.recovery_id,
+        )
+    });
+    assert!(external_id.starts_with("external:"), "{external_id}");
+    let baseline = panes[0].read_with(cx, |pane, _| pane.buffer.text());
+    let active = editor.read_with(cx, |editor, _| editor.active_split_editor().unwrap());
+    assert_ne!(active.entity_id(), panes[0].entity_id(), "活动面板应是工作区文档");
+    active.update_in(cx, |leaf, window, cx| {
+        leaf.open_ai_assistant(AiCommand::Ask, window, cx);
+    });
+    // 分屏把会话交给宿主持有；接受也从宿主派发到活动组。
+    editor.update(cx, |editor, cx| {
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.saved.workspace.live_documents.insert(external_id.clone());
+        session.saved.workspace.changes.proposals.insert(
+            external_id.clone(),
+            crate::ai::Proposal::new(
+                crate::ai::DocumentSnapshot {
+                    id: external_id.clone(),
+                    source: baseline.into(),
+                },
+                "外部修订",
+            ),
+        );
+        editor.refresh_ai_preview(cx);
+    });
+    let result = editor.update_in(cx, |editor, window, cx| {
+        editor.accept_ai_proposals(None, None, window, cx)
+    });
+    assert!(result.is_ok(), "{result:?}");
+    cx.run_until_parked();
+    assert_eq!(
+        panes[0].read_with(cx, |pane, _| pane.buffer.text()),
+        "外部修订",
+        "对非活动外部文档的提议应写进持有它的面板，而不是整批失败"
+    );
+    assert_eq!(panes[1].read_with(cx, |pane, _| pane.buffer.text()), "工作区原文");
+    std::fs::remove_dir_all(workspace).unwrap();
+    std::fs::remove_dir_all(external).unwrap();
+}
+
+#[gpui::test]
+fn ai_restoring_history_does_not_overwrite_a_stashed_session(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "第一段\n\n第二段".into(), None));
+    // 前台任务 B：待审修改与草稿都要在暂存后原样保留。
+    let history_id = editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        let task_id = session.saved.id.clone();
+        let id = session.saved.target.as_ref().unwrap().document_id.clone();
+        let baseline = session.saved.workspace.documents[&id].clone();
+        session.saved.workspace.changes.proposals.insert(
+            id.clone(),
+            crate::ai::Proposal::new(baseline, "B 的待审修改"),
+        );
+        session.saved.messages.push(crate::ai::session::ChatMessage {
+            role: "user".into(),
+            text: "B 的指令".into(),
+        });
+        editor.persist_ai_session(cx);
+        task_id
+    });
+    // 另写一份不在内存里的历史会话 X，触发磁盘加载路径。
+    let mut foreign = crate::ai::session::SavedSession::new(
+        crate::ai::workspace::AiWorkspace::new(None, Vec::new()).unwrap(),
+    );
+    foreign.messages.push(crate::ai::session::ChatMessage {
+        role: "user".into(),
+        text: "X 的消息".into(),
+    });
+    let foreign_path = foreign.path().unwrap();
+    foreign.save_at(&foreign_path).unwrap();
+    editor.update_in(cx, |editor, window, cx| {
+        editor.restore_ai_history(foreign_path.clone(), window, cx);
+        // 加载在途时用户唤起新任务，原任务被暂存。
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        let stashed = editor
+            .ai_task_sessions
+            .iter()
+            .find(|session| session.saved.id == history_id)
+            .unwrap_or_else(|| panic!("暂存任务必须保留：{:?}", editor.ai_task_sessions.len()));
+        assert_eq!(
+            stashed.saved.messages.last().unwrap().text.to_string(),
+            "B 的指令",
+            "迟到的历史加载不得整体替换暂存会话"
+        );
+        assert!(stashed.saved.workspace.changes.proposals.len() == 1);
+    });
+    std::fs::remove_file(foreign_path).unwrap();
 }
