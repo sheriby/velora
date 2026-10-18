@@ -52,6 +52,8 @@ pub(crate) struct TextField {
     painted_caret: bool,
     #[cfg(test)]
     painted_selection: bool,
+    #[cfg(test)]
+    painted_marked: bool,
 }
 
 impl TextField {
@@ -113,6 +115,8 @@ impl TextField {
             painted_caret: false,
             #[cfg(test)]
             painted_selection: false,
+            #[cfg(test)]
+            painted_marked: false,
         }
     }
 
@@ -192,18 +196,32 @@ impl TextField {
     /// 用 `text` 替换指定区间(区间会被夹回字符边界),光标停在插入文本之后。
     fn replace_range(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
         let range = clamp_to_char_boundaries(&self.value, range);
-        let merged = if self.composition_active {
-            if let Some(previous) = self.undo.last_mut().filter(|edit| {
-                edit.start == range.start && edit.start + edit.inserted.len() == range.end
-            }) {
-                previous.inserted = text.to_owned();
-                true
-            } else {
-                false
+        // 组词期间的编辑(整段替换,或 marked 区间内的子区间微调)都折进栈顶
+        // 同一条撤销记录:分段确认的输入法改的是组词的局部,若按整段对齐判合并,
+        // 一次组词会被拆成多步撤销。
+        let mut merged = false;
+        if self.composition_active
+            && let Some(previous) = self.undo.last().filter(|edit| {
+                let composed_end = edit.start + edit.inserted.len();
+                range.start >= edit.start && range.end <= composed_end
+            })
+        {
+            let head = previous
+                .inserted
+                .get(..range.start - previous.start)
+                .unwrap_or_default()
+                .to_owned();
+            let tail = previous
+                .inserted
+                .get(range.end - previous.start..)
+                .unwrap_or_default()
+                .to_owned();
+            let folded = format!("{head}{text}{tail}");
+            if let Some(previous) = self.undo.last_mut() {
+                previous.inserted = folded;
+                merged = true;
             }
-        } else {
-            false
-        };
+        }
         if !merged {
             self.undo.push(TextEdit {
                 start: range.start,
@@ -386,7 +404,10 @@ impl TextField {
     fn delete_forwards(&mut self, cx: &mut Context<Self>) {
         let selection = self.normalized_selection();
         let range = if selection.is_empty() {
-            let end = self.value[selection.end..]
+            let end = self
+                .value
+                .get(selection.end..)
+                .unwrap_or_default()
                 .grapheme_indices(true)
                 .nth(1)
                 .map(|(index, _)| selection.end + index)
@@ -619,9 +640,12 @@ impl EntityInputHandler for TextField {
         )
     }
 
-    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.marked_range = None;
         self.composition_active = false;
+        // macOS 失焦/输入法取消组词后没有后续提交,不主动请求重绘的话
+        // 组词下划线要等下一次无关重绘才消失。
+        cx.notify();
     }
 
     fn replace_text_in_range(
@@ -778,6 +802,13 @@ impl Render for TextField {
                 }
             }))
             .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|input, _, _, _| input.dragging = false),
+            )
+            // on_mouse_up 只在释放点命中本元素时触发;框内按下、框外释放的拖动
+            // 靠捕获阶段的 out 钩子复位 dragging,否则残留的拖动态会让之后
+            // 路过本框的其他拖动改写选区。
+            .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|input, _, _, _| input.dragging = false),
             )

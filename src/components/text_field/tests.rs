@@ -1,4 +1,7 @@
-use gpui::{AppContext, EntityInputHandler, KeyDownEvent, TestAppContext};
+use gpui::{
+    AppContext, EntityInputHandler, InteractiveElement, KeyDownEvent, ParentElement, Styled,
+    TestAppContext,
+};
 
 // 不能 use super::*:text_field 里的 gpui::* 会把 `test` 宏一起带进来,
 // 截胡 #[gpui::test] 展开出的裸 #[test],宏展开无限递归。按名导入。
@@ -403,6 +406,216 @@ fn multiline_input_wraps_without_changing_text_and_limits_visible_rows(cx: &mut 
             "长输入应在控件内部滚动显示光标"
         );
         assert_eq!(field.value(), text);
+    });
+}
+
+// 观察输入框 notify 的宿主视图:无头测试里帧只在显式 draw 时绘制,
+// 「unmark 后下一帧下划线消失」只能钉成「unmark 触发 notify(调度重绘)
+// 且随后那一帧不再画下划线 quad」,notify 本身是会红的那一半。
+struct UnmarkObserverHarness {
+    field: gpui::Entity<TextField>,
+    notifications: std::rc::Rc<std::cell::Cell<u32>>,
+    _subscription: gpui::Subscription,
+}
+
+impl UnmarkObserverHarness {
+    fn new(cx: &mut gpui::Context<Self>) -> Self {
+        let field = cx.new(|cx| TextField::new("", cx));
+        let notifications = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counter = notifications.clone();
+        let _subscription =
+            cx.observe(&field, move |_, _, _| counter.set(counter.get() + 1));
+        Self {
+            field,
+            notifications,
+            _subscription,
+        }
+    }
+}
+
+impl gpui::Render for UnmarkObserverHarness {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        self.field.clone()
+    }
+}
+
+#[gpui::test]
+fn unmark_text_requests_the_repaint_that_clears_the_composition_underline(
+    cx: &mut TestAppContext,
+) {
+    cx.update(init_theme);
+    let (harness, cx) = cx.add_window_view(|_, cx| UnmarkObserverHarness::new(cx));
+    let field = harness.read_with(cx, |harness, _| harness.field.clone());
+    field.update_in(cx, |field, window, cx| {
+        field.set_value("hello", cx);
+        field.replace_and_mark_text_in_range(Some(0..5), "mark", None, window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    let before = harness.read_with(cx, |harness, _| harness.notifications.get());
+    field.update_in(cx, |field, window, cx| {
+        assert!(field.painted_marked, "组词期必须画出下划线 quad");
+        field.unmark_text(window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    harness.read_with(cx, |harness, _| {
+        assert!(
+            harness.notifications.get() > before,
+            "unmark 必须请求重绘,否则下划线要等下一次无关重绘才消失"
+        );
+    });
+    field.update_in(cx, |field, _, _| {
+        assert!(!field.painted_marked, "unmark 之后的帧不能再画组词下划线");
+    });
+}
+
+#[gpui::test]
+fn multiline_input_down_arrow_on_the_last_row_keeps_the_caret_at_the_end(
+    cx: &mut TestAppContext,
+) {
+    cx.update(init_theme);
+    let (field, cx) = cx.add_window_view(|_, cx| TextField::new("", cx).multiline(3, 6));
+    field.update_in(cx, |field, window, cx| {
+        window.activate_window();
+        field.set_value("abc\nxyz", cx);
+        field.focus(window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down");
+    field.read_with(cx, |field, _| {
+        assert_eq!(
+            field.selected_range.end,
+            "abc\nxyz".len(),
+            "末行行尾按 Down 应停在文本末尾,不能落回末行行首"
+        );
+    });
+}
+
+#[gpui::test]
+fn multiline_input_click_below_the_text_lands_at_the_end_of_the_last_row(
+    cx: &mut TestAppContext,
+) {
+    cx.update(init_theme);
+    let (field, cx) = cx.add_window_view(|_, cx| TextField::new("", cx).multiline(3, 6));
+    field.update_in(cx, |field, window, cx| {
+        window.activate_window();
+        field.set_value("abc\nxyz", cx);
+        field.focus(window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    let target = field.read_with(cx, |field, _| {
+        let state = field.multiline.as_ref().unwrap();
+        let layout = state.layout.as_ref().unwrap();
+        let end = layout.position(field.value().len());
+        field.last_bounds.unwrap().origin
+            + gpui::point(end.x + gpui::px(4.0), layout.line_height * 2.5)
+    });
+    cx.simulate_mouse_down(target, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_up(target, gpui::MouseButton::Left, gpui::Modifiers::none());
+    field.read_with(cx, |field, _| {
+        assert_eq!(
+            field.selected_range.end,
+            "abc\nxyz".len(),
+            "点击末行下方的留白区应落到文本末尾,不能落回末行行首"
+        );
+    });
+}
+
+// 输入框上方带一块空白区域的宿主视图:模拟「框内按下 → 框外释放」,
+// 再从空白区发起一次拖动路过输入框,验证选区不被改写。
+struct DragOutsideHarness {
+    field: gpui::Entity<TextField>,
+}
+
+impl gpui::Render for DragOutsideHarness {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        gpui::div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                gpui::div()
+                    .id("outside-area")
+                    .h(gpui::px(120.0))
+                    .w_full()
+                    .flex_none(),
+            )
+            .child(gpui::div().py(gpui::px(8.0)).child(self.field.clone()))
+    }
+}
+
+#[gpui::test]
+fn releasing_a_drag_outside_the_field_does_not_hijack_later_drags(cx: &mut TestAppContext) {
+    cx.update(init_theme);
+    let (harness, cx) = cx.add_window_view(|_, cx| DragOutsideHarness {
+        field: cx.new(|cx| TextField::new("", cx)),
+    });
+    let field = harness.read_with(cx, |harness, _| harness.field.clone());
+    field.update_in(cx, |field, window, cx| {
+        window.activate_window();
+        field.set_value("0123456789", cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    let (inside_two, inside_eight, inside_four, outside) = field.read_with(cx, |field, _| {
+        let bounds = field.last_bounds.unwrap();
+        let line = field.last_line.as_ref().unwrap();
+        let at = |offset: usize| {
+            gpui::point(bounds.left() + line.x_for_index(offset), bounds.center().y)
+        };
+        (
+            at(2),
+            at(8),
+            at(4),
+            gpui::point(bounds.center().x, bounds.top() - gpui::px(60.0)),
+        )
+    });
+    // 框内按下并拖出选区后,在框外释放:输入框收不到 on_mouse_up。
+    cx.simulate_mouse_down(inside_two, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(inside_eight, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_up(outside, gpui::MouseButton::Left, gpui::Modifiers::none());
+    field.read_with(cx, |field, _| {
+        assert_eq!(field.selected_range, 2..8, "框内拖出选区应成立");
+    });
+    // 从框外另起一次拖动,路过本框:本框选区不能被这次路过的拖动改写。
+    cx.simulate_mouse_down(outside, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(inside_four, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_up(inside_four, gpui::MouseButton::Left, gpui::Modifiers::none());
+    field.read_with(cx, |field, _| {
+        assert_eq!(
+            field.selected_range, 2..8,
+            "框外释放后,别的拖动路过本框不能改写本框选区"
+        );
+    });
+}
+
+#[gpui::test]
+fn multiline_input_undo_collapses_sub_range_edits_inside_one_composition(
+    cx: &mut TestAppContext,
+) {
+    cx.update(init_theme);
+    let (field, cx) = cx.add_window_view(|_, cx| TextField::new("", cx).multiline(3, 6));
+    field.update_in(cx, |field, window, cx| {
+        window.activate_window();
+        field.set_value("前", cx);
+        field.focus(window, cx);
+        // 组词「nihao」整段上屏。
+        field.replace_and_mark_text_in_range(None, "nihao", None, window, cx);
+        // 分段确认:只把组词前段「ni」(UTF-16 1..3)换成「你」。
+        field.replace_and_mark_text_in_range(Some(1..3), "你", None, window, cx);
+        assert_eq!(field.value(), "前你hao");
+        // 整段提交组词区域(UTF-16 1..6 = 「你hao」)。
+        field.replace_text_in_range(Some(1..6), "你好", window, cx);
+        assert_eq!(field.value(), "前你好");
+        field.handle_key_down(&key_event("z", true, false), window, cx);
+        assert_eq!(
+            field.value(),
+            "前",
+            "一次撤销应回到组词前,组词内的子区间替换不能拆成多步撤销"
+        );
     });
 }
 
