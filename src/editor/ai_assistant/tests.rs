@@ -15,6 +15,23 @@ fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
 }
 
+fn menu_command_position(
+    cx: &mut VisualTestContext,
+    label: impl FnOnce(&crate::i18n::I18nStrings) -> &str,
+) -> gpui::Point<gpui::Pixels> {
+    use gpui_kit::test::TestWindowExt as _;
+    cx.update(|window, cx| {
+        let label = label(cx.global::<crate::i18n::I18nManager>().strings());
+        let menu = window.within("popup-menu");
+        (0usize..20)
+            .filter_map(|index| menu.try_find(index))
+            .find(|item| item.label() == Some(label))
+            .unwrap_or_else(|| panic!("菜单应包含可访问的命令：{label}"))
+            .bounds()
+            .center()
+    })
+}
+
 #[gpui::test]
 fn ai_conversation_entry_has_no_redundant_quick_command_row(cx: &mut TestAppContext) {
     initialize(cx);
@@ -545,7 +562,7 @@ fn ai_explicitly_returning_to_the_document_stays_closed_after_a_tab_round_trip(
     cx.simulate_click(options, gpui::Modifiers::none());
     draw(cx);
     draw(cx);
-    let leave = cx.debug_bounds("ai-options-view").unwrap().center();
+    let leave = menu_command_position(cx, |strings| &strings.ai_task_return);
     cx.simulate_click(leave, gpui::Modifiers::none());
     draw(cx);
     draw(cx);
@@ -1531,7 +1548,7 @@ fn ai_default_context_does_not_include_the_contents_of_an_excluded_active_docume
 }
 
 #[gpui::test]
-fn ai_escape_returns_from_options_before_dismissing_the_conversation(cx: &mut TestAppContext) {
+fn ai_more_menu_preserves_the_conversation_and_escape_dismisses_only_the_menu(cx: &mut TestAppContext) {
     initialize(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
     editor.update_in(cx, |editor, window, cx| {
@@ -1550,7 +1567,14 @@ fn ai_escape_returns_from_options_before_dismissing_the_conversation(cx: &mut Te
     draw(cx);
     draw(cx);
     editor.read_with(cx, |editor, _| {
-        assert!(editor.ai_session.as_ref().unwrap().mode == PanelMode::Options)
+        assert!(editor.ai_session.as_ref().unwrap().mode == PanelMode::Task,
+            "更多菜单应覆盖在对话上，不能切走对话")
+    });
+    cx.update(|window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        let menu = window.find("popup-menu");
+        assert_eq!(menu.role(), Some(gpui::Role::Menu));
+        assert_eq!(menu.focused(), Some(true), "原生菜单应获取键盘焦点");
     });
     cx.simulate_keystrokes("escape");
     draw(cx);
@@ -1605,9 +1629,8 @@ fn ai_discard_menu_removes_pending_revisions_and_preserves_the_document(cx: &mut
         menu_bounds,
         "次级菜单不能在重绘时自行移动"
     );
-    let discard = cx.debug_bounds("ai-options-discard");
-    assert!(discard.is_some(), "次级菜单应允许丢弃整批提议");
-    cx.simulate_click(discard.unwrap().center(), gpui::Modifiers::none());
+    let discard = menu_command_position(cx, |strings| &strings.ai_panel_discard);
+    cx.simulate_click(discard, gpui::Modifiers::none());
     draw(cx);
     draw(cx);
     assert!(cx.debug_bounds("ai-review-workspace").is_none());
@@ -1863,9 +1886,10 @@ fn ai_review_can_be_left_and_reopened_from_the_more_menu(cx: &mut TestAppContext
             cx.debug_bounds("ai-floating-workbench").is_none(),
             "停靠后在侧栏内切换菜单"
         );
-        let toggle = cx.debug_bounds("ai-options-view");
-        assert!(toggle.is_some(), "正文与修改预览之间的切换应放在具名菜单里");
-        cx.simulate_click(toggle.unwrap().center(), gpui::Modifiers::none());
+        let toggle = menu_command_position(cx, |strings| {
+            if visible { &strings.ai_review_title } else { &strings.ai_task_return }
+        });
+        cx.simulate_click(toggle, gpui::Modifiers::none());
         draw(cx);
         draw(cx);
         assert_eq!(cx.debug_bounds("ai-review-workspace").is_some(), visible);
@@ -2349,8 +2373,8 @@ fn ai_settings_entry_opens_preferences_and_preserves_the_running_conversation(cx
     let more = cx.debug_bounds("ai-options").unwrap();
     cx.simulate_click(more.center(), gpui::Modifiers::none());
     draw(cx); draw(cx);
-    let settings = cx.debug_bounds("ai-settings").unwrap();
-    cx.simulate_click(settings.center(), gpui::Modifiers::none());
+    let settings = menu_command_position(cx, |strings| &strings.ai_panel_settings);
+    cx.simulate_click(settings, gpui::Modifiers::none());
     cx.run_until_parked();
     assert!(cx.read(|cx| cx.windows().iter().any(|window| crate::ui::window_content::<crate::config::preferences::PreferencesWindow>(window, cx).is_some())),
         "AI 设置必须使用偏好设置，不在对话里编辑连接");
@@ -3736,4 +3760,41 @@ fn ai_message_repaint_reuses_code_highlights_and_code_copy_keeps_the_source(
         );
     });
     editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), "正文"));
+}
+
+#[gpui::test]
+fn ai_more_menu_keyboard_opens_history_and_returns_to_the_same_draft(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    let identity = editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_ref().unwrap();
+        session
+            .input
+            .update(cx, |input, cx| input.set_value("草稿", window, cx));
+        session.saved.id.clone()
+    });
+    draw(cx);
+    draw(cx);
+    let trigger = cx.debug_bounds("ai-options").unwrap().center();
+    cx.simulate_click(trigger, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    cx.simulate_keystrokes("down down enter");
+    draw(cx);
+    draw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.ai_session.as_ref().unwrap().mode == PanelMode::History);
+    });
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    draw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert!(session.mode == PanelMode::Task);
+        assert!(session.visible);
+        assert_eq!(session.saved.id, identity);
+        assert_eq!(session.input.read(cx).value(), "草稿");
+    });
 }

@@ -927,6 +927,7 @@ impl Render for Editor {
         };
 
         let base = div()
+            .key_context("VeloraEditor")
             .w_full()
             .h_full()
             .flex()

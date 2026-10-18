@@ -94,6 +94,7 @@ impl Editor {
         let leading = (crate::editor::render::supports_hamburger_menu() && menus.is_some())
             .then(|| self.render_hamburger_menu_button(&theme, cx));
         let mut root = div()
+            .key_context("VeloraEditor")
             .size_full()
             .relative()
             .flex()

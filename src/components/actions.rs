@@ -742,7 +742,8 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         id: "dismiss_transient_ui",
         category: ShortcutCategory::Other,
         default_keys: &["escape"],
-        context: None,
+        // 无上下文绑定与最深层同级，会覆盖 Kit 菜单自己的取消动作。
+        context: Some("VeloraEditor"),
     },
     ShortcutDefinition {
         command: ShortcutCommand::ToggleViewMode,

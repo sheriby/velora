@@ -2,6 +2,7 @@ use super::*;
 use gpui::prelude::FluentBuilder;
 use gpui_kit::component::ThemeStyled as _;
 use gpui_kit::component::form::{Field, Form};
+use gpui_kit::component::menu::DropdownMenu as _;
 
 impl Editor {
     pub(super) fn render_ai_workbench(
@@ -134,33 +135,24 @@ impl Editor {
                     cx.notify();
                 },
             ))
-            .child(self.ai_button(
-                "ai-options",
-                true,
-                cx,
-                |button, cx| {
-                    button
-                        .icon(IconName::Ellipsis)
-                        .accessibility_label(
-                            cx.global::<crate::i18n::I18nManager>()
-                                .strings()
-                                .ai_panel_more
-                                .clone(),
-                        )
-                        .tooltip(
-                            cx.global::<crate::i18n::I18nManager>()
-                                .strings()
-                                .ai_panel_more
-                                .clone(),
-                        )
-                },
-                |editor, _, cx| {
-                    if let Some(session) = editor.ai_session.as_mut() {
-                        session.mode = PanelMode::Options;
-                    }
-                    cx.notify();
-                },
-            ))
+            .child(
+                Button::new("ai-options")
+                    .debug_selector(|| "ai-options".into())
+                    .small()
+                    .ghost()
+                    .icon(IconName::Ellipsis)
+                    .accessibility_label(strings.ai_panel_more.clone())
+                    .tooltip(strings.ai_panel_more.clone())
+                    .dropdown_menu_with_anchor(Anchor::TopRight, {
+                        let owner = cx.entity().downgrade();
+                        move |menu, _, cx| match owner.upgrade() {
+                            Some(owner) => {
+                                owner.update(cx, |editor, cx| editor.ai_options_menu(menu, cx))
+                            }
+                            None => menu,
+                        }
+                    }),
+            )
             .child(self.ai_button(
                 "ai-hide",
                 false,

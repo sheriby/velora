@@ -36,7 +36,7 @@ pub(super) enum PanelMode {
     Skills,
     Instruction,
     Context,
-    Options,
+    Sources,
 }
 
 pub(super) struct AiSession {

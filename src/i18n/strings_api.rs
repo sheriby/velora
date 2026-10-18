@@ -494,7 +494,7 @@ impl I18nStrings {
         strings.ai_action_expand = "扩写".into();
         strings.ai_action_explain = "解释".into();
         strings.ai_panel_send = "发送".into();
-        strings.ai_panel_settings = "设置".into();
+        strings.ai_panel_settings = "设置…".into();
         strings.ai_panel_accept_all = "全部接受".into();
         strings.ai_panel_accept_file = "接受".into();
         strings.ai_panel_reject = "拒绝".into();
@@ -1046,7 +1046,7 @@ impl I18nStrings {
             ai_action_expand: "Expand".into(),
             ai_action_explain: "Explain".into(),
             ai_panel_send: "Send".into(),
-            ai_panel_settings: "Settings".into(),
+            ai_panel_settings: "Settings…".into(),
             ai_panel_accept_all: "Accept all".into(),
             ai_panel_accept_file: "Accept".into(),
             ai_panel_reject: "Reject".into(),
