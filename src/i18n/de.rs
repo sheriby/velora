@@ -418,6 +418,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) preferences_status_bar_show_sidebar_toggle: Option<String>,
     pub(crate) preferences_status_bar_show_mode_switch: Option<String>,
     pub(crate) ai_assistant: Option<String>,
+    pub(crate) preferences_ai_enabled: Option<String>,
+    pub(crate) ai_feature_disabled: Option<String>,
     pub(crate) ai_action_shorten: Option<String>,
     pub(crate) ai_action_expand: Option<String>,
     pub(crate) ai_action_explain: Option<String>,

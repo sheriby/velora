@@ -256,9 +256,17 @@ impl Editor {
             self.selection_toolbar = None;
             return None;
         }
-        let size = if self.is_read_only() {
+        let ai_enabled = crate::ai::settings::AiFeature::enabled(cx);
+        if self.is_read_only() && !ai_enabled {
+            self.selection_toolbar = None;
+            return None;
+        }
+        let mut size = if self.is_read_only() {
             size(px(BUTTON_SIZE + 2.0 * PANEL_PADDING + 2.0 * theme.dimensions.dialog_border_width), px(BUTTON_SIZE + 2.0 * PANEL_PADDING + 2.0 * theme.dimensions.dialog_border_width))
         } else { Self::toolbar_size(theme) };
+        if !self.is_read_only() && !ai_enabled {
+            size.width -= px(BUTTON_SIZE + BUTTON_GAP);
+        }
         let origin = Self::toolbar_origin(selection, size, viewport);
 
         let heading_menu_open = self
@@ -292,7 +300,9 @@ impl Editor {
         }
         toolbar = toolbar.child(Self::toolbar_separator(theme));
         toolbar = toolbar.child(self.link_button(&strings, theme, cx));
-        toolbar = toolbar.child(self.ai_toolbar_button(theme, cx));
+        if ai_enabled {
+            toolbar = toolbar.child(self.ai_toolbar_button(theme, cx));
+        }
         let clear_enabled = self.clear_format_is_available(cx);
         toolbar = toolbar.child(self.clear_format_button(&strings, theme, clear_enabled, cx));
         if let Some((rows, geometry, offset, _)) = heading_menu.as_ref() {

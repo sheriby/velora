@@ -311,6 +311,9 @@ impl Editor {
     /// 主菜单的行序：顶部图标条 → 复制为 → 格式 / 段落 / 插入 → 视图。
     pub(crate) fn document_menu_rows(&self, cx: &App) -> Vec<DocumentMenuRow> {
         let mut rows = self.document_menu_rows_without_ai(cx);
+        if !crate::ai::settings::AiFeature::enabled(cx) {
+            return rows;
+        }
         let commands=crate::ai::AiCommand::ALL.into_iter().filter(|command|!command.requires_selection()||self.has_text_selection(cx))
             .chain(std::iter::once(crate::ai::AiCommand::Ask));
         rows.push(DocumentMenuRow::Separator);

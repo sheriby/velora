@@ -53,6 +53,7 @@ pub(crate) struct CustomInstruction {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct AiSettings {
+    pub enabled: bool,
     pub endpoints: Vec<Endpoint>,
     pub default_endpoint: String,
     pub instructions: Vec<CustomInstruction>,
@@ -202,3 +203,37 @@ pub(crate) fn settings_path() -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests;
+
+
+pub(crate) struct AiFeature {
+    enabled: bool,
+}
+
+impl gpui::Global for AiFeature {}
+
+impl AiFeature {
+    pub fn init(cx: &mut gpui::App) {
+        let enabled = match AiSettings::load() {
+            Ok(settings) => settings.enabled,
+            Err(error) => {
+                eprintln!("读取 AI 开关失败，已保持关闭：{error}");
+                false
+            }
+        };
+        cx.set_global(Self { enabled });
+    }
+
+    pub fn enabled(cx: &gpui::App) -> bool {
+        cx.try_global::<Self>().is_some_and(|feature| feature.enabled)
+    }
+
+    pub fn set_enabled(cx: &mut gpui::App, enabled: bool) {
+        cx.set_global(Self { enabled });
+        if cx.try_global::<crate::theme::ThemeManager>().is_some()
+            && cx.try_global::<crate::i18n::I18nManager>().is_some()
+        {
+            crate::app_menu::install_menus(cx);
+        }
+        cx.refresh_windows();
+    }
+}

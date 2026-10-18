@@ -1240,6 +1240,7 @@ async fn the_shortcut_column_shows_the_users_own_binding(cx: &mut TestAppContext
 #[gpui::test]
 async fn the_main_panel_rows_draw_their_icons_inside_the_measured_box(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
+    cx.update(|cx| crate::ai::settings::AiFeature::set_enabled(cx, true));
     let (editor, cx) = cx
         .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
     redraw(cx);

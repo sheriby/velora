@@ -1791,7 +1791,7 @@ fn ai_preferences_page_edits_and_saves_the_same_connection_file(cx: &mut TestApp
     let _config = crate::config::override_test_config_root(&root);
     init_preferences_test_app(cx);
     crate::config::load_or_create_app_preferences().unwrap();
-    let mut settings = crate::ai::settings::AiSettings::default();
+    let mut settings = crate::ai::settings::AiSettings::default(); settings.enabled = true;
     let path = crate::ai::settings::settings_path().unwrap();
     settings.save_endpoint(&path, crate::ai::settings::Endpoint { id: "local".into(), name: "本地模型".into(), base_url: "http://localhost:11434/v1".into(), model: "old-model".into(), ..Default::default() }, Some("test-api-key")).unwrap();
     let handle = cx.update(|cx| open_preferences_window_with_size(cx, AppPreferences::default(), default_theme_options(), "偏好设置".into(), gpui::size(px(1000.0), px(1200.0))));
@@ -1820,7 +1820,7 @@ fn ai_preferences_invalid_input_preserves_configuration_and_cancel_discards_the_
     let _config = crate::config::override_test_config_root(&root);
     init_preferences_test_app(cx); crate::config::load_or_create_app_preferences().unwrap();
     let path = crate::ai::settings::settings_path().unwrap();
-    let mut settings = crate::ai::settings::AiSettings::default();
+    let mut settings = crate::ai::settings::AiSettings::default(); settings.enabled = true;
     settings.save_endpoint(&path, crate::ai::settings::Endpoint { id:"local".into(), name:"local".into(), base_url:"http://localhost:11434/v1".into(), model:"model".into(), ..Default::default() }, Some("test-key")).unwrap();
     let before = std::fs::read(&path).unwrap();
     let handle = cx.update(|cx| open_preferences_window_with_size(cx, AppPreferences::default(), default_theme_options(), "偏好设置".into(), gpui::size(px(1000.0), px(1200.0))));
@@ -1845,7 +1845,7 @@ fn ai_preferences_can_choose_a_default_clear_a_key_and_delete_a_connection(cx: &
     let _config = crate::config::override_test_config_root(&root);
     init_preferences_test_app(cx); crate::config::load_or_create_app_preferences().unwrap();
     let path = crate::ai::settings::settings_path().unwrap();
-    let mut settings = crate::ai::settings::AiSettings::default();
+    let mut settings = crate::ai::settings::AiSettings::default(); settings.enabled = true;
     for id in ["one","two"] { settings.save_endpoint(&path, crate::ai::settings::Endpoint { id:id.into(),name:id.into(),base_url:"http://localhost:11434/v1".into(),model:"model".into(),..Default::default() },Some("test-key")).unwrap(); }
     let handle = cx.update(|cx| open_preferences_window_with_size(cx, AppPreferences::default(), default_theme_options(), "偏好设置".into(), gpui::size(px(1000.0),px(1500.0))));
     let mut window_cx = gpui::VisualTestContext::from_window(handle.into(),cx);

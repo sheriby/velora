@@ -5,6 +5,7 @@ pub(crate) fn build_menus(
     theme_manager: &ThemeManager,
     i18n_manager: &I18nManager,
     recent_files: &[PathBuf],
+    ai_enabled: bool,
 ) -> Vec<Menu> {
     let current_theme_id = theme_manager.current_theme_id().to_string();
     let current_language_id = i18n_manager.current_language_id().to_string();
@@ -136,6 +137,14 @@ pub(crate) fn build_menus(
             items: help_items,
         },
     ]);
+    if !ai_enabled {
+        let actions = crate::commands::commands().iter().filter(|spec| spec.requires_ai())
+            .map(|spec| spec.boxed_action().as_any().type_id())
+            .collect::<std::collections::HashSet<_>>();
+        for menu in &mut menus {
+            hide_ai_menu_items(&mut menu.items, &actions);
+        }
+    }
     menus
 }
 
@@ -148,8 +157,32 @@ pub(crate) fn install_menus(cx: &mut App) {
         cx.global::<ThemeManager>(),
         cx.global::<I18nManager>(),
         &recent_entries,
+        crate::ai::settings::AiFeature::enabled(cx),
     );
     cx.set_menus(menus);
+}
+
+fn hide_ai_menu_items(items: &mut Vec<MenuItem>, actions: &std::collections::HashSet<std::any::TypeId>) {
+    for item in items.iter_mut() {
+        if let MenuItem::Submenu(menu) = item {
+            hide_ai_menu_items(&mut menu.items, actions);
+        }
+    }
+    let mut previous_separator = true;
+    items.retain(|item| {
+        if let MenuItem::Action { action, .. } = item
+            && actions.contains(&action.as_any().type_id())
+        {
+            return false;
+        }
+        let separator = matches!(item, MenuItem::Separator);
+        let keep = !separator || !previous_separator;
+        previous_separator = separator;
+        keep
+    });
+    if matches!(items.last(), Some(MenuItem::Separator)) {
+        items.pop();
+    }
 }
 
 /// Finds the editor window that should receive a picked folder: the active

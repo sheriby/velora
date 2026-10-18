@@ -6,6 +6,7 @@ fn initialize(cx: &mut TestAppContext) {
         crate::i18n::I18nManager::init_with_language_id(cx, "en-US");
         crate::theme::ThemeManager::init(cx);
         crate::components::init(cx);
+        crate::ai::settings::AiFeature::set_enabled(cx, true);
     });
 }
 
@@ -2385,4 +2386,40 @@ fn ai_cmd_j_always_starts_a_new_conversation_even_at_the_same_position(cx: &mut 
         );
         assert!(editor.ai_session.as_ref().unwrap().visible);
     });
+}
+
+#[gpui::test]
+fn ai_opt_in_disabling_cancels_active_and_retained_tasks_and_preserves_pending_history(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原文".into(), None));
+    let (previous, current, path) = editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.control = RunControl::default();
+        session.saved.running = true;
+        let id = session.saved.target.as_ref().unwrap().document_id.clone();
+        let base = session.saved.workspace.documents[&id].clone();
+        session.saved.workspace.changes.propose(base, "原文", "建议").unwrap();
+        let previous = session.control.clone();
+        let path = session.saved.path().unwrap();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.control = RunControl::default();
+        session.saved.running = true;
+        (previous, session.control.clone(), path)
+    });
+    cx.update(|_, cx| crate::ai::settings::AiFeature::set_enabled(cx, false));
+    draw(cx);
+    draw(cx);
+    assert!(previous.cancel.is_cancelled() && current.cancel.is_cancelled());
+    assert!(cx.debug_bounds("ai-assistant-panel").is_none());
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.ai_session.is_none() && editor.ai_task_sessions.is_empty());
+        assert_eq!(editor.buffer.text(), "原文");
+    });
+    let saved = crate::ai::session::SavedSession::load_at(&path, None).unwrap();
+    assert_eq!(saved.workspace.changes.proposals.len(), 1);
+    assert!(saved.interrupted);
 }

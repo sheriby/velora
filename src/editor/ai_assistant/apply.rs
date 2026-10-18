@@ -27,6 +27,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if !crate::ai::settings::AiFeature::enabled(cx) {
+            bail!("{}", cx.global::<crate::i18n::I18nManager>().strings().ai_feature_disabled);
+        }
         if self.is_read_only() {
             bail!("阅读模式下不能应用修改");
         }

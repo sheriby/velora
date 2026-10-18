@@ -73,6 +73,7 @@ impl Editor {
         let strings = cx.global::<I18nManager>().strings();
         crate::commands::commands()
             .iter()
+            .filter(|spec| !spec.requires_ai() || crate::ai::settings::AiFeature::enabled(cx))
             .map(|spec| CommandEntry::from_spec(spec, strings))
             .collect()
     }

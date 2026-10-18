@@ -308,7 +308,7 @@ fn reading_mode_preserves_selection_copy_search_and_scrolling(cx: &mut TestAppCo
         cx.debug_bounds("toolbar-bold").is_none() && cx.debug_bounds("toolbar-italic").is_none(),
         "阅读模式不应显示格式按钮"
     );
-    assert!(cx.debug_bounds("toolbar-ai").is_some(), "阅读模式保留选区 AI 入口");
+    assert!(cx.debug_bounds("toolbar-ai").is_none(), "未开启 AI 的阅读模式不显示 AI 入口");
     editor.update(cx, |editor, cx| editor.open_document_find(cx));
     redraw(cx);
     cx.simulate_input("alpha");

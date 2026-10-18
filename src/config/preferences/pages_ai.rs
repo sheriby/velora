@@ -32,6 +32,9 @@ impl Drop for AiPreferences {
 impl AiPreferences {
     fn staged(&self, cx: &App) -> anyhow::Result<AiSettings> {
         let mut settings = self.settings.clone();
+        if !settings.enabled {
+            return Ok(settings);
+        }
         settings.excluded_paths = self
             .excluded
             .read(cx)
@@ -198,8 +201,9 @@ impl PreferencesWindow {
         self.stop_ai_preferences_probe();
         if let Some(state) = self.ai_preferences.as_mut() {
             state.settings = settings.clone();
-            state.saved = settings;
+            state.saved = settings.clone();
         }
+        crate::ai::settings::AiFeature::set_enabled(cx, settings.enabled);
         self.ai_preferences_dirty.set(false);
         Ok(())
     }
@@ -284,7 +288,21 @@ impl PreferencesWindow {
         let Some(state) = self.ai_preferences.as_ref() else {
             return div().into_any_element();
         };
-        let mut content = div().w_full().flex().flex_col().gap(px(12.0));
+        let toggle = div().debug_selector(|| "preferences-ai-enabled".into())
+            .child(crate::components::switch::Switch::new("preferences-ai-enabled-switch")
+                .checked(state.settings.enabled)
+                .on_click(cx.listener(|preferences, _, _, cx| {
+                    preferences.stop_ai_preferences_probe();
+                    if let Some(state) = preferences.ai_preferences.as_mut() {
+                        state.settings.enabled = !state.settings.enabled;
+                    }
+                    cx.notify();
+                })));
+        let enabled_row = self.settings_row(theme, strings.preferences_ai_enabled.clone(), toggle);
+        let mut content = div().w_full().flex().flex_col().gap(px(12.0)).child(enabled_row);
+        if !state.settings.enabled {
+            return self.settings_card(theme, vec![div().w_full().p(px(16.0)).child(content).into_any_element()]);
+        }
         for (index, endpoint) in state.settings.endpoints.iter().enumerate() {
             let endpoint = endpoint.clone();
             content = content.child(self.ai_preference_button(

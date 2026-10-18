@@ -116,6 +116,20 @@ enum WorkerEvent {
 }
 
 impl Editor {
+    pub(in crate::editor) fn sync_ai_availability(&mut self, cx: &mut Context<Self>) {
+        if self.ai_result_preview || self.split_parent.is_some()
+            || crate::ai::settings::AiFeature::enabled(cx)
+        {
+            return;
+        }
+        if self.ai_session.is_some() {
+            self.stop_ai_task(cx);
+            drop(self.ai_session.take());
+        }
+        self.ai_task_sessions.clear();
+        self.ai_surface_visible.set(false);
+    }
+
     pub(in crate::editor) fn dismiss_ai_panel(
         &mut self,
         window: &mut Window,
@@ -793,6 +807,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !crate::ai::settings::AiFeature::enabled(cx) {
+            return;
+        }
         if let Some(group) = self.active_split_editor() {
             let handle = window.window_handle();
             cx.defer(move |cx| {
@@ -1117,6 +1134,10 @@ impl Editor {
     }
 
     pub(super) fn send_ai_task(&mut self, cx: &mut Context<Self>) {
+        if !crate::ai::settings::AiFeature::enabled(cx) {
+            self.sync_ai_availability(cx);
+            return;
+        }
         if self
             .ai_session
             .as_ref()

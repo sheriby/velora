@@ -480,6 +480,7 @@ fn main() {
         I18nManager::init_with_language_id(cx, &preferences.default_language_id);
         ThemeManager::init_with_theme_id(cx, &preferences.default_theme_id);
         config::EditorSettings::init(cx, preferences.show_table_headers);
+        ai::settings::AiFeature::init(cx);
         log_startup_phase(startup_start, "i18n/theme/settings ready");
         net::install_http_client(cx);
         init_editor(cx, &preferences.keybindings);

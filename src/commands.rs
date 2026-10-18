@@ -51,6 +51,10 @@ pub(crate) struct CommandSpec {
 }
 
 impl CommandSpec {
+    pub(crate) fn requires_ai(&self) -> bool {
+        self.id == "open_ai_assistant" || self.id.starts_with("ai_")
+    }
+
     /// 本地化文案。
     pub(crate) fn label(&self, strings: &I18nStrings) -> String {
         (self.label)(strings)

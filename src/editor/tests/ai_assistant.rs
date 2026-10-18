@@ -1,9 +1,14 @@
 use super::common::*;
 use crate::editor::context_menu::DocumentMenuRow;
 
+fn init_ai_test_app(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::ai::settings::AiFeature::set_enabled(cx, true));
+}
+
 #[gpui::test]
 fn ai_selection_toolbar_opens_the_assistant_without_changing_the_document(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha one\n\nbeta two".into(), None));
     redraw(cx);
@@ -28,7 +33,7 @@ fn ai_selection_toolbar_opens_the_assistant_without_changing_the_document(cx: &m
 fn ai_context_menu_exposes_common_commands_and_an_empty_selection_has_clear_scope(
     cx: &mut TestAppContext,
 ) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha one".into(), None));
     let block = editor.read_with(cx, |editor, _| {
@@ -68,7 +73,7 @@ fn ai_context_menu_exposes_common_commands_and_an_empty_selection_has_clear_scop
 
 #[gpui::test]
 fn ai_reading_mode_still_offers_selection_assistance(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha one".into(), None));
     redraw(cx);
@@ -89,7 +94,7 @@ fn ai_reading_mode_still_offers_selection_assistance(cx: &mut TestAppContext) {
 fn ai_review_applies_only_after_acceptance_and_one_undo_restores_the_document(
     cx: &mut TestAppContext,
 ) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let original = "# 标题\n\n原始内容。";
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, original.into(), None));
     editor.update_in(cx, |editor, window, cx| {
@@ -116,7 +121,7 @@ fn ai_review_applies_only_after_acceptance_and_one_undo_restores_the_document(
 fn ai_review_refuses_reading_mode_and_user_edits_without_discarding_the_proposal(
     cx: &mut TestAppContext,
 ) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原始内容".into(), None));
     editor.update_in(cx, |editor, window, cx| {
@@ -157,7 +162,7 @@ fn ai_review_refuses_reading_mode_and_user_edits_without_discarding_the_proposal
 
 #[gpui::test]
 fn ai_review_accepts_multiple_documents_into_tabs_and_preserves_utf16(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-ai-review-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let first = root.join("first.md");
@@ -208,7 +213,7 @@ fn ai_review_accepts_multiple_documents_into_tabs_and_preserves_utf16(cx: &mut T
 
 #[gpui::test]
 fn ai_review_preflights_every_document_before_accepting_any_change(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-ai-conflict-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let first = root.join("first.md");
@@ -250,7 +255,7 @@ fn ai_review_preflights_every_document_before_accepting_any_change(cx: &mut Test
 
 #[gpui::test]
 fn ai_review_new_document_becomes_an_unsaved_tab_without_creating_a_file(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-ai-new-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let first = root.join("first.md");
@@ -282,7 +287,7 @@ fn ai_review_new_document_becomes_an_unsaved_tab_without_creating_a_file(cx: &mu
 
 #[gpui::test]
 fn ai_review_shared_document_updates_both_split_views(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-ai-split-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("note.md");
@@ -330,7 +335,7 @@ fn ai_review_shared_document_updates_both_split_views(cx: &mut TestAppContext) {
 fn ai_review_rejects_a_dirty_copy_of_the_current_document_in_another_window(
     cx: &mut TestAppContext,
 ) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-ai-windows-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("note.md");
@@ -367,7 +372,7 @@ fn ai_review_rejects_a_dirty_copy_of_the_current_document_in_another_window(
 
 #[gpui::test]
 fn ai_window_commands_capture_the_active_split_document(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-ai-command-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("note.md");
@@ -414,7 +419,7 @@ fn ai_window_commands_capture_the_active_split_document(cx: &mut TestAppContext)
 
 #[gpui::test]
 fn ai_selection_commands_do_not_silently_expand_to_the_entire_document(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, "完整文档".into(), None));
     editor.update_in(cx, |editor, window, cx| {
@@ -427,7 +432,7 @@ fn ai_selection_commands_do_not_silently_expand_to_the_entire_document(cx: &mut 
 
 #[gpui::test]
 fn ai_closing_the_window_preserves_partial_output_and_cancels_execution(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原文".into(), None));
     let (path, control) = editor.update_in(cx, |editor, window, cx| {
         editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx);
@@ -457,7 +462,7 @@ fn ai_closing_the_window_preserves_partial_output_and_cancels_execution(cx: &mut
 fn ai_answer_links_open_workspace_sources_without_making_the_answer_editable(
     cx: &mut TestAppContext,
 ) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-ai-links-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("nested")).unwrap();
     std::fs::write(root.join("note.md"), "# Source\n\nContent").unwrap();
@@ -504,7 +509,7 @@ fn ai_answer_links_open_workspace_sources_without_making_the_answer_editable(
 
 #[gpui::test]
 fn ai_task_keeps_the_original_selection_when_the_user_continues_editing(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原始选区 后文".into(), None));
     let block = editor.read_with(cx, |editor, _| {
@@ -548,7 +553,7 @@ fn ai_documents_outside_the_workspace_do_not_alias_files_with_the_same_name() {
 
 #[gpui::test]
 fn ai_completed_answers_all_keep_their_markdown_previews(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
     editor.update_in(cx, |editor, window, cx| {
         editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx);
@@ -573,7 +578,7 @@ fn ai_completed_answers_all_keep_their_markdown_previews(cx: &mut TestAppContext
 
 #[gpui::test]
 fn ai_prompt_keyboard_shortcuts_do_not_edit_or_undo_the_document(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
     redraw(cx);
     editor.update_in(cx, |editor, window, cx| {
@@ -599,7 +604,7 @@ fn ai_prompt_keyboard_shortcuts_do_not_edit_or_undo_the_document(cx: &mut TestAp
 
 #[gpui::test]
 fn ai_selection_button_opens_after_a_real_drag_and_tooltip_hover(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let markdown = "# Velora\n\nA native Markdown editor with a paragraph that can be selected with the mouse.";
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.into(), None));
     cx.update(|window, _| window.activate_window());
@@ -650,7 +655,7 @@ fn ai_selection_button_opens_after_a_real_drag_and_tooltip_hover(cx: &mut TestAp
 
 #[gpui::test]
 fn ai_native_menu_action_does_not_read_the_window_during_its_own_dispatch(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     cx.update(crate::app_menu::init);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原生菜单入口".into(), None));
@@ -676,7 +681,7 @@ fn ai_native_menu_action_does_not_read_the_window_during_its_own_dispatch(cx: &m
 
 #[gpui::test]
 fn ai_selection_button_in_an_editor_group_displays_the_window_assistant(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
+    init_ai_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-ai-group-ui-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("note.md");
@@ -742,4 +747,38 @@ fn ai_selection_button_in_an_editor_group_displays_the_window_assistant(cx: &mut
             "从正文重新唤起应捕获新任务，不续用旧指令");
     });
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[gpui::test]
+fn ai_opt_in_default_document_menu_does_not_include_ai(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha one".into(), None));
+    editor.read_with(cx, |editor, cx| {
+        assert!(!editor.document_menu_rows(cx).iter().any(|row| {
+            matches!(row, DocumentMenuRow::Item { name, .. } if name.starts_with("ai-"))
+        }), "未开启 AI 时，正文右键菜单不应出现 AI 项");
+    });
+}
+
+#[gpui::test]
+fn ai_opt_in_default_selection_toolbar_does_not_include_ai(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha one".into(), None));
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
+    editor.update(cx, |editor, _| editor.focus_block(block.entity_id()));
+    block.update(cx, |block, _| block.selected_range = 0..5);
+    redraw(cx);
+    assert!(cx.debug_bounds("toolbar-bold").is_some());
+    assert!(cx.debug_bounds("toolbar-ai").is_none(), "默认工具栏应只有编辑操作");
+}
+
+#[gpui::test]
+fn ai_opt_in_default_shortcut_does_not_create_a_task(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx);
+        assert!(editor.ai_session.is_none(), "未开启 AI 不能创建或发送任务");
+    });
 }

@@ -106,6 +106,7 @@ async fn command_palette_panel_floats_top_centered_over_the_document(cx: &mut Te
 fn registry_index(id: &str) -> usize {
     commands()
         .iter()
+        .filter(|spec| !spec.requires_ai())
         .position(|spec| spec.id == id)
         .unwrap_or_else(|| panic!("命令注册表里没有 {id}"))
 }
@@ -352,7 +353,7 @@ async fn command_palette_selection_wraps_within_entries(cx: &mut TestAppContext)
     open_palette(&editor, cx);
 
     // 空查询时面板列的就是注册表顺序（registry_index 同一判据）。
-    let count = commands().len();
+    let count = commands().iter().filter(|spec| !spec.requires_ai()).count();
     assert!(count > 1, "前置：面板条目多于一条");
 
     // 连按 Down 越过末条：环绕回起点侧，落点可精确推演为 (count+3) % count。

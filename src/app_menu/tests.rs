@@ -31,6 +31,23 @@ mod tests {
     }
 
     #[test]
+    fn ai_opt_in_native_menu_excludes_ai_actions_when_disabled() {
+        fn has_ai(items: &[MenuItem]) -> bool {
+            items.iter().any(|item| match item {
+                MenuItem::Action { action, .. } => action.as_any().is::<crate::components::OpenAiAssistant>(),
+                MenuItem::Submenu(menu) => has_ai(&menu.items),
+                _ => false,
+            })
+        }
+        let theme_manager = ThemeManager::default();
+        let i18n_manager = I18nManager::default();
+        let disabled = build_menus(&theme_manager, &i18n_manager, &[], false);
+        assert!(!disabled.iter().any(|menu| has_ai(&menu.items)));
+        let enabled = build_menus(&theme_manager, &i18n_manager, &[], true);
+        assert!(enabled.iter().any(|menu| has_ai(&menu.items)));
+    }
+
+    #[test]
     fn windows_manifest_is_embedded_only_by_velora_in_builds_and_tests() {
         let manifest: toml::Value =
             toml::from_str(include_str!("../../Cargo.toml")).expect("应用 Cargo 配置");
@@ -190,7 +207,7 @@ mod tests {
     fn build_menus_uses_english_fallback_by_default() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], true);
 
         let menu_names = menus
             .iter()
@@ -310,7 +327,7 @@ mod tests {
     fn build_menus_uses_chinese_language_when_selected() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::new_with_language_id("zh-CN");
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], true);
 
         // 菜单项一律按命令 id 找：平台差异只体现在「命令落在哪个菜单」，
         // 不再写成 menus[1] / menus[0] 这种下标算术（下标会随注册表增删漂移）。
@@ -391,7 +408,7 @@ mod tests {
     fn export_menu_items_dispatch_export_actions() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], true);
 
         // 导出菜单就是注册表 Export 分组那五条，顺序与注册表一致（roadmap F4/F5：
         // 打印排在 PNG 之后，复制为 HTML 顺延到最后）。逐条对照文案与动作，
@@ -426,7 +443,7 @@ mod tests {
     fn view_menu_matches_the_command_registry() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], true);
         let strings = i18n_manager.strings();
         let items = &command_menu(&menus, "toggle_sidebar").items;
 
@@ -460,7 +477,7 @@ mod tests {
     fn language_menu_items_dispatch_select_language_actions() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], true);
 
         match &named_menu(&menus, "Language").items[0] {
             MenuItem::Action { action, .. } => {
@@ -478,7 +495,7 @@ mod tests {
     fn recent_files_submenu_uses_empty_state_when_history_is_empty() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], true);
 
         let recent_menu = recent_submenu(&menus);
 
@@ -530,7 +547,7 @@ mod tests {
             PathBuf::from(r"C:\docs\one.md"),
             PathBuf::from(r"D:\notes\two.markdown"),
         ];
-        let menus = build_menus(&theme_manager, &i18n_manager, &recent_files);
+        let menus = build_menus(&theme_manager, &i18n_manager, &recent_files, true);
 
         let recent_menu = recent_submenu(&menus);
 
@@ -574,7 +591,7 @@ mod tests {
     fn config_import_items_are_bottom_menu_actions() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], true);
 
         let language_items = &named_menu(&menus, "Language").items;
         assert!(matches!(
@@ -623,7 +640,7 @@ mod tests {
         let mut theme_manager = ThemeManager::default();
         assert!(theme_manager.set_theme_by_id("velora-light"));
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], true);
         let theme_items = &named_menu(&menus, "Theme").items;
 
         assert_eq!(action_name(&theme_items[0]), "Follow System");
@@ -646,7 +663,7 @@ mod tests {
     fn application_menu_includes_a_manual_release_update_check() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], true);
         let items = &command_menu(&menus, "preferences").items;
         assert!(items.iter().any(|item| match item {
             MenuItem::Action { action, .. } => action.as_any().is::<CheckForUpdates>(),
@@ -658,7 +675,7 @@ mod tests {
     fn help_menu_contains_about_only() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], true);
         let help_items = &command_menu(&menus, "show_about").items;
 
         assert_eq!(help_items.len(), 1);

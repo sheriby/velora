@@ -1028,6 +1028,8 @@ impl I18nStringsDe {
             ai_assistant: self
                 .ai_assistant
                 .unwrap_or(defaults.ai_assistant),
+            preferences_ai_enabled: self.preferences_ai_enabled.unwrap_or(defaults.preferences_ai_enabled),
+            ai_feature_disabled: self.ai_feature_disabled.unwrap_or(defaults.ai_feature_disabled),
             ai_action_shorten: self.ai_action_shorten.unwrap_or(defaults.ai_action_shorten),
             ai_action_expand: self.ai_action_expand.unwrap_or(defaults.ai_action_expand),
             ai_action_explain: self.ai_action_explain.unwrap_or(defaults.ai_action_explain),
