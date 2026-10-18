@@ -1543,7 +1543,7 @@ fn ai_escape_returns_from_options_before_dismissing_the_conversation(cx: &mut Te
         session.mode = PanelMode::Task;
         session
             .input
-            .update(cx, |input, cx| input.set_value("保留输入", cx));
+            .update(cx, |input, cx| input.set_value("保留输入", window, cx));
     });
     draw(cx);
     draw(cx);
@@ -1897,7 +1897,7 @@ fn ai_cmd_j_in_another_tab_starts_from_its_current_selection_and_preserves_both_
             });
         session
             .input
-            .update(cx, |input, cx| input.set_value("A 的草稿", cx));
+            .update(cx, |input, cx| input.set_value("A 的草稿", window, cx));
         session.saved.id.clone()
     });
     propose_tab_changes(&editor, cx);
@@ -1919,7 +1919,7 @@ fn ai_cmd_j_in_another_tab_starts_from_its_current_selection_and_preserves_both_
     });
     draw(cx);
     draw(cx);
-    let second_task = editor.update(cx, |editor, cx| {
+    let second_task = editor.update_in(cx, |editor, window, cx| {
         let session = editor.ai_session.as_mut().unwrap();
         let target = session.saved.target.as_ref().unwrap();
         assert_eq!(
@@ -1937,7 +1937,7 @@ fn ai_cmd_j_in_another_tab_starts_from_its_current_selection_and_preserves_both_
         session.mode = PanelMode::Task;
         session
             .input
-            .update(cx, |input, cx| input.set_value("B 的草稿", cx));
+            .update(cx, |input, cx| input.set_value("B 的草稿", window, cx));
         session.saved.id.clone()
     });
     editor.update_in(cx, |editor, window, cx| {
@@ -2070,7 +2070,7 @@ fn ai_cmd_j_in_a_new_selection_of_the_same_tab_starts_an_independent_task(cx: &m
         );
         session
             .input
-            .update(cx, |input, cx| input.set_value("第一处的补充要求", cx));
+            .update(cx, |input, cx| input.set_value("第一处的补充要求", window, cx));
         let start = source.find("第二处").unwrap();
         editor.jump_to_document_search_range(start..source.len(), cx);
         editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx);
@@ -2344,7 +2344,7 @@ fn ai_settings_entry_opens_preferences_and_preserves_the_running_conversation(cx
         session.control = RunControl::default();
         session.saved.running = true;
         session.generation = 20;
-        session.input.update(cx, |field, cx| field.set_value("未发出的要求", cx));
+        session.input.update(cx, |field, cx| field.set_value("未发出的要求", window, cx));
         (session.saved.id.clone(), session.control.clone())
     });
     draw(cx); draw(cx);
@@ -2386,7 +2386,7 @@ fn ai_settings_saved_elsewhere_refreshes_configuration_without_resetting_the_con
     let id = editor.update_in(cx, |editor, window, cx| {
         editor.open_ai_assistant(AiCommand::Ask, window, cx);
         let session = editor.ai_session.as_mut().unwrap();
-        session.input.update(cx, |field, cx| field.set_value("尚未发出", cx));
+        session.input.update(cx, |field, cx| field.set_value("尚未发出", window, cx));
         session.saved.id.clone()
     });
     let settings = crate::ai::settings::AiSettings {
@@ -2469,8 +2469,8 @@ fn ai_instruction_conversation_keeps_its_http_prefix_after_language_and_preferen
             .as_ref()
             .unwrap()
             .input
-            .update(cx, |field, cx| field.set_value("First request", cx));
-        editor.send_ai_task(cx);
+            .update(cx, |field, cx| field.set_value("First request", window, cx));
+        editor.send_ai_task(window, cx);
     });
     for _ in 0..10 {
         cx.executor()
@@ -2485,14 +2485,14 @@ fn ai_instruction_conversation_keeps_its_http_prefix_after_language_and_preferen
         .insert("conversation".into(), "Changed preference".into());
     settings.save_at(&path).unwrap();
     cx.update(|_, cx| crate::i18n::I18nManager::init_with_language_id(cx, "zh-CN"));
-    editor.update(cx, |editor, cx| {
+    editor.update_in(cx, |editor, window, cx| {
         editor
             .ai_session
             .as_ref()
             .unwrap()
             .input
-            .update(cx, |field, cx| field.set_value("Second request", cx));
-        editor.send_ai_task(cx);
+            .update(cx, |field, cx| field.set_value("Second request", window, cx));
+        editor.send_ai_task(window, cx);
     });
     for _ in 0..10 {
         cx.executor()
@@ -2559,13 +2559,13 @@ fn sidebar_menu_chain(cx: &mut TestAppContext, split: bool) {
         cx.debug_bounds("ai-sidebar").is_some(),
         "从视图打开应直接显示侧栏"
     );
-    let (id, control) = editor.update(cx, |editor, cx| {
+    let (id, control) = editor.update_in(cx, |editor, window, cx| {
         let session = editor.ai_session.as_mut().unwrap();
         assert!(session.expanded && session.visible);
         assert_eq!(session.saved.target.as_ref().unwrap().selection, "alpha");
         session
             .input
-            .update(cx, |input, cx| input.set_value("尚未发送的后续要求", cx));
+            .update(cx, |input, cx| input.set_value("尚未发送的后续要求", window, cx));
         session
             .saved
             .messages
@@ -2959,4 +2959,154 @@ fn ai_panel_actions_are_buttons_and_can_be_closed_from_the_keyboard(cx: &mut Tes
         assert!(!editor.ai_session.as_ref().unwrap().visible);
         assert_eq!(editor.buffer.text(), "保留正文。");
     }).unwrap();
+}
+
+#[gpui::test]
+fn ai_composer_uses_native_multiline_input_and_does_not_submit_ime_composition(
+    cx: &mut TestAppContext,
+) {
+    use gpui::{AppContext as _, EntityInputHandler as _};
+    use gpui_kit::test::TestWindowExt as _;
+    initialize(cx);
+    let mut settings = crate::ai::settings::AiSettings {
+        enabled: true,
+        ..Default::default()
+    };
+    settings
+        .set_endpoint(
+            crate::ai::providers::ProviderPreset::get("deepseek")
+                .unwrap()
+                .endpoint(),
+        )
+        .unwrap();
+    settings
+        .save_at(&crate::ai::settings::settings_path().unwrap())
+        .unwrap();
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(
+            gpui::WindowOptions {
+                window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::new(
+                    Default::default(),
+                    gpui::size(gpui::px(1024.0), gpui::px(768.0)),
+                ))),
+                ..Default::default()
+            },
+            cx,
+            |_, cx| cx.new(|cx| Editor::from_markdown(cx, "保留正文。".into(), None)),
+        )
+        .unwrap()
+    });
+    let input = handle
+        .update(cx, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            editor.ai_session.as_ref().unwrap().input.clone()
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    draw(&mut visual);
+    draw(&mut visual);
+    visual.update(|window, cx| {
+        assert_eq!(
+            window
+                .try_find(("input", input.entity_id()))
+                .and_then(|field| field.role()),
+            Some(gpui::Role::MultilineTextInput),
+            "对话输入应使用标准多行控件"
+        );
+        input.update(cx, |input, cx| input.focus(window, cx));
+        window.input("第一行", cx);
+        window.press("shift-enter", cx);
+        window.input("第二行", cx);
+    });
+    visual.run_until_parked();
+    assert_eq!(
+        handle
+            .read_with(cx, |editor, cx| editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .input
+                .read(cx)
+                .value()
+                .to_string())
+            .unwrap(),
+        "第一行\n第二行"
+    );
+    visual.update(|window, cx| {
+        window.press("secondary-a", cx);
+        window.press("secondary-c", cx);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("第一行\n第二行".into())
+        );
+        window.press("secondary-x", cx);
+    });
+    visual.run_until_parked();
+    assert!(
+        handle
+            .read_with(cx, |editor, cx| editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .input
+                .read(cx)
+                .value()
+                .is_empty())
+            .unwrap()
+    );
+    visual.update(|window, cx| window.press("secondary-z", cx));
+    visual.run_until_parked();
+    assert_eq!(
+        handle
+            .read_with(cx, |editor, cx| editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .input
+                .read(cx)
+                .value()
+                .to_string())
+            .unwrap(),
+        "第一行\n第二行"
+    );
+    visual.update(|window, cx| {
+        window.press("secondary-a", cx);
+        input.update(cx, |input, cx| {
+            input.replace_and_mark_text_in_range(None, "拼", Some(0..1), window, cx)
+        });
+        window.press("enter", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .read_with(cx, |editor, _| {
+            let session = editor.ai_session.as_ref().unwrap();
+            assert!(session.saved.messages.is_empty());
+            assert!(session.error.is_none(), "组词回车不能触发发送或连接校验");
+        })
+        .unwrap();
+    visual.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.replace_text_in_range(None, "拼音", window, cx)
+        });
+        window.press("enter", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .read_with(cx, |editor, cx| {
+            let session = editor.ai_session.as_ref().unwrap();
+            assert!(
+                session.error.is_some(),
+                "普通回车应触发缺少密钥的校验：task={}, draft={:?}, messages={}",
+                session.mode == PanelMode::Task,
+                session.input.read(cx).value(),
+                session.saved.messages.len()
+            );
+            assert_eq!(
+                session.input.read(cx).value(),
+                "拼音",
+                "发送校验失败应保留草稿且不插入换行"
+            );
+            assert_eq!(editor.buffer.text(), "保留正文。");
+        })
+        .unwrap();
 }

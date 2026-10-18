@@ -1,10 +1,5 @@
 //! 通用文本输入组件，默认单行，可选择软换行的多行模式。
 //!
-//! 设置页(AI 服务地址/密钥/模型)与编辑器内 AI 面板(自定义指令)共用。
-//! 输入走 `EntityInputHandler`(与工作区搜索框、命令面板同一条 IME 路由,
-//! 中文与非 ASCII 文本能输入),按键处理在本组件内完成:方向键/行首行尾/
-//! 退格/删除/全选/剪贴板,回车交给宿主的 `on_enter` 回调。
-//!
 //! 鼠标定位、光标与 IME 候选框共用实际文字布局，避免多字节文本下位置漂移。
 
 use std::ops::Range;
@@ -15,8 +10,6 @@ use unicode_segmentation::UnicodeSegmentation;
 mod element;
 mod multiline;
 
-/// 回车回调签名。
-type OnEnterCallback = Box<dyn Fn(&mut TextField, &mut Window, &mut Context<TextField>) + 'static>;
 
 struct TextEdit {
     start: usize,
@@ -34,10 +27,6 @@ pub(crate) struct TextField {
     marked_range: Option<Range<usize>>,
     focus: FocusHandle,
     placeholder: SharedString,
-    /// 回车回调(AI 面板用它触发自定义指令;设置页不用)。
-    on_enter: Option<OnEnterCallback>,
-    on_change: Option<Box<dyn Fn(&mut Context<TextField>)>>,
-    framed: bool,
     last_line: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     scroll_x: f32,
@@ -83,9 +72,6 @@ impl TextField {
             marked_range: None,
             focus: cx.focus_handle(),
             placeholder: placeholder.into(),
-            on_enter: None,
-            on_change: None,
-            framed: true,
             last_line: None,
             last_bounds: None,
             scroll_x: 0.0,
@@ -103,11 +89,6 @@ impl TextField {
         }
     }
 
-    pub(crate) fn unframed(mut self) -> Self {
-        self.framed = false;
-        self
-    }
-
     pub(crate) fn multiline(mut self, minimum_rows: usize, maximum_rows: usize) -> Self {
         self.multiline = Some(multiline::State {
             minimum_rows: minimum_rows.max(1),
@@ -119,28 +100,12 @@ impl TextField {
         self
     }
 
-    /// 注册回车回调。
-    pub(crate) fn on_enter(
-        mut self,
-        callback: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
-    ) -> Self {
-        self.on_enter = Some(Box::new(callback));
-        self
-    }
-
-    pub(crate) fn on_change(
-        mut self,
-        callback: impl Fn(&mut Context<TextField>) + 'static,
-    ) -> Self {
-        self.on_change = Some(Box::new(callback));
-        self
-    }
-
     pub(crate) fn value(&self) -> &str {
         &self.value
     }
 
     /// 让输入框拿到焦点(光标移到末尾)。
+    #[cfg(test)]
     pub(crate) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.move_to(self.value.len(), false);
         window.focus(&self.focus, cx);
@@ -215,9 +180,6 @@ impl TextField {
         let caret = range.start + text.len();
         self.selected_range = caret..caret;
         self.reveal_caret();
-        if let Some(callback) = &self.on_change {
-            callback(cx);
-        }
         cx.notify();
     }
 
@@ -261,9 +223,6 @@ impl TextField {
             self.redo.push(edit);
         }
         self.reveal_caret();
-        if let Some(callback) = &self.on_change {
-            callback(cx);
-        }
         cx.notify();
     }
 
@@ -517,14 +476,8 @@ impl TextField {
                 cx.stop_propagation();
             }
             "enter" => {
-                if self.multiline.is_some() && (shift || self.on_enter.is_none()) {
+                if self.multiline.is_some() {
                     self.replace_range(self.normalized_selection(), "\n", cx);
-                } else {
-                    let callback = self.on_enter.take();
-                    if let Some(callback) = callback {
-                        callback(self, window, cx);
-                        self.on_enter = Some(callback);
-                    }
                 }
                 window.prevent_default();
                 cx.stop_propagation();
@@ -724,18 +677,18 @@ impl Render for TextField {
             .w_full()
             .min_w_0()
             .min_h(px(32.0))
-            .px(px(if self.framed { 10.0 } else { 0.0 }))
-            .py(px(if self.framed { 4.0 } else { 0.0 }))
+            .px(px(10.0))
+            .py(px(4.0))
             .flex()
             .items_center()
             .rounded(px(theme.dimensions.menu_item_radius))
-            .border(px(if self.framed { 1.0 } else { 0.0 }))
+            .border_1()
             .border_color(if focused {
                 theme.colors.dialog_primary_button_bg
             } else {
                 theme.colors.dialog_border
             })
-            .bg(if self.framed { theme.colors.editor_background } else { hsla(0.0, 0.0, 0.0, 0.0) })
+            .bg(theme.colors.editor_background)
             .text_size(px(theme.typography.dialog_body_size))
             .font(font(crate::config::EditorSettings::fonts(cx).ui_family))
             .child(if self.multiline.is_some() {

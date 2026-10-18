@@ -166,17 +166,13 @@ async fn input_handler_routes_insert_and_replacement(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn enter_key_invokes_host_callback(cx: &mut TestAppContext) {
+async fn single_line_enter_keeps_text_and_escape_reaches_the_host(cx: &mut TestAppContext) {
     cx.update(|cx| init_theme(cx));
-    let (field, cx) = cx.add_window_view(|_window, cx| {
-        TextField::new("p", cx).on_enter(|field, _window, _cx| {
-            field.set_value("submitted", _cx);
-        })
-    });
+    let (field, cx) = cx.add_window_view(|_, cx| TextField::new("p", cx));
     field.update_in(cx, |field, window, cx| {
         field.set_value("draft", cx);
         field.handle_key_down(&key_event("enter", false, false), window, cx);
-        assert_eq!(field.value(), "submitted");
+        assert_eq!(field.value(), "draft");
         // escape 不被输入框吞掉:留给宿主面板关闭。
         field.handle_key_down(&key_event("escape", false, false), window, cx);
     });
@@ -270,36 +266,6 @@ fn multiline_input_reserves_rows_and_preserves_newlines_on_paste(cx: &mut TestAp
     field.read_with(cx, |field, _| assert_eq!(field.value(), "甲\n乙🙂\n中文"));
 }
 
-#[gpui::test]
-fn multiline_input_shift_enter_edits_without_submitting_and_enter_submits_once(
-    cx: &mut TestAppContext,
-) {
-    cx.update(init_theme);
-    let submitted = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let (field, cx) = cx.add_window_view({
-        let submitted = submitted.clone();
-        move |_, cx| {
-            TextField::new("", cx)
-                .multiline(1, 4)
-                .on_enter(move |field, _, _| submitted.borrow_mut().push(field.value().to_owned()))
-        }
-    });
-    field.update_in(cx, |field, window, cx| {
-        window.activate_window();
-        field.set_value("first", cx);
-        field.focus(window, cx);
-    });
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    cx.run_until_parked();
-    cx.simulate_keystrokes("shift-enter");
-    cx.simulate_input("second");
-    assert!(
-        submitted.borrow().is_empty(),
-        "Shift+Enter 不应发出半成品要求"
-    );
-    cx.simulate_keystrokes("enter");
-    assert_eq!(*submitted.borrow(), vec!["first\nsecond"]);
-}
 
 #[gpui::test]
 fn multiline_input_up_arrow_moves_between_rows_without_changing_text(cx: &mut TestAppContext) {
@@ -618,23 +584,4 @@ fn multiline_input_undo_collapses_sub_range_edits_inside_one_composition(
             "一次撤销应回到组词前,组词内的子区间替换不能拆成多步撤销"
         );
     });
-}
-
-#[gpui::test]
-fn multiline_input_does_not_submit_while_confirming_an_ime_candidate(cx: &mut TestAppContext) {
-    cx.update(init_theme);
-    let submitted = std::rc::Rc::new(std::cell::Cell::new(false));
-    let (field, cx) = cx.add_window_view({
-        let submitted = submitted.clone();
-        move |_, cx| {
-            TextField::new("", cx)
-                .multiline(1, 4)
-                .on_enter(move |_, _, _| submitted.set(true))
-        }
-    });
-    field.update_in(cx, |field, window, cx| {
-        field.replace_and_mark_text_in_range(None, "中", Some(1..1), window, cx);
-        field.handle_key_down(&key_event("enter", false, false), window, cx);
-    });
-    assert!(!submitted.get(), "确认组词不能把尚未完成的要求发给模型");
 }

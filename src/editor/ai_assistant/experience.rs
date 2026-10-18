@@ -123,8 +123,8 @@ impl Editor {
             (session.review_open && session.review_focus.contains_focused(window, cx))
                 || (session.visible
                     && (session.panel_focus.contains_focused(window, cx)
+                        || session.input.read(cx).focus_handle(cx).is_focused(window)
                         || [
-                            &session.input,
                             &session.language,
                             &session.instruction_name,
                             &session.instruction_body,

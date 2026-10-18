@@ -1,5 +1,6 @@
 use super::*;
 use gpui::prelude::FluentBuilder;
+use gpui_kit::component::ThemeStyled as _;
 
 impl Editor {
     pub(super) fn render_ai_workbench(
@@ -7,6 +8,7 @@ impl Editor {
         theme: &crate::theme::Theme,
         height: f32,
         sidebar: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(session) = self.ai_session.as_ref() else {
@@ -214,6 +216,7 @@ impl Editor {
             .bg(theme.colors.dialog_surface)
             .when(!sidebar && has_messages, |panel| panel.h(px(height)))
             .when(sidebar, |panel| panel.h_full().p(px(16.0)).gap(px(16.0)))
+            .when(!sidebar && !has_messages, |panel| panel.gap_1())
             .when(!sidebar, |panel| {
                 panel
                     .rounded(px(10.0))
@@ -319,11 +322,11 @@ impl Editor {
                         .label(strings.ai_panel_retry.clone())
                         .disabled(!(!session.saved.running))
                 },
-                |editor, _, cx| editor.retry_ai_task(cx),
+                |editor, window, cx| editor.retry_ai_task(window, cx),
             ));
         }
         if session.saved.kind == SessionKind::Conversation || !has_messages {
-            panel = panel.child(self.render_ai_composer(theme, cx));
+            panel = panel.child(self.render_ai_composer(theme, window, cx));
         } else if session.saved.running {
             panel = panel.child(self.ai_button(
                 "ai-stop",
@@ -439,12 +442,15 @@ impl Editor {
     fn render_ai_composer(
         &self,
         theme: &crate::theme::Theme,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(session) = self.ai_session.as_ref() else {
             return div().into_any_element();
         };
         let strings = cx.global::<crate::i18n::I18nManager>().strings_arc();
+        let input_id = session.input.entity_id();
+        let session_id = session.saved.id.clone();
         let has_input = !session.input.read(cx).value().trim().is_empty();
         let controls = div()
             .w_full()
@@ -508,13 +514,14 @@ impl Editor {
                                     .with_size(gpui_kit::component::Size::Medium)
                                     .rounded_full()
                             },
-                            |editor, _, cx| editor.send_ai_task(cx),
+                            |editor, window, cx| editor.send_ai_task(window, cx),
                         ))
                     }),
             );
         div()
             .id("ai-composer")
             .debug_selector(|| "ai-composer".into())
+            .track_focus(&session.composer_focus)
             .w_full()
             .flex_shrink_0()
             .flex()
@@ -531,9 +538,47 @@ impl Editor {
                     .debug_selector(|| "ai-composer-input".into())
                     .w_full()
                     .min_w_0()
-                    .child(session.input.clone()),
+                    .child(
+                        Textarea::new(&session.input)
+                            .appearance(false)
+                            .bordered(false)
+                            .p_0()
+                            .accessibility_id("ai-composer-input")
+                            .aria_label(strings.ai_custom_placeholder.clone()),
+                    ),
             )
             .child(controls)
+            // 使用冒泡的回车动作，让提交与组词检查共享当前窗口。
+            .on_action(cx.listener(move |editor, action: &InputEnter, window, cx| {
+                let input = editor
+                    .ai_session
+                    .as_ref()
+                    .filter(|session| {
+                        session.saved.id == session_id && session.input.entity_id() == input_id
+                    })
+                    .map(|session| session.input.clone());
+                let Some(input) = input else {
+                    cx.propagate();
+                    return;
+                };
+                if action.shift
+                    || input.update(cx, |input, cx| {
+                        input.marked_text_range(window, cx).is_some()
+                    })
+                {
+                    cx.propagate();
+                    return;
+                }
+                editor.send_ai_task(window, cx);
+            }))
+            .when(
+                session.composer_focus.contains_focused(window, cx),
+                |composer| {
+                    composer
+                        .border_color(theme.colors.dialog_primary_button_bg)
+                        .focus_ring_style(window, cx)
+                },
+            )
             .into_any_element()
     }
 
@@ -654,7 +699,7 @@ impl Editor {
                         )
                         .disabled(!(!session.saved.running))
                 },
-                |editor, _, cx| editor.retry_ai_task(cx),
+                |editor, window, cx| editor.retry_ai_task(window, cx),
             ))
             .child(div().flex_1());
         if session.saved.workspace.changes.proposals.len() > 1 {

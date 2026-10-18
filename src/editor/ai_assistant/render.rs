@@ -67,7 +67,7 @@ impl Editor {
             point((viewport.width - px(width)) * 0.5, px(82.0))
         };
         let panel = if compact {
-            self.render_ai_workbench(theme, task_height, false, cx)
+            self.render_ai_workbench(theme, task_height, false, window, cx)
         } else {
             self.render_ai_panel(theme, height, cx)
                 .w(px(width))
@@ -130,7 +130,7 @@ impl Editor {
         let width = (f32::from(window.viewport_size().width) * 0.30).clamp(320.0, 480.0);
         let height = f32::from(window.viewport_size().height) - 100.0;
         let content = if session.mode == PanelMode::Task {
-            self.render_ai_workbench(theme, height, true, cx)
+            self.render_ai_workbench(theme, height, true, window, cx)
         } else {
             self.render_ai_panel(theme, height, cx)
                 .w_full()
@@ -474,7 +474,11 @@ impl Editor {
                         move |editor, window, cx| {
                             if let Some(session) = editor.ai_session.as_mut() {
                                 session.input.update(cx, |input, cx| {
-                                    input.set_value(&format!("/{id} {}", input.value()), cx);
+                                    input.set_value(
+                                        &format!("/{id} {}", input.value()),
+                                        window,
+                                        cx,
+                                    );
                                     input.focus(window, cx);
                                 });
                                 session.mode = PanelMode::Task;

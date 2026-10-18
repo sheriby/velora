@@ -12,6 +12,7 @@ use crate::ai::settings::{AiFeature, AiSettings};
 use crate::ai::workspace::AiWorkspace;
 use crate::ai::{AiCommand, DocumentSnapshot};
 use crate::components::TextField;
+use gpui_kit::component::input::{Enter as InputEnter, InputEvent, Textarea, TextareaState};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{button::{Button, ButtonVariants}, checkbox::Checkbox, Disableable, Sizable};
 
@@ -36,7 +37,9 @@ pub(super) struct AiSession {
     document: uuid::Uuid,
     panel_navigation: bool,
     pub(super) saved: SavedSession,
-    input: Entity<TextField>,
+    input: Entity<TextareaState>,
+    _input_subscription: Subscription,
+    composer_focus: FocusHandle,
     language: Entity<TextField>,
     instruction_name: Entity<TextField>,
     instruction_body: Entity<TextField>,
@@ -458,7 +461,7 @@ impl Editor {
         cx.notify();
     }
 
-    fn retry_ai_task(&mut self, cx: &mut Context<Self>) {
+    fn retry_ai_task(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(session) = self.ai_session.as_mut() {
             if let Some(prompt) = session
                 .saved
@@ -470,7 +473,7 @@ impl Editor {
             {
                 session
                     .input
-                    .update(cx, |input, cx| input.set_value(&prompt, cx));
+                    .update(cx, |input, cx| input.set_value(&prompt, window, cx));
             }
         }
         if let Some(session) = self.ai_session.as_mut() {
@@ -483,7 +486,7 @@ impl Editor {
                 session.saved.rollback_failed_conversation_round();
             }
         }
-        self.send_ai_task(cx);
+        self.send_ai_task(window, cx);
     }
 
     fn open_ai_source(
@@ -735,45 +738,45 @@ impl Editor {
         let root = session.saved.workspace.root.clone();
         let load =
             cx.background_spawn(async move { SavedSession::load_at(&path, root.as_deref()) });
-        cx.spawn(async move |owner, cx| {
+        cx.spawn_in(window, async move |owner, cx| {
             let loaded = load.await;
-            if let Err(error) = owner.update(cx, |editor, cx| {
-                // 磁盘加载在途时会话可能已被新任务暂存；暂存会话不递增
-                // generation，按 id 回退搜索会命中它并把待审状态整体替换掉。
-                // 只认仍在前台的同一会话，否则丢弃这次加载。
-                if let Some(session) = editor
-                    .ai_session
-                    .as_mut()
-                    .filter(|session| session.saved.id == id && session.generation == generation)
-                {
-                    match loaded {
-                        Ok(saved) => {
-                            session.saved = saved;
-                            session.expanded = true;
-                            session.visible = true;
-                            session.panel_navigation = false;
-                            session.command = session
-                                .saved
-                                .prompt_profile
-                                .as_ref()
-                                .map_or(AiCommand::Ask, |profile| profile.command);
-                            session
-                                .input
-                                .update(cx, |input, cx| input.set_value("", cx));
-                            session.mode = PanelMode::Task;
-                            session.error = None;
-                            session.stream_index = None;
-                            session.conversation = None;
-                            session.review = None;
-                            session.review_navigation = None;
-                            session.review_dirty = true;
+            if let Err(error) =
+                owner.update_in(cx, |editor, window, cx| {
+                    // 磁盘加载在途时会话可能已被新任务暂存；暂存会话不递增
+                    // generation，按 id 回退搜索会命中它并把待审状态整体替换掉。
+                    // 只认仍在前台的同一会话，否则丢弃这次加载。
+                    if let Some(session) = editor.ai_session.as_mut().filter(|session| {
+                        session.saved.id == id && session.generation == generation
+                    }) {
+                        match loaded {
+                            Ok(saved) => {
+                                session.saved = saved;
+                                session.expanded = true;
+                                session.visible = true;
+                                session.panel_navigation = false;
+                                session.command = session
+                                    .saved
+                                    .prompt_profile
+                                    .as_ref()
+                                    .map_or(AiCommand::Ask, |profile| profile.command);
+                                session
+                                    .input
+                                    .update(cx, |input, cx| input.set_value("", window, cx));
+                                session.mode = PanelMode::Task;
+                                session.error = None;
+                                session.stream_index = None;
+                                session.conversation = None;
+                                session.review = None;
+                                session.review_navigation = None;
+                                session.review_dirty = true;
+                            }
+                            Err(error) => session.error = Some(error.to_string()),
                         }
-                        Err(error) => session.error = Some(error.to_string()),
+                        editor.refresh_ai_preview(cx);
+                        cx.notify();
                     }
-                    editor.refresh_ai_preview(cx);
-                    cx.notify();
-                }
-            }) {
+                })
+            {
                 eprintln!("恢复 AI 会话失败：{error}");
             }
         })
@@ -1034,37 +1037,24 @@ impl Editor {
             .map(|endpoint| endpoint.id.clone())
             .unwrap_or_default();
         let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
-        let owner = cx.entity().downgrade();
-        let changed_owner = owner.clone();
         let input = cx.new(|cx| {
-            TextField::new(strings.ai_custom_placeholder.clone(), cx)
-                .multiline(1, 4)
-                .unframed()
-                .on_change(move |cx| {
-                    let owner = changed_owner.clone();
-                    cx.defer(move |cx| {
-                        if let Err(error) = owner.update(cx, |_,cx| cx.notify()) {
-                            eprintln!("更新 AI 输入状态失败：{error}");
-                        }
-                    });
-                })
-                .on_enter(move |_, _, cx| {
-                    let owner = owner.clone();
-                    let input_id = cx.entity_id();
-                    cx.defer(move |cx| {
-                        if let Err(error) = owner.update(cx, |editor, cx| {
-                            if editor
-                                .ai_session
-                                .as_ref()
-                                .is_some_and(|session| session.input.entity_id() == input_id)
-                            {
-                                editor.send_ai_task(cx);
-                            }
-                        }) {
-                            eprintln!("发送 AI 指令失败：{error}");
-                        }
-                    });
-                })
+            TextareaState::new(window, cx)
+                .placeholder(strings.ai_custom_placeholder.clone())
+                .auto_grow(1, 4)
+                .submit_on_enter(true)
+        });
+        let input_subscription = cx.subscribe(&input, |editor, input, event: &InputEvent, cx| {
+            if editor
+                .ai_session
+                .as_ref()
+                .is_some_and(|session| session.input.entity_id() == input.entity_id())
+                && matches!(
+                    event,
+                    InputEvent::Change | InputEvent::Focus | InputEvent::Blur
+                )
+            {
+                cx.notify();
+            }
         });
         let mut directories = Vec::new();
         if let Ok(path) = crate::ai::settings::settings_path() {
@@ -1081,6 +1071,8 @@ impl Editor {
             panel_navigation: false,
             saved,
             input,
+            _input_subscription: input_subscription,
+            composer_focus: cx.focus_handle(),
             language: cx.new(|cx| {
                 let mut field = TextField::new("English / 简体中文", cx);
                 // 默认翻译目标随界面语言；占位符罗列的是可填的语言名本身。
@@ -1089,8 +1081,9 @@ impl Editor {
             }),
             instruction_name: cx.new(|cx| TextField::new(strings.ai_panel_instruction_name, cx)),
             context_input: cx.new(|cx| TextField::new("@notes.md / @\"folder name\"", cx)),
-            instruction_body: cx
-                .new(|cx| TextField::new("{{selection}} · {{document}} · {{references}}", cx).multiline(4, 8)),
+            instruction_body: cx.new(|cx| {
+                TextField::new("{{selection}} · {{document}} · {{references}}", cx).multiline(4, 8)
+            }),
             settings,
             visible: true,
             expanded,
@@ -1150,6 +1143,7 @@ impl Editor {
             if command != AiCommand::Ask {
                 input.set_value(
                     &command.label(cx.global::<crate::i18n::I18nManager>().strings()),
+                    window,
                     cx,
                 );
             }
@@ -1157,7 +1151,7 @@ impl Editor {
         });
         let configured = !session.settings.endpoints.is_empty();
         if configured && !matches!(command, AiCommand::Ask | AiCommand::Translate) {
-            self.send_ai_task(cx);
+            self.send_ai_task(window, cx);
         }
         self.pending_focus = None;
         cx.notify();
@@ -1230,7 +1224,7 @@ impl Editor {
             })
     }
 
-    pub(super) fn send_ai_task(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn send_ai_task(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !crate::ai::settings::AiFeature::enabled(cx) {
             self.sync_ai_availability(cx);
             return;
@@ -1270,7 +1264,12 @@ impl Editor {
                     }))
         }) {
             if let Some(session) = self.ai_session.as_mut() {
-                session.error = Some(cx.global::<crate::i18n::I18nManager>().strings().ai_error_return_to_document.clone());
+                session.error = Some(
+                    cx.global::<crate::i18n::I18nManager>()
+                        .strings()
+                        .ai_error_return_to_document
+                        .clone(),
+                );
             }
             cx.notify();
             return;
@@ -1349,7 +1348,12 @@ impl Editor {
                 .as_ref()
                 .is_none_or(|target| target.range.is_empty())
         {
-            session.error = Some(cx.global::<crate::i18n::I18nManager>().strings().ai_error_no_selection.clone());
+            session.error = Some(
+                cx.global::<crate::i18n::I18nManager>()
+                    .strings()
+                    .ai_error_no_selection
+                    .clone(),
+            );
             cx.notify();
             return;
         }
@@ -1375,7 +1379,7 @@ impl Editor {
             });
             session
                 .input
-                .update(cx, |input, cx| input.set_value("", cx));
+                .update(cx, |input, cx| input.set_value("", window, cx));
             cx.notify();
             return;
         }
@@ -1399,7 +1403,12 @@ impl Editor {
             .and_then(serde_json::Value::as_str)
             .is_some_and(|id| session.saved.workspace.is_excluded(id));
         if excluded_target || excluded_active {
-            session.error = Some(cx.global::<crate::i18n::I18nManager>().strings().ai_error_document_excluded.clone());
+            session.error = Some(
+                cx.global::<crate::i18n::I18nManager>()
+                    .strings()
+                    .ai_error_document_excluded
+                    .clone(),
+            );
             cx.notify();
             return;
         }
@@ -1468,14 +1477,20 @@ impl Editor {
         let mut editor_context = editor_context;
         if let Some(context) = editor_context.as_object_mut() {
             if let Some(scope) = &session.saved.workspace.selection_scope {
-                context.insert("write_scope".into(), serde_json::json!({
-                    "document_id":scope.document_id,
-                    "byte_range":{"start":scope.range.start,"end":scope.range.end},
-                    "preserve_all_other_bytes":true,
-                }));
+                context.insert(
+                    "write_scope".into(),
+                    serde_json::json!({
+                        "document_id":scope.document_id,
+                        "byte_range":{"start":scope.range.start,"end":scope.range.end},
+                        "preserve_all_other_bytes":true,
+                    }),
+                );
             }
             if session.command == AiCommand::Translate {
-                context.insert("target_language".into(), session.language.read(cx).value().into());
+                context.insert(
+                    "target_language".into(),
+                    session.language.read(cx).value().into(),
+                );
             }
         }
         let prompt = crate::ai::context::task_prompt(
@@ -1501,7 +1516,7 @@ impl Editor {
         });
         session
             .input
-            .update(cx, |input, cx| input.set_value("", cx));
+            .update(cx, |input, cx| input.set_value("", window, cx));
         session.saved.workspace.cursor_target = (|| {
             Some(crate::ai::workspace::CursorTarget {
                 document_id: editor_context
