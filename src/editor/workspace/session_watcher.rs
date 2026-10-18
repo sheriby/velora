@@ -157,6 +157,7 @@ impl Editor {
         if !same_root {
             self.stop_ai_task(cx);
             drop(self.ai_session.take());
+            self.ai_task_sessions.clear();
             self.workspace.file_tree = None;
             self.workspace.tree_scan_root = None;
             self.invalidate_workspace_files_walk();

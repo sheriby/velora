@@ -193,6 +193,7 @@ impl Editor {
             }
             return;
         }
+        let session_id = session.saved.id.clone();
         let proposal = proposal.clone();
         let path = session
             .saved
@@ -245,6 +246,7 @@ impl Editor {
         let tracked = self.ai_document_preview(source, path, cx);
         let index = previous.min(edits.len().saturating_sub(1));
         let binding = ReviewBinding {
+            session_id,
             owner: cx.entity().downgrade(),
             document_id: id.to_owned(),
             versions,
@@ -545,6 +547,7 @@ impl Editor {
                                 let current = editor
                                     .ai_session
                                     .as_ref()
+                                    .filter(|session| session.saved.id == binding.session_id)
                                     .and_then(|session| session.review.as_ref())
                                     .is_some_and(|review| {
                                         review.id == binding.document_id

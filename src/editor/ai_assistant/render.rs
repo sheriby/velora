@@ -10,7 +10,9 @@ impl Editor {
     ) -> Option<AnyElement> {
         let session = self.ai_session.as_ref()?;
         if !session.visible {
-            if session.saved.running || !session.saved.workspace.changes.proposals.is_empty() {
+            if session.document == self.ai_review_navigation_origin(cx)
+                && (session.saved.running || !session.saved.workspace.changes.proposals.is_empty())
+            {
                 return Some(
                     self.ai_button(
                         "ai-return",
@@ -650,8 +652,8 @@ impl Editor {
                                     true,
                                     theme,
                                     cx,
-                                    move |editor, _, cx| {
-                                        editor.restore_ai_history(path.clone(), cx)
+                                    move |editor, window, cx| {
+                                        editor.restore_ai_history(path.clone(), window, cx)
                                     },
                                 )
                                 .flex_1()

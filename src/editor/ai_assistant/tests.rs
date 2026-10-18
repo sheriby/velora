@@ -334,7 +334,9 @@ fn ai_review_finishes_in_the_editor_without_leaving_the_old_selection_toolbar_or
 }
 
 #[gpui::test]
-fn ai_opening_another_selection_keeps_existing_unreviewed_changes(cx: &mut TestAppContext) {
+fn ai_opening_another_selection_preserves_the_previous_task_for_explicit_resumption(
+    cx: &mut TestAppContext,
+) {
     initialize(cx);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, "第一段\n\n第二段".into(), None));
@@ -352,10 +354,17 @@ fn ai_opening_another_selection_keeps_existing_unreviewed_changes(cx: &mut TestA
         editor.select_document(cx);
         editor.open_ai_assistant(AiCommand::Ask, window, cx);
         let session = editor.ai_session.as_ref().unwrap();
-        assert_eq!(
-            session.saved.id, task_id,
-            "新选区不能悄悄替换尚未处理的任务"
-        );
+        assert_ne!(session.saved.id, task_id, "新选区应发起独立任务");
+        let previous = editor
+            .ai_task_sessions
+            .iter()
+            .find(|session| session.saved.id == task_id)
+            .unwrap();
+        assert!(previous.saved.workspace.changes.proposals.contains_key(&id));
+        let path = previous.saved.path().unwrap();
+        editor.restore_ai_history(path, window, cx);
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(session.saved.id, task_id);
         assert!(session.saved.workspace.changes.proposals.contains_key(&id));
     });
 }
@@ -1590,7 +1599,7 @@ fn ai_retargeted_conversation_does_not_keep_a_previous_selection_boundary(cx: &m
         editor.jump_to_document_search_range(start..start, cx);
         editor.open_ai_assistant(AiCommand::Ask, window, cx);
         let session = editor.ai_session.as_ref().unwrap();
-        assert_eq!(session.saved.id, id);
+        assert_ne!(session.saved.id, id);
         assert!(
             session.saved.workspace.selection_scope.is_none(),
             "新目标不能被旧选区限制"
@@ -1959,4 +1968,317 @@ fn ai_review_can_be_left_and_reopened_from_the_more_menu(cx: &mut TestAppContext
             "底部不重复摆放含义不明的返回箭头"
         );
     }
+}
+
+#[gpui::test]
+fn ai_cmd_j_in_another_tab_starts_from_its_current_selection_and_preserves_both_tasks(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, directory, first, second) = tab_review_fixture(cx);
+    let first_task = editor.update_in(cx, |editor, window, cx| {
+        editor.jump_to_document_search_range(0.."旧第一段。".len(), cx);
+        editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "user".into(),
+                text: "A 的指令".into(),
+            });
+        session
+            .input
+            .update(cx, |input, cx| input.set_value("A 的草稿", cx));
+        session.saved.id.clone()
+    });
+    propose_tab_changes(&editor, cx);
+    let first_review = editor.read_with(cx, |editor, _| {
+        editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .review
+            .as_ref()
+            .unwrap()
+            .tracked
+            .entity_id()
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(second.clone(), window, cx);
+        editor.jump_to_document_search_range(0.."另外".len(), cx);
+        editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx);
+    });
+    draw(cx);
+    draw(cx);
+    let second_task = editor.update(cx, |editor, cx| {
+        let session = editor.ai_session.as_mut().unwrap();
+        let target = session.saved.target.as_ref().unwrap();
+        assert_eq!(
+            target.path.as_ref(),
+            Some(&second),
+            "B 的入口不能继续使用 A 的目标"
+        );
+        assert_eq!(target.range, 0.."另外".len());
+        assert_eq!(target.selection, "另外");
+        assert_ne!(session.saved.id, first_task);
+        assert!(session.saved.history.is_empty());
+        assert!(session.saved.messages.is_empty());
+        assert!(session.saved.workspace.changes.proposals.is_empty());
+        assert_eq!(session.input.read(cx).value(), "");
+        session.mode = PanelMode::Task;
+        session
+            .input
+            .update(cx, |input, cx| input.set_value("B 的草稿", cx));
+        session.saved.id.clone()
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(first.clone(), window, cx)
+    });
+    draw(cx);
+    draw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(session.saved.id, first_task);
+        assert_eq!(session.input.read(cx).value(), "A 的草稿");
+        assert_eq!(session.saved.messages.first().unwrap().text, "A 的指令");
+        assert_eq!(
+            session.review.as_ref().unwrap().tracked.entity_id(),
+            first_review
+        );
+        assert!(session.review_open);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(second, window, cx)
+    });
+    draw(cx);
+    draw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(session.saved.id, second_task);
+        assert_eq!(session.input.read(cx).value(), "B 的草稿");
+    });
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[gpui::test]
+fn ai_cmd_j_does_not_reuse_a_finished_conversation_from_another_tab(cx: &mut TestAppContext) {
+    let (editor, cx, directory, _first, second) = tab_review_fixture(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.visible = false;
+        session
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "user".into(),
+                text: "解释 A".into(),
+            });
+        session
+            .saved
+            .history
+            .push(serde_json::json!({"role":"user", "content":"解释 A"}));
+        editor.open_workspace_file(second.clone(), window, cx);
+        editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx);
+        let session = editor.ai_session.as_ref().unwrap();
+        assert!(session.saved.messages.is_empty(), "B 不应显示 A 的对话");
+        assert!(
+            session.saved.history.is_empty(),
+            "B 的请求不能携带 A 的模型历史"
+        );
+        assert_eq!(
+            session.saved.target.as_ref().unwrap().path.as_ref(),
+            Some(&second)
+        );
+    });
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[gpui::test]
+fn ai_cmd_j_in_a_split_uses_the_active_leaf_target(cx: &mut TestAppContext) {
+    let (editor, cx, directory, _first, second) = tab_review_fixture(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor.split_active_document(
+            crate::editor::workspace::split::SplitDirection::Right,
+            window,
+            cx,
+        );
+    });
+    draw(cx);
+    draw(cx);
+    let active = editor.read_with(cx, |editor, _| editor.active_split_editor().unwrap());
+    active.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(second.clone(), window, cx);
+        editor.jump_to_document_search_range("另".len().."另外一篇".len(), cx);
+        editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx);
+    });
+    draw(cx);
+    draw(cx);
+    editor.read_with(cx, |editor, _| {
+        let target = editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .saved
+            .target
+            .as_ref()
+            .unwrap();
+        assert_eq!(target.path.as_ref(), Some(&second));
+        assert_eq!(target.selection, "外一篇");
+    });
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[gpui::test]
+fn ai_cmd_j_in_a_new_selection_of_the_same_tab_starts_an_independent_task(cx: &mut TestAppContext) {
+    initialize(cx);
+    let source = "第一处原文。\n\n第二处原文。";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.jump_to_document_search_range(0.."第一处原文。".len(), cx);
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        let first_task = session.saved.id.clone();
+        let target = session.saved.target.as_ref().unwrap().clone();
+        session.saved.workspace.selection_scope = Some(crate::ai::workspace::SelectionScope {
+            document_id: target.document_id.clone(),
+            range: target.range,
+            version: target.version,
+        });
+        session
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "user".into(),
+                text: "只润色第一处".into(),
+            });
+        let baseline = session.saved.workspace.documents[&target.document_id].clone();
+        session.saved.workspace.changes.proposals.insert(
+            target.document_id,
+            crate::ai::Proposal::new(baseline, source.replace("第一处原文", "第一处建议")),
+        );
+        session
+            .input
+            .update(cx, |input, cx| input.set_value("第一处的补充要求", cx));
+        let start = source.find("第二处").unwrap();
+        editor.jump_to_document_search_range(start..source.len(), cx);
+        editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx);
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_ne!(
+            session.saved.id, first_task,
+            "同一标签的新选区不能沿用旧任务"
+        );
+        assert_eq!(
+            session.saved.target.as_ref().unwrap().selection,
+            "第二处原文。"
+        );
+        assert!(session.saved.messages.is_empty());
+        assert!(session.saved.history.is_empty());
+        assert!(session.saved.workspace.selection_scope.is_none());
+        assert_eq!(session.input.read(cx).value(), "");
+        assert_eq!(editor.buffer.text(), source);
+        let previous = editor
+            .ai_task_sessions
+            .iter()
+            .find(|session| session.saved.id == first_task)
+            .unwrap();
+        assert!(!previous.saved.workspace.changes.proposals.is_empty());
+        assert_eq!(previous.input.read(cx).value(), "第一处的补充要求");
+        let path = previous.saved.path().unwrap();
+        editor.restore_ai_history(path, window, cx);
+        assert_eq!(editor.ai_session.as_ref().unwrap().saved.id, first_task);
+    });
+}
+
+#[gpui::test]
+fn ai_late_events_and_snapshot_reads_belong_to_the_original_task_even_with_equal_generations(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, directory, first, second) = tab_review_fixture(cx);
+    let (first_task, workspace, control) = editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.saved.running = true;
+        session.control = RunControl::default();
+        session.generation = 1;
+        (
+            session.saved.id.clone(),
+            session.saved.workspace.clone(),
+            session.control.clone(),
+        )
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(second.clone(), window, cx);
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.saved.running = true;
+        session.generation = 1;
+        let second_task = session.saved.id.clone();
+        assert!(
+            !control.cancel.is_cancelled(),
+            "新任务不能取消先前的后台任务"
+        );
+        let (response, receive) = std::sync::mpsc::sync_channel(1);
+        let done = editor.receive_ai_session_events(
+            &first_task,
+            1,
+            vec![
+                super::WorkerEvent::Refresh {
+                    id: "first.md".into(),
+                    response,
+                },
+                super::WorkerEvent::Runtime(super::RunEvent::AssistantStart),
+                super::WorkerEvent::Runtime(super::RunEvent::Text("A 的回答".into())),
+                super::WorkerEvent::Runtime(super::RunEvent::Checkpoint {
+                    workspace: Box::new(workspace),
+                    history: Vec::new(),
+                }),
+                super::WorkerEvent::Finished(Ok(super::RunOutput::default())),
+            ],
+            cx,
+        );
+        assert!(done);
+        assert_eq!(
+            receive.try_recv().unwrap().unwrap().unwrap().source,
+            std::fs::read_to_string(&first).unwrap()
+        );
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(session.saved.id, second_task);
+        assert!(session.saved.running, "A 完成不能把 B 标记为已完成");
+        assert!(session.saved.messages.is_empty(), "A 的回复不能出现在 B 中");
+        assert_eq!(
+            session.saved.target.as_ref().unwrap().path.as_ref(),
+            Some(&second)
+        );
+        let previous = editor
+            .ai_task_sessions
+            .iter()
+            .find(|session| session.saved.id == first_task)
+            .unwrap();
+        assert!(!previous.saved.running);
+        assert_eq!(previous.saved.messages.last().unwrap().text, "A 的回答");
+    });
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[gpui::test]
+fn ai_cmd_j_always_starts_a_new_conversation_even_at_the_same_position(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx);
+        let previous = editor.ai_session.as_ref().unwrap().saved.id.clone();
+        editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx);
+        assert_ne!(
+            editor.ai_session.as_ref().unwrap().saved.id,
+            previous,
+            "重新唤起默认重置；继续对话应在原输入框中进行"
+        );
+        assert!(editor.ai_session.as_ref().unwrap().visible);
+    });
 }

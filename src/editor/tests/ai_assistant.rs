@@ -727,8 +727,8 @@ fn ai_selection_button_in_an_editor_group_displays_the_window_assistant(cx: &mut
     redraw(cx);
     redraw(cx);
     assert!(
-        cx.debug_bounds("ai-assistant-panel").is_none(),
-        "分组内的快捷入口应收起宿主面板"
+        cx.debug_bounds("ai-assistant-panel").is_some(),
+        "分组内的快捷入口应打开独立用户对话"
     );
     group.update_in(cx, |editor, window, cx| {
         editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx)
@@ -738,7 +738,8 @@ fn ai_selection_button_in_an_editor_group_displays_the_window_assistant(cx: &mut
     redraw(cx);
     assert!(cx.debug_bounds("ai-assistant-panel").is_some());
     editor.read_with(cx, |editor, _| {
-        assert_eq!(editor.ai_session.as_ref().unwrap().saved.id, session_id)
+        assert_ne!(editor.ai_session.as_ref().unwrap().saved.id, session_id,
+            "从正文重新唤起应捕获新任务，不续用旧指令");
     });
     std::fs::remove_dir_all(root).unwrap();
 }

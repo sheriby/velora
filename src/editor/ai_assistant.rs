@@ -41,6 +41,8 @@ pub(super) struct EndpointDraft {
 }
 
 pub(super) struct AiSession {
+    document: uuid::Uuid,
+    panel_navigation: bool,
     pub(super) saved: SavedSession,
     input: Entity<TextField>,
     language: Entity<TextField>,
@@ -162,13 +164,52 @@ impl Editor {
         }
         cx.notify();
     }
+    fn ai_session_mut(&mut self, id: &str) -> Option<&mut AiSession> {
+        self.ai_session.as_mut().filter(|session| session.saved.id == id)
+            .or_else(|| self.ai_task_sessions.iter_mut().find(|session| session.saved.id == id))
+    }
+
+    fn activate_ai_document_session(&mut self, document: uuid::Uuid) {
+        if self.ai_session.as_ref().is_some_and(|session| session.document == document) {
+            return;
+        }
+        if let Some(index) = self.ai_task_sessions.iter().rposition(|session| session.document == document) {
+            let session = self.ai_task_sessions.remove(index);
+            if let Some(previous) = self.ai_session.replace(session) {
+                self.ai_task_sessions.push(previous);
+            }
+        }
+    }
+
+    pub(in crate::editor) fn sync_ai_task_navigation(&mut self, cx: &App) {
+        if self.ai_result_preview || self.split_parent.is_some() {
+            return;
+        }
+        let current = self.ai_review_navigation_origin(cx);
+        if self.ai_session.as_ref().is_some_and(|session| session.document != current) {
+            self.suspend_ai_review_for_navigation(
+                self.ai_session.as_ref().map_or(current, |session| session.document),
+            );
+        }
+        self.activate_ai_document_session(current);
+        if let Some(session) = self.ai_session.as_mut()
+            && session.document == current && session.panel_navigation
+        {
+            session.visible = true;
+            session.panel_navigation = false;
+        }
+    }
+
     fn ai_review_navigation_origin(&self, cx: &App) -> uuid::Uuid {
         self.active_split_editor()
             .map_or(self.recovery_id, |group| group.read(cx).recovery_id)
     }
 
     fn suspend_ai_review_for_navigation(&mut self, origin: uuid::Uuid) {
-        if let Some(session) = self.ai_session.as_mut() {
+        if let Some(session) = self.ai_session.as_mut().filter(|session| session.document == origin) {
+            session.panel_navigation |= session.visible;
+            session.visible = false;
+            session.panel_drag = None;
             if session.review_open
                 || (session.review.is_none()
                     && session.saved.running
@@ -253,10 +294,7 @@ impl Editor {
         cx.spawn(async move |owner, cx| {
             let result = load.await;
             if let Err(error) = owner.update(cx, |editor, cx| {
-                if let Some(session) = editor
-                    .ai_session
-                    .as_mut()
-                    .filter(|session| session.saved.id == id)
+                if let Some(session) = editor.ai_session_mut(&id)
                 {
                     match result {
                         Ok(paths) => session.context_candidates = paths,
@@ -448,6 +486,7 @@ impl Editor {
         {
             self.new_ai_task(window, cx);
         }
+        self.ai_task_sessions.retain(|session| session.saved.path().ok().as_ref() != Some(&path));
         let delete = cx.background_spawn(async move { SavedSession::delete_at(&path) });
         cx.spawn(async move |owner, cx| {
             let result = delete.await;
@@ -471,8 +510,6 @@ impl Editor {
             .ai_session
             .as_ref()
             .is_some_and(|session| session.expanded);
-        self.stop_ai_task(cx);
-        drop(self.ai_session.take());
         self.open_ai_assistant(AiCommand::Ask, window, cx);
         if let Some(session) = self.ai_session.as_mut() {
             session.expanded = expanded;
@@ -487,10 +524,22 @@ impl Editor {
         session.mode = PanelMode::History;
         let id = session.saved.id.clone();
         let root = session.saved.workspace.root.clone();
+        let retained = self.ai_task_sessions.iter().rev()
+            .filter(|session| session.saved.workspace.root == root)
+            .filter_map(|session| {
+                let path = match session.saved.path() {
+                    Ok(path) => path,
+                    Err(error) => { eprintln!("读取 AI 任务路径失败：{error}"); return None; }
+                };
+                let title = session.saved.messages.iter().find(|message| message.role == "user")
+                    .map(|message| message.text.chars().take(60).collect::<String>())
+                    .unwrap_or_else(|| session.input.read(cx).value().chars().take(60).collect());
+                Some((path, if title.is_empty() { session.saved.id.clone() } else { title }))
+            }).collect::<Vec<_>>();
         let load = cx.background_spawn(async move {
             let directory = SavedSession::directory(root.as_deref())?;
             if !directory.exists() {
-                return Ok(Vec::new());
+                return Ok(retained);
             }
             let mut files = std::fs::read_dir(directory)?
                 .map(|entry| entry.map(|entry| entry.path()))
@@ -506,8 +555,9 @@ impl Editor {
                         .ok(),
                 )
             });
+            files.retain(|path| !retained.iter().any(|(retained, _)| retained == path));
             files.truncate(20);
-            let mut summaries = Vec::new();
+            let mut summaries = retained;
             for path in files {
                 let title = match SavedSession::load_at(&path, root.as_deref()) {
                     Ok(saved) => saved
@@ -529,10 +579,7 @@ impl Editor {
         cx.spawn(async move |owner, cx| {
             let result = load.await;
             if let Err(error) = owner.update(cx, |editor, cx| {
-                if let Some(session) = editor
-                    .ai_session
-                    .as_mut()
-                    .filter(|session| session.saved.id == id)
+                if let Some(session) = editor.ai_session_mut(&id)
                 {
                     match result {
                         Ok(files) => session.history_files = files,
@@ -548,7 +595,27 @@ impl Editor {
         cx.notify();
     }
 
-    fn restore_ai_history(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    fn restore_ai_history(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.ai_task_sessions.iter()
+            .position(|session| session.saved.path().ok().as_ref() == Some(&path))
+        {
+            let destination = self.ai_task_sessions.get(index).and_then(|session| {
+                session.saved.target.as_ref().and_then(|target| target.path.clone()
+                    .or_else(|| session.saved.bindings.get(&target.document_id).cloned()))
+            });
+            if let Some(destination) = destination {
+                self.open_workspace_file(destination, window, cx);
+            }
+            let mut session = self.ai_task_sessions.remove(index);
+            session.visible = true;
+            session.panel_navigation = false;
+            session.mode = PanelMode::Task;
+            if let Some(previous) = self.ai_session.replace(session) {
+                self.ai_task_sessions.push(previous);
+            }
+            cx.notify();
+            return;
+        }
         self.stop_ai_task(cx);
         let Some(session) = self.ai_session.as_ref() else {
             return;
@@ -562,9 +629,7 @@ impl Editor {
             let loaded = load.await;
             if let Err(error) =
                 owner.update(cx, |editor, cx| {
-                    if let Some(session) = editor.ai_session.as_mut().filter(|session| {
-                        session.saved.id == id && session.generation == generation
-                    }) {
+                    if let Some(session) = editor.ai_session_mut(&id).filter(|session| session.generation == generation) {
                         match loaded {
                             Ok(saved) => {
                                 session.saved = saved;
@@ -637,20 +702,7 @@ impl Editor {
             });
             return;
         }
-        if self
-            .ai_session
-            .as_ref()
-            .is_some_and(|session| session.visible)
-        {
-            self.hide_ai_panel(cx);
-        } else if let Some(session) = self.ai_session.as_mut() {
-            session.visible = true;
-            let input = session.input.clone();
-            input.update(cx, |input, cx| input.focus(window, cx));
-            cx.notify();
-        } else {
-            self.open_ai_assistant(AiCommand::Ask, window, cx);
-        }
+        self.open_ai_assistant(AiCommand::Ask, window, cx);
     }
 
     pub(crate) fn open_ai_assistant(
@@ -715,12 +767,13 @@ impl Editor {
             });
         self.context_menu = None;
         self.selection_toolbar = None;
+        let owner_document = self.recovery_id;
         if let Some(parent) = self.split_parent.clone() {
             let handle = window.window_handle();
             cx.defer(move |cx| {
                 match handle.update(cx, |_, window, cx| {
                     parent.update(cx, |editor, cx| {
-                        editor.open_ai_target(command, target, document, root, origin, window, cx)
+                        editor.open_ai_target(command, owner_document, target, document, root, origin, window, cx)
                     })
                 }) {
                     Ok(Ok(())) => {}
@@ -729,12 +782,13 @@ impl Editor {
             });
             return;
         }
-        self.open_ai_target(command, target, document, root, origin, window, cx);
+        self.open_ai_target(command, owner_document, target, document, root, origin, window, cx);
     }
 
     fn open_ai_target(
         &mut self,
         command: AiCommand,
+        owner_document: uuid::Uuid,
         target: TargetSnapshot,
         document: DocumentSnapshot,
         root: Option<PathBuf>,
@@ -743,153 +797,113 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.window_handle = Some(window.window_handle());
-        let mut same_target = self.ai_session.as_ref().is_some_and(|session| {
-            !(session.saved.running && command != AiCommand::Ask)
-                && session.saved.workspace.root == root
-                && session.saved.target.as_ref().is_some_and(|previous| {
-                    previous.document_id == target.document_id
-                        && previous.range == target.range
-                        && previous.identity == target.identity
-                        && previous.version == target.version
-                })
+        let mut workspace = match AiWorkspace::new(root.clone(), vec![document]) {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                self.show_message_modal("AI", error.to_string(), cx);
+                return;
+            }
+        };
+        workspace
+            .live_documents
+            .extend(self.ai_window_live_ids(root.as_deref(), cx));
+        let loaded = AiSettings::load();
+        let error = loaded.as_ref().err().map(ToString::to_string);
+        let settings = loaded.unwrap_or_default();
+        workspace.excluded_paths = settings.excluded_paths.clone();
+        let mut saved = SavedSession::new(workspace);
+        saved.target = Some(target);
+        saved.endpoint_id = settings
+            .active_endpoint()
+            .map(|endpoint| endpoint.id.clone())
+            .unwrap_or_default();
+        let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+        let owner = cx.entity().downgrade();
+        let input = cx.new(|cx| {
+            TextField::new(strings.ai_custom_placeholder.clone(), cx).on_enter(
+                move |_, _, cx| {
+                    let owner = owner.clone();
+                    let input_id = cx.entity_id();
+                    cx.defer(move |cx| {
+                        if let Err(error) =
+                            owner.update(cx, |editor, cx| {
+                                if editor.ai_session.as_ref().is_some_and(|session| session.input.entity_id() == input_id) {
+                                    editor.send_ai_task(cx);
+                                }
+                            })
+                        {
+                            eprintln!("发送 AI 指令失败：{error}");
+                        }
+                    });
+                },
+            )
         });
-        if !same_target
-            && let Some(session) = self.ai_session.as_mut().filter(|session| {
-                session.saved.workspace.root == root
-                    && !session.saved.running
-                    && session.saved.workspace.changes.proposals.is_empty()
-            })
-        {
-            session.saved.workspace.selection_scope = None;
-            session.saved.workspace.read_only = false;
-            session.saved.workspace.cursor_target = None;
-            session.review_navigation = None;
-            session.saved.target = Some(target.clone());
-            session
-                .saved
-                .workspace
-                .documents
-                .insert(document.id.clone(), document.clone());
-            same_target = true;
+        let mut directories = Vec::new();
+        if let Ok(path) = crate::ai::settings::settings_path() {
+            directories.push((path.with_file_name("ai").join("skills"), "user"));
         }
-        if (!same_target || command.is_reading_task())
-            && let Some(session) = self.ai_session.as_mut().filter(|session| {
-                session.saved.running || !session.saved.workspace.changes.proposals.is_empty()
-            })
-        {
-            session.visible = true;
-            session.mode = PanelMode::Task;
-            session.error = Some(
-                cx.global::<crate::i18n::I18nManager>()
-                    .strings()
-                    .ai_task_pending_first
-                    .clone(),
-            );
-            session
-                .input
-                .update(cx, |input, cx| input.focus(window, cx));
-            cx.notify();
-            return;
+        if let Some(root) = &root {
+            directories.push((root.join(".velora").join("skills"), "workspace"));
         }
-        if !same_target {
-            self.stop_ai_task(cx);
-            let mut workspace = match AiWorkspace::new(root.clone(), vec![document]) {
-                Ok(workspace) => workspace,
-                Err(error) => {
-                    self.show_message_modal("AI", error.to_string(), cx);
-                    return;
-                }
-            };
-            workspace
-                .live_documents
-                .extend(self.ai_window_live_ids(root.as_deref(), cx));
-            let loaded = AiSettings::load();
-            let error = loaded.as_ref().err().map(ToString::to_string);
-            let settings = loaded.unwrap_or_default();
-            workspace.excluded_paths = settings.excluded_paths.clone();
-            let mut saved = SavedSession::new(workspace);
-            saved.target = Some(target);
-            saved.endpoint_id = settings
-                .active_endpoint()
-                .map(|endpoint| endpoint.id.clone())
-                .unwrap_or_default();
-            let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
-            let owner = cx.entity().downgrade();
-            let input = cx.new(|cx| {
-                TextField::new(strings.ai_custom_placeholder.clone(), cx).on_enter(
-                    move |_, _, cx| {
-                        let owner = owner.clone();
-                        cx.defer(move |cx| {
-                            if let Err(error) =
-                                owner.update(cx, |editor, cx| editor.send_ai_task(cx))
-                            {
-                                eprintln!("发送 AI 指令失败：{error}");
-                            }
-                        });
-                    },
-                )
-            });
-            let mut directories = Vec::new();
-            if let Ok(path) = crate::ai::settings::settings_path() {
-                directories.push((path.with_file_name("ai").join("skills"), "user"));
-            }
-            if let Some(root) = &root {
-                directories.push((root.join(".velora").join("skills"), "workspace"));
-            }
-            self.ai_session = Some(AiSession {
-                saved,
-                input,
-                language: cx.new(|cx| {
-                    let mut field = TextField::new("English / 简体中文", cx);
-                    field.set_value("English", cx);
-                    field
-                }),
-                instruction_name: cx
-                    .new(|cx| TextField::new(strings.ai_panel_instruction_name, cx)),
-                context_input: cx.new(|cx| TextField::new("@notes.md / @\"folder name\"", cx)),
-                instruction_body: cx
-                    .new(|cx| TextField::new("{{selection}} · {{document}} · {{references}}", cx)),
-                excluded_input: cx.new(|cx| {
-                    let mut field = TextField::new("private/, secrets.md", cx);
-                    field.set_value(&settings.excluded_paths.join(", "), cx);
-                    field
-                }),
-                settings,
-                draft: None,
-                visible: true,
-                expanded: false,
-                mode: PanelMode::Task,
-                command,
-                origin,
-                error,
-                activity: String::new(),
-                generation: 0,
-                control: RunControl::default(),
-                task: None,
-                stream_index: None,
-                scroll: ScrollHandle::new(),
-                review_focus: cx.focus_handle(),
-                panel_focus: cx.focus_handle(),
-                panel_bounds: Default::default(),
-                panel_drag: None,
-                conversation: None,
-                review_open: false,
-                review_navigation: None,
-                history_files: Vec::new(),
-                skills: crate::ai::skills::SkillCatalog::load(&directories),
-                input_tokens: 0,
-                output_tokens: 0,
-                context_candidates: Vec::new(),
-                settings_saving: false,
-                settings_revision: 0,
-                review: None,
-                review_dirty: true,
-            });
+        if let Some(previous) = self.ai_session.take() {
+            self.ai_task_sessions.push(previous);
         }
+        self.ai_session = Some(AiSession {
+            document: owner_document,
+            panel_navigation: false,
+            saved,
+            input,
+            language: cx.new(|cx| {
+                let mut field = TextField::new("English / 简体中文", cx);
+                field.set_value("English", cx);
+                field
+            }),
+            instruction_name: cx
+                .new(|cx| TextField::new(strings.ai_panel_instruction_name, cx)),
+            context_input: cx.new(|cx| TextField::new("@notes.md / @\"folder name\"", cx)),
+            instruction_body: cx
+                .new(|cx| TextField::new("{{selection}} · {{document}} · {{references}}", cx)),
+            excluded_input: cx.new(|cx| {
+                let mut field = TextField::new("private/, secrets.md", cx);
+                field.set_value(&settings.excluded_paths.join(", "), cx);
+                field
+            }),
+            settings,
+            draft: None,
+            visible: true,
+            expanded: false,
+            mode: PanelMode::Task,
+            command,
+            origin,
+            error,
+            activity: String::new(),
+            generation: 0,
+            control: RunControl::default(),
+            task: None,
+            stream_index: None,
+            scroll: ScrollHandle::new(),
+            review_focus: cx.focus_handle(),
+            panel_focus: cx.focus_handle(),
+            panel_bounds: Default::default(),
+            panel_drag: None,
+            conversation: None,
+            review_open: false,
+            review_navigation: None,
+            history_files: Vec::new(),
+            skills: crate::ai::skills::SkillCatalog::load(&directories),
+            input_tokens: 0,
+            output_tokens: 0,
+            context_candidates: Vec::new(),
+            settings_saving: false,
+            settings_revision: 0,
+            review: None,
+            review_dirty: true,
+        });
         let Some(session) = self.ai_session.as_mut() else {
             return;
         };
         session.visible = true;
+        session.panel_navigation = false;
         if command != AiCommand::Ask {
             session.saved.workspace.read_only = command.is_reading_task();
         }
@@ -1007,6 +1021,23 @@ impl Editor {
             return;
         }
         let editor_context = self.ai_editor_context(cx);
+        if self.ai_session.as_ref().is_some_and(|session| {
+            session.document != self.ai_review_navigation_origin(cx)
+                || session.saved.target.as_ref().is_some_and(|target| {
+                    editor_context.get("active_tab").and_then(|tab| tab.get("document_id"))
+                        .and_then(serde_json::Value::as_str) != Some(target.document_id.as_str())
+                        && session.saved.bindings.get(&target.document_id).is_none_or(|path| {
+                            editor_context.get("active_tab").and_then(|tab| tab.get("path"))
+                                != Some(&serde_json::json!(path))
+                        })
+                })
+        }) {
+            if let Some(session) = self.ai_session.as_mut() {
+                session.error = Some("请回到任务所属文档继续，或重新发起任务".into());
+            }
+            cx.notify();
+            return;
+        }
         let ui_language = cx
             .global::<crate::i18n::I18nManager>()
             .current_language_id()
@@ -1205,15 +1236,12 @@ impl Editor {
             }
         }
         let prompt = crate::ai::context::task_prompt(
-            &prompt,
-            &editor_context,
-            session.saved.target.as_ref(),
-            &session.saved.references,
-            session.saved.history.is_empty(),
-            task_command,
+            &prompt, &editor_context, session.saved.target.as_ref(),
+            &session.saved.references, session.saved.history.is_empty(), task_command,
         );
         session.generation = session.generation.wrapping_add(1);
         let generation = session.generation;
+        let session_id = session.saved.id.clone();
         session.control.cancel.cancel();
         session.control = RunControl::default();
         session.saved.running = true;
@@ -1308,7 +1336,7 @@ impl Editor {
                 let mut finished = false;
                 if !events.is_empty() {
                     match owner.update(cx, |editor, cx| {
-                        editor.receive_ai_events(generation, events, cx)
+                        editor.receive_ai_session_events(&session_id, generation, events, cx)
                     }) {
                         Ok(done) => finished = done,
                         Err(_) => break,
@@ -1325,6 +1353,30 @@ impl Editor {
         }));
         self.persist_ai_session(cx);
         cx.notify();
+    }
+
+    fn receive_ai_session_events(
+        &mut self,
+        id: &str,
+        generation: u64,
+        events: Vec<WorkerEvent>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.ai_session.as_ref().is_some_and(|session| session.saved.id == id) {
+            return self.receive_ai_events(generation, events, cx);
+        }
+        let Some(index) = self.ai_task_sessions.iter().position(|session| session.saved.id == id) else {
+            return true;
+        };
+        let session = self.ai_task_sessions.remove(index);
+        // 后台任务继续读取各标签的实时缓冲区，但结果只回写它自己的会话。
+        let previous = self.ai_session.replace(session);
+        let finished = self.receive_ai_events(generation, events, cx);
+        if let Some(session) = self.ai_session.take() {
+            self.ai_task_sessions.insert(index, session);
+        }
+        self.ai_session = previous;
+        finished
     }
 
     fn receive_ai_events(
@@ -1443,10 +1495,7 @@ impl Editor {
             if let Err(error) = write.await {
                 let message = error.to_string();
                 if let Err(context_error) = owner.update(cx, |editor, cx| {
-                    if let Some(session) = editor
-                        .ai_session
-                        .as_mut()
-                        .filter(|session| session.saved.id == id)
+                    if let Some(session) = editor.ai_session_mut(&id)
                     {
                         session.error = Some(message.clone());
                         cx.notify();
@@ -1612,10 +1661,7 @@ impl Editor {
         cx.spawn(async move |owner, cx| {
             let result = save.await;
             if let Err(error) = owner.update(cx, |editor, cx| {
-                if let Some(session) = editor
-                    .ai_session
-                    .as_mut()
-                    .filter(|session| session.saved.id == session_id)
+                if let Some(session) = editor.ai_session_mut(&session_id)
                 {
                     session.settings_saving = false;
                     match result {
@@ -1687,9 +1733,7 @@ impl Editor {
             if let Err(error) =
                 owner.update(cx, |editor, cx| {
                     let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
-                    if let Some(session) = editor.ai_session.as_mut().filter(|session| {
-                        session.saved.id == id && session.generation == generation
-                    }) {
+                    if let Some(session) = editor.ai_session_mut(&id).filter(|session| session.generation == generation) {
                         match result {
                             Ok(output) => {
                                 session.activity = strings.preferences_ai_test_ok;
@@ -1729,10 +1773,7 @@ impl Editor {
         cx.spawn(async move |owner, cx| {
             let result = save.await;
             if let Err(error) = owner.update(cx, |editor, cx| {
-                if let Some(session) = editor
-                    .ai_session
-                    .as_mut()
-                    .filter(|session| session.saved.id == id)
+                if let Some(session) = editor.ai_session_mut(&id)
                 {
                     session.settings_saving = false;
                     match result {
@@ -1769,10 +1810,7 @@ impl Editor {
         cx.spawn(async move |owner, cx| {
             let result = save.await;
             if let Err(error) = owner.update(cx, |editor, cx| {
-                if let Some(session) = editor
-                    .ai_session
-                    .as_mut()
-                    .filter(|session| session.saved.id == session_id)
+                if let Some(session) = editor.ai_session_mut(&session_id)
                 {
                     session.settings_saving = false;
                     match result {
@@ -1812,10 +1850,7 @@ impl Editor {
         cx.spawn(async move |owner, cx| {
             let result = load.await;
             if let Err(error) = owner.update(cx, |editor, cx| {
-                if let Some(session) = editor
-                    .ai_session
-                    .as_mut()
-                    .filter(|session| session.saved.id == id)
+                if let Some(session) = editor.ai_session_mut(&id)
                 {
                     match result {
                         Ok(skills) => session.skills = skills,

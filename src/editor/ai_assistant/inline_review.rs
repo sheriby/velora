@@ -142,6 +142,7 @@ pub(super) fn tracked_document(
 
 #[derive(Clone)]
 pub(in crate::editor) struct ReviewBinding {
+    pub session_id: String,
     pub owner: gpui::WeakEntity<super::Editor>,
     pub document_id: String,
     pub versions: (u64, u64),
