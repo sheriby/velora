@@ -491,7 +491,7 @@ impl Editor {
     fn render_ai_inline_controls(
         &self,
         binding: &ReviewBinding,
-        theme: &crate::theme::Theme,
+        _theme: &crate::theme::Theme,
         cx: &App,
     ) -> AnyElement {
         let strings = cx.global::<crate::i18n::I18nManager>().strings_arc();
@@ -507,17 +507,11 @@ impl Editor {
             .gap(px(4.0))
             .px(px(8.0))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-        for (accept, id, path, tooltip) in [
-            (
-                false,
-                "ai-review-reject",
-                "icon/titlebar/chrome-close.svg",
-                strings.ai_panel_reject.clone(),
-            ),
+        for (accept, id, label) in [
+            (false, "ai-review-reject", strings.ai_panel_reject.clone()),
             (
                 true,
                 "ai-review-accept",
-                "icon/workspace/check.svg",
                 strings.ai_panel_accept_edit.clone(),
             ),
         ] {
@@ -527,30 +521,13 @@ impl Editor {
             } else {
                 binding.enabled
             };
-            let button = div()
-                .id(id)
+            let button = Button::new(id)
                 .debug_selector(move || id.into())
-                .size(px(28.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(6.0))
-                .cursor_pointer()
-                .when(!enabled, |button| button.opacity(0.35).cursor_default())
-                .when(enabled, |button| {
-                    button.hover(|style| style.bg(theme.colors.dialog_secondary_button_hover))
-                })
-                .child(svg().path(path).size(px(14.0)).text_color(if accept {
-                    theme.colors.dialog_primary_button_bg
-                } else {
-                    theme.colors.dialog_muted
-                }))
-                .tooltip(move |_, cx| {
-                    cx.new(|_| crate::components::HoverPreviewTooltip {
-                        label: tooltip.clone().into(),
-                    })
-                    .into()
-                })
+                .small()
+                .ghost()
+                .when(accept, |button| button.primary())
+                .label(label)
+                .disabled(!enabled)
                 .on_click(move |_, window, cx| {
                     if !enabled {
                         return;

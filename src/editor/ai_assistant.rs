@@ -12,6 +12,8 @@ use crate::ai::settings::{AiFeature, AiSettings};
 use crate::ai::workspace::AiWorkspace;
 use crate::ai::{AiCommand, DocumentSnapshot};
 use crate::components::TextField;
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{button::{Button, ButtonVariants}, checkbox::Checkbox, Disableable, Sizable};
 
 mod apply;
 mod context;

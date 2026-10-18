@@ -56,6 +56,13 @@ fn ai_revisions_use_the_document_area_and_acceptance_returns_to_the_original_edi
     });
     draw(cx);
     draw(cx);
+    cx.update(|window, cx| {
+        use gpui_kit::test::TestWindowExt as _;
+        let accept = window.find("ai-review-accept");
+        assert_eq!(accept.role(), Some(gpui::Role::Button));
+        assert_eq!(accept.label(), Some(cx.global::<crate::i18n::I18nManager>().strings().ai_panel_accept_edit.as_str()),
+            "接受修改必须提供清楚的文字标签");
+    });
     let surface = cx
         .debug_bounds("ai-review-workspace")
         .expect("修改应在正文区域审阅");
@@ -1628,13 +1635,14 @@ fn ai_visible_controls_resolve_through_the_production_asset_source(cx: &mut Test
     use gpui::AssetSource;
     for path in [
         "icon/editor/ai.svg",
-        "icon/editor/ai-back.svg",
-        "icon/editor/ai-dock.svg",
-        "icon/editor/ai-float.svg",
-        "icon/editor/ai-more.svg",
-        "icon/editor/ai-retry.svg",
-        "icon/editor/ai-send.svg",
-        "icon/editor/ai-stop.svg",
+        "icons/arrow-left.svg",
+        "icons/panel-right-open.svg",
+        "icons/external-link.svg",
+        "icons/ellipsis.svg",
+        "icons/rotate-cw.svg",
+        "icons/arrow-up.svg",
+        "icons/square.svg",
+        "icons/trash.svg",
     ] {
         let bytes = crate::VeloraAssets.load(path).unwrap();
         assert!(bytes.is_some(), "产品资源中缺少图标：{path}");
@@ -2912,4 +2920,43 @@ fn ai_restoring_history_does_not_overwrite_a_stashed_session(cx: &mut TestAppCon
         assert!(stashed.saved.workspace.changes.proposals.len() == 1);
     });
     std::fs::remove_file(foreign_path).unwrap();
+}
+
+#[gpui::test]
+fn ai_panel_actions_are_buttons_and_can_be_closed_from_the_keyboard(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui::AppContext as _;
+    initialize(cx);
+    let handle = cx.update(|cx| crate::ui::open_window(
+        gpui::WindowOptions {
+            window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::new(
+                Default::default(), gpui::size(gpui::px(1024.0), gpui::px(768.0)),
+            ))),
+            ..Default::default()
+        }, cx, |_, cx| cx.new(|cx| Editor::from_markdown(cx, "保留正文。".into(), None)),
+    ).unwrap());
+    handle.update(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_ref().unwrap();
+        window.focus(&session.panel_focus, cx);
+    }).unwrap();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    draw(&mut visual);
+    draw(&mut visual);
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.try_find("ai-hide").and_then(|button| button.role()), Some(gpui::Role::Button), "AI 操作应使用可聚焦的标准按钮");
+        for _ in 0..32 {
+            window.press("tab", cx);
+            window.render_frame(cx);
+            if window.find("ai-hide").focused() == Some(true) { break; }
+        }
+        assert_eq!(window.find("ai-hide").focused(), Some(true), "关闭按钮应能从键盘到达");
+        window.press("space", cx);
+    });
+    visual.run_until_parked();
+    handle.read_with(cx, |editor, _| {
+        assert!(!editor.ai_session.as_ref().unwrap().visible);
+        assert_eq!(editor.buffer.text(), "保留正文。");
+    }).unwrap();
 }

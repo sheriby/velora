@@ -66,37 +66,91 @@ impl Editor {
                 |header| {
                     header.child(self.ai_button(
                         "ai-copy-result",
-                        "",
                         false,
-                        true,
-                        theme,
                         cx,
+                        |button, cx| {
+                            button.icon(IconName::Copy).accessibility_label(
+                                cx.global::<crate::i18n::I18nManager>()
+                                    .strings()
+                                    .ai_panel_copy
+                                    .clone(),
+                            )
+                        },
                         |editor, _, cx| editor.copy_ai_result(cx),
                     ))
                 },
             )
             .child(self.ai_button(
                 "ai-expand",
-                if sidebar { "↙" } else { "↗" },
                 false,
-                true,
-                theme,
                 cx,
-                |editor, _, cx| {
+                |button, _cx| {
+                    button
+                        .icon(
+                            if self
+                                .ai_session
+                                .as_ref()
+                                .is_some_and(|session| session.expanded)
+                            {
+                                IconName::ExternalLink
+                            } else {
+                                IconName::PanelRightOpen
+                            },
+                        )
+                        .accessibility_label(
+                            if self
+                                .ai_session
+                                .as_ref()
+                                .is_some_and(|session| session.expanded)
+                            {
+                                strings.ai_panel_float.clone()
+                            } else {
+                                strings.ai_panel_dock.clone()
+                            },
+                        )
+                        .tooltip(
+                            if self
+                                .ai_session
+                                .as_ref()
+                                .is_some_and(|session| session.expanded)
+                            {
+                                strings.ai_panel_float.clone()
+                            } else {
+                                strings.ai_panel_dock.clone()
+                            },
+                        )
+                },
+                |editor, window, cx| {
                     if let Some(session) = editor.ai_session.as_mut() {
                         session.expanded = !session.expanded;
                         session.panel_drag = None;
+                        session
+                            .input
+                            .update(cx, |input, cx| input.focus(window, cx));
                     }
                     cx.notify();
                 },
             ))
             .child(self.ai_button(
                 "ai-options",
-                "⋯",
-                false,
                 true,
-                theme,
                 cx,
+                |button, cx| {
+                    button
+                        .icon(IconName::Ellipsis)
+                        .accessibility_label(
+                            cx.global::<crate::i18n::I18nManager>()
+                                .strings()
+                                .ai_panel_more
+                                .clone(),
+                        )
+                        .tooltip(
+                            cx.global::<crate::i18n::I18nManager>()
+                                .strings()
+                                .ai_panel_more
+                                .clone(),
+                        )
+                },
                 |editor, _, cx| {
                     if let Some(session) = editor.ai_session.as_mut() {
                         session.mode = PanelMode::Options;
@@ -104,11 +158,20 @@ impl Editor {
                     cx.notify();
                 },
             ))
-            .child(
-                self.ai_button("ai-hide", "×", false, true, theme, cx, |editor, _, cx| {
-                    editor.hide_ai_panel(cx)
-                }),
-            );
+            .child(self.ai_button(
+                "ai-hide",
+                false,
+                cx,
+                |button, cx| {
+                    button.icon(IconName::Close).accessibility_label(
+                        cx.global::<crate::i18n::I18nManager>()
+                            .strings()
+                            .file_history_close
+                            .clone(),
+                    )
+                },
+                |editor, _, cx| editor.hide_ai_panel(cx),
+            ));
         let titlebar = div()
             .id("ai-float-titlebar")
             .debug_selector(|| "ai-float-titlebar".into())
@@ -169,11 +232,9 @@ impl Editor {
         {
             panel = panel.child(self.ai_button(
                 "ai-configure",
-                strings.ai_panel_settings.clone(),
                 false,
-                true,
-                theme,
                 cx,
+                |button, _cx| button.label(strings.ai_panel_settings.clone()).outline(),
                 |editor, _, cx| editor.open_ai_settings(cx),
             ));
         }
@@ -251,11 +312,13 @@ impl Editor {
         if session.error.is_some() {
             panel = panel.child(self.ai_button(
                 "ai-retry",
-                strings.ai_panel_retry.clone(),
                 false,
-                !session.saved.running,
-                theme,
                 cx,
+                |button, _cx| {
+                    button
+                        .label(strings.ai_panel_retry.clone())
+                        .disabled(!(!session.saved.running))
+                },
                 |editor, _, cx| editor.retry_ai_task(cx),
             ));
         }
@@ -264,11 +327,20 @@ impl Editor {
         } else if session.saved.running {
             panel = panel.child(self.ai_button(
                 "ai-stop",
-                "■",
                 false,
-                true,
-                theme,
                 cx,
+                |button, cx| {
+                    button
+                        .icon(IconName::Square)
+                        .accessibility_label(
+                            cx.global::<crate::i18n::I18nManager>()
+                                .strings()
+                                .ai_panel_stop
+                                .clone(),
+                        )
+                        .with_size(gpui_kit::component::Size::Medium)
+                        .rounded_full()
+                },
                 |editor, _, cx| editor.stop_ai_task(cx),
             ));
         }
@@ -372,6 +444,7 @@ impl Editor {
         let Some(session) = self.ai_session.as_ref() else {
             return div().into_any_element();
         };
+        let strings = cx.global::<crate::i18n::I18nManager>().strings_arc();
         let has_input = !session.input.read(cx).value().trim().is_empty();
         let controls = div()
             .w_full()
@@ -380,11 +453,15 @@ impl Editor {
             .justify_between()
             .child(self.ai_button(
                 "ai-context",
-                "@",
-                false,
-                !session.saved.running,
-                theme,
+                true,
                 cx,
+                |button, _cx| {
+                    button
+                        .label("@")
+                        .accessibility_label(strings.ai_panel_add_context.clone())
+                        .tooltip(strings.ai_panel_add_context.clone())
+                        .disabled(!(!session.saved.running))
+                },
                 |editor, _, cx| editor.show_ai_context(cx),
             ))
             .child(
@@ -395,22 +472,42 @@ impl Editor {
                     .when(session.saved.running, |actions| {
                         actions.child(self.ai_button(
                             "ai-stop",
-                            "■",
                             false,
-                            true,
-                            theme,
                             cx,
+                            |button, cx| {
+                                button
+                                    .icon(IconName::Square)
+                                    .accessibility_label(
+                                        cx.global::<crate::i18n::I18nManager>()
+                                            .strings()
+                                            .ai_panel_stop
+                                            .clone(),
+                                    )
+                                    .with_size(gpui_kit::component::Size::Medium)
+                                    .rounded_full()
+                            },
                             |editor, _, cx| editor.stop_ai_task(cx),
                         ))
                     })
                     .when(!session.saved.running || has_input, |actions| {
                         actions.child(self.ai_button(
                             "ai-send",
-                            "↑",
-                            has_input,
-                            has_input,
-                            theme,
+                            false,
                             cx,
+                            |button, cx| {
+                                button
+                                    .icon(IconName::ArrowUp)
+                                    .accessibility_label(
+                                        cx.global::<crate::i18n::I18nManager>()
+                                            .strings()
+                                            .ai_panel_send
+                                            .clone(),
+                                    )
+                                    .when(has_input, |button| button.primary())
+                                    .disabled(!(has_input))
+                                    .with_size(gpui_kit::component::Size::Medium)
+                                    .rounded_full()
+                            },
                             |editor, _, cx| editor.send_ai_task(cx),
                         ))
                     }),
@@ -422,8 +519,8 @@ impl Editor {
             .flex_shrink_0()
             .flex()
             .flex_col()
-            .gap(px(6.0))
-            .p(px(8.0))
+            .gap_1()
+            .p_2()
             .rounded(px(10.0))
             .border_1()
             .border_color(theme.colors.dialog_border)
@@ -466,11 +563,9 @@ impl Editor {
                 .unwrap_or_else(|| id.clone());
             files = files.child(self.ai_button(
                 SharedString::from(format!("ai-review-file-{index}")),
-                format!("{label} · {}", proposal.edit_count()),
                 false,
-                true,
-                theme,
                 cx,
+                |button, _cx| button.label(format!("{label} · {}", proposal.edit_count())),
                 move |editor, _, cx| {
                     if let Some(session) = editor.ai_session.as_mut() {
                         session.review_open = true;
@@ -493,11 +588,24 @@ impl Editor {
                 actions = actions
                     .child(self.ai_button(
                         "ai-review-previous",
-                        "↑",
                         false,
-                        true,
-                        theme,
                         cx,
+                        |button, cx| {
+                            button
+                                .icon(IconName::ArrowUp)
+                                .accessibility_label(
+                                    cx.global::<crate::i18n::I18nManager>()
+                                        .strings()
+                                        .file_history_previous_change
+                                        .clone(),
+                                )
+                                .tooltip(
+                                    cx.global::<crate::i18n::I18nManager>()
+                                        .strings()
+                                        .file_history_previous_change
+                                        .clone(),
+                                )
+                        },
                         |editor, _, cx| editor.move_ai_review_change(false, cx),
                     ))
                     .child(
@@ -508,11 +616,24 @@ impl Editor {
                     )
                     .child(self.ai_button(
                         "ai-review-next",
-                        "↓",
                         false,
-                        true,
-                        theme,
                         cx,
+                        |button, cx| {
+                            button
+                                .icon(IconName::ArrowDown)
+                                .accessibility_label(
+                                    cx.global::<crate::i18n::I18nManager>()
+                                        .strings()
+                                        .file_history_next_change
+                                        .clone(),
+                                )
+                                .tooltip(
+                                    cx.global::<crate::i18n::I18nManager>()
+                                        .strings()
+                                        .file_history_next_change
+                                        .clone(),
+                                )
+                        },
                         |editor, _, cx| editor.move_ai_review_change(true, cx),
                     ));
             }
@@ -520,35 +641,49 @@ impl Editor {
         actions = actions
             .child(self.ai_button(
                 "ai-regenerate",
-                "↻",
                 false,
-                !session.saved.running,
-                theme,
                 cx,
+                |button, cx| {
+                    button
+                        .icon(IconName::RotateCw)
+                        .accessibility_label(
+                            cx.global::<crate::i18n::I18nManager>()
+                                .strings()
+                                .ai_panel_retry
+                                .clone(),
+                        )
+                        .disabled(!(!session.saved.running))
+                },
                 |editor, _, cx| editor.retry_ai_task(cx),
             ))
             .child(div().flex_1());
         if session.saved.workspace.changes.proposals.len() > 1 {
             actions = actions.child(self.ai_button(
                 "ai-accept-all",
-                strings.ai_panel_accept_all.clone(),
                 false,
-                self.ai_review_can_accept(None, false),
-                theme,
                 cx,
+                |button, _cx| {
+                    button
+                        .label(strings.ai_panel_accept_all.clone())
+                        .disabled(!(self.ai_review_can_accept(None, false)))
+                },
                 |editor, window, cx| editor.apply_ai_review(None, None, window, cx),
             ));
         }
         if let Some(review) = &session.review {
             let id = review.id.clone();
+            let can_accept = self.ai_review_can_accept(Some(&id), false);
             actions = actions.child(
                 self.ai_button(
                     "ai-review-file-accept",
-                    strings.ai_panel_accept_file.clone(),
-                    true,
-                    self.ai_review_can_accept(Some(&id), false),
-                    theme,
+                    false,
                     cx,
+                    |button, _cx| {
+                        button
+                            .label(strings.ai_panel_accept_file.clone())
+                            .primary()
+                            .disabled(!can_accept)
+                    },
                     move |editor, window, cx| {
                         editor.apply_ai_review(Some(id.clone()), None, window, cx)
                     },

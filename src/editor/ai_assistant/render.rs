@@ -16,14 +16,15 @@ impl Editor {
                 return Some(
                     self.ai_button(
                         "ai-return",
-                        "AI",
                         false,
-                        true,
-                        theme,
                         cx,
-                        |editor, _, cx| {
+                        |button, _cx| button.label("AI").outline(),
+                        |editor, window, cx| {
                             if let Some(session) = editor.ai_session.as_mut() {
                                 session.visible = true;
+                                session
+                                    .input
+                                    .update(cx, |input, cx| input.focus(window, cx));
                             }
                             cx.notify();
                         },
@@ -84,11 +85,7 @@ impl Editor {
                     - px(if compact && session.saved.messages.is_empty() {
                         180.0
                     } else {
-                        if compact {
-                            task_height
-                        } else {
-                            height
-                        }
+                        if compact { task_height } else { height }
                     })
                     - px(36.0))
                 .max(px(65.0)),
@@ -145,7 +142,8 @@ impl Editor {
         Some(
             div()
                 .bg(theme.colors.dialog_surface)
-                .border_l_1().border_color(theme.colors.dialog_border)
+                .border_l_1()
+                .border_color(theme.colors.dialog_border)
                 .w(px(width))
                 .h_full()
                 .flex_shrink_0()
@@ -183,11 +181,16 @@ impl Editor {
             .gap(px(8.0))
             .child(self.ai_button(
                 "ai-back",
-                "‹",
                 false,
-                true,
-                theme,
                 cx,
+                |button, cx| {
+                    button.icon(IconName::ArrowLeft).accessibility_label(
+                        cx.global::<crate::i18n::I18nManager>()
+                            .strings()
+                            .ai_panel_back
+                            .clone(),
+                    )
+                },
                 |editor, window, cx| {
                     if let Some(session) = editor.ai_session.as_mut() {
                         session.mode = PanelMode::Task;
@@ -206,11 +209,20 @@ impl Editor {
                     .font_weight(FontWeight::MEDIUM)
                     .child(caption.clone()),
             )
-            .child(
-                self.ai_button("ai-hide", "×", false, true, theme, cx, |editor, _, cx| {
-                    editor.hide_ai_panel(cx)
-                }),
-            );
+            .child(self.ai_button(
+                "ai-hide",
+                false,
+                cx,
+                |button, cx| {
+                    button.icon(IconName::Close).accessibility_label(
+                        cx.global::<crate::i18n::I18nManager>()
+                            .strings()
+                            .file_history_close
+                            .clone(),
+                    )
+                },
+                |editor, _, cx| editor.hide_ai_panel(cx),
+            ));
         let mut content = div().w_full().flex().flex_col().gap(px(10.0));
         if let Some(error) = session.error.as_ref() {
             content = content.child(
@@ -226,31 +238,25 @@ impl Editor {
                 content = content
                     .child(self.ai_button(
                         "ai-settings",
-                        strings.ai_panel_settings.clone(),
-                        false,
                         true,
-                        theme,
                         cx,
+                        |button, _cx| button.label(strings.ai_panel_settings.clone()),
                         |editor, _, cx| {
                             editor.open_ai_settings(cx);
                         },
                     ))
                     .child(self.ai_button(
                         "ai-options-history",
-                        strings.ai_panel_history.clone(),
-                        false,
                         true,
-                        theme,
                         cx,
+                        |button, _cx| button.label(strings.ai_panel_history.clone()),
                         |editor, _, cx| editor.show_ai_history(cx),
                     ))
                     .child(self.ai_button(
                         "ai-options-skills",
-                        strings.ai_panel_skills.clone(),
-                        false,
                         true,
-                        theme,
                         cx,
+                        |button, _cx| button.label(strings.ai_panel_skills.clone()),
                         |editor, _, cx| {
                             if let Some(session) = editor.ai_session.as_mut() {
                                 session.mode = PanelMode::Skills;
@@ -261,11 +267,9 @@ impl Editor {
                     ))
                     .child(self.ai_button(
                         "ai-options-instructions",
-                        strings.ai_panel_instructions.clone(),
-                        false,
                         true,
-                        theme,
                         cx,
+                        |button, _cx| button.label(strings.ai_panel_instructions.clone()),
                         |editor, _, cx| {
                             if let Some(session) = editor.ai_session.as_mut() {
                                 session.mode = PanelMode::Instruction;
@@ -275,25 +279,23 @@ impl Editor {
                     ))
                     .child(self.ai_button(
                         "ai-options-new",
-                        strings.ai_panel_new_chat.clone(),
                         false,
-                        true,
-                        theme,
                         cx,
+                        |button, _cx| button.label(strings.ai_panel_new_chat.clone()),
                         |editor, window, cx| editor.new_ai_task(window, cx),
                     ));
                 if !session.saved.workspace.changes.proposals.is_empty() {
                     content = content.child(self.ai_button(
                         "ai-options-view",
-                        if session.review_open {
-                            strings.ai_task_return.clone()
-                        } else {
-                            strings.ai_review_title.clone()
-                        },
                         false,
-                        true,
-                        theme,
                         cx,
+                        |button, _cx| {
+                            button.label(if session.review_open {
+                                strings.ai_task_return.clone()
+                            } else {
+                                strings.ai_review_title.clone()
+                            })
+                        },
                         |editor, window, cx| {
                             if let Some(session) = editor.ai_session.as_mut() {
                                 session.review_open = !session.review_open;
@@ -308,11 +310,13 @@ impl Editor {
                     ));
                     content = content.child(self.ai_button(
                         "ai-options-discard",
-                        strings.ai_panel_discard.clone(),
                         false,
-                        !session.saved.running,
-                        theme,
                         cx,
+                        |button, _cx| {
+                            button
+                                .label(strings.ai_panel_discard.clone())
+                                .disabled(!(!session.saved.running))
+                        },
                         |editor, window, cx| {
                             if let Some(session) = editor.ai_session.as_mut() {
                                 session.saved.workspace.discard_proposals();
@@ -342,11 +346,9 @@ impl Editor {
                         let label = format!("{}:{}", record.path, record.line);
                         content = content.child(self.ai_button(
                             ("ai-source", index),
-                            label,
                             false,
-                            true,
-                            theme,
                             cx,
+                            |button, _cx| button.label(label),
                             move |editor, window, cx| {
                                 editor.open_ai_source(record.clone(), window, cx)
                             },
@@ -394,11 +396,9 @@ impl Editor {
                                 .child(
                                     self.ai_button(
                                         SharedString::from(format!("ai-history-{identity}")),
-                                        title,
                                         false,
-                                        true,
-                                        theme,
                                         cx,
+                                        |button, _cx| button.label(title),
                                         move |editor, window, cx| {
                                             editor.restore_ai_history(path.clone(), window, cx)
                                         },
@@ -409,11 +409,16 @@ impl Editor {
                                 )
                                 .child(self.ai_button(
                                     SharedString::from(format!("ai-history-delete-{identity}")),
-                                    "×",
                                     false,
-                                    true,
-                                    theme,
                                     cx,
+                                    |button, _cx| {
+                                        button
+                                            .icon(IconName::Trash)
+                                            .accessibility_label(
+                                                strings.ai_panel_delete_conversation.clone(),
+                                            )
+                                            .tooltip(strings.ai_panel_delete_conversation.clone())
+                                    },
                                     move |editor, window, cx| {
                                         editor.delete_ai_history(delete_path.clone(), window, cx)
                                     },
@@ -425,36 +430,32 @@ impl Editor {
             PanelMode::Skills => {
                 content = content.child(self.ai_button(
                     "ai-skills-reload",
-                    strings.ai_panel_reload.clone(),
                     false,
-                    true,
-                    theme,
                     cx,
+                    |button, _cx| button.label(strings.ai_panel_reload.clone()),
                     |editor, _, cx| editor.reload_ai_skills(cx),
                 ));
                 for skill in &session.skills.entries {
                     let id = skill.id.clone();
                     let disabled = session.settings.disabled_skills.contains(&skill.id);
                     let toggle_id = id.clone();
-                    content = content.child(self.ai_button(
-                        SharedString::from(format!("ai-skill-toggle-{id}")),
-                        if disabled { "○" } else { "✓" },
-                        false,
-                        !session.settings_saving,
-                        theme,
-                        cx,
-                        move |editor, _, cx| {
-                            if let Some(session) = editor.ai_session.as_ref() {
-                                let mut settings = session.settings.clone();
-                                if settings.disabled_skills.contains(&toggle_id) {
-                                    settings.disabled_skills.retain(|id| id != &toggle_id);
-                                } else {
-                                    settings.disabled_skills.push(toggle_id.clone());
+                    content = content.child(
+                        Checkbox::new(SharedString::from(format!("ai-skill-toggle-{id}")))
+                            .checked(!disabled)
+                            .accessibility_label(skill.id.clone())
+                            .disabled(!(!session.settings_saving))
+                            .on_change(cx.listener(move |editor, _, _, cx| {
+                                if let Some(session) = editor.ai_session.as_ref() {
+                                    let mut settings = session.settings.clone();
+                                    if settings.disabled_skills.contains(&toggle_id) {
+                                        settings.disabled_skills.retain(|id| id != &toggle_id);
+                                    } else {
+                                        settings.disabled_skills.push(toggle_id.clone());
+                                    }
+                                    editor.update_ai_settings(settings, cx);
                                 }
-                                editor.update_ai_settings(settings, cx);
-                            }
-                        },
-                    ));
+                            })),
+                    );
                     let label = format!(
                         "{} · {}{}",
                         skill.id,
@@ -467,11 +468,9 @@ impl Editor {
                     );
                     content = content.child(self.ai_button(
                         SharedString::from(format!("ai-skill-{id}")),
-                        label,
                         false,
-                        !disabled,
-                        theme,
                         cx,
+                        |button, _cx| button.label(label).disabled(!(!disabled)),
                         move |editor, window, cx| {
                             if let Some(session) = editor.ai_session.as_mut() {
                                 session.input.update(cx, |input, cx| {
@@ -491,17 +490,16 @@ impl Editor {
             PanelMode::Instruction => {
                 for (index, instruction) in session.settings.instructions.iter().enumerate() {
                     let instruction = instruction.clone();
+                    let instruction_label = instruction.name.clone();
                     content = content.child(
                         div()
                             .flex()
                             .gap(px(4.0))
                             .child(self.ai_button(
                                 ("ai-template-edit", index),
-                                instruction.name.clone(),
                                 false,
-                                true,
-                                theme,
                                 cx,
+                                |button, _cx| button.label(instruction_label),
                                 move |editor, _, cx| {
                                     if let Some(session) = editor.ai_session.as_mut() {
                                         session.instruction_name.update(cx, |field, cx| {
@@ -515,11 +513,17 @@ impl Editor {
                             ))
                             .child(self.ai_button(
                                 ("ai-template-delete", index),
-                                "×",
                                 false,
-                                !session.settings_saving,
-                                theme,
                                 cx,
+                                |button, _cx| {
+                                    button
+                                        .icon(IconName::Trash)
+                                        .accessibility_label(
+                                            strings.ai_panel_delete_instruction.clone(),
+                                        )
+                                        .tooltip(strings.ai_panel_delete_instruction.clone())
+                                        .disabled(!(!session.settings_saving))
+                                },
                                 move |editor, _, cx| {
                                     if let Some(session) = editor.ai_session.as_ref() {
                                         let mut settings = session.settings.clone();
@@ -537,11 +541,14 @@ impl Editor {
                     .child(session.instruction_body.clone())
                     .child(self.ai_button(
                         "ai-instruction-save",
-                        strings.ai_panel_save_instruction.clone(),
-                        true,
-                        !session.settings_saving,
-                        theme,
+                        false,
                         cx,
+                        |button, _cx| {
+                            button
+                                .label(strings.ai_panel_save_instruction.clone())
+                                .primary()
+                                .disabled(!(!session.settings_saving))
+                        },
                         |editor, _, cx| editor.save_ai_instruction(cx),
                     ));
             }
@@ -556,23 +563,30 @@ impl Editor {
                     .child(session.context_input.clone())
                     .child(self.ai_button(
                         "ai-context-add",
-                        strings.ai_panel_add_context.clone(),
                         false,
-                        !session.saved.running,
-                        theme,
                         cx,
+                        |button, _cx| {
+                            button
+                                .label(strings.ai_panel_add_context.clone())
+                                .disabled(!(!session.saved.running))
+                        },
                         |editor, _, cx| editor.add_ai_context(None, cx),
                     ));
                 let mut selected = div().flex().flex_wrap().gap(px(4.0));
                 for (index, path) in session.saved.references.iter().enumerate() {
                     let path = path.clone();
+                    let path_label = path.clone();
                     selected = selected.child(self.ai_button(
                         ("ai-context-remove", index),
-                        format!("{path} ×"),
                         false,
-                        !session.saved.running,
-                        theme,
                         cx,
+                        |button, _cx| {
+                            button
+                                .label(path_label)
+                                .icon(IconName::Close)
+                                .outline()
+                                .disabled(!(!session.saved.running))
+                        },
                         move |editor, _, cx| {
                             if let Some(session) = editor.ai_session.as_mut() {
                                 session
@@ -588,14 +602,22 @@ impl Editor {
                 for (index, path) in session.context_candidates.iter().enumerate() {
                     let chosen = session.saved.references.contains(path);
                     let path = path.clone();
+                    let path_label = path.clone();
                     content = content.child(
                         self.ai_button(
                             ("ai-context-choice", index),
-                            format!("{}  {path}", if chosen { "✓" } else { "+" }),
                             false,
-                            !session.saved.running,
-                            theme,
                             cx,
+                            |button, _cx| {
+                                button
+                                    .label(path_label)
+                                    .icon(if chosen {
+                                        IconName::Check
+                                    } else {
+                                        IconName::Plus
+                                    })
+                                    .disabled(!(!session.saved.running))
+                            },
                             move |editor, _, cx| editor.add_ai_context(Some(path.clone()), cx),
                         )
                         .w_full()
@@ -606,11 +628,9 @@ impl Editor {
                 }
                 content = content.child(self.ai_button(
                     "ai-context-done",
-                    strings.ai_task_done.clone(),
-                    true,
-                    true,
-                    theme,
+                    false,
                     cx,
+                    |button, _cx| button.label(strings.ai_task_done.clone()).primary(),
                     |editor, window, cx| {
                         if let Some(session) = editor.ai_session.as_mut() {
                             session.mode = PanelMode::Task;
@@ -659,143 +679,26 @@ impl Editor {
     pub(super) fn ai_button(
         &self,
         id: impl Into<ElementId>,
-        label: impl Into<SharedString>,
-        primary: bool,
-        enabled: bool,
-        theme: &crate::theme::Theme,
+        focus_panel: bool,
         cx: &mut Context<Self>,
+        build: impl FnOnce(Button, &App) -> Button,
         handler: impl Fn(&mut Editor, &mut Window, &mut Context<Editor>) + 'static,
-    ) -> Stateful<Div> {
+    ) -> Button {
         let id = id.into();
         let selector = id.to_string();
-        let strings = cx.global::<crate::i18n::I18nManager>().strings();
-        let tooltip = match selector.as_str() {
-            "ai-hide" | "ai-task-hide" | "ai-details-hide" => {
-                Some(strings.file_history_close.clone())
+        build(
+            Button::new(id)
+                .debug_selector(move || selector.clone())
+                .small()
+                .ghost(),
+            cx,
+        )
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |editor, _, window, cx| {
+            if focus_panel && let Some(session) = editor.ai_session.as_ref() {
+                window.focus(&session.panel_focus, cx);
             }
-            "ai-review-previous" => Some(strings.file_history_previous_change.clone()),
-            "ai-review-next" => Some(strings.file_history_next_change.clone()),
-            "ai-stop" => Some(strings.ai_panel_stop.clone()),
-            "ai-send" => Some(strings.ai_panel_send.clone()),
-            "ai-copy-result" => Some(strings.ai_panel_copy.clone()),
-            "ai-context" => Some(strings.ai_panel_add_context.clone()),
-            "ai-regenerate" => Some(strings.ai_panel_retry.clone()),
-            "ai-expand" => Some(
-                if self
-                    .ai_session
-                    .as_ref()
-                    .is_some_and(|session| session.expanded)
-                {
-                    strings.ai_panel_float.clone()
-                } else {
-                    strings.ai_panel_dock.clone()
-                },
-            ),
-            "ai-options" => Some(strings.ai_panel_more.clone()),
-            "ai-task-details" => Some(strings.ai_task_details.clone()),
-            "ai-review-accept" => Some(format!(
-                "{} · {}",
-                strings.ai_panel_accept_edit,
-                if cfg!(target_os = "macos") {
-                    "⌘Enter"
-                } else {
-                    "Ctrl+Enter"
-                }
-            )),
-            _ => None,
-        };
-        let icon = match selector.as_str() {
-            "ai-hide" => Some("icon/workspace/tab-close.svg"),
-            "ai-copy-result" => Some("icon/workspace/copy.svg"),
-            "ai-options" => Some("icon/editor/ai-more.svg"),
-            "ai-send" => Some("icon/editor/ai-send.svg"),
-            "ai-stop" => Some("icon/editor/ai-stop.svg"),
-            "ai-regenerate" => Some("icon/editor/ai-retry.svg"),
-            "ai-back" => Some("icon/editor/ai-back.svg"),
-            "ai-expand" => Some(
-                if self
-                    .ai_session
-                    .as_ref()
-                    .is_some_and(|session| session.expanded)
-                {
-                    "icon/editor/ai-float.svg"
-                } else {
-                    "icon/editor/ai-dock.svg"
-                },
-            ),
-            _ => None,
-        };
-        let send_button = selector == "ai-send";
-        let opens_menu = matches!(
-            selector.as_str(),
-            "ai-options"
-                | "ai-context"
-                | "ai-settings"
-                | "ai-options-history"
-                | "ai-options-skills"
-                | "ai-options-instructions"
-        );
-        let color = if primary {
-            theme.colors.dialog_primary_button_text
-        } else {
-            theme.colors.dialog_secondary_button_text
-        };
-        div()
-            .id(id)
-            .debug_selector(move || selector.clone())
-            .px(px(7.0))
-            .py(px(4.0))
-            .text_size(px(12.0))
-            .rounded(px(4.0))
-            .cursor_pointer()
-            .bg(if primary {
-                theme.colors.dialog_primary_button_bg
-            } else {
-                hsla(0.0, 0.0, 0.0, 0.0)
-            })
-            .text_color(if primary {
-                theme.colors.dialog_primary_button_text
-            } else {
-                theme.colors.dialog_secondary_button_text
-            })
-            .when(enabled, |button| {
-                button.hover(|style| {
-                    style.bg(if primary {
-                        theme.colors.dialog_primary_button_hover
-                    } else {
-                        theme.colors.dialog_secondary_button_hover
-                    })
-                })
-            })
-            .when(!enabled, |button| button.opacity(0.4).cursor_default())
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .when(icon.is_none(), |button| button.child(label.into()))
-            .when_some(icon, |button, path| {
-                button
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(28.0))
-                    .p_0()
-                    .rounded(px(6.0))
-                    .child(svg().path(path).size(px(15.0)).text_color(color))
-            })
-            .when(send_button, |button| button.size(px(28.0)).rounded(px(7.0)))
-            .when_some(tooltip, |button, label| {
-                button.tooltip(move |_, cx| {
-                    cx.new(|_| crate::components::HoverPreviewTooltip {
-                        label: label.clone().into(),
-                    })
-                    .into()
-                })
-            })
-            .on_click(cx.listener(move |editor, _, window, cx| {
-                if enabled {
-                    if opens_menu && let Some(session) = editor.ai_session.as_ref() {
-                        window.focus(&session.panel_focus, cx);
-                    }
-                    handler(editor, window, cx);
-                }
-            }))
+            handler(editor, window, cx);
+        }))
     }
 }

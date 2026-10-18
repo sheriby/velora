@@ -522,6 +522,9 @@ impl I18nStrings {
         strings.ai_task_scope_document = "当前文档".into();
         strings.ai_task_done = "完成".into();
         strings.ai_panel_ask = "用 AI 处理…".into();
+        strings.ai_panel_back = "返回".into();
+        strings.ai_panel_delete_conversation = "删除对话".into();
+        strings.ai_panel_delete_instruction = "删除指令".into();
         strings.ai_panel_more = "更多 AI…".into();
         strings.ai_panel_add_context = "添加资料".into();
         strings.ai_panel_accept_edit = "接受此处".into();
@@ -1067,6 +1070,9 @@ impl I18nStrings {
             ai_task_scope_document: "Current document".into(),
             ai_task_done: "Done".into(),
             ai_panel_ask: "Work with AI…".into(),
+            ai_panel_back: "Back".into(),
+            ai_panel_delete_conversation: "Delete conversation".into(),
+            ai_panel_delete_instruction: "Delete instruction".into(),
             ai_panel_more: "More AI…".into(),
             ai_panel_add_context: "Add context".into(),
             ai_panel_accept_edit: "Accept change".into(),
