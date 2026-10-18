@@ -41,3 +41,22 @@ fn ai_skills_preserve_scope_and_read_references_only_when_requested() {
     assert!(enabled.prompt_catalog().contains("workspace:review"));
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn ai_prompt_cache_skill_catalog_does_not_depend_on_directory_enumeration_order() {
+    let mut catalog = SkillCatalog {
+        entries: ["workspace:z", "user:a"]
+            .into_iter()
+            .map(|id| SkillEntry {
+                id: id.into(),
+                name: id.into(),
+                description: "任务说明".into(),
+                directory: PathBuf::new(),
+            })
+            .collect(),
+        warnings: Vec::new(),
+    };
+    let first = catalog.prompt_catalog();
+    catalog.entries.reverse();
+    assert_eq!(first, catalog.prompt_catalog());
+}

@@ -76,8 +76,10 @@ impl SkillCatalog {
     }
 
     pub fn prompt_catalog(&self) -> String {
-        self.entries
-            .iter()
+        let mut entries = self.entries.iter().collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.id.cmp(&right.id));
+        entries
+            .into_iter()
             .map(|skill| format!("- {}: {} ({})", skill.id, skill.description, skill.name))
             .collect::<Vec<_>>()
             .join("\n")

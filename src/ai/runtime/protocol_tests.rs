@@ -96,13 +96,30 @@ fn events(protocol: Protocol, tool: bool) -> String {
     stream
 }
 
+fn without_cache_breakpoints(value: &Value) -> Value {
+    // Anthropic 的末尾缓存断点会随消息追加移动；模型输入正文仍须保持原前缀。
+    match value {
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .filter(|(key, _)| key.as_str() != "cache_control")
+                .map(|(key, value)| (key.clone(), without_cache_breakpoints(value)))
+                .collect(),
+        ),
+        Value::Array(values) => {
+            Value::Array(values.iter().map(without_cache_breakpoints).collect())
+        }
+        _ => value.clone(),
+    }
+}
+
 fn verify_protocol(protocol: Protocol, suffix: &str) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     listener.set_nonblocking(true).unwrap();
     let server = std::thread::spawn(move || {
         let mut requests = Vec::new();
-        for tool in [true, false] {
+        for tool in [true, false, false] {
             let start = Instant::now();
             let mut stream = loop {
                 match listener.accept() {
@@ -155,8 +172,47 @@ fn verify_protocol(protocol: Protocol, suffix: &str) {
     )
     .unwrap();
     assert!(output.error.is_none(), "{output:?}");
+    let resumed = run_blocking(
+        RunRequest {
+            model: endpoint.model_config().unwrap(),
+            api_key: String::new(),
+            history: output.history.clone(),
+            prompt: "继续解释，不改变之前的对话".into(),
+            system: "测试".into(),
+            max_turns: 3,
+            timeout: Duration::from_secs(10),
+        },
+        workspace.clone(),
+        RunControl::default(),
+        |_| {},
+    )
+    .unwrap();
+    assert!(resumed.error.is_none(), "{resumed:?}");
     let requests = server.join().unwrap();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 3);
+    for pair in requests.windows(2) {
+        assert_eq!(
+            pair[0].1.get("tools"),
+            pair[1].1.get("tools"),
+            "工具定义必须保持稳定"
+        );
+        assert_eq!(pair[0].1.get("system"), pair[1].1.get("system"));
+        assert_eq!(pair[0].1.get("instructions"), pair[1].1.get("instructions"));
+        let key = if protocol == Protocol::Responses {
+            "input"
+        } else {
+            "messages"
+        };
+        let before = without_cache_breakpoints(pair[0].1.get(key).unwrap());
+        let after = without_cache_breakpoints(pair[1].1.get(key).unwrap());
+        assert!(
+            after
+                .as_array()
+                .unwrap()
+                .starts_with(before.as_array().unwrap()),
+            "工具续轮与新一轮对话只能追加历史，不能重写消息前缀：{protocol:?}"
+        );
+    }
     assert!(
         requests
             .iter()
