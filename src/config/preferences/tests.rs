@@ -1908,7 +1908,10 @@ fn ai_preferences_foreign_writes_conflict_instead_of_overwriting(cx: &mut TestAp
     handle
         .update(cx, |preferences, _, _| {
             assert!(
-                preferences.save_error.as_deref().is_some_and(|error| error.contains("其他窗口")),
+                preferences
+                    .save_error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("another window")),
                 "应报冲突：{:?}",
                 preferences.save_error
             );

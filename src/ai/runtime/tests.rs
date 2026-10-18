@@ -214,13 +214,8 @@ fn ai_runtime_deadline_stops_a_provider_that_does_not_finish_within_budget() {
             |_| {},
         ))
         .unwrap();
-    assert!(
-        output
-            .error
-            .as_ref()
-            .is_some_and(|error| error.contains("超时")),
-        "{output:?}"
-    );
+    // 运行时发的是错误码，界面层按码取本地化文案。
+    assert_eq!(output.error.as_deref(), Some(super::super::error_codes::TIMEOUT), "{output:?}");
 }
 
 #[test]

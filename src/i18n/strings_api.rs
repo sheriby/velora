@@ -462,7 +462,21 @@ impl I18nStrings {
         strings.preferences_ai_url_invalid = "请填写不含账号密码的 HTTP 或 HTTPS 服务地址".into();
         strings.preferences_ai_default_connection = "默认连接".into();
         strings.ai_feature_disabled = "AI 尚未启用".into();
-        strings.ai_action_shorten = "缩短".into();
+        strings.ai_error_timeout = "任务超时，已保留完成的内容，可以继续讨论".into();
+        strings.ai_error_stopped = "任务已停止".into();
+        strings.ai_error_budget = "任务已达到执行预算，可以继续讨论".into();
+        strings.ai_error_model_failed = "模型未能完成请求".into();
+        strings.ai_error_no_selection = "请先选择需要处理的文字".into();
+        strings.ai_error_instruction_incomplete = "请输入指令名称和内容".into();
+        strings.ai_error_reference_closed = "引用的未保存文档已关闭".into();
+        strings.ai_error_reference_missing = "引用文档已不存在或超出工作区".into();
+        strings.ai_error_return_to_document = "请回到任务所属文档继续，或重新发起任务".into();
+        strings.ai_error_document_excluded = "当前文档已从 AI 资料中排除".into();
+        strings.ai_error_read_only_accept = "阅读模式下不能应用修改".into();
+        strings.ai_error_owner_closed = "此修改对应的文档已关闭或不在当前窗口，请重新打开后再接受".into();
+        strings.ai_error_settings_readonly = "AI 配置读取失败，已阻止修改写入，请先修复配置文件".into();
+        strings.preferences_ai_conflict = "AI 配置已被其他窗口修改，请关闭本页后重新打开再保存".into();
+        strings.ai_panel_translate_default = "简体中文".into();
         strings.ai_action_expand = "扩写".into();
         strings.ai_action_explain = "解释".into();
         strings.ai_panel_send = "发送".into();
@@ -476,43 +490,26 @@ impl I18nStrings {
         strings.ai_panel_instructions = "自定义指令".into();
         strings.ai_panel_exclusions = "排除的文件或目录（逗号分隔）".into();
         strings.ai_panel_save = "保存".into();
-        strings.ai_panel_related = "关联修改需一起接受".into();
-        strings.ai_panel_stale = "依据已变化，请重新生成".into();
         strings.ai_panel_history = "历史任务".into();
         strings.ai_history_conversations = "对话".into();
         strings.ai_history_quick_commands = "快捷指令".into();
         strings.ai_panel_new_chat = "新任务".into();
         strings.ai_panel_copy = "复制".into();
-        strings.ai_panel_insert = "插入正文".into();
         strings.ai_panel_sources = "来源".into();
         strings.ai_panel_skills = "任务说明".into();
         strings.ai_panel_save_instruction = "保存指令".into();
         strings.ai_panel_instruction_name = "指令名称".into();
         strings.ai_panel_context_budget = "上下文预算".into();
-        strings.ai_panel_pending = "待审阅".into();
         strings.ai_review_title = "修改审阅".into();
-        strings.ai_review_changes = "处修改".into();
-        strings.ai_review_compare = "对比".into();
-        strings.ai_review_original = "原文".into();
-        strings.ai_review_proposed = "修改后".into();
         strings.ai_panel_dock = "移至侧栏".into();
         strings.ai_panel_float = "浮动窗口".into();
         strings.ai_task_details = "任务详情".into();
-        strings.ai_task_result = "结果".into();
         strings.ai_task_return = "返回正文".into();
-        strings.ai_task_scope_selection = "选区".into();
         strings.ai_task_scope_document = "当前文档".into();
-        strings.ai_task_models = "模型".into();
         strings.ai_task_done = "完成".into();
-        strings.ai_task_pending_first = "当前任务尚未结束。可继续调整或审阅，也可在任务详情中开始新任务。".into();
         strings.ai_panel_ask = "用 AI 处理…".into();
         strings.ai_panel_more = "更多 AI…".into();
         strings.ai_panel_add_context = "添加资料".into();
-        strings.ai_panel_clear_key = "清除密钥".into();
-        strings.ai_panel_keep_key = "已保存密钥，留空保留".into();
-        strings.ai_panel_make_default = "设为默认".into();
-        strings.ai_panel_input_tokens = "输入".into();
-        strings.ai_panel_output_tokens = "输出".into();
         strings.ai_panel_accept_edit = "接受此处".into();
         strings.ai_panel_files_scope = "只查阅所选资料与当前文档".into();
         strings.ai_activity_read = "读取文档".into();
@@ -523,10 +520,8 @@ impl I18nStrings {
         strings.ai_activity_new = "准备新文档".into();
         strings.ai_activity_skill = "读取任务说明".into();
         strings.ai_action_polish = "润色".into();
-        strings.ai_action_fix_grammar = "语法纠错".into();
         strings.ai_action_translate = "翻译…".into();
         strings.ai_action_summarize = "摘要".into();
-        strings.ai_action_continue = "续写".into();
         strings.ai_custom_placeholder = "询问或描述修改…".into();
         strings.ai_panel_retry = "重试".into();
         strings.ai_panel_stop = "停止".into();
@@ -535,14 +530,11 @@ impl I18nStrings {
         strings.preferences_ai_api_key = "API 密钥".into();
         strings.preferences_ai_model = "模型".into();
         strings.preferences_shortcut_open_ai_assistant = "AI 助手".into();
-        strings.preferences_shortcut_open_ai_assistant = "AI 助手".into();
-        strings.preferences_ai_add_endpoint = "添加端点…".into();
         strings.preferences_ai_delete = "删除".into();
         strings.preferences_ai_name = "名称".into();
         strings.preferences_ai_test_connection = "测试连接".into();
         strings.preferences_ai_test_running = "正在测试…".into();
         strings.preferences_ai_test_ok = "连接成功".into();
-        strings.preferences_ai_save_endpoint = "保存端点".into();
         strings
     }
 
@@ -1001,7 +993,21 @@ impl I18nStrings {
             preferences_ai_url_invalid: "Enter an HTTP or HTTPS address without embedded credentials".into(),
             preferences_ai_default_connection: "Default connection".into(),
             ai_feature_disabled: "AI is disabled".into(),
-            ai_action_shorten: "Shorten".into(),
+            ai_error_timeout: "Task timed out. The completed content is kept; you can continue the discussion.".into(),
+            ai_error_stopped: "Task stopped".into(),
+            ai_error_budget: "Task reached its execution budget; you can continue the discussion.".into(),
+            ai_error_model_failed: "The model could not complete the request".into(),
+            ai_error_no_selection: "Select some text first".into(),
+            ai_error_instruction_incomplete: "Enter both an instruction name and content".into(),
+            ai_error_reference_closed: "A referenced unsaved document has been closed".into(),
+            ai_error_reference_missing: "A referenced document no longer exists or is outside the workspace".into(),
+            ai_error_return_to_document: "Return to the document this task belongs to, or start a new task".into(),
+            ai_error_document_excluded: "The current document is excluded from AI sources".into(),
+            ai_error_read_only_accept: "Changes cannot be applied in reading mode".into(),
+            ai_error_owner_closed: "The document for this change is closed or not in this window; reopen it before accepting".into(),
+            ai_error_settings_readonly: "AI settings could not be read; saving changes is blocked until the config file is fixed".into(),
+            preferences_ai_conflict: "AI settings were changed in another window; close and reopen this page to save".into(),
+            ai_panel_translate_default: "English".into(),
             ai_action_expand: "Expand".into(),
             ai_action_explain: "Explain".into(),
             ai_panel_send: "Send".into(),
@@ -1015,43 +1021,26 @@ impl I18nStrings {
             ai_panel_instructions: "Custom instructions".into(),
             ai_panel_exclusions: "Excluded files or folders (comma separated)".into(),
             ai_panel_save: "Save".into(),
-            ai_panel_related: "Accept related changes together".into(),
-            ai_panel_stale: "Source changed; regenerate this proposal".into(),
             ai_panel_history: "History".into(),
             ai_history_conversations: "Conversations".into(),
             ai_history_quick_commands: "Quick commands".into(),
             ai_panel_new_chat: "New task".into(),
             ai_panel_copy: "Copy".into(),
-            ai_panel_insert: "Insert into document".into(),
             ai_panel_sources: "Sources".into(),
             ai_panel_skills: "Skills".into(),
             ai_panel_save_instruction: "Save instruction".into(),
             ai_panel_instruction_name: "Instruction name".into(),
             ai_panel_context_budget: "Context budget".into(),
-            ai_panel_pending: "Pending review".into(),
             ai_review_title: "Review changes".into(),
-            ai_review_changes: "changes".into(),
-            ai_review_compare: "Compare".into(),
-            ai_review_original: "Original".into(),
-            ai_review_proposed: "Revised".into(),
             ai_panel_dock: "Move to sidebar".into(),
             ai_panel_float: "Float window".into(),
             ai_task_details: "Task details".into(),
-            ai_task_result: "Result".into(),
             ai_task_return: "Back to document".into(),
-            ai_task_scope_selection: "Selection".into(),
             ai_task_scope_document: "Current document".into(),
-            ai_task_models: "Model".into(),
             ai_task_done: "Done".into(),
-            ai_task_pending_first: "Finish reviewing or refining this task, or start a new one from task details.".into(),
             ai_panel_ask: "Work with AI…".into(),
             ai_panel_more: "More AI…".into(),
             ai_panel_add_context: "Add context".into(),
-            ai_panel_clear_key: "Clear key".into(),
-            ai_panel_keep_key: "Key saved; leave blank to keep".into(),
-            ai_panel_make_default: "Set as default".into(),
-            ai_panel_input_tokens: "Input".into(),
-            ai_panel_output_tokens: "Output".into(),
             ai_panel_accept_edit: "Accept change".into(),
             ai_panel_files_scope: "Use selected sources and the current document".into(),
             ai_activity_read: "Reading documents".into(),
@@ -1062,22 +1051,18 @@ impl I18nStrings {
             ai_activity_new: "Drafting document".into(),
             ai_activity_skill: "Reading skill".into(),
             ai_action_polish: "Improve writing".into(),
-            ai_action_fix_grammar: "Fix spelling & grammar".into(),
             ai_action_translate: "Translate…".into(),
             ai_action_summarize: "Summarize".into(),
-            ai_action_continue: "Continue writing".into(),
             ai_custom_placeholder: "Ask or describe a change…".into(),
             ai_panel_retry: "Retry".into(),
             ai_panel_stop: "Stop".into(),
             ai_panel_running: "Generating…".into(),
             preferences_shortcut_open_ai_assistant: "AI Assistant".into(),
-            preferences_ai_add_endpoint: "Add endpoint…".into(),
             preferences_ai_delete: "Delete".into(),
             preferences_ai_name: "Name".into(),
             preferences_ai_test_connection: "Test connection".into(),
             preferences_ai_test_running: "Testing…".into(),
             preferences_ai_test_ok: "Works".into(),
-            preferences_ai_save_endpoint: "Save endpoint".into(),
             preferences_ai_api_base_url: "API base URL".into(),
             preferences_ai_api_key: "API key".into(),
             preferences_ai_model: "Model".into(),

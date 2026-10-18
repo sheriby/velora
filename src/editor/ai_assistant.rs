@@ -525,7 +525,7 @@ impl Editor {
             ai_document_id(self.file_path.as_deref(), root.as_deref(), self.recovery_id);
         if current_id != record.path {
             let Some(root) = root else {
-                self.show_message_modal("AI", "引用的未保存文档已关闭", cx);
+                self.show_message_modal("AI", cx.global::<crate::i18n::I18nManager>().strings().ai_error_reference_closed.clone(), cx);
                 return;
             };
             match root.join(&record.path).canonicalize() {
@@ -536,7 +536,7 @@ impl Editor {
                     cx,
                 ),
                 _ => {
-                    self.show_message_modal("AI", "引用文档已不存在或超出工作区", cx);
+                    self.show_message_modal("AI", cx.global::<crate::i18n::I18nManager>().strings().ai_error_reference_missing.clone(), cx);
                     return;
                 }
             }
@@ -783,7 +783,7 @@ impl Editor {
             let name = session.instruction_name.read(cx).value().trim().to_owned();
             let prompt = session.instruction_body.read(cx).value().trim().to_owned();
             if name.is_empty() || prompt.is_empty() {
-                session.error = Some("请输入指令名称和内容".into());
+                session.error = Some(cx.global::<crate::i18n::I18nManager>().strings().ai_error_instruction_incomplete.clone());
             } else {
                 let mut settings = session.settings.clone();
                 if let Some(instruction) = settings
@@ -913,7 +913,7 @@ impl Editor {
             return;
         }
         if command.requires_selection() && !self.has_text_selection(cx) {
-            self.show_message_modal("AI", "请先选择需要处理的文字", cx);
+            self.show_message_modal("AI", cx.global::<crate::i18n::I18nManager>().strings().ai_error_no_selection.clone(), cx);
             return;
         }
         self.overlay_focus_restore_target = self.focused_edit_target_entity_id(window, cx);
@@ -1081,7 +1081,8 @@ impl Editor {
             input,
             language: cx.new(|cx| {
                 let mut field = TextField::new("English / 简体中文", cx);
-                field.set_value("English", cx);
+                // 默认翻译目标随界面语言；占位符罗列的是可填的语言名本身。
+                field.set_value(&strings.ai_panel_translate_default, cx);
                 field
             }),
             instruction_name: cx.new(|cx| TextField::new(strings.ai_panel_instruction_name, cx)),
@@ -1267,7 +1268,7 @@ impl Editor {
                     }))
         }) {
             if let Some(session) = self.ai_session.as_mut() {
-                session.error = Some("请回到任务所属文档继续，或重新发起任务".into());
+                session.error = Some(cx.global::<crate::i18n::I18nManager>().strings().ai_error_return_to_document.clone());
             }
             cx.notify();
             return;
@@ -1346,7 +1347,7 @@ impl Editor {
                 .as_ref()
                 .is_none_or(|target| target.range.is_empty())
         {
-            session.error = Some("请先选择需要处理的文字".into());
+            session.error = Some(cx.global::<crate::i18n::I18nManager>().strings().ai_error_no_selection.clone());
             cx.notify();
             return;
         }
@@ -1396,7 +1397,7 @@ impl Editor {
             .and_then(serde_json::Value::as_str)
             .is_some_and(|id| session.saved.workspace.is_excluded(id));
         if excluded_target || excluded_active {
-            session.error = Some("当前文档已从 AI 资料中排除".into());
+            session.error = Some(cx.global::<crate::i18n::I18nManager>().strings().ai_error_document_excluded.clone());
             cx.notify();
             return;
         }
@@ -1682,10 +1683,16 @@ impl Editor {
                 }
                 WorkerEvent::Finished(result) => {
                     session.saved.running = false;
+                    let strings = cx
+                        .global::<crate::i18n::I18nManager>()
+                        .strings()
+                        .clone();
                     match result {
                         Ok(output) => {
                             session.saved.history = output.history;
-                            session.error = output.error;
+                            session.error = output
+                                .error
+                                .map(|error| crate::ai::error_text(&error, &strings));
                         }
                         Err(error) => session.error = Some(error),
                     }
@@ -1859,8 +1866,12 @@ impl Editor {
             return;
         };
         if session.settings_readonly {
-            session.error =
-                Some("AI 配置读取失败，已阻止修改写入，请先修复配置文件".into());
+            session.error = Some(
+                cx.global::<crate::i18n::I18nManager>()
+                    .strings()
+                    .ai_error_settings_readonly
+                    .clone(),
+            );
             cx.notify();
             return;
         }

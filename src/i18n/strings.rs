@@ -677,8 +677,21 @@ pub struct I18nStrings {
     pub preferences_ai_advanced: String,
     pub preferences_ai_custom_provider: String,
     pub ai_feature_disabled: String,
-    /// AI 动作:润色。
-    pub ai_action_shorten: String,
+    pub ai_error_timeout: String,
+    pub ai_error_stopped: String,
+    pub ai_error_budget: String,
+    pub ai_error_model_failed: String,
+    pub ai_error_no_selection: String,
+    pub ai_error_instruction_incomplete: String,
+    pub ai_error_reference_closed: String,
+    pub ai_error_reference_missing: String,
+    pub ai_error_return_to_document: String,
+    pub ai_error_document_excluded: String,
+    pub ai_error_read_only_accept: String,
+    pub ai_error_owner_closed: String,
+    pub ai_error_settings_readonly: String,
+    pub preferences_ai_conflict: String,
+    pub ai_panel_translate_default: String,
     pub ai_action_expand: String,
     pub ai_action_explain: String,
     pub ai_panel_send: String,
@@ -692,43 +705,26 @@ pub struct I18nStrings {
     pub ai_panel_instructions: String,
     pub ai_panel_exclusions: String,
     pub ai_panel_save: String,
-    pub ai_panel_related: String,
-    pub ai_panel_stale: String,
     pub ai_panel_history: String,
     pub ai_history_conversations: String,
     pub ai_history_quick_commands: String,
     pub ai_panel_new_chat: String,
     pub ai_panel_copy: String,
-    pub ai_panel_insert: String,
     pub ai_panel_sources: String,
     pub ai_panel_skills: String,
     pub ai_panel_save_instruction: String,
     pub ai_panel_instruction_name: String,
     pub ai_panel_context_budget: String,
-    pub ai_panel_pending: String,
     pub ai_review_title: String,
-    pub ai_review_changes: String,
-    pub ai_review_compare: String,
-    pub ai_review_original: String,
-    pub ai_review_proposed: String,
     pub ai_panel_dock: String,
     pub ai_panel_float: String,
     pub ai_task_details: String,
-    pub ai_task_result: String,
     pub ai_task_return: String,
-    pub ai_task_scope_selection: String,
     pub ai_task_scope_document: String,
-    pub ai_task_models: String,
     pub ai_task_done: String,
-    pub ai_task_pending_first: String,
     pub ai_panel_ask: String,
     pub ai_panel_more: String,
     pub ai_panel_add_context: String,
-    pub ai_panel_clear_key: String,
-    pub ai_panel_keep_key: String,
-    pub ai_panel_make_default: String,
-    pub ai_panel_input_tokens: String,
-    pub ai_panel_output_tokens: String,
     pub ai_panel_accept_edit: String,
     pub ai_panel_files_scope: String,
     pub ai_activity_read: String,
@@ -739,14 +735,10 @@ pub struct I18nStrings {
     pub ai_activity_new: String,
     pub ai_activity_skill: String,
     pub ai_action_polish: String,
-    /// AI 动作:语法纠错。
-    pub ai_action_fix_grammar: String,
     /// AI 动作:翻译。
     pub ai_action_translate: String,
     /// AI 动作:总结。
     pub ai_action_summarize: String,
-    /// AI 动作:续写。
-    pub ai_action_continue: String,
     /// AI 面板:自定义指令输入占位符。
     pub ai_custom_placeholder: String,
     /// AI 面板:重试按钮。
@@ -763,8 +755,6 @@ pub struct I18nStrings {
     pub preferences_ai_model: String,
     /// 快捷键设置:AI 助手。
     pub preferences_shortcut_open_ai_assistant: String,
-    /// AI 页:新增端点。
-    pub preferences_ai_add_endpoint: String,
     /// AI 页:删除端点。
     pub preferences_ai_delete: String,
     /// AI 页:端点名称。
@@ -775,6 +765,4 @@ pub struct I18nStrings {
     pub preferences_ai_test_running: String,
     /// AI 页:测试成功。
     pub preferences_ai_test_ok: String,
-    /// AI 页:保存端点按钮。
-    pub preferences_ai_save_endpoint: String,
 }

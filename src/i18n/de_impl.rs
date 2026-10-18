@@ -1042,7 +1042,21 @@ impl I18nStringsDe {
             preferences_ai_url_invalid: self.preferences_ai_url_invalid.unwrap_or(defaults.preferences_ai_url_invalid),
             preferences_ai_default_connection: self.preferences_ai_default_connection.unwrap_or(defaults.preferences_ai_default_connection),
             ai_feature_disabled: self.ai_feature_disabled.unwrap_or(defaults.ai_feature_disabled),
-            ai_action_shorten: self.ai_action_shorten.unwrap_or(defaults.ai_action_shorten),
+            ai_error_timeout: self.ai_error_timeout.unwrap_or(defaults.ai_error_timeout),
+            ai_error_stopped: self.ai_error_stopped.unwrap_or(defaults.ai_error_stopped),
+            ai_error_budget: self.ai_error_budget.unwrap_or(defaults.ai_error_budget),
+            ai_error_model_failed: self.ai_error_model_failed.unwrap_or(defaults.ai_error_model_failed),
+            ai_error_no_selection: self.ai_error_no_selection.unwrap_or(defaults.ai_error_no_selection),
+            ai_error_instruction_incomplete: self.ai_error_instruction_incomplete.unwrap_or(defaults.ai_error_instruction_incomplete),
+            ai_error_reference_closed: self.ai_error_reference_closed.unwrap_or(defaults.ai_error_reference_closed),
+            ai_error_reference_missing: self.ai_error_reference_missing.unwrap_or(defaults.ai_error_reference_missing),
+            ai_error_return_to_document: self.ai_error_return_to_document.unwrap_or(defaults.ai_error_return_to_document),
+            ai_error_document_excluded: self.ai_error_document_excluded.unwrap_or(defaults.ai_error_document_excluded),
+            ai_error_read_only_accept: self.ai_error_read_only_accept.unwrap_or(defaults.ai_error_read_only_accept),
+            ai_error_owner_closed: self.ai_error_owner_closed.unwrap_or(defaults.ai_error_owner_closed),
+            ai_error_settings_readonly: self.ai_error_settings_readonly.unwrap_or(defaults.ai_error_settings_readonly),
+            preferences_ai_conflict: self.preferences_ai_conflict.unwrap_or(defaults.preferences_ai_conflict),
+            ai_panel_translate_default: self.ai_panel_translate_default.unwrap_or(defaults.ai_panel_translate_default),
             ai_action_expand: self.ai_action_expand.unwrap_or(defaults.ai_action_expand),
             ai_action_explain: self.ai_action_explain.unwrap_or(defaults.ai_action_explain),
             ai_panel_send: self.ai_panel_send.unwrap_or(defaults.ai_panel_send),
@@ -1056,43 +1070,26 @@ impl I18nStringsDe {
             ai_panel_instructions: self.ai_panel_instructions.unwrap_or(defaults.ai_panel_instructions),
             ai_panel_exclusions: self.ai_panel_exclusions.unwrap_or(defaults.ai_panel_exclusions),
             ai_panel_save: self.ai_panel_save.unwrap_or(defaults.ai_panel_save),
-            ai_panel_related: self.ai_panel_related.unwrap_or(defaults.ai_panel_related),
-            ai_panel_stale: self.ai_panel_stale.unwrap_or(defaults.ai_panel_stale),
             ai_panel_history: self.ai_panel_history.unwrap_or(defaults.ai_panel_history),
             ai_history_conversations: self.ai_history_conversations.unwrap_or(defaults.ai_history_conversations),
             ai_history_quick_commands: self.ai_history_quick_commands.unwrap_or(defaults.ai_history_quick_commands),
             ai_panel_new_chat: self.ai_panel_new_chat.unwrap_or(defaults.ai_panel_new_chat),
             ai_panel_copy: self.ai_panel_copy.unwrap_or(defaults.ai_panel_copy),
-            ai_panel_insert: self.ai_panel_insert.unwrap_or(defaults.ai_panel_insert),
             ai_panel_sources: self.ai_panel_sources.unwrap_or(defaults.ai_panel_sources),
             ai_panel_skills: self.ai_panel_skills.unwrap_or(defaults.ai_panel_skills),
             ai_panel_save_instruction: self.ai_panel_save_instruction.unwrap_or(defaults.ai_panel_save_instruction),
             ai_panel_instruction_name: self.ai_panel_instruction_name.unwrap_or(defaults.ai_panel_instruction_name),
             ai_panel_context_budget: self.ai_panel_context_budget.unwrap_or(defaults.ai_panel_context_budget),
-            ai_panel_pending: self.ai_panel_pending.unwrap_or(defaults.ai_panel_pending),
             ai_review_title: self.ai_review_title.unwrap_or(defaults.ai_review_title),
-            ai_review_changes: self.ai_review_changes.unwrap_or(defaults.ai_review_changes),
-            ai_review_compare: self.ai_review_compare.unwrap_or(defaults.ai_review_compare),
-            ai_review_original: self.ai_review_original.unwrap_or(defaults.ai_review_original),
-            ai_review_proposed: self.ai_review_proposed.unwrap_or(defaults.ai_review_proposed),
             ai_panel_dock: self.ai_panel_dock.unwrap_or(defaults.ai_panel_dock),
             ai_panel_float: self.ai_panel_float.unwrap_or(defaults.ai_panel_float),
             ai_task_details: self.ai_task_details.unwrap_or(defaults.ai_task_details),
-            ai_task_result: self.ai_task_result.unwrap_or(defaults.ai_task_result),
             ai_task_return: self.ai_task_return.unwrap_or(defaults.ai_task_return),
-            ai_task_scope_selection: self.ai_task_scope_selection.unwrap_or(defaults.ai_task_scope_selection),
             ai_task_scope_document: self.ai_task_scope_document.unwrap_or(defaults.ai_task_scope_document),
-            ai_task_models: self.ai_task_models.unwrap_or(defaults.ai_task_models),
             ai_task_done: self.ai_task_done.unwrap_or(defaults.ai_task_done),
-            ai_task_pending_first: self.ai_task_pending_first.unwrap_or(defaults.ai_task_pending_first),
             ai_panel_ask: self.ai_panel_ask.unwrap_or(defaults.ai_panel_ask),
             ai_panel_more: self.ai_panel_more.unwrap_or(defaults.ai_panel_more),
             ai_panel_add_context: self.ai_panel_add_context.unwrap_or(defaults.ai_panel_add_context),
-            ai_panel_clear_key: self.ai_panel_clear_key.unwrap_or(defaults.ai_panel_clear_key),
-            ai_panel_keep_key: self.ai_panel_keep_key.unwrap_or(defaults.ai_panel_keep_key),
-            ai_panel_make_default: self.ai_panel_make_default.unwrap_or(defaults.ai_panel_make_default),
-            ai_panel_input_tokens: self.ai_panel_input_tokens.unwrap_or(defaults.ai_panel_input_tokens),
-            ai_panel_output_tokens: self.ai_panel_output_tokens.unwrap_or(defaults.ai_panel_output_tokens),
             ai_panel_accept_edit: self.ai_panel_accept_edit.unwrap_or(defaults.ai_panel_accept_edit),
             ai_panel_files_scope: self.ai_panel_files_scope.unwrap_or(defaults.ai_panel_files_scope),
             ai_activity_read: self.ai_activity_read.unwrap_or(defaults.ai_activity_read),
@@ -1105,18 +1102,12 @@ impl I18nStringsDe {
             ai_action_polish: self
                 .ai_action_polish
                 .unwrap_or(defaults.ai_action_polish),
-            ai_action_fix_grammar: self
-                .ai_action_fix_grammar
-                .unwrap_or(defaults.ai_action_fix_grammar),
             ai_action_translate: self
                 .ai_action_translate
                 .unwrap_or(defaults.ai_action_translate),
             ai_action_summarize: self
                 .ai_action_summarize
                 .unwrap_or(defaults.ai_action_summarize),
-            ai_action_continue: self
-                .ai_action_continue
-                .unwrap_or(defaults.ai_action_continue),
             ai_custom_placeholder: self
                 .ai_custom_placeholder
                 .unwrap_or(defaults.ai_custom_placeholder),
@@ -1132,9 +1123,6 @@ impl I18nStringsDe {
             preferences_shortcut_open_ai_assistant: self
                 .preferences_shortcut_open_ai_assistant
                 .unwrap_or(defaults.preferences_shortcut_open_ai_assistant),
-            preferences_ai_add_endpoint: self
-                .preferences_ai_add_endpoint
-                .unwrap_or(defaults.preferences_ai_add_endpoint),
             preferences_ai_delete: self
                 .preferences_ai_delete
                 .unwrap_or(defaults.preferences_ai_delete),
@@ -1150,9 +1138,6 @@ impl I18nStringsDe {
             preferences_ai_test_ok: self
                 .preferences_ai_test_ok
                 .unwrap_or(defaults.preferences_ai_test_ok),
-            preferences_ai_save_endpoint: self
-                .preferences_ai_save_endpoint
-                .unwrap_or(defaults.preferences_ai_save_endpoint),
             preferences_ai_api_base_url: self
                 .preferences_ai_api_base_url
                 .unwrap_or(defaults.preferences_ai_api_base_url),

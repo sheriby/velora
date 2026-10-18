@@ -31,7 +31,12 @@ impl Editor {
             bail!("{}", cx.global::<crate::i18n::I18nManager>().strings().ai_feature_disabled);
         }
         if self.is_read_only() {
-            bail!("阅读模式下不能应用修改");
+            bail!(
+                "{}",
+                cx.global::<crate::i18n::I18nManager>()
+                    .strings()
+                    .ai_error_read_only_accept
+            );
         }
         if self.split_workspace.is_some() {
             let group = self.active_split_editor().context("没有活动编辑器")?;
@@ -151,7 +156,12 @@ impl Editor {
                 })?;
                 Destination::Live(group)
             } else if bound_path.is_none() && id.contains(':') {
-                bail!("此修改对应的文档已关闭或不在当前窗口，请重新打开后再接受：{id}");
+                bail!(
+                    "{}：{id}",
+                    cx.global::<crate::i18n::I18nManager>()
+                        .strings()
+                        .ai_error_owner_closed
+                );
             } else {
                 let path = if let Some(path) = bound_path {
                     path

@@ -133,3 +133,27 @@ fn ai_small_changes_to_long_lines_do_not_duplicate_the_unchanged_line_in_edits()
     }
     assert_eq!(result, changes.read(&document));
 }
+
+#[test]
+fn ai_error_codes_localize_for_each_language_and_pass_unknown_through() {
+    let en = crate::i18n::I18nStrings::en_us();
+    let zh = crate::i18n::I18nStrings::zh_cn();
+    assert_eq!(
+        super::error_text(super::error_codes::TIMEOUT, &en),
+        en.ai_error_timeout
+    );
+    assert_eq!(
+        super::error_text(super::error_codes::STOPPED, &zh),
+        zh.ai_error_stopped
+    );
+    assert_eq!(
+        super::error_text(super::error_codes::STOPPED, &zh),
+        "任务已停止"
+    );
+    let model = super::error_text(&super::error_codes::model_failed(Some("boom".into())), &en);
+    assert!(model.contains("boom"), "{model}");
+    assert_eq!(
+        super::error_text("模型返回的原始错误", &zh),
+        "模型返回的原始错误"
+    );
+}

@@ -95,7 +95,7 @@ pub(crate) async fn run_with_provider(
 ) -> Result<RunOutput> {
     if control.cancel.is_cancelled() {
         return Ok(RunOutput {
-            error: Some("任务已停止".into()),
+            error: Some(super::error_codes::STOPPED.into()),
             ..RunOutput::default()
         });
     }
@@ -229,7 +229,7 @@ pub(crate) async fn run_with_provider(
                             ..
                         }),
                 } => {
-                    output.error = Some(error_message.unwrap_or_else(|| "模型未能完成请求".into()))
+                    output.error = Some(super::error_codes::model_failed(error_message))
                 }
                 AgentEvent::AgentEnd { stats, .. } => {
                     output.input_tokens =
@@ -251,14 +251,14 @@ pub(crate) async fn run_with_provider(
     };
     let (timed_out, mut output) = futures::join!(runner, observer);
     if timed_out {
-        output.error = Some("任务超时，已保留完成的内容，可以继续讨论".into());
+        output.error = Some(super::error_codes::TIMEOUT.into());
     } else if control.cancel.is_cancelled() {
-        output.error = Some("任务已停止".into());
+        output.error = Some(super::error_codes::STOPPED.into());
     }
     if context.messages.last().is_some_and(|message| {
         matches!(message.as_llm(), Some(Message::User { content, .. }) if content.iter().any(|content| matches!(content, Content::Text { text } if text.starts_with(yoagent::agent_loop::AGENT_STOPPED_PREFIX))))
     }) && output.error.is_none() {
-        output.error = Some("任务已达到执行预算，可以继续讨论".into());
+        output.error = Some(super::error_codes::BUDGET.into());
     }
     // 强制超时可能发生在 tool_use 与 tool_result 之间，只恢复完整轮次的检查点。
     let history = if timed_out {

@@ -326,7 +326,12 @@ impl PreferencesWindow {
             // 与载入快照，不一致时报冲突，让用户重开本页拿到最新内容。
             if let Ok(disk) = AiSettings::load() {
                 if disk != state.saved {
-                    anyhow::bail!("AI 配置已被其他窗口修改，请关闭本页后重新打开再保存");
+                    anyhow::bail!(
+                        "{}",
+                        cx.global::<crate::i18n::I18nManager>()
+                            .strings()
+                            .preferences_ai_conflict
+                    );
                 }
             }
             settings.save_at(&crate::ai::settings::settings_path()?)?;

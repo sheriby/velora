@@ -72,6 +72,34 @@ impl AiCommand {
     }
 }
 
+/// 运行时错误码（后台线程拿不到 i18n）在界面层翻译成本地化文案；
+/// 未知内容（模型/IO 的原始报错）原样返回。
+pub(crate) fn error_text(error: &str, strings: &crate::i18n::I18nStrings) -> String {
+    if let Some(detail) = error.strip_prefix("velora-ai:model-failed:") {
+        return if detail.is_empty() {
+            strings.ai_error_model_failed.clone()
+        } else {
+            format!("{}: {detail}", strings.ai_error_model_failed)
+        };
+    }
+    match error {
+        error_codes::TIMEOUT => strings.ai_error_timeout.clone(),
+        error_codes::STOPPED => strings.ai_error_stopped.clone(),
+        error_codes::BUDGET => strings.ai_error_budget.clone(),
+        _ => error.to_string(),
+    }
+}
+
+/// 后台线程发出的固定错误码：不携带语言，界面层按码取词。
+pub(crate) mod error_codes {
+    pub const TIMEOUT: &str = "velora-ai:timeout";
+    pub const STOPPED: &str = "velora-ai:stopped";
+    pub const BUDGET: &str = "velora-ai:budget";
+    pub fn model_failed(detail: Option<String>) -> String {
+        format!("velora-ai:model-failed:{}", detail.unwrap_or_default())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct DocumentSnapshot {
     pub id: String,
