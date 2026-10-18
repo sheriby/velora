@@ -63,7 +63,8 @@ fn ai_revisions_use_the_document_area_and_acceptance_returns_to_the_original_edi
     let viewport = cx.update(|window, _| window.viewport_size());
     assert!(surface.size.width > viewport.width * 0.65);
     assert!(surface.size.height > viewport.height * 0.65);
-    assert!(cx.debug_bounds("ai-command-bar").is_none());
+    assert!(cx.debug_bounds("ai-task-bar").is_none());
+    assert!(cx.debug_bounds("ai-floating-workbench").is_some());
     assert!(cx.debug_bounds("ai-review-document").is_some());
     editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
     let accept = cx
@@ -85,9 +86,7 @@ fn ai_revisions_use_the_document_area_and_acceptance_returns_to_the_original_edi
 }
 
 #[gpui::test]
-fn ai_multiple_document_review_has_file_navigation_outside_the_instruction_bar(
-    cx: &mut TestAppContext,
-) {
+fn ai_multiple_document_review_has_file_navigation_in_the_floating_dialog(cx: &mut TestAppContext) {
     initialize(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
     editor.update_in(cx, |editor, window, cx| {
@@ -113,8 +112,9 @@ fn ai_multiple_document_review_has_file_navigation_outside_the_instruction_bar(
     let files = cx
         .debug_bounds("ai-review-files")
         .expect("跨文档修改需要独立的文件导航");
-    let document = cx.debug_bounds("ai-review-document").unwrap();
-    assert!(files.right() <= document.left());
+    let panel = cx.debug_bounds("ai-floating-workbench").unwrap();
+    assert!(files.left() >= panel.left() && files.right() <= panel.right());
+    assert!(cx.debug_bounds("ai-review-document").is_some());
     let second = cx.debug_bounds("ai-review-file-1").unwrap().center();
     cx.simulate_click(second, gpui::Modifiers::none());
     draw(cx);
@@ -138,7 +138,11 @@ fn ai_instruction_clipboard_shortcuts_do_not_consume_the_original_document_selec
         window.activate_window();
         editor.select_document(cx);
         editor.open_ai_assistant(AiCommand::Ask, window, cx);
-        editor.ai_session.as_mut().unwrap().mode = PanelMode::Task;
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session
+            .input
+            .update(cx, |input, cx| input.focus(window, cx));
     });
     draw(cx);
     draw(cx);
@@ -195,11 +199,19 @@ fn ai_review_document_supports_copy_without_modifying_the_original_or_the_draft(
             .review
             .as_ref()
             .unwrap()
-            .proposed
+            .tracked
             .clone()
     });
+    let tracked_source = draft.read_with(cx, |editor, _| editor.buffer.text());
     let (start, end) = draft.read_with(cx, |editor, cx| {
-        let block = editor.document.first_root().unwrap().read(cx);
+        let block = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|block| block.entity.read(cx).display_text() == "新的第一段")
+            .unwrap()
+            .entity
+            .read(cx);
         let bounds = block.visible_range_bounds(0.."新的第一段".len()).unwrap();
         (
             gpui::point(bounds.left() + gpui::px(0.5), bounds.center().y),
@@ -226,7 +238,9 @@ fn ai_review_document_supports_copy_without_modifying_the_original_or_the_draft(
         "ctrl-x backspace"
     });
     editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
-    draft.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), proposed));
+    draft.read_with(cx, |editor, _| {
+        assert_eq!(editor.buffer.text(), tracked_source)
+    });
 }
 
 #[gpui::test]
@@ -386,7 +400,7 @@ fn ai_opening_a_real_document_returns_to_editing_and_keeps_pending_changes(
         cx.debug_bounds("ai-review-workspace").is_none(),
         "切换文件不能仍被审阅页面遮挡"
     );
-    assert!(cx.debug_bounds("ai-return").is_some());
+    assert!(cx.debug_bounds("ai-floating-workbench").is_some());
     editor.read_with(cx, |editor, _| {
         assert_eq!(editor.buffer.text(), "另外一篇");
         assert_eq!(
@@ -450,11 +464,7 @@ fn ai_reference_picker_keeps_multiple_selections_visible_until_done(cx: &mut Tes
     assert!(cx.debug_bounds("ai-command-bar").is_some());
 }
 
-#[gpui::test]
-#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
-fn ai_instruction_to_native_tool_to_document_review_completes_through_the_ui(
-    cx: &mut TestAppContext,
-) {
+fn native_ui_chain(cx: &mut TestAppContext, reading: bool) {
     use serde_json::json;
     use std::io::Write;
     initialize(cx);
@@ -516,7 +526,12 @@ fn ai_instruction_to_native_tool_to_document_review_completes_through_the_ui(
     draw(cx);
     editor.update_in(cx, |editor, window, cx| {
         window.activate_window();
-        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        if reading {
+            editor.select_document(cx);
+            editor.open_ai_assistant(AiCommand::Explain, window, cx);
+        } else {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        }
     });
     draw(cx);
     cx.simulate_input("新建一篇笔记，等待我审阅");
@@ -528,6 +543,40 @@ fn ai_instruction_to_native_tool_to_document_review_completes_through_the_ui(
     }
     let requests = server.join().unwrap();
     assert_eq!(requests.len(), 2);
+    assert!(requests[0].to_string().contains("workspace_path"));
+    assert!(requests[0].to_string().contains("open_tabs"));
+    if reading {
+        let tools = requests[0]
+            .get("tools")
+            .and_then(serde_json::Value::as_array)
+            .unwrap();
+        assert!(
+            !tools
+                .iter()
+                .any(|tool| tool.to_string().contains("propose_")
+                    || tool.to_string().contains("reset_proposal"))
+        );
+        assert!(cx.debug_bounds("ai-dialog-result").is_some());
+        assert!(cx.debug_bounds("ai-review-workspace").is_none());
+        assert!(cx.debug_bounds("ai-review-file-accept").is_none());
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(editor.buffer.text(), "# 原文\n\n保留的内容");
+            assert!(
+                editor
+                    .ai_session
+                    .as_ref()
+                    .unwrap()
+                    .saved
+                    .workspace
+                    .changes
+                    .proposals
+                    .is_empty()
+            );
+        });
+        assert!(!directory.join("generated.md").exists());
+        std::fs::remove_dir_all(directory).unwrap();
+        return;
+    }
     assert!(requests[1].to_string().contains("generated.md"));
     assert!(
         cx.debug_bounds("ai-review-workspace").is_some(),
@@ -559,6 +608,22 @@ fn ai_instruction_to_native_tool_to_document_review_completes_through_the_ui(
         "# 原文\n\n保留的内容"
     );
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+fn ai_instruction_to_native_tool_to_document_review_completes_through_the_ui(
+    cx: &mut TestAppContext,
+) {
+    native_ui_chain(cx, false);
+}
+
+#[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+fn ai_reading_request_omits_write_tools_and_cannot_apply_an_unsolicited_model_edit(
+    cx: &mut TestAppContext,
+) {
+    native_ui_chain(cx, true);
 }
 
 #[gpui::test]
@@ -650,9 +715,7 @@ fn ai_review_accepts_the_focused_change_with_the_platform_enter_shortcut(cx: &mu
 }
 
 #[gpui::test]
-fn ai_stopping_a_response_keeps_the_received_text_readable_in_the_document_area(
-    cx: &mut TestAppContext,
-) {
+fn ai_stopping_a_response_keeps_the_received_text_readable_in_the_dialog(cx: &mut TestAppContext) {
     initialize(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原文".into(), None));
     editor.update_in(cx, |editor, window, cx| {
@@ -672,8 +735,8 @@ fn ai_stopping_a_response_keeps_the_received_text_readable_in_the_document_area(
     draw(cx);
     draw(cx);
     assert!(
-        cx.debug_bounds("ai-result-document").is_some(),
-        "停止后仍然可以阅读已收到的内容"
+        cx.debug_bounds("ai-dialog-result").is_some(),
+        "停止后仍然可以在浮窗阅读已收到的内容"
     );
     editor.read_with(cx, |editor, _| {
         assert_eq!(editor.buffer.text(), "原文");
@@ -818,4 +881,619 @@ fn ai_command_validation_errors_are_visible_before_the_task_starts(cx: &mut Test
         cx.debug_bounds("ai-command-error").is_some(),
         "发送前的校验错误必须在指令栏显示，不能表现为点击无反应"
     );
+}
+
+fn reading_command_is_not_an_edit(cx: &mut TestAppContext, command: AiCommand) {
+    initialize(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "选中的原文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_document(cx);
+        editor.open_ai_assistant(command, window, cx);
+        assert!(
+            editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .saved
+                .workspace
+                .read_only,
+            "总结、解释、翻译只能生成阅读结果"
+        );
+        assert_eq!(editor.buffer.text(), "选中的原文");
+    });
+}
+
+#[gpui::test]
+fn ai_reading_summary_never_starts_a_document_edit(cx: &mut TestAppContext) {
+    reading_command_is_not_an_edit(cx, AiCommand::Summarize);
+}
+#[gpui::test]
+fn ai_reading_explanation_never_starts_a_document_edit(cx: &mut TestAppContext) {
+    reading_command_is_not_an_edit(cx, AiCommand::Explain);
+}
+#[gpui::test]
+fn ai_reading_translation_never_starts_a_document_edit(cx: &mut TestAppContext) {
+    reading_command_is_not_an_edit(cx, AiCommand::Translate);
+}
+
+#[gpui::test]
+fn ai_reading_result_stays_in_a_floating_window_with_no_insertion_or_bottom_bars(
+    cx: &mut TestAppContext,
+) {
+    initialize(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原文不能变成解释稿".into(), None));
+    draw(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.saved.workspace.read_only = true;
+        session
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: "## 解释\n\n只供阅读的结果。".into(),
+            });
+        editor.refresh_ai_preview(cx);
+    });
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-floating-workbench").is_some(),
+        "结果应在浮动工作台中阅读"
+    );
+    assert!(cx.debug_bounds("ai-result-insert").is_none());
+    assert!(cx.debug_bounds("ai-task-bar").is_none());
+    assert!(
+        cx.debug_bounds("ai-result-document").is_none(),
+        "阅读结果不能顶替正文"
+    );
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.buffer.text(), "原文不能变成解释稿")
+    });
+}
+
+#[gpui::test]
+fn ai_editor_context_contains_workspace_tabs_active_cursor_and_selection(cx: &mut TestAppContext) {
+    initialize(cx);
+    let root =
+        std::env::temp_dir().join(format!("velora-ai-context-state-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let first = root.join("first.md");
+    let second = root.join("second.md");
+    std::fs::write(&first, "第一篇").unwrap();
+    std::fs::write(&second, "# 标题\n\n选中的文字").unwrap();
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "第一篇".into(), Some(first.clone())));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.ensure_current_document_tab(cx);
+        editor.open_workspace_file(second.clone(), window, cx);
+        editor.select_document(cx);
+        let context = editor.ai_editor_context(cx);
+        assert_eq!(
+            context["workspace_path"].as_str(),
+            Some(root.canonicalize().unwrap().to_str().unwrap())
+        );
+        let tabs = context["open_tabs"]
+            .as_array()
+            .expect("应提供全部标签页元数据");
+        assert_eq!(tabs.len(), 2);
+        assert!(
+            tabs.iter()
+                .any(|tab| tab["path"].as_str() == first.to_str())
+        );
+        assert!(
+            tabs.iter()
+                .any(|tab| tab["path"].as_str() == second.to_str())
+        );
+        assert_eq!(context["active_tab"]["path"].as_str(), second.to_str());
+        assert_eq!(context["cursor"]["line"], 3);
+        assert_eq!(context["selection"]["text"], "# 标题\n\n选中的文字");
+        assert!(context["cursor"]["byte_offset"].as_u64().unwrap() > 0);
+    });
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[gpui::test]
+fn ai_quick_commands_require_selection_except_summary(cx: &mut TestAppContext) {
+    initialize(cx);
+    for command in [
+        AiCommand::Explain,
+        AiCommand::Translate,
+        AiCommand::Polish,
+        AiCommand::Expand,
+    ] {
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, "# 当前文档\n\n需要处理的正文".into(), None)
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            editor.open_ai_assistant(command, window, cx);
+            assert!(
+                editor.ai_session.is_none(),
+                "必须明确选择处理范围：{command:?}"
+            );
+            assert!(editor.modal_is_open());
+        });
+    }
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "全文可以摘要".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Summarize, window, cx);
+        assert!(editor.ai_session.is_some());
+        assert!(!editor.modal_is_open());
+    });
+}
+
+#[test]
+fn ai_inline_review_keeps_deleted_and_inserted_blocks_at_their_document_position() {
+    use super::inline_review::{MarkKind, tracked_document};
+    let before_parts = ["# 标题\n\n", "旧段落。\n\n", "保留正文。\n"];
+    let after_parts = [
+        "# 标题\n\n",
+        "新段落。\n\n",
+        "保留正文。\n\n",
+        "补充的内容。\n",
+    ];
+    let spans = |parts: &[&str]| {
+        let mut offset = 0;
+        parts
+            .iter()
+            .map(|part| {
+                let start = offset;
+                offset += part.len();
+                start..offset
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = before_parts.concat();
+    let after = after_parts.concat();
+    let proposal = crate::ai::Proposal::new(
+        crate::ai::DocumentSnapshot {
+            id: "note.md".into(),
+            source: before.clone(),
+        },
+        after.clone(),
+    );
+    let (text, marks) = tracked_document(
+        &before,
+        &spans(&before_parts),
+        &after,
+        &spans(&after_parts),
+        &proposal.edits(),
+    )
+    .unwrap();
+    assert!(text.contains("旧段落。"), "删除部分必须留在原位置供审阅");
+    assert!(text.find("旧段落。").unwrap() < text.find("新段落。").unwrap());
+    assert_eq!(text.matches("保留正文。").count(), 1);
+    assert!(marks.iter().any(|mark| mark.kind == MarkKind::Removed
+        && text.get(mark.range.clone()).unwrap().contains("旧段落")));
+    assert!(marks.iter().any(|mark| mark.kind == MarkKind::Added
+        && text.get(mark.range.clone()).unwrap().contains("新段落")));
+    assert!(marks.iter().any(|mark| mark.kind == MarkKind::Added
+        && text.get(mark.range.clone()).unwrap().contains("补充")));
+    assert!(marks.iter().all(|mark| !mark.edits.is_empty()));
+}
+
+#[test]
+fn ai_inline_review_shows_a_pure_deletion_instead_of_an_empty_document() {
+    use super::inline_review::{MarkKind, tracked_document};
+    let before = "应被删除的段落。\n";
+    let proposal = crate::ai::Proposal::new(
+        crate::ai::DocumentSnapshot {
+            id: "note.md".into(),
+            source: before.into(),
+        },
+        String::new(),
+    );
+    let (text, marks) =
+        tracked_document(before, &[0..before.len()], "", &[], &proposal.edits()).unwrap();
+    assert_eq!(text, before);
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks[0].kind, MarkKind::Removed);
+}
+
+#[gpui::test]
+fn ai_conversation_keeps_secondary_commands_out_of_the_reading_surface(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: "阅读结果".into(),
+            });
+        editor.refresh_ai_preview(cx);
+    });
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-command-bar").is_none(),
+        "已开始对话后不重复铺满快捷指令"
+    );
+    assert!(cx.debug_bounds("ai-composer").is_some());
+    assert!(cx.debug_bounds("ai-dialog-result").is_some());
+}
+
+#[gpui::test]
+fn ai_floating_dialog_drag_moves_only_until_mouse_release(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor.ai_session.as_mut().unwrap().mode = PanelMode::Task;
+    });
+    draw(cx);
+    draw(cx);
+    let before = cx.debug_bounds("ai-floating-workbench").unwrap();
+    let start = cx.debug_bounds("ai-float-titlebar").unwrap().center();
+    let end = start + gpui::point(gpui::px(30.0), gpui::px(30.0));
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(end, Some(gpui::MouseButton::Left), gpui::Modifiers::none());
+    cx.simulate_mouse_up(end, gpui::MouseButton::Left, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    let after = cx.debug_bounds("ai-floating-workbench").unwrap();
+    assert_eq!(
+        after.origin,
+        before.origin + gpui::point(gpui::px(30.0), gpui::px(30.0))
+    );
+    cx.simulate_mouse_move(
+        end + gpui::point(gpui::px(20.0), gpui::px(20.0)),
+        None,
+        gpui::Modifiers::none(),
+    );
+    draw(cx);
+    assert_eq!(
+        cx.debug_bounds("ai-floating-workbench").unwrap().origin,
+        after.origin
+    );
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), "正文"));
+}
+
+#[gpui::test]
+fn ai_selected_writing_accepts_each_change_and_undo_restores_only_that_change(
+    cx: &mut TestAppContext,
+) {
+    initialize(cx);
+    let source = "前文不变\n\n框架甲\n\n框架乙\n\n后文不变";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        let start = source.find("框架甲").unwrap();
+        let end = source.find("框架乙").unwrap() + "框架乙".len();
+        editor.jump_to_document_search_range(start..end, cx);
+        editor.open_ai_assistant(AiCommand::Expand, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        let id = session.saved.target.as_ref().unwrap().document_id.clone();
+        assert_eq!(
+            session
+                .saved
+                .workspace
+                .selection_scope
+                .as_ref()
+                .unwrap()
+                .range,
+            start..end
+        );
+        session
+            .saved
+            .workspace
+            .call(
+                "propose_edit",
+                &serde_json::json!({"path":id,"before":"框架甲","after":"框架甲与说明🙂"}),
+            )
+            .unwrap();
+        session
+            .saved
+            .workspace
+            .call(
+                "propose_edit",
+                &serde_json::json!({"path":id,"before":"框架乙","after":"框架乙与例子"}),
+            )
+            .unwrap();
+        assert!(
+            session
+                .saved
+                .workspace
+                .call(
+                    "propose_edit",
+                    &serde_json::json!({"path":id,"before":"前文不变","after":"越界"})
+                )
+                .is_err()
+        );
+        editor
+            .accept_ai_proposals(Some(&id), Some(0), window, cx)
+            .unwrap();
+        assert_eq!(
+            editor.buffer.text(),
+            source.replace("框架甲", "框架甲与说明🙂")
+        );
+        editor
+            .accept_ai_proposals(Some(&id), Some(0), window, cx)
+            .unwrap();
+        assert_eq!(
+            editor.buffer.text(),
+            source
+                .replace("框架甲", "框架甲与说明🙂")
+                .replace("框架乙", "框架乙与例子")
+        );
+        editor.on_undo(&crate::components::Undo, window, cx);
+        assert_eq!(
+            editor.buffer.text(),
+            source.replace("框架甲", "框架甲与说明🙂")
+        );
+        editor.on_undo(&crate::components::Undo, window, cx);
+        assert_eq!(editor.buffer.text(), source);
+    });
+}
+
+#[gpui::test]
+fn ai_selected_writing_cannot_accept_an_out_of_scope_proposal(cx: &mut TestAppContext) {
+    initialize(cx);
+    let source = "前文不变\n\n选区内容\n\n后文不变";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        let start = source.find("选区内容").unwrap();
+        editor.jump_to_document_search_range(start..start + "选区内容".len(), cx);
+        editor.open_ai_assistant(AiCommand::Polish, window, cx);
+        let workspace = &mut editor.ai_session.as_mut().unwrap().saved.workspace;
+        workspace.changes.proposals.insert(
+            "other.md".into(),
+            crate::ai::Proposal::new(
+                crate::ai::DocumentSnapshot {
+                    id: "other.md".into(),
+                    source: "其他文档".into(),
+                },
+                "越界修改".into(),
+            ),
+        );
+        let result = editor.accept_ai_proposals(None, None, window, cx);
+        assert!(result.unwrap_err().to_string().contains("选区"));
+        assert_eq!(editor.buffer.text(), source);
+    });
+}
+
+#[gpui::test]
+fn ai_floating_dialog_preserves_writing_width_and_docking_keeps_the_conversation(
+    cx: &mut TestAppContext,
+) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "内容".into(), None));
+    draw(cx);
+    draw(cx);
+    assert!(cx.debug_bounds("ai-assistant-panel").is_none());
+    let initial = cx.debug_bounds("editor-scroll").unwrap();
+    let id = editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx);
+        editor.ai_session.as_ref().unwrap().saved.id.clone()
+    });
+    draw(cx);
+    draw(cx);
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.scroll_handle.bounds().size.width),
+        initial.size.width
+    );
+    let panel = cx.debug_bounds("ai-assistant-panel").unwrap();
+    let viewport = cx.update(|window, _| window.viewport_size());
+    assert!(panel.left() >= gpui::px(0.0) && panel.right() <= viewport.width);
+    assert!(panel.top() >= gpui::px(0.0) && panel.bottom() <= viewport.height);
+    if let Some(back) = cx.debug_bounds("ai-back") {
+        cx.simulate_click(back.center(), gpui::Modifiers::none());
+    }
+    editor.update(cx, |editor, cx| {
+        editor
+            .ai_session
+            .as_mut()
+            .unwrap()
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "user".into(),
+                text: "整理当前文档".into(),
+            });
+        editor.refresh_ai_preview(cx);
+        cx.notify();
+    });
+    draw(cx);
+    draw(cx);
+    let conversation = editor.read_with(cx, |editor, _| {
+        editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .conversation
+            .clone()
+            .unwrap()
+    });
+    let expand = cx.debug_bounds("ai-expand").unwrap().center();
+    cx.simulate_click(expand, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    assert!(
+        editor.read_with(cx, |editor, _| editor.scroll_handle.bounds().size.width)
+            < initial.size.width
+    );
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.ai_session.as_ref().unwrap().saved.id, id);
+        assert_eq!(
+            editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .conversation
+                .as_ref()
+                .unwrap()
+                .entity_id(),
+            conversation.entity_id()
+        )
+    });
+    let collapse = cx.debug_bounds("ai-expand").unwrap().center();
+    cx.simulate_click(collapse, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.scroll_handle.bounds().size.width),
+        initial.size.width
+    );
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.ai_session.as_ref().unwrap().saved.id, id);
+        assert_eq!(
+            editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .conversation
+                .as_ref()
+                .unwrap()
+                .entity_id(),
+            conversation.entity_id()
+        )
+    });
+}
+
+#[gpui::test]
+fn ai_retargeted_conversation_does_not_keep_a_previous_selection_boundary(cx: &mut TestAppContext) {
+    initialize(cx);
+    let source = "第一段\n\n第二段";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.jump_to_document_search_range(0.."第一段".len(), cx);
+        editor.open_ai_assistant(AiCommand::Polish, window, cx);
+        let id = editor.ai_session.as_ref().unwrap().saved.id.clone();
+        let start = source.find("第二段").unwrap();
+        editor.jump_to_document_search_range(start..start, cx);
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(session.saved.id, id);
+        assert!(
+            session.saved.workspace.selection_scope.is_none(),
+            "新目标不能被旧选区限制"
+        );
+        assert!(!session.saved.workspace.read_only);
+    });
+}
+
+#[gpui::test]
+fn ai_default_context_does_not_include_the_contents_of_an_excluded_active_document(
+    cx: &mut TestAppContext,
+) {
+    initialize(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "不应发送的正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_document(cx);
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        let id = session.saved.target.as_ref().unwrap().document_id.clone();
+        session.saved.workspace.excluded_paths = vec![id];
+        let context = editor.ai_editor_context(cx);
+        assert!(!context.to_string().contains("不应发送的正文"));
+        assert!(context.get("active_tab").is_some());
+    });
+}
+
+#[gpui::test]
+fn ai_escape_returns_from_options_before_dismissing_the_conversation(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session
+            .input
+            .update(cx, |input, cx| input.set_value("保留输入", cx));
+    });
+    draw(cx);
+    draw(cx);
+    let options = cx.debug_bounds("ai-options").unwrap().center();
+    cx.simulate_click(options, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.ai_session.as_ref().unwrap().mode == PanelMode::Options)
+    });
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-composer").is_some(),
+        "Esc 应先退出次级菜单"
+    );
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.ai_session.as_ref().unwrap().input.read(cx).value(),
+            "保留输入"
+        )
+    });
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert!(cx.debug_bounds("ai-floating-workbench").is_none());
+}
+
+#[gpui::test]
+fn ai_discard_menu_removes_pending_revisions_and_preserves_the_document(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        let id = session.saved.target.as_ref().unwrap().document_id.clone();
+        session
+            .saved
+            .workspace
+            .changes
+            .propose(
+                session.saved.workspace.documents[&id].clone(),
+                "原文",
+                "待审阅的修改",
+            )
+            .unwrap();
+        editor.refresh_ai_preview(cx);
+    });
+    draw(cx);
+    draw(cx);
+    let options = cx.debug_bounds("ai-options").unwrap().center();
+    cx.simulate_click(options, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    let menu_bounds = cx.debug_bounds("ai-assistant-panel").unwrap();
+    draw(cx);
+    assert_eq!(
+        cx.debug_bounds("ai-assistant-panel").unwrap(),
+        menu_bounds,
+        "次级菜单不能在重绘时自行移动"
+    );
+    let discard = cx.debug_bounds("ai-options-discard");
+    assert!(discard.is_some(), "次级菜单应允许丢弃整批提议");
+    cx.simulate_click(discard.unwrap().center(), gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    assert!(cx.debug_bounds("ai-review-workspace").is_none());
+    assert!(cx.debug_bounds("ai-composer").is_some());
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.buffer.text(), "原文");
+        assert!(
+            editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .saved
+                .workspace
+                .changes
+                .proposals
+                .is_empty()
+        );
+    });
 }

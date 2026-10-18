@@ -45,7 +45,7 @@ fn ai_context_menu_exposes_common_commands_and_an_empty_selection_has_clear_scop
                 _ => None,
             })
             .collect();
-        for name in ["ai-polish", "ai-translate", "ai-summarize", "ai-ask"] {
+        for name in ["ai-summarize", "ai-explain", "ai-translate", "ai-polish", "ai-expand", "ai-ask"] {
             assert!(names.contains(&name), "缺少常用指令：{name}");
         }
     });
@@ -59,7 +59,9 @@ fn ai_context_menu_exposes_common_commands_and_an_empty_selection_has_clear_scop
                 _ => None,
             })
             .collect();
-        assert!(names.contains(&"ai-continue"));
+        assert!(names.contains(&"ai-summarize"));
+        assert!(names.contains(&"ai-ask"));
+        for name in ["ai-explain", "ai-translate", "ai-polish", "ai-expand"] { assert!(!names.contains(&name)); }
         assert!(!names.contains(&"ai-polish"), "无选区不能默默改成润色全文");
     });
 }
@@ -478,12 +480,9 @@ fn ai_answer_links_open_workspace_sources_without_making_the_answer_editable(
                 .ai_session
                 .as_ref()
                 .unwrap()
-                .previews
-                .values()
-                .next_back()
+                .conversation
+                .as_ref()
                 .unwrap()
-                .read(cx)
-                .editor
                 .clone()
         });
     preview.update(cx, |preview, cx| {
@@ -530,61 +529,6 @@ fn ai_task_keeps_the_original_selection_when_the_user_continues_editing(cx: &mut
     });
 }
 
-#[gpui::test]
-fn ai_command_entry_preserves_writing_width_and_task_details_keep_the_same_task(
-    cx: &mut TestAppContext,
-) {
-    init_editor_test_app(cx);
-    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "内容".into(), None));
-    redraw(cx);
-    redraw(cx);
-    assert!(cx.debug_bounds("ai-assistant-panel").is_none());
-    let initial = cx.debug_bounds("editor-scroll").unwrap();
-    let id = editor.update_in(cx, |editor, window, cx| {
-        editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx);
-        editor.ai_session.as_ref().unwrap().saved.id.clone()
-    });
-    redraw(cx);
-    redraw(cx);
-    assert_eq!(
-        cx.debug_bounds("editor-scroll").unwrap().size.width,
-        initial.size.width
-    );
-    let panel = cx.debug_bounds("ai-assistant-panel").unwrap();
-    let viewport = cx.update(|window, _| window.viewport_size());
-    assert!(panel.left() >= gpui::px(0.0) && panel.right() <= viewport.width);
-    assert!(panel.top() >= gpui::px(0.0) && panel.bottom() <= viewport.height);
-    if let Some(back) = cx.debug_bounds("ai-back") {
-        cx.simulate_click(back.center(), gpui::Modifiers::none());
-    }
-    editor.update(cx, |editor, cx| {
-        editor.ai_session.as_mut().unwrap().saved.messages.push(crate::ai::session::ChatMessage {
-            role: "user".into(), text: "整理当前文档".into(),
-        });
-        cx.notify();
-    });
-    redraw(cx);
-    redraw(cx);
-    let expand = cx.debug_bounds("ai-task-details").unwrap().center();
-    cx.simulate_click(expand, gpui::Modifiers::none());
-    redraw(cx);
-    redraw(cx);
-    assert!(cx.debug_bounds("editor-scroll").unwrap().size.width < initial.size.width);
-    editor.read_with(cx, |editor, _| {
-        assert_eq!(editor.ai_session.as_ref().unwrap().saved.id, id)
-    });
-    let collapse = cx.debug_bounds("ai-details-hide").unwrap().center();
-    cx.simulate_click(collapse, gpui::Modifiers::none());
-    redraw(cx);
-    redraw(cx);
-    assert_eq!(
-        cx.debug_bounds("editor-scroll").unwrap().size.width,
-        initial.size.width
-    );
-    editor.read_with(cx, |editor, _| {
-        assert_eq!(editor.ai_session.as_ref().unwrap().saved.id, id)
-    });
-}
 
 #[test]
 fn ai_documents_outside_the_workspace_do_not_alias_files_with_the_same_name() {
@@ -621,7 +565,9 @@ fn ai_completed_answers_all_keep_their_markdown_previews(cx: &mut TestAppContext
                 }),
             );
         editor.refresh_ai_preview(cx);
-        assert_eq!(editor.ai_session.as_ref().unwrap().previews.len(), 2);
+        let conversation=editor.ai_session.as_ref().unwrap().conversation.as_ref().unwrap().read(cx);
+        assert_eq!(conversation.buffer.text(),"**第一条**\n\n---\n\n`第二条`");
+        assert!(conversation.is_read_only());
     });
 }
 

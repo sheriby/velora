@@ -2,6 +2,16 @@ use super::*;
 use super::super::{DocumentBlockState, DocumentEditingState, DocumentRowLayout, ViewMode};
 
 impl Editor {
+    pub(in crate::editor) fn ai_open_tabs_context(&self, root: Option<&Path>, group: usize, active_group: bool) -> Vec<serde_json::Value> {
+        self.workspace.open_documents.iter().map(|tab| serde_json::json!({
+            "document_id": super::super::ai_assistant::ai_document_id(Some(&tab.path), root, tab.recovery_id),
+            "path": tab.path, "group": group,
+            "active": active_group && self.active_document_path() == Some(&tab.path),
+            "modified": if self.active_document_path() == Some(&tab.path) { self.document_dirty } else { tab.dirty },
+            "markdown": crate::file_url::is_markdown_document(&tab.path) || super::untitled_document_id(&tab.path).is_some()
+        })).collect()
+    }
+
     pub(in crate::editor) fn ai_cached_document_sources(&self) -> Vec<(PathBuf, String)> {
         self.workspace.open_documents.iter().map(|tab| (tab.path.clone(), tab.markdown.clone())).collect()
     }

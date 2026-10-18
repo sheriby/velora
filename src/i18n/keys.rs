@@ -446,6 +446,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_review_compare",
     "ai_review_original",
     "ai_review_proposed",
+    "ai_panel_dock",
+    "ai_panel_float",
     "ai_task_details",
     "ai_task_result",
     "ai_task_return",

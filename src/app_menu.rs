@@ -841,8 +841,10 @@ pub(crate) fn editor_menu_handler(action: &dyn Action) -> Option<EditorMenuHandl
         Some(|editor, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Translate, window, cx))
     } else if action.as_any().is::<crate::components::AiSummarize>() {
         Some(|editor, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Summarize, window, cx))
-    } else if action.as_any().is::<crate::components::AiContinue>() {
-        Some(|editor, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Continue, window, cx))
+    } else if action.as_any().is::<crate::components::AiExplain>() {
+        Some(|editor, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Explain, window, cx))
+    } else if action.as_any().is::<crate::components::AiExpand>() {
+        Some(|editor, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Expand, window, cx))
     } else if action.as_any().is::<crate::components::OpenAiAssistant>() {
         Some(|editor, window, cx| editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx))
     } else if action.as_any().is::<crate::components::ToggleReadingMode>() {

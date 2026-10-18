@@ -121,7 +121,8 @@ impl PreferencesWindow {
             ShortcutCommand::AiPolish => format!("AI {}", strings.ai_action_polish),
             ShortcutCommand::AiTranslate => format!("AI {}", strings.ai_action_translate),
             ShortcutCommand::AiSummarize => format!("AI {}", strings.ai_action_summarize),
-            ShortcutCommand::AiContinue => format!("AI {}", strings.ai_action_continue),
+            ShortcutCommand::AiExplain => format!("AI {}", strings.ai_action_explain),
+            ShortcutCommand::AiExpand => format!("AI {}", strings.ai_action_expand),
             ShortcutCommand::FindNextMatch => strings.preferences_shortcut_find_next_match.clone(),
             ShortcutCommand::FindPreviousMatch => {
                 strings.preferences_shortcut_find_previous_match.clone()

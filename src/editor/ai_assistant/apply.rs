@@ -68,6 +68,9 @@ impl Editor {
         if session.saved.running {
             bail!("请先停止生成，再审阅修改");
         }
+        if session.saved.workspace.read_only {
+            bail!("阅读结果不能应用到正文");
+        }
         let saved = session.saved.clone();
         let root = saved.workspace.root.as_deref();
         let current_id = ai_document_id(self.file_path.as_deref(), root, self.recovery_id);
@@ -93,6 +96,14 @@ impl Editor {
         let mut staged = saved.workspace.changes.clone();
         let mut prepared = Vec::new();
         for id in ids {
+            if saved
+                .workspace
+                .selection_scope
+                .as_ref()
+                .is_some_and(|scope| scope.document_id != id)
+            {
+                bail!("本任务只能修改原始选区");
+            }
             let proposal = saved
                 .workspace
                 .changes
@@ -229,6 +240,21 @@ impl Editor {
                 staged.proposals.remove(&id);
                 proposal.edits()
             };
+            if let Some(scope) = saved
+                .workspace
+                .selection_scope
+                .as_ref()
+                .filter(|scope| scope.document_id == id)
+            {
+                let mut pending = proposal.base.source.clone();
+                for edit in edits.iter().rev() {
+                    if pending.get(edit.range.clone()).is_none() {
+                        bail!("修改范围已失效");
+                    }
+                    pending.replace_range(edit.range.clone(), &edit.replacement);
+                }
+                scope.allowed_in(&proposal.base.source, &pending)?;
+            }
             prepared.push(PreparedDocument {
                 id,
                 destination,
@@ -311,14 +337,29 @@ impl Editor {
                     source
                 }
             };
-            accepted.push((prepared.id, source));
+            accepted.push((prepared.id, source, prepared.edits));
         }
         if let Some(session) = self.ai_session.as_mut() {
             session.saved.workspace.changes = staged;
             session.review_dirty = true;
-            session.show_result = false;
             session.saved.bindings = bindings;
-            for (id, source) in accepted {
+            for (id, source, edits) in accepted {
+                if let Some(scope) = session
+                    .saved
+                    .workspace
+                    .selection_scope
+                    .as_mut()
+                    .filter(|scope| scope.document_id == id)
+                {
+                    for edit in &edits {
+                        scope.range.end = scope
+                            .range
+                            .end
+                            .saturating_sub(edit.range.len())
+                            .saturating_add(edit.replacement.len());
+                    }
+                    scope.version = super::super::persistence::file_content_version(&source);
+                }
                 session.saved.workspace.new_documents.remove(&id);
                 session.saved.workspace.live_documents.insert(id.clone());
                 if let Some(snapshot) = session.saved.workspace.documents.get_mut(&id) {
@@ -326,8 +367,12 @@ impl Editor {
                 }
             }
         }
-        if self.ai_session.as_ref().is_some_and(|session| session.saved.workspace.changes.proposals.is_empty()) {
-            self.hide_ai_panel(cx);
+        if let Some(session) = self
+            .ai_session
+            .as_mut()
+            .filter(|session| session.saved.workspace.changes.proposals.is_empty())
+        {
+            session.review_open = false;
         }
         self.schedule_autosave(cx);
         self.persist_ai_session(cx);

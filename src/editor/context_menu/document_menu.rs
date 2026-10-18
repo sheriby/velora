@@ -147,7 +147,8 @@ impl DocumentMenuCommand {
                 crate::ai::AiCommand::Polish => "ai-polish",
                 crate::ai::AiCommand::Translate => "ai-translate",
                 crate::ai::AiCommand::Summarize => "ai-summarize",
-                crate::ai::AiCommand::Continue => "ai-continue",
+                crate::ai::AiCommand::Explain => "ai-explain",
+                crate::ai::AiCommand::Expand => "ai-expand",
                 _ => "ai-ask",
             },
             Self::Undo => "undo",
@@ -310,11 +311,8 @@ impl Editor {
     /// 主菜单的行序：顶部图标条 → 复制为 → 格式 / 段落 / 插入 → 视图。
     pub(crate) fn document_menu_rows(&self, cx: &App) -> Vec<DocumentMenuRow> {
         let mut rows = self.document_menu_rows_without_ai(cx);
-        let commands = if self.has_text_selection(cx) {
-            vec![crate::ai::AiCommand::Polish, crate::ai::AiCommand::Translate, crate::ai::AiCommand::Summarize, crate::ai::AiCommand::Ask]
-        } else {
-            vec![crate::ai::AiCommand::Ask, crate::ai::AiCommand::Summarize, crate::ai::AiCommand::Continue]
-        };
+        let commands=crate::ai::AiCommand::ALL.into_iter().filter(|command|!command.requires_selection()||self.has_text_selection(cx))
+            .chain(std::iter::once(crate::ai::AiCommand::Ask));
         rows.push(DocumentMenuRow::Separator);
         rows.extend(commands.into_iter().map(|action| {
             let command = DocumentMenuCommand::Ai(action);

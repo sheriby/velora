@@ -15,50 +15,40 @@ pub(crate) mod workspace;
 pub(crate) enum AiCommand {
     Ask,
     Polish,
-    FixGrammar,
-    Shorten,
     Expand,
     Translate,
     Summarize,
     Explain,
-    Continue,
 }
 
 impl AiCommand {
+    pub fn is_reading_task(self) -> bool {
+        matches!(self, Self::Summarize | Self::Explain | Self::Translate)
+    }
+
     pub fn requires_selection(self) -> bool {
         matches!(
             self,
-            Self::Polish
-                | Self::FixGrammar
-                | Self::Shorten
-                | Self::Expand
-                | Self::Translate
-                | Self::Explain
+            Self::Polish | Self::Expand | Self::Translate | Self::Explain
         )
     }
 
-    pub const ALL: [Self; 8] = [
-        Self::Polish,
-        Self::FixGrammar,
-        Self::Shorten,
-        Self::Expand,
-        Self::Translate,
+    pub const ALL: [Self; 5] = [
         Self::Summarize,
         Self::Explain,
-        Self::Continue,
+        Self::Translate,
+        Self::Polish,
+        Self::Expand,
     ];
 
     pub fn label(self, strings: &crate::i18n::I18nStrings) -> String {
         match self {
             Self::Ask => strings.ai_panel_ask.clone(),
             Self::Polish => strings.ai_action_polish.clone(),
-            Self::FixGrammar => strings.ai_action_fix_grammar.clone(),
-            Self::Shorten => strings.ai_action_shorten.clone(),
             Self::Expand => strings.ai_action_expand.clone(),
             Self::Translate => strings.ai_action_translate.clone(),
             Self::Summarize => strings.ai_action_summarize.clone(),
             Self::Explain => strings.ai_action_explain.clone(),
-            Self::Continue => strings.ai_action_continue.clone(),
         }
     }
 
@@ -68,15 +58,18 @@ impl AiCommand {
             Self::Polish => {
                 "润色指定选区，使表达清晰自然，保留原意与作者语气，只提出必要的局部修改。"
             }
-            Self::FixGrammar => "检查指定选区的错别字、语法和标点，只提出最小修改。",
-            Self::Shorten => "缩短指定选区，保留关键事实、例子和引用。",
-            Self::Expand => "扩写指定选区，结合已有资料补足解释，不编造事实。",
-            Self::Translate => {
-                "把指定选区翻译成用户指定的目标语言，保留 Markdown 结构、链接、代码、公式与术语。"
+            Self::Expand => {
+                "只扩写指定选区，在保留原意和框架结构的基础上填充合适的内容、说明与例子；可以读取资料补足背景，不编造事实，保持选区以外的内容不变。"
             }
-            Self::Summarize => "总结指定选区；没有选区时总结当前文档，给出有来源的简明摘要。",
-            Self::Explain => "解释指定选区，必要时查阅相关笔记并标明来源。",
-            Self::Continue => "从指定光标或选区末尾续写，只提出新增内容，衔接前文并保持写作风格。",
+            Self::Translate => {
+                "把指定选区翻译成用户指定的目标语言，仅返回译文供阅读，不插入或替换正文；保留 Markdown 结构、链接、代码、公式与术语。"
+            }
+            Self::Summarize => {
+                "总结指定选区；没有选区时总结当前文档，返回有来源的简明摘要供阅读，不能插入或改写正文。"
+            }
+            Self::Explain => {
+                "解释指定选区，必要时查阅相关笔记并标明来源，仅回答，不插入或修改正文。"
+            }
         }
     }
 }

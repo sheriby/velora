@@ -695,6 +695,8 @@ pub struct I18nStrings {
     pub ai_review_compare: String,
     pub ai_review_original: String,
     pub ai_review_proposed: String,
+    pub ai_panel_dock: String,
+    pub ai_panel_float: String,
     pub ai_task_details: String,
     pub ai_task_result: String,
     pub ai_task_return: String,

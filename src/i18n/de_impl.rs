@@ -1059,6 +1059,8 @@ impl I18nStringsDe {
             ai_review_compare: self.ai_review_compare.unwrap_or(defaults.ai_review_compare),
             ai_review_original: self.ai_review_original.unwrap_or(defaults.ai_review_original),
             ai_review_proposed: self.ai_review_proposed.unwrap_or(defaults.ai_review_proposed),
+            ai_panel_dock: self.ai_panel_dock.unwrap_or(defaults.ai_panel_dock),
+            ai_panel_float: self.ai_panel_float.unwrap_or(defaults.ai_panel_float),
             ai_task_details: self.ai_task_details.unwrap_or(defaults.ai_task_details),
             ai_task_result: self.ai_task_result.unwrap_or(defaults.ai_task_result),
             ai_task_return: self.ai_task_return.unwrap_or(defaults.ai_task_return),

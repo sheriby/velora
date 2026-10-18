@@ -88,7 +88,8 @@ static COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: "ai_polish", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_polish), action: || Box::new(crate::components::AiPolish) },
     CommandSpec { id: "ai_translate", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_translate), action: || Box::new(crate::components::AiTranslate) },
     CommandSpec { id: "ai_summarize", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_summarize), action: || Box::new(crate::components::AiSummarize) },
-    CommandSpec { id: "ai_continue", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_continue), action: || Box::new(crate::components::AiContinue) },
+    CommandSpec { id: "ai_explain", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_explain), action: || Box::new(crate::components::AiExplain) },
+    CommandSpec { id: "ai_expand", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_expand), action: || Box::new(crate::components::AiExpand) },
 
     command!("check_updates", App, menu_check_updates, CheckForUpdates),
     command!(sep "quit", App, menu_quit, QuitApplication),
@@ -331,7 +332,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             edit_ids,
-            vec!["ai_polish", "ai_translate", "ai_summarize", "ai_continue", "select_document", "paste_as_plain_text", "copy_as_markdown"]
+            vec!["ai_polish", "ai_translate", "ai_summarize", "ai_explain", "ai_expand", "select_document", "paste_as_plain_text", "copy_as_markdown"]
         );
 
         let format_ids = super::commands_for(CommandMenu::Format)

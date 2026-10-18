@@ -479,6 +479,8 @@ impl I18nStrings {
         strings.ai_review_compare = "对比".into();
         strings.ai_review_original = "原文".into();
         strings.ai_review_proposed = "修改后".into();
+        strings.ai_panel_dock = "移至侧栏".into();
+        strings.ai_panel_float = "浮动窗口".into();
         strings.ai_task_details = "任务详情".into();
         strings.ai_task_result = "结果".into();
         strings.ai_task_return = "返回正文".into();
@@ -507,9 +509,9 @@ impl I18nStrings {
         strings.ai_action_polish = "润色".into();
         strings.ai_action_fix_grammar = "语法纠错".into();
         strings.ai_action_translate = "翻译…".into();
-        strings.ai_action_summarize = "总结".into();
+        strings.ai_action_summarize = "摘要".into();
         strings.ai_action_continue = "续写".into();
-        strings.ai_custom_placeholder = "描述要做的修改，可用 @ 引用资料…".into();
+        strings.ai_custom_placeholder = "输入要求，可用 @ 引用资料…".into();
         strings.ai_panel_retry = "重试".into();
         strings.ai_panel_stop = "停止".into();
         strings.ai_panel_running = "生成中…".into();
@@ -1000,6 +1002,8 @@ impl I18nStrings {
             ai_review_compare: "Compare".into(),
             ai_review_original: "Original".into(),
             ai_review_proposed: "Revised".into(),
+            ai_panel_dock: "Move to sidebar".into(),
+            ai_panel_float: "Float window".into(),
             ai_task_details: "Task details".into(),
             ai_task_result: "Result".into(),
             ai_task_return: "Back to document".into(),
@@ -1030,7 +1034,7 @@ impl I18nStrings {
             ai_action_translate: "Translate…".into(),
             ai_action_summarize: "Summarize".into(),
             ai_action_continue: "Continue writing".into(),
-            ai_custom_placeholder: "Describe a change, use @ to reference notes…".into(),
+            ai_custom_placeholder: "Ask or give an instruction, use @ to reference notes…".into(),
             ai_panel_retry: "Retry".into(),
             ai_panel_stop: "Stop".into(),
             ai_panel_running: "Generating…".into(),

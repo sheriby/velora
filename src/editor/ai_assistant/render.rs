@@ -34,25 +34,32 @@ impl Editor {
             }
             return None;
         }
-        if session.mode == PanelMode::Task
-            && (!session.saved.messages.is_empty()
-                || session.saved.running
-                || !session.saved.workspace.changes.proposals.is_empty())
-        {
+        if session.mode == PanelMode::Task && session.expanded {
             return None;
         }
         let viewport = window.viewport_size();
         let compact = session.mode == PanelMode::Task;
+        let menu = matches!(session.mode, PanelMode::Options | PanelMode::Models);
         let width =
-            (f32::from(viewport.width) - 32.0).clamp(180.0, if compact { 560.0 } else { 640.0 });
+            (f32::from(viewport.width) - 32.0).clamp(180.0, if menu { 300.0 } else { 620.0 });
         let height = (f32::from(viewport.height) - 120.0).clamp(180.0, 720.0);
         let origin = if compact {
-            session.origin + point(px(0.0), px(12.0))
+            session.origin
+        } else if menu {
+            let bounds = session.panel_bounds.get();
+            point(
+                if session.expanded {
+                    viewport.width - px(width) - px(16.0)
+                } else {
+                    bounds.right() - px(width)
+                },
+                bounds.top() + px(36.0),
+            )
         } else {
             point((viewport.width - px(width)) * 0.5, px(82.0))
         };
         let panel = if compact {
-            self.render_ai_command_bar(theme, cx)
+            self.render_ai_workbench(theme, height.min(520.0), false, cx)
         } else {
             self.render_ai_panel(theme, height, cx)
                 .w(px(width))
@@ -60,16 +67,44 @@ impl Editor {
                 .shadow_lg()
                 .into_any_element()
         };
+        let origin = point(
+            origin
+                .x
+                .max(px(12.0))
+                .min((viewport.width - px(width) - px(12.0)).max(px(12.0))),
+            origin.y.max(px(65.0)).min(
+                (viewport.height
+                    - px(if compact && session.saved.messages.is_empty() {
+                        180.0
+                    } else {
+                        height.min(520.0)
+                    })
+                    - px(36.0))
+                .max(px(65.0)),
+            ),
+        );
+        let measured = session.panel_bounds.clone();
         Some(
-            anchored()
-                .position(origin)
-                .snap_to_window_with_margin(Edges {
-                    top: px(70.0),
-                    bottom: px(36.0),
-                    left: px(16.0),
-                    right: px(16.0),
-                })
-                .child(div().w(px(width)).child(panel))
+            div()
+                .id("ai-floating-workbench")
+                .debug_selector(|| "ai-floating-workbench".into())
+                .absolute()
+                .left(origin.x)
+                .top(origin.y)
+                .w(px(width))
+                .child(panel)
+                .child(
+                    canvas(
+                        move |bounds, _, _| {
+                            if compact {
+                                measured.set(bounds);
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .inset_0(),
+                )
                 .into_any_element(),
         )
     }
@@ -80,16 +115,22 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        self.ai_session
-            .as_ref()
-            .filter(|session| session.visible && session.expanded)?;
-        let width = (f32::from(window.viewport_size().width) * 0.22).clamp(220.0, 300.0);
+        self.ai_session.as_ref().filter(|session| {
+            session.visible && session.expanded && session.mode == PanelMode::Task
+        })?;
+        let width = (f32::from(window.viewport_size().width) * 0.30).clamp(320.0, 480.0);
         Some(
             div()
                 .w(px(width))
                 .h_full()
                 .flex_shrink_0()
-                .child(self.render_ai_task_details(theme, cx))
+                .debug_selector(|| "ai-sidebar".into())
+                .child(self.render_ai_workbench(
+                    theme,
+                    f32::from(window.viewport_size().height) - 100.0,
+                    true,
+                    cx,
+                ))
                 .into_any_element(),
         )
     }
@@ -162,20 +203,6 @@ impl Editor {
             PanelMode::Options => {
                 content = content
                     .child(self.ai_button(
-                        "ai-options-commands",
-                        strings.ai_panel_more.clone(),
-                        false,
-                        true,
-                        theme,
-                        cx,
-                        |editor, _, cx| {
-                            if let Some(session) = editor.ai_session.as_mut() {
-                                session.mode = PanelMode::Commands;
-                            }
-                            cx.notify();
-                        },
-                    ))
-                    .child(self.ai_button(
                         "ai-settings",
                         strings.ai_panel_settings.clone(),
                         false,
@@ -238,6 +265,54 @@ impl Editor {
                         cx,
                         |editor, window, cx| editor.new_ai_task(window, cx),
                     ));
+                if !session.saved.workspace.changes.proposals.is_empty() {
+                    content = content.child(self.ai_button(
+                        "ai-options-discard",
+                        strings.ai_panel_discard.clone(),
+                        false,
+                        !session.saved.running,
+                        theme,
+                        cx,
+                        |editor, window, cx| {
+                            if let Some(session) = editor.ai_session.as_mut() {
+                                session.saved.workspace.discard_proposals();
+                                session.review = None;
+                                session.review_open = false;
+                                session.mode = PanelMode::Task;
+                                session
+                                    .input
+                                    .update(cx, |input, cx| input.focus(window, cx));
+                            }
+                            editor.refresh_ai_preview(cx);
+                            editor.persist_ai_session(cx);
+                            cx.notify();
+                        },
+                    ));
+                }
+                if !session.saved.workspace.source_records.is_empty() {
+                    content = content.child(
+                        div()
+                            .pt(px(8.0))
+                            .text_color(theme.colors.dialog_muted)
+                            .child(strings.ai_panel_sources.clone()),
+                    );
+                    for (index, record) in session.saved.workspace.source_records.iter().enumerate()
+                    {
+                        let record = record.clone();
+                        let label = format!("{}:{}", record.path, record.line);
+                        content = content.child(self.ai_button(
+                            ("ai-source", index),
+                            label,
+                            false,
+                            true,
+                            theme,
+                            cx,
+                            move |editor, window, cx| {
+                                editor.open_ai_source(record.clone(), window, cx)
+                            },
+                        ));
+                    }
+                }
             }
             PanelMode::Settings => {
                 let mut choices = div().w_full().flex().flex_col().gap(px(4.0));
@@ -774,60 +849,6 @@ impl Editor {
                     ));
                 }
             }
-            PanelMode::Commands => {
-                for command in AiCommand::ALL {
-                    let label = command.label(&strings);
-                    let enabled = !command.requires_selection()
-                        || session
-                            .saved
-                            .target
-                            .as_ref()
-                            .is_some_and(|target| !target.range.is_empty());
-                    content = content.child(self.ai_button(
-                        ("ai-command", command as usize),
-                        label.clone(),
-                        false,
-                        enabled,
-                        theme,
-                        cx,
-                        move |editor, window, cx| {
-                            if let Some(session) = editor.ai_session.as_mut() {
-                                session.mode = PanelMode::Task;
-                                session.command = command;
-                                session.input.update(cx, |input, cx| {
-                                    input.set_value(&label, cx);
-                                    input.focus(window, cx);
-                                });
-                            }
-                            if command != AiCommand::Translate {
-                                editor.send_ai_task(cx);
-                            }
-                            cx.notify();
-                        },
-                    ));
-                }
-                for instruction in &session.settings.instructions {
-                    let prompt = instruction.prompt.clone();
-                    content = content.child(self.ai_button(
-                        SharedString::from(format!("ai-instruction-{}", instruction.name)),
-                        instruction.name.clone(),
-                        false,
-                        true,
-                        theme,
-                        cx,
-                        move |editor, _, cx| {
-                            if let Some(session) = editor.ai_session.as_mut() {
-                                session.mode = PanelMode::Task;
-                                session.command = AiCommand::Ask;
-                                session
-                                    .input
-                                    .update(cx, |input, cx| input.set_value(&prompt, cx));
-                            }
-                            editor.send_ai_task(cx);
-                        },
-                    ));
-                }
-            }
             PanelMode::Task => {}
         }
 
@@ -841,6 +862,7 @@ impl Editor {
             .child(content);
         let panel = div()
             .id("ai-assistant-panel")
+            .track_focus(&session.panel_focus)
             .debug_selector(|| "ai-assistant-panel".into())
             .p(px(10.0))
             .flex()
@@ -881,6 +903,22 @@ impl Editor {
             "ai-review-previous" => Some(strings.file_history_previous_change.clone()),
             "ai-review-next" => Some(strings.file_history_next_change.clone()),
             "ai-stop" => Some(strings.ai_panel_stop.clone()),
+            "ai-send" => Some(strings.ai_panel_send.clone()),
+            "ai-copy-result" => Some(strings.ai_panel_copy.clone()),
+            "ai-context" => Some(strings.ai_panel_add_context.clone()),
+            "ai-regenerate" => Some(strings.ai_panel_retry.clone()),
+            "ai-review-return" => Some(strings.ai_task_return.clone()),
+            "ai-expand" => Some(
+                if self
+                    .ai_session
+                    .as_ref()
+                    .is_some_and(|session| session.expanded)
+                {
+                    strings.ai_panel_float.clone()
+                } else {
+                    strings.ai_panel_dock.clone()
+                },
+            ),
             "ai-options" => Some(strings.ai_panel_more.clone()),
             "ai-task-details" => Some(strings.ai_task_details.clone()),
             "ai-review-accept" => Some(format!(
@@ -893,6 +931,42 @@ impl Editor {
                 }
             )),
             _ => None,
+        };
+        let icon = match selector.as_str() {
+            "ai-hide" => Some("icon/workspace/tab-close.svg"),
+            "ai-copy-result" => Some("icon/workspace/copy.svg"),
+            "ai-options" => Some("icon/editor/ai-more.svg"),
+            "ai-send" => Some("icon/editor/ai-send.svg"),
+            "ai-stop" => Some("icon/editor/ai-stop.svg"),
+            "ai-regenerate" => Some("icon/editor/ai-retry.svg"),
+            "ai-review-return" => Some("icon/editor/ai-back.svg"),
+            "ai-expand" => Some(
+                if self
+                    .ai_session
+                    .as_ref()
+                    .is_some_and(|session| session.expanded)
+                {
+                    "icon/editor/ai-float.svg"
+                } else {
+                    "icon/editor/ai-dock.svg"
+                },
+            ),
+            _ => None,
+        };
+        let opens_menu = matches!(
+            selector.as_str(),
+            "ai-options"
+                | "ai-models"
+                | "ai-context"
+                | "ai-settings"
+                | "ai-options-history"
+                | "ai-options-skills"
+                | "ai-options-instructions"
+        );
+        let color = if primary {
+            theme.colors.dialog_primary_button_text
+        } else {
+            theme.colors.dialog_secondary_button_text
         };
         div()
             .id(id)
@@ -922,7 +996,15 @@ impl Editor {
                 })
             })
             .when(!enabled, |button| button.opacity(0.4).cursor_default())
-            .child(label.into())
+            .when(icon.is_none(), |button| button.child(label.into()))
+            .when_some(icon, |button, path| {
+                button
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .min_w(px(28.0))
+                    .child(svg().path(path).size(px(14.0)).text_color(color))
+            })
             .when_some(tooltip, |button, label| {
                 button.tooltip(move |_, cx| {
                     cx.new(|_| crate::components::HoverPreviewTooltip {
@@ -933,6 +1015,9 @@ impl Editor {
             })
             .on_click(cx.listener(move |editor, _, window, cx| {
                 if enabled {
+                    if opens_menu && let Some(session) = editor.ai_session.as_ref() {
+                        window.focus(&session.panel_focus);
+                    }
                     handler(editor, window, cx);
                 }
             }))

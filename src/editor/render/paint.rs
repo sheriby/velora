@@ -394,16 +394,6 @@ impl Render for Editor {
         // P4b：行元素只在挂载时从计划构建（旧实现在扫描期为所有组行
         // 预构建元素再丢弃，是超大文档的每帧浪费）。
         let build_row_element = |row: usize| -> AnyElement {
-            let review_changed = !self.ai_review_ranges.is_empty() && {
-                let start = rows[row].visible_start;
-                let end = rows[row].visible_end;
-                self.document.visible_blocks().get(start..end).is_some_and(|blocks| blocks.iter().any(|block| {
-                    self.document.source_span_of(block.entity.entity_id()).is_some_and(|span| self.ai_review_ranges.iter().any(|range| {
-                        if range.is_empty() { span.start <= range.start && range.start <= span.end }
-                        else { span.start < range.end && range.start < span.end }
-                    }))
-                }))
-            };
             let element = match &rows[row].body {
                 RenderedRowBody::Ordinary { entity, .. } => {
                     let index = rows[row].visible_start;
@@ -599,12 +589,7 @@ impl Render for Editor {
                     }
                 }
             };
-            if review_changed {
-                div().relative().w(px(centered_width)).max_w(relative(1.0)).flex_shrink_0()
-                    .child(element)
-                    .child(div().absolute().top_0().bottom_0().left(px(-8.0)).w(px(2.0)).rounded(px(1.0)).bg(theme.colors.dialog_primary_button_bg))
-                    .into_any_element()
-            } else { element }
+            self.render_ai_review_row(element,rows[row].visible_start..rows[row].visible_end,centered_width,&theme,cx)
         };
         let take_row = |rows: &mut Vec<AnyElement>, row: usize| {
             rows.push(build_row_element(row));
@@ -674,7 +659,9 @@ impl Render for Editor {
                 d.editor_padding
             }))
             .pr(px(d.editor_padding))
-            .pt(px(if self.code_tab_active() {
+            .pt(px(if self.ai_compact_preview {
+                12.0
+            } else if self.code_tab_active() {
                 24.0
             } else if self.typewriter_mode && self.view_mode == crate::editor::ViewMode::Rendered {
                 (viewport_height * 0.5).max(52.0)
@@ -1015,7 +1002,8 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiPolish>))
             .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiTranslate>))
             .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiSummarize>))
-            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiContinue>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiExplain>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiExpand>))
             .on_action(Self::document_listener(cx, Self::on_save_document_as))
             .on_action(cx.listener(Self::on_export_html))
             .on_action(cx.listener(Self::on_export_pdf))
