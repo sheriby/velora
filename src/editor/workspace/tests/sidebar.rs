@@ -665,3 +665,151 @@ fn workspace_navigation_icons_resolve_through_the_production_asset_source(cx: &m
         );
     }
 }
+
+fn native_workspace_panel_resize_chain(cx: &mut TestAppContext, split: bool) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    init_sidebar_test_app(cx);
+    cx.update(|cx| crate::config::EditorSettings::install_test_settings(cx, false));
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "正文".into(), None))
+        })
+        .unwrap()
+    });
+    let host = handle
+        .update(cx, |editor, window, cx| {
+            window.activate_window();
+            if split {
+                editor.split_active_document(
+                    super::super::split::SplitDirection::Right,
+                    window,
+                    cx,
+                );
+            }
+            cx.entity()
+        })
+        .unwrap();
+    let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+    cx.simulate_resize(gpui::size(px(1200.0), px(800.0)));
+    for _ in 0..4 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    let owner = host
+        .read_with(cx, |host, _| host.active_split_editor())
+        .unwrap_or(host.clone());
+    cx.update(|window, _| {
+        assert_eq!(
+            window
+                .try_find("workspace-panel-divider")
+                .and_then(|item| item.role()),
+            Some(gpui::Role::Splitter),
+            "工作区应使用具有键盘入口的 Kit 分隔条"
+        )
+    });
+    let before = cx.debug_bounds("workspace-panel").unwrap();
+    let start = point(before.right() - px(1.0), before.center().y);
+    let end = start + point(px(80.0), px(0.0));
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(end, Some(gpui::MouseButton::Left), Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.simulate_mouse_move(end, Some(gpui::MouseButton::Left), Modifiers::none());
+    cx.simulate_mouse_up(end, gpui::MouseButton::Left, Modifiers::none());
+    for _ in 0..4 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    let resized = cx.debug_bounds("workspace-panel").unwrap().size.width;
+    assert!(resized >= before.size.width + px(70.0));
+    let remembered = owner.read_with(cx, |owner, _| owner.workspace.panel_width);
+    assert_eq!(remembered, Some(f32::from(resized)));
+    cx.update(|window, cx| {
+        for _ in 0..32 {
+            if window.find("workspace-panel-divider").focused() == Some(true) {
+                break;
+            }
+            window.focus_next(cx);
+            window.render_frame(cx);
+        }
+        assert_eq!(window.find("workspace-panel-divider").focused(), Some(true));
+        window.press("right", cx);
+    });
+    for _ in 0..4 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    let keyboard_width = cx.debug_bounds("workspace-panel").unwrap().size.width;
+    assert!(keyboard_width > resized, "右箭头应扩大左侧面板");
+    cx.read(|cx| {
+        assert_eq!(
+            crate::config::EditorSettings::workspace_sidebar_width(cx),
+            f32::from(keyboard_width).round() as u16
+        )
+    });
+    for width in [1600.0, 1100.0, 1200.0] {
+        cx.simulate_resize(gpui::size(px(width), px(800.0)));
+        for _ in 0..4 {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            cx.debug_bounds("workspace-panel").unwrap().size.width,
+            keyboard_width,
+            "窗口缩放应把多余空间交给正文，保持文件树宽度"
+        );
+    }
+    for _ in 0..2 {
+        owner.update_in(cx, |owner, window, cx| {
+            owner.toggle_workspace_drawer(window, cx)
+        });
+        for _ in 0..4 {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+        }
+    }
+    assert_eq!(
+        cx.debug_bounds("workspace-panel").unwrap().size.width,
+        keyboard_width,
+        "收起和重开应保留面板宽度"
+    );
+    owner.update_in(cx, |owner, window, cx| {
+        window.focus(&owner.workspace.panel_layout.as_ref().unwrap().focus, cx);
+    });
+    cx.update(|window, cx| window.press("end", cx));
+    for _ in 0..4 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    cx.simulate_resize(gpui::size(px(720.0), px(800.0)));
+    for _ in 0..4 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    let narrow_width = cx.debug_bounds("workspace-panel").unwrap().size.width;
+    if !split {
+        assert!(cx.debug_bounds("editor-scroll").unwrap().size.width >= px(320.0));
+    }
+    cx.update(|window, cx| window.press("left", cx));
+    for _ in 0..4 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    assert!(
+        cx.debug_bounds("workspace-panel").unwrap().size.width < narrow_width,
+        "窗口缩窄后第一次左箭头就应缩小面板"
+    );
+    owner.read_with(cx, |owner, _| assert_eq!(owner.buffer.text(), "正文"));
+}
+
+#[gpui::test]
+fn workspace_native_panel_resize_retains_width_and_keyboard_control(cx: &mut TestAppContext) {
+    native_workspace_panel_resize_chain(cx, false);
+}
+
+#[gpui::test]
+fn workspace_native_panel_resize_in_split_retains_width_and_keyboard_control(
+    cx: &mut TestAppContext,
+) {
+    native_workspace_panel_resize_chain(cx, true);
+}

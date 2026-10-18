@@ -347,9 +347,9 @@ pub(crate) fn stable_node_hash(id: &str) -> u64 {
     hasher.finish()
 }
 
-pub(crate) fn clamp_workspace_panel_width(width: f32, viewport_width: f32) -> f32 {
-    let maximum = (viewport_width - 320.0).clamp(180.0, 600.0);
-    width.clamp(180.0, maximum)
+pub(crate) fn clamp_workspace_panel_width(width: f32, available_width: f32) -> f32 {
+    let maximum = (available_width - 320.0).clamp(WORKSPACE_PANEL_MIN_WIDTH, 600.0);
+    width.clamp(WORKSPACE_PANEL_MIN_WIDTH, maximum)
 }
 
 pub(crate) fn prune_outline_state(workspace: &mut WorkspaceState, outline: &[WorkspaceTreeNode]) {

@@ -33,6 +33,7 @@ pub(crate) fn untitled_document_path(id: uuid::Uuid, number: usize) -> PathBuf {
 
 const FOLDER_ICON: &str = "icon/workspace/folder.svg";
 pub(super) const WORKSPACE_ACTIVITY_WIDTH: Rems = rems(3.0);
+const WORKSPACE_PANEL_MIN_WIDTH: f32 = 180.0;
 const MARKDOWN_ICON: &str = "icon/workspace/markdown.svg";
 const CODE_ICON: &str = "icon/workspace/code.svg";
 const CHEVRON_RIGHT_ICON: &str = "icon/workspace/chevron-right.svg";
@@ -172,10 +173,13 @@ struct WorkspaceContextMenu {
     can_paste: bool,
 }
 
-#[derive(Clone, Copy)]
-struct WorkspaceResizeDrag {
-    start_x: f32,
-    start_width: f32,
+struct WorkspacePanelLayout {
+    state: Entity<gpui_kit::component::resizable::ResizableState>,
+    focus: FocusHandle,
+    preference: Pixels,
+    viewport_width: Pixels,
+    container_width: Pixels,
+    _subscription: Subscription,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -468,7 +472,7 @@ pub(super) struct WorkspaceState {
     tree_focus: Option<FocusHandle>,
     tab_context_menu: Option<TabContextMenu>,
     panel_width: Option<f32>,
-    resize_drag: Option<WorkspaceResizeDrag>,
+    panel_layout: Option<WorkspacePanelLayout>,
     /// 侧栏文件树滚动位置：让「点文件后重扫不跳回顶部」可断言。
     pub(crate) tree_scroll_handle: ScrollHandle,
 }
@@ -546,7 +550,7 @@ impl Default for WorkspaceState {
             tree_focus: None,
             tab_context_menu: None,
             panel_width: None,
-            resize_drag: None,
+            panel_layout: None,
             tree_scroll_handle: ScrollHandle::new(),
         }
     }

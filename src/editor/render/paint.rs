@@ -936,15 +936,6 @@ impl Render for Editor {
             .bg(theme.colors.editor_background)
             .font(editor_text_font(&fonts.ui_family))
             .text_size(px(theme.typography.dialog_body_size))
-            .on_mouse_move(cx.listener(Self::on_workspace_resize_mouse_move))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(Self::on_workspace_resize_mouse_up),
-            )
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(Self::on_workspace_resize_mouse_up),
-            )
             .capture_action(Self::document_listener(cx, Self::on_copy_capture))
             .on_action(cx.listener(Self::on_registered_menu_action::<SplitEditorLeft>))
             .on_action(cx.listener(Self::on_registered_menu_action::<SplitEditorRight>))
@@ -1080,27 +1071,13 @@ impl Render for Editor {
             base
         };
         let workspace_width =
-            self.current_workspace_panel_width(f32::from(window.viewport_size().width), cx);
+            self.current_workspace_panel_width(window, cx);
         let workspace_panel = if self.split_parent.is_none() {
-            self.render_workspace_panel(&theme, &strings, workspace_width, window, cx)
+            self.render_workspace_panel(&theme, &strings, window, cx)
         } else { None };
-        // 收起 = 整条侧边栏（图标列 + 面板）都不占布局，正文满宽。没有贴边浮层：
-        // 唤出只有「视图 → 切换侧边栏」与 cmd/ctrl-b 两条，误触不会再把它甩出来。
-        let mut main_content = div()
-            .w_full()
-            .flex_1()
-            .min_h(px(0.0))
-            .flex()
-            .min_w(px(0.0));
-        if self.workspace.is_open && self.split_parent.is_none() {
-            // 展开：图标列与面板占位，正文被挤到右边。
-            main_content = main_content.child(self.render_activity_rail(cx));
-            if let Some(workspace_panel) = workspace_panel {
-                main_content = main_content.child(workspace_panel);
-            }
-        }
-        main_content = main_content.child(self.render_ai_workspace(content_area, &theme, window, cx));
-        let main_content = self.render_ai_sidebar_layout(main_content.into_any_element(), &theme, window, cx);
+        let content_area = self.render_ai_workspace(content_area, &theme, window, cx);
+        let main_content = self.render_workspace_layout(content_area, workspace_panel, workspace_width, window, cx);
+        let main_content = self.render_ai_sidebar_layout(main_content, &theme, window, cx);
         let base = base.child(div().flex_1().min_h_0().flex().flex_col()
             .pt(px(titlebar_height + menu_bar_height)).child(main_content));
         let status_bar = if self.split_parent.is_none() { self.render_status_bar(&theme, &strings, window, cx) } else { None };

@@ -1,5 +1,6 @@
 use super::*;
 use gpui_kit::assets::IconName;
+use gpui_kit::component::resizable::{ResizablePanelEvent, ResizableState, h_resizable, resizable_panel};
 use gpui_kit::component::{
     ActiveTheme as _, Selectable as _,
     button::{Button, ButtonVariants},
@@ -33,7 +34,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let sidebar_owns_focus = self
+        let sidebar_owns_focus = self.workspace.panel_layout.as_ref()
+            .is_some_and(|layout| layout.focus.is_focused(window))
+            || self
             .workspace
             .navigation_focus
             .as_ref()
@@ -150,20 +153,21 @@ impl Editor {
         })
     }
 
-    pub(crate) fn current_workspace_panel_width(&self, viewport_width: f32, cx: &App) -> f32 {
+    pub(crate) fn current_workspace_panel_width(&self, window: &Window, cx: &App) -> f32 {
         let width = self
             .workspace
             .panel_width
             .unwrap_or_else(|| crate::config::EditorSettings::workspace_sidebar_width(cx) as f32);
-        clamp_workspace_panel_width(width, viewport_width)
+        let available =
+            window.viewport_size().width - WORKSPACE_ACTIVITY_WIDTH.to_pixels(window.rem_size());
+        clamp_workspace_panel_width(width, f32::from(available))
     }
 
     pub(crate) fn workspace_navigation_width(&self, window: &Window, cx: &App) -> Pixels {
         let width = |editor: &Editor| {
             if editor.workspace.is_open {
                 WORKSPACE_ACTIVITY_WIDTH.to_pixels(window.rem_size())
-                    + px(editor
-                        .current_workspace_panel_width(f32::from(window.viewport_size().width), cx))
+                    + px(editor.current_workspace_panel_width(window, cx))
             } else {
                 px(0.0)
             }
@@ -172,48 +176,119 @@ impl Editor {
             .map_or_else(|| width(self), |active| width(active.read(cx)))
     }
 
-    pub(crate) fn start_workspace_resize(&mut self, pointer_x: f32, width: f32, cx: &mut Context<Self>) {
-        self.workspace.resize_drag = Some(WorkspaceResizeDrag {
-            start_x: pointer_x,
-            start_width: width,
+    pub(crate) fn render_workspace_layout(
+        &mut self,
+        document: AnyElement,
+        panel: Option<AnyElement>,
+        width: f32,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(panel) = panel else {
+            return document;
+        };
+        let preference = px(width);
+        let viewport_width = window.viewport_size().width;
+        let layout = self.workspace.panel_layout.get_or_insert_with(|| {
+            workspace_panel_layout(preference, cx.focus_handle(), viewport_width, px(0.0), cx)
         });
-        cx.notify();
+        let available = layout.state.read(cx).container_size();
+        if layout.container_width == px(0.0) && available > px(0.0) {
+            layout.container_width = available;
+        }
+        if layout.preference != preference
+            || layout.viewport_width != viewport_width
+            || (available > px(0.0) && layout.container_width != available)
+        {
+            // 文件树记忆固定宽度；容器变化时让正文消化余量，避免沿用 Kit 的比例布局。
+            *layout = workspace_panel_layout(
+                preference,
+                layout.focus.clone(),
+                viewport_width,
+                available,
+                cx,
+            );
+        }
+        let state = layout.state.clone();
+        let focus = layout.focus.clone();
+        let rail_width = WORKSPACE_ACTIVITY_WIDTH.to_pixels(window.rem_size());
+        let minimum = px(WORKSPACE_PANEL_MIN_WIDTH);
+        let document_minimum = (window.rem_size() * 20.0)
+            .min((window.viewport_size().width - rail_width - minimum).max(px(0.0)));
+        let maximum = px(clamp_workspace_panel_width(
+            f32::MAX,
+            f32::from(window.viewport_size().width - rail_width),
+        ));
+        let available = state.read(cx).container_size();
+        let maximum = if available > px(0.0) {
+            maximum.min((available - document_minimum).max(minimum))
+        } else {
+            maximum
+        };
+        let content = h_resizable("workspace-panel-layout")
+            .with_state(&state)
+            .with_handle_appearance(
+                crate::ui::PanelResizeHandle {
+                    id: "workspace-panel-divider",
+                    label: "Resize workspace panel",
+                    state,
+                    focus,
+                    panel_index: 0,
+                    edge: gpui_kit::base::HandleEdge::Trailing,
+                    minimum,
+                    maximum,
+                    initial: preference,
+                }
+                .appearance(),
+            )
+            .child(
+                resizable_panel()
+                    .size(preference)
+                    .size_range(minimum..maximum)
+                    .flex_none()
+                    .child(panel),
+            )
+            .child(
+                resizable_panel()
+                    .size_range(document_minimum..Pixels::MAX)
+                    .child(document),
+            );
+        div()
+            .size_full()
+            .flex()
+            .min_w_0()
+            .child(self.render_activity_rail(cx))
+            .child(div().flex_1().min_w_0().h_full().child(content))
+            .into_any_element()
     }
 
-    pub(crate) fn on_workspace_resize_mouse_move(
+    fn on_workspace_panel_resized(
         &mut self,
-        event: &MouseMoveEvent,
-        window: &mut Window,
+        state: Entity<ResizableState>,
+        _: &ResizablePanelEvent,
         cx: &mut Context<Self>,
     ) {
-        let Some(drag) = self.workspace.resize_drag else {
+        let Some(width) = state.read(cx).sizes().first().copied() else {
             return;
         };
-        let viewport = f32::from(window.viewport_size().width);
-        let width = clamp_workspace_panel_width(
-            drag.start_width + f32::from(event.position.x) - drag.start_x,
-            viewport,
+        let Some(layout) = self
+            .workspace
+            .panel_layout
+            .as_mut()
+            .filter(|layout| layout.state.entity_id() == state.entity_id())
+        else {
+            return;
+        };
+        layout.preference = width;
+        self.workspace.panel_width = Some(f32::from(width));
+        crate::config::EditorSettings::set_workspace_sidebar_width(
+            cx,
+            f32::from(width).round() as u16,
         );
-        self.workspace.panel_width = Some(width);
+        self.persist_session(cx);
         cx.notify();
     }
 
-    pub(crate) fn on_workspace_resize_mouse_up(
-        &mut self,
-        _event: &MouseUpEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.workspace.resize_drag.take().is_some() {
-            if let Some(width) = self.workspace.panel_width {
-                crate::config::EditorSettings::set_workspace_sidebar_width(
-                    cx,
-                    width.round() as u16,
-                );
-            }
-            cx.notify();
-        }
-    }
     pub(crate) fn render_activity_rail(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let navigation_focus = self
             .workspace
@@ -282,5 +357,24 @@ impl Editor {
                 cx,
             ))
             .into_any_element()
+    }
+}
+
+fn workspace_panel_layout(
+    preference: Pixels,
+    focus: FocusHandle,
+    viewport_width: Pixels,
+    container_width: Pixels,
+    cx: &mut Context<Editor>,
+) -> WorkspacePanelLayout {
+    let state = cx.new(|_| ResizableState::default());
+    let subscription = cx.subscribe(&state, Editor::on_workspace_panel_resized);
+    WorkspacePanelLayout {
+        state,
+        focus,
+        preference,
+        viewport_width,
+        container_width,
+        _subscription: subscription,
     }
 }

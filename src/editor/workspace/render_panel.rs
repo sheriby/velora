@@ -14,7 +14,6 @@ impl Editor {
         &mut self,
         theme: &Theme,
         strings: &I18nStrings,
-        panel_width: f32,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
@@ -28,17 +27,21 @@ impl Editor {
 
         self.sync_workspace_models(cx);
         let editor = cx.entity().downgrade();
-        let tree_focus = self.workspace.tree_focus.get_or_insert_with(|| cx.focus_handle()).clone();
-        let resize_editor = editor.clone();
+        let tree_focus = self
+            .workspace
+            .tree_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
         let c = &theme.colors;
-        let d = &theme.dimensions;
 
         let search_header = (self.workspace.active_tab == WorkspaceTab::Search)
             .then(|| self.render_search_header(theme, strings, window, cx));
         let body = match self.workspace.active_tab {
             WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor, cx),
             WorkspaceTab::Search => self.render_search_results(theme, strings, &editor, cx),
-            WorkspaceTab::Outline => self.render_workspace_outline_tree(theme, strings, &editor, cx),
+            WorkspaceTab::Outline => {
+                self.render_workspace_outline_tree(theme, strings, &editor, cx)
+            }
         };
 
         Some(
@@ -51,21 +54,22 @@ impl Editor {
                     cx.listener(Self::on_workspace_background_right_click),
                 )
                 .h_full()
-                .w(px(panel_width))
+                .w_full()
                 .flex()
                 .flex_col()
                 .flex_shrink_0()
                 .bg(c.dialog_secondary_button_bg)
-                .border_r(px(d.dialog_border_width))
-                .border_color(c.dialog_border)
                 .children(search_header)
                 .child(
                     div()
                         .id("workspace-panel-scroll")
                         .when_some(
                             (self.workspace.active_tab == WorkspaceTab::Files)
-                                .then(|| self.workspace.root.clone()).flatten(),
-                            |element, root| workspace_tree_drop_target(element, root, &editor, None),
+                                .then(|| self.workspace.root.clone())
+                                .flatten(),
+                            |element, root| {
+                                workspace_tree_drop_target(element, root, &editor, None)
+                            },
                         )
                         .track_focus(&tree_focus)
                         .on_key_down(cx.listener(Self::on_workspace_tree_key_down))
@@ -77,30 +81,10 @@ impl Editor {
                         .py(px(6.0))
                         .child(body),
                 )
-                .child(
-                    div()
-                        .id("workspace-resize-handle")
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .right_0()
-                        .w(px(6.0))
-                        .cursor(CursorStyle::ResizeLeftRight)
-                        .hover(|this| this.bg(c.selection))
-                        .on_mouse_down(MouseButton::Left, move |event, _, cx| {
-                            let _ = resize_editor.update(cx, |editor, cx| {
-                                editor.start_workspace_resize(
-                                    f32::from(event.position.x),
-                                    panel_width,
-                                    cx,
-                                );
-                            });
-                            cx.stop_propagation();
-                        }),
-                )
                 .into_any_element(),
         )
     }
+
     pub(crate) fn render_workspace_outline_tree(
         &mut self,
         theme: &Theme,

@@ -38,14 +38,10 @@ impl Editor {
         let theme = cx.global::<ThemeManager>().derived_theme(cx);
         let strings = cx.global::<I18nManager>().strings_arc();
         let height = crate::window_chrome::custom_titlebar_height(window, &theme.dimensions);
-        let (rail, sidebar, status, title) = active.update(cx, |editor, cx| {
+        let (sidebar, status, title, workspace_width) = active.update(cx, |editor, cx| {
             let width =
-                editor.current_workspace_panel_width(f32::from(window.viewport_size().width), cx);
-            let panel = editor.render_workspace_panel(&theme, &strings, width, window, cx);
-            let rail = editor
-                .workspace
-                .is_open
-                .then(|| editor.render_activity_rail(cx));
+                editor.current_workspace_panel_width(window, cx);
+            let panel = editor.render_workspace_panel(&theme, &strings, window, cx);
             let panel = if editor.workspace.is_open {
                 panel
             } else {
@@ -53,7 +49,7 @@ impl Editor {
             };
             let status = editor.render_status_bar(&theme, &strings, window, cx);
             editor.sync_window_title(window, &strings);
-            (rail, panel, status, editor.workspace_breadcrumb())
+            (panel, status, editor.workspace_breadcrumb(), width)
         });
         let groups = self.split_groups();
         let mut group_tabs = self.render_group_tabs(&theme, window, cx);
@@ -72,23 +68,17 @@ impl Editor {
         window.set_window_edited(groups.iter().any(|group| {
             group.read(cx).document_dirty || group.read(cx).has_dirty_workspace_documents()
         }));
-        let mut main = div()
-            .flex()
-            .flex_1()
-            .min_h(px(0.0))
-            .min_w(px(0.0));
-        if let Some(rail) = rail {
-            main = main.child(rail);
-        }
-        if let Some(sidebar) = sidebar {
-            main = main.child(sidebar);
-        }
-        if let Some(layout) = self.split_workspace.as_ref().map(|workspace| workspace.layout.clone()) {
+        let document = if let Some(layout) = self.split_workspace.as_ref().map(|workspace| workspace.layout.clone()) {
             let mut index = 0;
             let groups = self.render_group_node(&layout, &theme, &mut index, cx);
-            main = main.child(self.render_ai_workspace(groups, &theme, window, cx));
-        }
-        let main = self.render_ai_sidebar_layout(main.into_any_element(), &theme, window, cx);
+            self.render_ai_workspace(groups, &theme, window, cx)
+        } else {
+            div().into_any_element()
+        };
+        let main = active.update(cx, |editor, cx| {
+            editor.render_workspace_layout(document, sidebar, workspace_width, window, cx)
+        });
+        let main = self.render_ai_sidebar_layout(main, &theme, window, cx);
         let menus = self.window_menus(cx).filter(|menus| !menus.is_empty());
         let leading = (crate::editor::render::supports_hamburger_menu() && menus.is_some())
             .then(|| self.render_hamburger_menu_button(&theme, cx));
@@ -98,19 +88,7 @@ impl Editor {
             .relative()
             .flex()
             .flex_col()
-            .on_mouse_move(cx.listener(|editor, event, window, cx| {
-                if let Some(group) = editor.active_split_editor() {
-                    group.update(cx, |editor, cx| {
-                        editor.on_workspace_resize_mouse_move(event, window, cx)
-                    });
-                }
-            }))
-            .capture_any_mouse_up(cx.listener(|editor, event, window, cx| {
-                if let Some(group) = editor.active_split_editor() {
-                    group.update(cx, |editor, cx| {
-                        editor.on_workspace_resize_mouse_up(event, window, cx)
-                    });
-                }
+            .capture_any_mouse_up(cx.listener(|editor, _event, _window, cx| {
                 if editor
                     .split_workspace
                     .as_mut()
