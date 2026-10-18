@@ -81,19 +81,15 @@ impl AiSettings {
         Ok(())
     }
 
-    pub fn remove_endpoint(&mut self, path: &Path, id: &str) -> Result<()> {
-        let mut staged = self.clone();
-        staged.endpoints.retain(|endpoint| endpoint.id != id);
-        if staged.default_endpoint == id {
-            staged.default_endpoint = staged
+    pub fn remove_endpoint(&mut self, id: &str) {
+        self.endpoints.retain(|endpoint| endpoint.id != id);
+        if self.default_endpoint == id {
+            self.default_endpoint = self
                 .endpoints
                 .first()
                 .map(|endpoint| endpoint.id.clone())
                 .unwrap_or_default();
         }
-        staged.save_at(path)?;
-        *self = staged;
-        Ok(())
     }
 
     pub fn active_endpoint(&self) -> Option<&Endpoint> {
@@ -103,34 +99,23 @@ impl AiSettings {
             .or_else(|| self.endpoints.first())
     }
 
-    pub fn save_endpoint(
-        &mut self,
-        path: &Path,
-        mut endpoint: Endpoint,
-        secret: Option<&str>,
-    ) -> Result<()> {
+    pub fn set_endpoint(&mut self, mut endpoint: Endpoint) -> Result<()> {
         endpoint.model_config()?;
         if endpoint.id.is_empty() {
             endpoint.id = uuid::Uuid::new_v4().to_string();
         }
-        if let Some(secret) = secret {
-            endpoint.api_key = secret.to_owned();
+        if self.default_endpoint.is_empty() {
+            self.default_endpoint = endpoint.id.clone();
         }
-        let mut staged = self.clone();
-        if let Some(existing) = staged
+        if let Some(existing) = self
             .endpoints
             .iter_mut()
             .find(|saved| saved.id == endpoint.id)
         {
-            *existing = endpoint.clone();
+            *existing = endpoint;
         } else {
-            staged.endpoints.push(endpoint.clone());
+            self.endpoints.push(endpoint);
         }
-        if staged.default_endpoint.is_empty() {
-            staged.default_endpoint = endpoint.id;
-        }
-        staged.save_at(path)?;
-        *self = staged;
         Ok(())
     }
 }
@@ -204,9 +189,9 @@ pub(crate) fn settings_path() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests;
 
-
 pub(crate) struct AiFeature {
     enabled: bool,
+    revision: u64,
 }
 
 impl gpui::Global for AiFeature {}
@@ -220,15 +205,25 @@ impl AiFeature {
                 false
             }
         };
-        cx.set_global(Self { enabled });
+        cx.set_global(Self {
+            enabled,
+            revision: 0,
+        });
     }
 
     pub fn enabled(cx: &gpui::App) -> bool {
-        cx.try_global::<Self>().is_some_and(|feature| feature.enabled)
+        cx.try_global::<Self>()
+            .is_some_and(|feature| feature.enabled)
+    }
+
+    pub fn revision(cx: &gpui::App) -> u64 {
+        cx.try_global::<Self>()
+            .map_or(0, |feature| feature.revision)
     }
 
     pub fn set_enabled(cx: &mut gpui::App, enabled: bool) {
-        cx.set_global(Self { enabled });
+        let revision = Self::revision(cx).wrapping_add(1);
+        cx.set_global(Self { enabled, revision });
         if cx.try_global::<crate::theme::ThemeManager>().is_some()
             && cx.try_global::<crate::i18n::I18nManager>().is_some()
         {

@@ -56,19 +56,7 @@ impl AiPreferences {
                 .value()
                 .parse()
                 .context("请输入有效的上下文 token 数量")?;
-            endpoint.model_config()?;
-            if let Some(saved) = settings
-                .endpoints
-                .iter_mut()
-                .find(|saved| saved.id == endpoint.id)
-            {
-                *saved = endpoint;
-            } else {
-                if settings.default_endpoint.is_empty() {
-                    settings.default_endpoint = endpoint.id.clone();
-                }
-                settings.endpoints.push(endpoint);
-            }
+            settings.set_endpoint(endpoint)?;
         }
         Ok(settings)
     }
@@ -97,8 +85,9 @@ impl PreferencesWindow {
         })
     }
 
-    pub(crate) fn set_nav_ai(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn set_nav_ai(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.close_dropdowns();
+        self.focus_handle.focus(window);
         self.nav = PreferencesNav::Ai;
         self.page_scroll.set_offset(Point::default());
         if self.ai_preferences.is_none() {
@@ -454,18 +443,7 @@ impl PreferencesWindow {
                         move |preferences, cx| {
                             preferences.stop_ai_preferences_probe();
                             let next = preferences.ai_preferences.as_mut().and_then(|state| {
-                                state
-                                    .settings
-                                    .endpoints
-                                    .retain(|endpoint| endpoint.id != removed_id);
-                                if state.settings.default_endpoint == removed_id {
-                                    state.settings.default_endpoint = state
-                                        .settings
-                                        .endpoints
-                                        .first()
-                                        .map(|endpoint| endpoint.id.clone())
-                                        .unwrap_or_default();
-                                }
+                                state.settings.remove_endpoint(&removed_id);
                                 state.draft = None;
                                 state.settings.active_endpoint().cloned()
                             });

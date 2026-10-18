@@ -186,6 +186,12 @@ impl Editor {
             .when(!sidebar, |panel| panel.child(titlebar))
             .child(header)
             .when(!has_messages, |panel| panel.child(quick));
+        if session.settings.endpoints.is_empty() {
+            panel = panel.child(self.ai_button(
+                "ai-configure", strings.ai_panel_settings.clone(), false, true, theme, cx,
+                |editor, _, cx| editor.open_ai_settings(cx),
+            ));
+        }
         if let Some(error) = &session.error {
             panel = panel.child(
                 div()

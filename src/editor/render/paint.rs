@@ -54,6 +54,7 @@ impl Render for Editor {
         }
         if !self.ai_result_preview && self.split_parent.is_none() { self.install_close_guard(cx, window); }
         self.sync_ai_availability(cx);
+        self.sync_ai_settings(cx);
         self.sync_ai_task_navigation(cx);
         self.sync_ai_review_document(cx);
         self.sync_ai_surface_visibility(cx);

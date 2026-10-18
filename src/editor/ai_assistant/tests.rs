@@ -973,109 +973,6 @@ fn ai_stopping_a_response_keeps_the_received_text_readable_in_the_dialog(cx: &mu
 }
 
 #[gpui::test]
-fn editing_connection_inputs_cancels_the_old_probe_and_removes_its_status(cx: &mut TestAppContext) {
-    initialize(cx);
-    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
-    let control = editor.update_in(cx, |editor, window, cx| {
-        editor.open_ai_assistant(AiCommand::Ask, window, cx);
-        let session = editor.ai_session.as_mut().unwrap();
-        session.control = RunControl::default();
-        session.activity = "old connection status".into();
-        session
-            .draft
-            .as_ref()
-            .unwrap()
-            .model
-            .update(cx, |field, cx| field.focus(window, cx));
-        session.control.clone()
-    });
-    draw(cx);
-    draw(cx);
-    cx.simulate_input("changed-model");
-    draw(cx);
-    editor.read_with(cx, |editor, _| {
-        assert!(
-            editor.ai_session.as_ref().unwrap().activity.is_empty(),
-            "修改连接后不能继续显示旧连接的测试状态"
-        )
-    });
-    assert!(control.cancel.is_cancelled());
-}
-
-#[gpui::test]
-fn editing_connection_inputs_does_not_cancel_a_running_document_task(cx: &mut TestAppContext) {
-    initialize(cx);
-    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
-    let control = editor.update_in(cx, |editor, window, cx| {
-        editor.open_ai_assistant(AiCommand::Ask, window, cx);
-        let session = editor.ai_session.as_mut().unwrap();
-        session.control = RunControl::default();
-        session.saved.running = true;
-        session.generation = 20;
-        session.activity = "read_document".into();
-        session
-            .draft
-            .as_ref()
-            .unwrap()
-            .model
-            .update(cx, |field, cx| field.focus(window, cx));
-        session.control.clone()
-    });
-    draw(cx);
-    draw(cx);
-    cx.simulate_input("changed-model");
-    draw(cx);
-    assert!(!control.cancel.is_cancelled());
-    editor.read_with(cx, |editor, _| {
-        assert_eq!(editor.ai_session.as_ref().unwrap().generation, 20)
-    });
-}
-
-#[gpui::test]
-fn a_background_connection_save_keeps_newer_input_in_the_form(cx: &mut TestAppContext) {
-    initialize(cx);
-    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
-    editor.update_in(cx, |editor, window, cx| {
-        editor.open_ai_assistant(AiCommand::Ask, window, cx);
-        editor
-            .ai_session
-            .as_ref()
-            .unwrap()
-            .draft
-            .as_ref()
-            .unwrap()
-            .model
-            .update(cx, |field, cx| field.set_value("saved-model", cx));
-        editor.save_ai_endpoint(cx);
-        editor
-            .ai_session
-            .as_ref()
-            .unwrap()
-            .draft
-            .as_ref()
-            .unwrap()
-            .model
-            .update(cx, |field, cx| field.set_value("newer-unsaved-model", cx));
-        editor.invalidate_ai_connection_test(cx);
-    });
-    cx.run_until_parked();
-    draw(cx);
-    editor.read_with(cx, |editor, cx| {
-        let session = editor.ai_session.as_ref().unwrap();
-        assert!(
-            session.draft.is_some(),
-            "异步保存完成不能丢弃随后输入的内容"
-        );
-        assert!(session.mode == PanelMode::Settings);
-        assert_eq!(
-            session.draft.as_ref().unwrap().model.read(cx).value(),
-            "newer-unsaved-model"
-        );
-        assert_eq!(session.settings.endpoints[0].model, "saved-model");
-    });
-}
-
-#[gpui::test]
 fn ai_command_validation_errors_are_visible_before_the_task_starts(cx: &mut TestAppContext) {
     initialize(cx);
     let endpoint = crate::ai::settings::Endpoint {
@@ -2422,4 +2319,78 @@ fn ai_opt_in_disabling_cancels_active_and_retained_tasks_and_preserves_pending_h
     let saved = crate::ai::session::SavedSession::load_at(&path, None).unwrap();
     assert_eq!(saved.workspace.changes.proposals.len(), 1);
     assert!(saved.interrupted);
+}
+
+#[gpui::test]
+fn ai_settings_entry_opens_preferences_and_preserves_the_running_conversation(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    let (id, control) = editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.control = RunControl::default();
+        session.saved.running = true;
+        session.generation = 20;
+        session.input.update(cx, |field, cx| field.set_value("未发出的要求", cx));
+        (session.saved.id.clone(), session.control.clone())
+    });
+    draw(cx); draw(cx);
+    let more = cx.debug_bounds("ai-options").unwrap();
+    cx.simulate_click(more.center(), gpui::Modifiers::none());
+    draw(cx); draw(cx);
+    let settings = cx.debug_bounds("ai-settings").unwrap();
+    cx.simulate_click(settings.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(cx.read(|cx| cx.windows().iter().any(|window| window.downcast::<crate::config::preferences::PreferencesWindow>().is_some())),
+        "AI 设置必须使用偏好设置，不在对话里编辑连接");
+    assert!(!control.cancel.is_cancelled());
+    editor.read_with(cx, |editor, cx| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(session.saved.id, id);
+        assert_eq!(session.generation, 20);
+        assert_eq!(session.input.read(cx).value(), "未发出的要求");
+        assert_eq!(editor.buffer.text(), "正文");
+    });
+}
+
+#[gpui::test]
+fn ai_settings_reuses_the_preferences_window(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update(cx, |editor, cx| {
+        editor.open_ai_settings(cx);
+        editor.open_ai_settings(cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| cx.windows().iter().filter(|window| window.downcast::<crate::config::preferences::PreferencesWindow>().is_some()).count()),
+        1, "配置入口应复用偏好设置，避免多份未保存的连接草稿");
+}
+
+#[gpui::test]
+fn ai_settings_saved_elsewhere_refreshes_configuration_without_resetting_the_conversation(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    let id = editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.input.update(cx, |field, cx| field.set_value("尚未发出", cx));
+        session.saved.id.clone()
+    });
+    let settings = crate::ai::settings::AiSettings {
+        enabled:true,
+        endpoints:vec![crate::ai::settings::Endpoint {id:"local".into(), name:"Local".into(),
+            model:"new-model".into(), base_url:"http://localhost:11434/v1".into(), ..Default::default()}],
+        ..Default::default()
+    };
+    settings.save_at(&crate::ai::settings::settings_path().unwrap()).unwrap();
+    cx.update(|_, cx| crate::ai::settings::AiFeature::set_enabled(cx, true));
+    draw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert!(session.settings.active_endpoint().is_some(), "保存后应刷新已有对话的连接配置");
+        assert_eq!(session.settings.active_endpoint().unwrap().model, "new-model");
+        assert_eq!(session.saved.id, id);
+        assert_eq!(session.input.read(cx).value(), "尚未发出");
+    });
 }

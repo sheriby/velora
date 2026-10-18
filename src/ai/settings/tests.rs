@@ -15,7 +15,10 @@ fn ai_settings_store_api_keys_in_configuration_and_load_keyless_endpoints() {
     let root = std::env::temp_dir().join(format!("velora-ai-settings-{}", uuid::Uuid::new_v4()));
     let path = root.join("ai.json");
     let mut settings = AiSettings::default();
-    let saved = settings.save_endpoint(&path, endpoint(), Some("private-test-key"));
+    let mut connection = endpoint();
+    connection.api_key = "private-test-key".into();
+    settings.set_endpoint(connection).unwrap();
+    let saved = settings.save_at(&path);
     assert!(saved.is_ok(), "{saved:?}");
     let text = std::fs::read_to_string(&path).unwrap();
     assert_eq!(
@@ -32,12 +35,11 @@ fn ai_settings_store_api_keys_in_configuration_and_load_keyless_endpoints() {
         );
     }
     let loaded = AiSettings::load_at(&path).unwrap();
-    assert_eq!(loaded.endpoints.len(), 1);
-    assert_eq!(loaded.endpoints[0].api_key, "private-test-key");
     assert_eq!(loaded, settings);
     let mut local = endpoint();
     local.id = "keyless".into();
-    settings.save_endpoint(&path, local, None).unwrap();
+    settings.set_endpoint(local).unwrap();
+    settings.save_at(&path).unwrap();
     assert_eq!(AiSettings::load_at(&path).unwrap().endpoints.len(), 2);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -47,21 +49,20 @@ fn ai_settings_failed_save_preserves_old_configuration_and_key() {
     let root = std::env::temp_dir().join(format!("velora-ai-settings-{}", uuid::Uuid::new_v4()));
     let path = root.join("ai.json");
     let mut settings = AiSettings::default();
-    assert!(
-        settings
-            .save_endpoint(&path, endpoint(), Some("old-key"))
-            .is_ok()
-    );
-    let previous = settings.clone();
-    let invalid = path.join("blocked.json");
-    assert!(
-        settings
-            .save_endpoint(&invalid, endpoint(), Some("new-key"))
-            .is_err()
-    );
-    assert_eq!(settings, previous);
-    assert_eq!(AiSettings::load_at(&path).unwrap(), previous);
-    assert_eq!(settings.endpoints[0].api_key, "old-key");
+    let mut connection = endpoint();
+    connection.api_key = "old-key".into();
+    settings.set_endpoint(connection.clone()).unwrap();
+    settings.save_at(&path).unwrap();
+    let mut pending = settings.clone();
+    connection.api_key = "new-key".into();
+    pending.set_endpoint(connection).unwrap();
+    assert!(pending.save_at(&path.join("blocked.json")).is_err());
+    assert_eq!(AiSettings::load_at(&path).unwrap(), settings);
+    let previous = pending.clone();
+    let mut invalid = endpoint();
+    invalid.model.clear();
+    assert!(pending.set_endpoint(invalid).is_err());
+    assert_eq!(pending, previous, "失败的校验不能改变暂存值");
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -70,16 +71,15 @@ fn ai_settings_removing_an_endpoint_removes_its_key_from_configuration() {
     let root = std::env::temp_dir().join(format!("velora-ai-remove-{}", uuid::Uuid::new_v4()));
     let path = root.join("ai.json");
     let mut settings = AiSettings::default();
-    settings
-        .save_endpoint(&path, endpoint(), Some("test-secret"))
-        .unwrap();
-    assert!(
-        settings
-            .remove_endpoint(&path.join("blocked"), "test")
-            .is_err()
-    );
-    assert_eq!(settings.endpoints[0].api_key, "test-secret");
-    settings.remove_endpoint(&path, "test").unwrap();
+    let mut connection = endpoint();
+    connection.api_key = "test-secret".into();
+    settings.set_endpoint(connection).unwrap();
+    settings.save_at(&path).unwrap();
+    let mut pending = settings.clone();
+    pending.remove_endpoint("test");
+    assert!(pending.save_at(&path.join("blocked")).is_err());
+    assert_eq!(AiSettings::load_at(&path).unwrap(), settings);
+    pending.save_at(&path).unwrap();
     assert!(AiSettings::load_at(&path).unwrap().endpoints.is_empty());
     assert!(
         !std::fs::read_to_string(&path)
@@ -116,30 +116,27 @@ fn ai_settings_editing_a_connection_preserves_its_key_until_explicitly_changed_o
     let root = std::env::temp_dir().join(format!("velora-ai-key-edit-{}", uuid::Uuid::new_v4()));
     let path = root.join("ai.json");
     let mut settings = AiSettings::default();
-    settings
-        .save_endpoint(&path, endpoint(), Some("original-key"))
-        .unwrap();
-    let mut edited = settings.endpoints[0].clone();
+    let mut edited = endpoint();
+    edited.api_key = "original-key".into();
+    settings.set_endpoint(edited.clone()).unwrap();
+    settings.save_at(&path).unwrap();
     edited.model = "another-model".into();
-    settings.save_endpoint(&path, edited, None).unwrap();
+    settings.set_endpoint(edited.clone()).unwrap();
+    settings.save_at(&path).unwrap();
     assert_eq!(
         AiSettings::load_at(&path).unwrap().endpoints[0].api_key,
         "original-key"
     );
-    settings
-        .save_endpoint(
-            &path,
-            settings.endpoints[0].clone(),
-            Some("replacement-key"),
-        )
-        .unwrap();
+    edited.api_key = "replacement-key".into();
+    settings.set_endpoint(edited.clone()).unwrap();
+    settings.save_at(&path).unwrap();
     assert_eq!(
         AiSettings::load_at(&path).unwrap().endpoints[0].api_key,
         "replacement-key"
     );
-    settings
-        .save_endpoint(&path, settings.endpoints[0].clone(), Some(""))
-        .unwrap();
+    edited.api_key.clear();
+    settings.set_endpoint(edited).unwrap();
+    settings.save_at(&path).unwrap();
     assert_eq!(AiSettings::load_at(&path).unwrap().endpoints[0].api_key, "");
     assert!(
         !std::fs::read_to_string(&path)

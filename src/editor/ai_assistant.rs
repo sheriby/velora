@@ -8,7 +8,7 @@ use gpui::*;
 use super::Editor;
 use crate::ai::runtime::{RunControl, RunEvent, RunOutput, RunRequest};
 use crate::ai::session::{ChatMessage, SavedSession, SessionKind, TargetSnapshot};
-use crate::ai::settings::{AiSettings, Endpoint, Protocol};
+use crate::ai::settings::{AiFeature, AiSettings};
 use crate::ai::workspace::AiWorkspace;
 use crate::ai::{AiCommand, DocumentSnapshot};
 use crate::components::TextField;
@@ -23,21 +23,11 @@ mod workbench;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PanelMode {
     Task,
-    Settings,
     History,
     Skills,
     Instruction,
     Context,
     Options,
-}
-
-pub(super) struct EndpointDraft {
-    endpoint: Endpoint,
-    name: Entity<TextField>,
-    address: Entity<TextField>,
-    model: Entity<TextField>,
-    secret: Entity<TextField>,
-    context: Entity<TextField>,
 }
 
 pub(super) struct AiSession {
@@ -48,10 +38,8 @@ pub(super) struct AiSession {
     language: Entity<TextField>,
     instruction_name: Entity<TextField>,
     instruction_body: Entity<TextField>,
-    excluded_input: Entity<TextField>,
     context_input: Entity<TextField>,
     settings: AiSettings,
-    draft: Option<EndpointDraft>,
     visible: bool,
     expanded: bool,
     mode: PanelMode,
@@ -74,11 +62,9 @@ pub(super) struct AiSession {
     review_navigation: Option<uuid::Uuid>,
     history_files: Vec<(PathBuf, String, SessionKind)>,
     skills: crate::ai::skills::SkillCatalog,
-    input_tokens: u64,
-    output_tokens: u64,
     context_candidates: Vec<String>,
     settings_saving: bool,
-    // 连接编辑独立于任务代数，避免改配置干扰正在运行的文档任务。
+    // 设置单独编辑，仅在配置版本变化时读盘，避免在每帧渲染里读取配置。
     settings_revision: u64,
     review: Option<experience::ReviewDocument>,
     review_dirty: bool,
@@ -117,7 +103,8 @@ enum WorkerEvent {
 
 impl Editor {
     pub(in crate::editor) fn sync_ai_availability(&mut self, cx: &mut Context<Self>) {
-        if self.ai_result_preview || self.split_parent.is_some()
+        if self.ai_result_preview
+            || self.split_parent.is_some()
             || crate::ai::settings::AiFeature::enabled(cx)
         {
             return;
@@ -984,13 +971,7 @@ impl Editor {
             context_input: cx.new(|cx| TextField::new("@notes.md / @\"folder name\"", cx)),
             instruction_body: cx
                 .new(|cx| TextField::new("{{selection}} · {{document}} · {{references}}", cx)),
-            excluded_input: cx.new(|cx| {
-                let mut field = TextField::new("private/, secrets.md", cx);
-                field.set_value(&settings.excluded_paths.join(", "), cx);
-                field
-            }),
             settings,
-            draft: None,
             visible: true,
             expanded: false,
             mode: PanelMode::Task,
@@ -1012,11 +993,9 @@ impl Editor {
             review_navigation: None,
             history_files: Vec::new(),
             skills: crate::ai::skills::SkillCatalog::load(&directories),
-            input_tokens: 0,
-            output_tokens: 0,
             context_candidates: Vec::new(),
             settings_saving: false,
-            settings_revision: 0,
+            settings_revision: AiFeature::revision(cx),
             review: None,
             review_dirty: true,
         });
@@ -1056,10 +1035,7 @@ impl Editor {
             input.focus(window, cx);
         });
         let configured = !session.settings.endpoints.is_empty();
-        if !configured {
-            window.focus(&session.panel_focus);
-            self.edit_ai_endpoint(None, cx);
-        } else if !matches!(command, AiCommand::Ask | AiCommand::Translate) {
+        if configured && !matches!(command, AiCommand::Ask | AiCommand::Translate) {
             self.send_ai_task(cx);
         }
         self.pending_focus = None;
@@ -1314,7 +1290,7 @@ impl Editor {
             .or_else(|| session.settings.active_endpoint())
             .cloned()
         else {
-            self.edit_ai_endpoint(None, cx);
+            self.open_ai_settings(cx);
             return;
         };
         let model = match endpoint.model_config() {
@@ -1604,8 +1580,6 @@ impl Editor {
                         Ok(output) => {
                             session.saved.history = output.history;
                             session.error = output.error;
-                            session.input_tokens += output.input_tokens;
-                            session.output_tokens += output.output_tokens;
                         }
                         Err(error) => session.error = Some(error),
                     }
@@ -1723,195 +1697,35 @@ impl Editor {
         }
     }
 
-    fn invalidate_ai_connection_test(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn open_ai_settings(&mut self, cx: &mut Context<Self>) {
         if let Some(session) = self.ai_session.as_mut() {
-            session.settings_revision = session.settings_revision.wrapping_add(1);
-            if !session.saved.running {
-                session.control.cancel.cancel();
-                session.generation = session.generation.wrapping_add(1);
-                session.activity.clear();
-            }
-            cx.notify();
+            session.mode = PanelMode::Task;
         }
-    }
-
-    pub(super) fn edit_ai_endpoint(&mut self, endpoint: Option<Endpoint>, cx: &mut Context<Self>) {
-        self.invalidate_ai_connection_test(cx);
-        let Some(session) = self.ai_session.as_mut() else {
-            return;
-        };
-        let endpoint = endpoint.unwrap_or_else(|| Endpoint {
-            id: uuid::Uuid::new_v4().to_string(),
-            name: "OpenAI Compatible".into(),
-            base_url: "https://api.openai.com/v1".into(),
-            context_tokens: 64_000,
-            ..Endpoint::default()
-        });
-        let field = |value: &str, masked: bool, cx: &mut Context<Self>| {
-            let owner = cx.entity().downgrade();
-            cx.new(|cx| {
-                let mut field = TextField::new("", cx);
-                field.set_value(value, cx);
-                if masked {
-                    field = field.masked();
-                }
-                field.on_change(move |cx| {
-                    let owner = owner.clone();
-                    cx.defer(move |cx| {
-                        if let Err(error) =
-                            owner.update(cx, |editor, cx| editor.invalidate_ai_connection_test(cx))
-                        {
-                            eprintln!("更新 AI 连接输入失败：{error}");
-                        }
-                    });
-                })
-            })
-        };
-        session.draft = Some(EndpointDraft {
-            name: field(&endpoint.name, false, cx),
-            address: field(&endpoint.base_url, false, cx),
-            model: field(&endpoint.model, false, cx),
-            secret: field("", true, cx),
-            context: field(&endpoint.context_tokens.to_string(), false, cx),
-            endpoint,
-        });
-        session.mode = PanelMode::Settings;
-        cx.notify();
-    }
-
-    pub(super) fn save_ai_endpoint(&mut self, cx: &mut Context<Self>) {
-        self.invalidate_ai_connection_test(cx);
-        let Some(session) = self.ai_session.as_mut() else {
-            return;
-        };
-        if session.settings_saving {
-            return;
-        }
-        let Some(draft) = &session.draft else {
-            return;
-        };
-        let mut endpoint = draft.endpoint.clone();
-        endpoint.name = draft.name.read(cx).value().trim().to_owned();
-        endpoint.base_url = draft.address.read(cx).value().trim().to_owned();
-        endpoint.model = draft.model.read(cx).value().trim().to_owned();
-        endpoint.context_tokens = match draft.context.read(cx).value().parse() {
-            Ok(tokens) => tokens,
-            Err(_) => {
-                session.error = Some("请输入有效的上下文 token 数量".into());
-                cx.notify();
-                return;
-            }
-        };
-        let secret = draft.secret.read(cx).value().to_owned();
-        let mut settings = session.settings.clone();
-        let id = endpoint.id.clone();
-        let session_id = session.saved.id.clone();
-        let revision = session.settings_revision;
-        session.settings_saving = true;
-        let save = cx.background_spawn(async move {
-            settings.save_endpoint(
-                &crate::ai::settings::settings_path()?,
-                endpoint,
-                (!secret.is_empty()).then_some(secret.as_str()),
-            )?;
-            Ok::<_, anyhow::Error>(settings)
-        });
-        cx.spawn(async move |owner, cx| {
-            let result = save.await;
-            if let Err(error) = owner.update(cx, |editor, cx| {
-                if let Some(session) = editor.ai_session_mut(&session_id) {
-                    session.settings_saving = false;
-                    match result {
-                        Ok(settings) => {
-                            session.settings = settings;
-                            if session.settings_revision == revision {
-                                session.saved.endpoint_id = id;
-                                session.mode = PanelMode::Task;
-                                session.draft = None;
-                            }
-                            session.error = None;
-                        }
-                        Err(error) => session.error = Some(error.to_string()),
-                    }
-                }
-                cx.notify();
+        cx.defer(|cx| {
+            let handle = cx.windows().into_iter()
+                .find_map(|window| window.downcast::<crate::config::preferences::PreferencesWindow>())
+                .unwrap_or_else(|| crate::config::open_preferences_window(cx));
+            if let Err(error) = handle.update(cx, |preferences, window, cx| {
+                window.activate_window();
+                preferences.set_nav_ai(&ClickEvent::default(), window, cx);
             }) {
-                eprintln!("更新 AI 服务设置失败：{error}");
+                eprintln!("打开 AI 偏好设置失败：{error}");
             }
-        })
-        .detach();
+        });
         cx.notify();
     }
 
-    fn test_ai_connection(&mut self, cx: &mut Context<Self>) {
-        let Some(session) = self
-            .ai_session
-            .as_mut()
-            .filter(|session| !session.saved.running && !session.settings_saving)
-        else {
-            return;
-        };
-        let Some(draft) = &session.draft else {
-            return;
-        };
-        let mut endpoint = draft.endpoint.clone();
-        endpoint.base_url = draft.address.read(cx).value().trim().to_owned();
-        endpoint.model = draft.model.read(cx).value().trim().to_owned();
-        let entered_key = draft.secret.read(cx).value().to_owned();
-        if !entered_key.is_empty() {
-            endpoint.api_key = entered_key;
+    pub(in crate::editor) fn sync_ai_settings(&mut self, cx: &mut Context<Self>) {
+        let revision = AiFeature::revision(cx);
+        if let Some(session) = self.ai_session.as_mut()
+            && session.settings_revision != revision
+        {
+            session.settings_revision = revision;
+            match AiSettings::load() {
+                Ok(settings) => session.settings = settings,
+                Err(error) => session.error = Some(error.to_string()),
+            }
         }
-        endpoint.context_tokens = match draft.context.read(cx).value().parse() {
-            Ok(tokens) => tokens,
-            Err(_) => {
-                session.error = Some("请输入有效的上下文 token 数量".into());
-                cx.notify();
-                return;
-            }
-        };
-        let id = session.saved.id.clone();
-        session.control.cancel.cancel();
-        session.control = RunControl::default();
-        session.generation = session.generation.wrapping_add(1);
-        let generation = session.generation;
-        let control = session.control.clone();
-        session.activity = cx
-            .global::<crate::i18n::I18nManager>()
-            .strings()
-            .preferences_ai_test_running
-            .clone();
-        session.error = None;
-        let probe =
-            cx.background_spawn(
-                async move { crate::ai::runtime::test_connection(endpoint, control) },
-            );
-        cx.spawn(async move |owner, cx| {
-            let result = probe.await;
-            if let Err(error) = owner.update(cx, |editor, cx| {
-                let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
-                if let Some(session) = editor
-                    .ai_session_mut(&id)
-                    .filter(|session| session.generation == generation)
-                {
-                    match result {
-                        Ok(output) => {
-                            session.activity = strings.preferences_ai_test_ok;
-                            session.input_tokens += output.input_tokens;
-                            session.output_tokens += output.output_tokens;
-                        }
-                        Err(error) => {
-                            session.activity.clear();
-                            session.error = Some(error.to_string());
-                        }
-                    }
-                    cx.notify();
-                }
-            }) {
-                eprintln!("更新 AI 连接测试结果失败：{error}");
-            }
-        })
-        .detach();
-        cx.notify();
     }
 
     fn update_ai_settings(&mut self, settings: AiSettings, cx: &mut Context<Self>) {
@@ -1945,44 +1759,6 @@ impl Editor {
         })
         .detach();
         cx.notify();
-    }
-
-    fn delete_ai_endpoint(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.invalidate_ai_connection_test(cx);
-        let Some(session) = self
-            .ai_session
-            .as_mut()
-            .filter(|session| !session.settings_saving)
-        else {
-            return;
-        };
-        let mut settings = session.settings.clone();
-        let id = id.to_owned();
-        let session_id = session.saved.id.clone();
-        session.settings_saving = true;
-        let save = cx.background_spawn(async move {
-            settings.remove_endpoint(&crate::ai::settings::settings_path()?, &id)?;
-            Ok::<_, anyhow::Error>(settings)
-        });
-        cx.spawn(async move |owner, cx| {
-            let result = save.await;
-            if let Err(error) = owner.update(cx, |editor, cx| {
-                if let Some(session) = editor.ai_session_mut(&session_id) {
-                    session.settings_saving = false;
-                    match result {
-                        Ok(settings) => {
-                            session.settings = settings;
-                            session.draft = None;
-                        }
-                        Err(error) => session.error = Some(error.to_string()),
-                    }
-                    cx.notify();
-                }
-            }) {
-                eprintln!("删除 AI 连接失败：{error}");
-            }
-        })
-        .detach();
     }
 
     fn reload_ai_skills(&mut self, cx: &mut Context<Self>) {

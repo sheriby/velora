@@ -124,22 +124,10 @@ impl Editor {
                             &session.language,
                             &session.instruction_name,
                             &session.instruction_body,
-                            &session.excluded_input,
                             &session.context_input,
                         ]
                         .iter()
-                        .any(|field| field.read(cx).is_focused(window))
-                        || session.draft.as_ref().is_some_and(|draft| {
-                            [
-                                &draft.name,
-                                &draft.address,
-                                &draft.model,
-                                &draft.secret,
-                                &draft.context,
-                            ]
-                            .iter()
-                            .any(|field| field.read(cx).is_focused(window))
-                        })))
+                        .any(|field| field.read(cx).is_focused(window))))
         })
     }
 
