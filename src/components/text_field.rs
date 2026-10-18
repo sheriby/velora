@@ -1,4 +1,4 @@
-//! 通用单行文本输入组件。
+//! 通用文本输入组件，默认单行，可选择软换行的多行模式。
 //!
 //! 设置页(AI 服务地址/密钥/模型)与编辑器内 AI 面板(自定义指令)共用。
 //! 输入走 `EntityInputHandler`(与工作区搜索框、命令面板同一条 IME 路由,
@@ -13,11 +13,19 @@ use gpui::*;
 use unicode_segmentation::UnicodeSegmentation;
 
 mod element;
+mod multiline;
 
 /// 回车回调签名。
 type OnEnterCallback = Box<dyn Fn(&mut TextField, &mut Window, &mut Context<TextField>) + 'static>;
 
-/// 单行文本输入。
+struct TextEdit {
+    start: usize,
+    removed: String,
+    inserted: String,
+    selection: Range<usize>,
+}
+
+/// 单行与多行文本输入。
 pub(crate) struct TextField {
     value: String,
     /// UTF-8 字节偏移;总是落在字符边界上。
@@ -34,6 +42,10 @@ pub(crate) struct TextField {
     last_line: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     scroll_x: f32,
+    multiline: Option<multiline::State>,
+    undo: Vec<TextEdit>,
+    redo: Vec<TextEdit>,
+    composition_active: bool,
     dragging: bool,
     #[cfg(test)]
     painted_caret: bool,
@@ -56,6 +68,12 @@ impl TextField {
     }
 
     fn index_for_point(&self, position: Point<Pixels>) -> usize {
+        if let Some(state) = &self.multiline
+            && let Some((bounds, layout)) = self.last_bounds.zip(state.layout.as_ref())
+        {
+            let offset = layout.index(position - bounds.origin + point(px(0.0), state.scroll_y));
+            return self.value.floor_char_boundary(offset.min(self.value.len()));
+        }
         let Some((bounds, line)) = self.last_bounds.zip(self.last_line.as_ref()) else {
             return self.value.len();
         };
@@ -84,12 +102,27 @@ impl TextField {
             last_line: None,
             last_bounds: None,
             scroll_x: 0.0,
+            multiline: None,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            composition_active: false,
             dragging: false,
             #[cfg(test)]
             painted_caret: false,
             #[cfg(test)]
             painted_selection: false,
         }
+    }
+
+    pub(crate) fn multiline(mut self, minimum_rows: usize, maximum_rows: usize) -> Self {
+        self.multiline = Some(multiline::State {
+            minimum_rows: minimum_rows.max(1),
+            maximum_rows: maximum_rows.max(minimum_rows).max(1),
+            layout: None,
+            scroll_y: px(0.0),
+            reveal_caret: true,
+        });
+        self
     }
 
     /// 密钥模式:内容显示为圆点,长度与真实值一致。
@@ -131,6 +164,10 @@ impl TextField {
         self.value = value.to_string();
         self.selected_range = self.value.len()..self.value.len();
         self.marked_range = None;
+        self.undo.clear();
+        self.redo.clear();
+        self.composition_active = false;
+        self.reveal_caret();
         cx.notify();
     }
 
@@ -148,13 +185,100 @@ impl TextField {
     /// 用 `text` 替换指定区间(区间会被夹回字符边界),光标停在插入文本之后。
     fn replace_range(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
         let range = clamp_to_char_boundaries(&self.value, range);
+        let merged = if self.composition_active {
+            if let Some(previous) = self.undo.last_mut().filter(|edit| {
+                edit.start == range.start && edit.start + edit.inserted.len() == range.end
+            }) {
+                previous.inserted = text.to_owned();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if !merged {
+            self.undo.push(TextEdit {
+                start: range.start,
+                removed: self.value.get(range.clone()).unwrap_or_default().to_owned(),
+                inserted: text.to_owned(),
+                selection: self.selected_range.clone(),
+            });
+            if self.undo.len() > 100 {
+                self.undo.remove(0);
+            }
+        }
+        self.redo.clear();
         self.value.replace_range(range.clone(), text);
         let caret = range.start + text.len();
         self.selected_range = caret..caret;
+        self.reveal_caret();
         if let Some(callback) = &self.on_change {
             callback(cx);
         }
         cx.notify();
+    }
+
+    fn reveal_caret(&mut self) {
+        if let Some(state) = self.multiline.as_mut() {
+            state.reveal_caret = true;
+        }
+    }
+
+    fn undo_edit(&mut self, redo: bool, cx: &mut Context<Self>) {
+        let edit = if redo {
+            self.redo.pop()
+        } else {
+            self.undo.pop()
+        };
+        let Some(edit) = edit else {
+            return;
+        };
+        let (before, after) = if redo {
+            (&edit.removed, &edit.inserted)
+        } else {
+            (&edit.inserted, &edit.removed)
+        };
+        let range = edit.start..edit.start + before.len();
+        if self.value.get(range.clone()) != Some(before.as_str()) {
+            eprintln!("输入撤销状态与当前文本不一致，已跳过失效编辑");
+            return;
+        }
+        self.value.replace_range(range, after);
+        self.selected_range = if redo {
+            let caret = edit.start + edit.inserted.len();
+            caret..caret
+        } else {
+            edit.selection.clone()
+        };
+        self.marked_range = None;
+        self.composition_active = false;
+        if redo {
+            self.undo.push(edit);
+        } else {
+            self.redo.push(edit);
+        }
+        self.reveal_caret();
+        if let Some(callback) = &self.on_change {
+            callback(cx);
+        }
+        cx.notify();
+    }
+
+    fn move_vertically(&mut self, down: bool, extend: bool) {
+        let Some(layout) = self
+            .multiline
+            .as_ref()
+            .and_then(|state| state.layout.clone())
+        else {
+            return;
+        };
+        let position = layout.position(self.selected_range.end);
+        let target = point(
+            position.x,
+            (position.y + layout.line_height * if down { 1.0 } else { -1.0 }).max(px(0.0)),
+        );
+        self.move_to(layout.index(target), extend);
     }
 
     fn move_to(&mut self, offset: usize, extend: bool) {
@@ -164,6 +288,7 @@ impl TextField {
         } else {
             self.selected_range = offset..offset;
         }
+        self.reveal_caret();
     }
 
     fn move_caret_left(&mut self, extend: bool) {
@@ -287,8 +412,12 @@ impl TextField {
 
     fn paste(&mut self, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            // 单行输入:粘贴内容里的换行折成空格,不悄悄截断。
-            let text = text.replace(['\r', '\n'], " ");
+            // 地址和密钥保持单行；指令编辑保留粘贴内容的段落。
+            let text = if self.multiline.is_some() {
+                text
+            } else {
+                text.replace(['\r', '\n'], " ")
+            };
             let selection = self.normalized_selection();
             self.replace_range(selection, &text, cx);
         }
@@ -303,7 +432,26 @@ impl TextField {
         let key = event.keystroke.key.to_ascii_lowercase();
         let secondary = event.keystroke.modifiers.secondary();
         let shift = event.keystroke.modifiers.shift;
+        if self.marked_range.is_some() && matches!(key.as_str(), "enter" | "escape") {
+            cx.stop_propagation();
+            return;
+        }
         match key.as_str() {
+            "up" | "down" if self.multiline.is_some() => {
+                self.move_vertically(key == "down", shift);
+                window.prevent_default();
+                cx.stop_propagation();
+            }
+            "z" if secondary => {
+                self.undo_edit(shift, cx);
+                window.prevent_default();
+                cx.stop_propagation();
+            }
+            "y" if secondary => {
+                self.undo_edit(true, cx);
+                window.prevent_default();
+                cx.stop_propagation();
+            }
             // 交给宿主层:面板用它关闭自己,设置页用全局 Escape 语义。
             "escape" => return,
             "left" => {
@@ -317,12 +465,19 @@ impl TextField {
                 cx.stop_propagation();
             }
             "home" => {
-                self.move_to(0, shift);
+                let start = if self.multiline.is_some() && !secondary {
+                    self.value.get(..self.selected_range.end).unwrap_or_default().rfind('\n').map_or(0, |offset| offset + 1)
+                } else { 0 };
+                self.move_to(start, shift);
                 window.prevent_default();
                 cx.stop_propagation();
             }
             "end" => {
-                self.move_to(self.value.len(), shift);
+                let end = if self.multiline.is_some() && !secondary {
+                    self.value.get(self.selected_range.end..).and_then(|tail| tail.find('\n'))
+                        .map_or(self.value.len(), |offset| self.selected_range.end + offset)
+                } else { self.value.len() };
+                self.move_to(end, shift);
                 window.prevent_default();
                 cx.stop_propagation();
             }
@@ -357,10 +512,14 @@ impl TextField {
                 cx.stop_propagation();
             }
             "enter" => {
-                let callback = self.on_enter.take();
-                if let Some(callback) = callback {
-                    callback(self, window, cx);
-                    self.on_enter = Some(callback);
+                if self.multiline.is_some() && (shift || self.on_enter.is_none()) {
+                    self.replace_range(self.normalized_selection(), "\n", cx);
+                } else {
+                    let callback = self.on_enter.take();
+                    if let Some(callback) = callback {
+                        callback(self, window, cx);
+                        self.on_enter = Some(callback);
+                    }
                 }
                 window.prevent_default();
                 cx.stop_propagation();
@@ -369,6 +528,7 @@ impl TextField {
             // 最终从 EntityInputHandler 进来。
             _ => return,
         }
+        self.reveal_caret();
         cx.notify();
     }
 }
@@ -454,6 +614,7 @@ impl EntityInputHandler for TextField {
 
     fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
         self.marked_range = None;
+        self.composition_active = false;
     }
 
     fn replace_text_in_range(
@@ -472,6 +633,7 @@ impl EntityInputHandler for TextField {
             .unwrap_or_else(|| self.normalized_selection());
         self.marked_range = None;
         self.replace_range(range, text, cx);
+        self.composition_active = false;
     }
 
     fn replace_and_mark_text_in_range(
@@ -490,6 +652,7 @@ impl EntityInputHandler for TextField {
             .or_else(|| self.marked_range.clone())
             .unwrap_or_else(|| self.normalized_selection());
         self.replace_range(range.clone(), new_text, cx);
+        self.composition_active = true;
         let marked_start = range.start;
         let marked_end = range.start + new_text.len();
         self.marked_range = Some(marked_start..marked_end);
@@ -507,6 +670,16 @@ impl EntityInputHandler for TextField {
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let source = utf16_to_utf8_offset(&self.value, range.start);
+        if let Some(state) = &self.multiline
+            && let Some(layout) = &state.layout
+        {
+            let bounds = self.last_bounds.unwrap_or(bounds);
+            let position = layout.position(source);
+            return Some(Bounds::new(
+                bounds.origin + position - point(px(0.0), state.scroll_y),
+                size(px(2.0), layout.line_height),
+            ));
+        }
         let offset = self.display_offset(source);
         let x = self
             .last_line
@@ -557,7 +730,28 @@ impl Render for TextField {
             .bg(theme.colors.editor_background)
             .text_size(px(theme.typography.dialog_body_size))
             .font(font(crate::config::EditorSettings::fonts(cx).ui_family))
-            .child(element::TextFieldElement { input: cx.entity() })
+            .child(if self.multiline.is_some() {
+                multiline::TextAreaElement { input: cx.entity() }.into_any_element()
+            } else {
+                element::TextFieldElement { input: cx.entity() }.into_any_element()
+            })
+            .on_scroll_wheel(cx.listener(|input, event: &ScrollWheelEvent, _, cx| {
+                let Some(state) = input.multiline.as_mut() else {
+                    return;
+                };
+                let Some((bounds, layout)) = input.last_bounds.zip(state.layout.as_ref()) else {
+                    return;
+                };
+                let next = (state.scroll_y - event.delta.pixel_delta(layout.line_height).y)
+                    .max(px(0.0))
+                    .min((layout.height - bounds.size.height).max(px(0.0)));
+                if next != state.scroll_y {
+                    state.scroll_y = next;
+                    state.reveal_caret = false;
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|input, event: &MouseDownEvent, window, cx| {

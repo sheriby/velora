@@ -236,3 +236,191 @@ fn ai_text_fields_render_reversed_selection_and_report_its_direction(cx: &mut Te
         );
     });
 }
+
+#[gpui::test]
+fn multiline_input_reserves_rows_and_preserves_newlines_on_paste(cx: &mut TestAppContext) {
+    cx.update(init_theme);
+    let (field, cx) = cx.add_window_view(|_, cx| TextField::new("", cx).multiline(3, 8));
+    field.update_in(cx, |field, window, cx| {
+        window.activate_window();
+        field.focus(window, cx);
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("甲\n乙🙂".into()));
+    });
+    cx.run_until_parked();
+    field.read_with(cx, |field, _| {
+        assert!(
+            field.last_bounds.unwrap().size.height > gpui::px(40.0),
+            "多行编辑器必须预留实际行高"
+        )
+    });
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-v"
+    } else {
+        "ctrl-v"
+    });
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("中文");
+    field.read_with(cx, |field, _| assert_eq!(field.value(), "甲\n乙🙂\n中文"));
+}
+
+#[gpui::test]
+fn multiline_input_shift_enter_edits_without_submitting_and_enter_submits_once(
+    cx: &mut TestAppContext,
+) {
+    cx.update(init_theme);
+    let submitted = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let (field, cx) = cx.add_window_view({
+        let submitted = submitted.clone();
+        move |_, cx| {
+            TextField::new("", cx)
+                .multiline(1, 4)
+                .on_enter(move |field, _, _| submitted.borrow_mut().push(field.value().to_owned()))
+        }
+    });
+    field.update_in(cx, |field, window, cx| {
+        window.activate_window();
+        field.set_value("first", cx);
+        field.focus(window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("shift-enter");
+    cx.simulate_input("second");
+    assert!(
+        submitted.borrow().is_empty(),
+        "Shift+Enter 不应发出半成品要求"
+    );
+    cx.simulate_keystrokes("enter");
+    assert_eq!(*submitted.borrow(), vec!["first\nsecond"]);
+}
+
+#[gpui::test]
+fn multiline_input_up_arrow_moves_between_rows_without_changing_text(cx: &mut TestAppContext) {
+    cx.update(init_theme);
+    let (field, cx) = cx.add_window_view(|_, cx| TextField::new("", cx).multiline(3, 6));
+    field.update_in(cx, |field, window, cx| {
+        window.activate_window();
+        field.set_value("abc\nxyz", cx);
+        field.focus(window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("up");
+    field.read_with(cx, |field, _| {
+        assert!(field.selected_range.end <= 3, "向上应回到第一行");
+        assert_eq!(field.value(), "abc\nxyz");
+    });
+}
+
+#[gpui::test]
+fn multiline_input_undo_keeps_an_ime_composition_as_one_edit(cx: &mut TestAppContext) {
+    cx.update(init_theme);
+    let (field, cx) = cx.add_window_view(|_, cx| TextField::new("", cx).multiline(3, 6));
+    field.update_in(cx, |field, window, cx| {
+        window.activate_window();
+        field.set_value("前", cx);
+        field.focus(window, cx);
+        field.replace_and_mark_text_in_range(None, "ni", Some(2..2), window, cx);
+        field.replace_and_mark_text_in_range(None, "你", Some(1..1), window, cx);
+        field.replace_text_in_range(None, "你好", window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-z"
+    } else {
+        "ctrl-z"
+    });
+    field.read_with(cx, |field, _| {
+        assert_eq!(
+            field.value(),
+            "前",
+            "一次撤销应移除整个组词，不留下拼音或候选字"
+        )
+    });
+}
+
+#[gpui::test]
+fn multiline_input_mouse_and_ime_follow_the_second_row(cx: &mut TestAppContext) {
+    cx.update(init_theme);
+    let (field, cx) = cx.add_window_view(|_, cx| TextField::new("", cx).multiline(3, 3));
+    field.update_in(cx, |field, window, cx| {
+        window.activate_window();
+        field.set_value("ab\n中文🙂\nz", cx);
+        field.focus(window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    let target = field.read_with(cx, |field, _| {
+        let state = field.multiline.as_ref().unwrap();
+        let layout = state.layout.as_ref().unwrap();
+        field.last_bounds.unwrap().origin
+            + layout.position("ab\n中".len())
+            + gpui::point(gpui::px(0.0), layout.line_height * 0.5)
+    });
+    cx.simulate_mouse_down(target, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_up(target, gpui::MouseButton::Left, gpui::Modifiers::none());
+    field.update_in(cx, |field, window, cx| {
+        assert_eq!(field.selected_range.end, "ab\n中".len());
+        let bounds = field.last_bounds.unwrap();
+        let ime = field.bounds_for_range(4..4, bounds, window, cx).unwrap();
+        assert!(ime.top() > bounds.top(), "输入法候选框不能留在第一行");
+        field.replace_text_in_range(None, "X", window, cx);
+        assert_eq!(field.value(), "ab\n中X文🙂\nz");
+    });
+}
+
+#[gpui::test]
+fn multiline_input_wraps_without_changing_text_and_limits_visible_rows(cx: &mut TestAppContext) {
+    cx.update(init_theme);
+    let (field, cx) = cx.add_window_view(|_, cx| TextField::new("", cx).multiline(1, 2));
+    let text = "word ".repeat(200);
+    field.update_in(cx, |field, window, cx| {
+        window.activate_window();
+        field.set_value(&text, cx);
+        field.focus(window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    field.read_with(cx, |field, _| {
+        let state = field.multiline.as_ref().unwrap();
+        let layout = state.layout.as_ref().unwrap();
+        assert!(
+            !layout
+                .rows
+                .first()
+                .unwrap()
+                .line
+                .wrap_boundaries()
+                .is_empty()
+        );
+        assert!(field.last_bounds.unwrap().size.height <= layout.line_height * 2);
+        assert!(
+            state.scroll_y > gpui::px(0.0),
+            "长输入应在控件内部滚动显示光标"
+        );
+        assert_eq!(field.value(), text);
+    });
+}
+
+#[gpui::test]
+fn multiline_input_does_not_submit_while_confirming_an_ime_candidate(cx: &mut TestAppContext) {
+    cx.update(init_theme);
+    let submitted = std::rc::Rc::new(std::cell::Cell::new(false));
+    let (field, cx) = cx.add_window_view({
+        let submitted = submitted.clone();
+        move |_, cx| {
+            TextField::new("", cx)
+                .multiline(1, 4)
+                .on_enter(move |_, _, _| submitted.set(true))
+        }
+    });
+    field.update_in(cx, |field, window, cx| {
+        field.replace_and_mark_text_in_range(None, "中", Some(1..1), window, cx);
+        field.handle_key_down(&key_event("enter", false, false), window, cx);
+    });
+    assert!(!submitted.get(), "确认组词不能把尚未完成的要求发给模型");
+}

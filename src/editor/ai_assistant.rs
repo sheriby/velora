@@ -929,23 +929,25 @@ impl Editor {
         let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
         let owner = cx.entity().downgrade();
         let input = cx.new(|cx| {
-            TextField::new(strings.ai_custom_placeholder.clone(), cx).on_enter(move |_, _, cx| {
-                let owner = owner.clone();
-                let input_id = cx.entity_id();
-                cx.defer(move |cx| {
-                    if let Err(error) = owner.update(cx, |editor, cx| {
-                        if editor
-                            .ai_session
-                            .as_ref()
-                            .is_some_and(|session| session.input.entity_id() == input_id)
-                        {
-                            editor.send_ai_task(cx);
+            TextField::new(strings.ai_custom_placeholder.clone(), cx)
+                .multiline(1, 4)
+                .on_enter(move |_, _, cx| {
+                    let owner = owner.clone();
+                    let input_id = cx.entity_id();
+                    cx.defer(move |cx| {
+                        if let Err(error) = owner.update(cx, |editor, cx| {
+                            if editor
+                                .ai_session
+                                .as_ref()
+                                .is_some_and(|session| session.input.entity_id() == input_id)
+                            {
+                                editor.send_ai_task(cx);
+                            }
+                        }) {
+                            eprintln!("发送 AI 指令失败：{error}");
                         }
-                    }) {
-                        eprintln!("发送 AI 指令失败：{error}");
-                    }
-                });
-            })
+                    });
+                })
         });
         let mut directories = Vec::new();
         if let Ok(path) = crate::ai::settings::settings_path() {
@@ -1296,7 +1298,10 @@ impl Editor {
         let model = match endpoint.request_config() {
             Ok(model) => model,
             Err(error) => {
-                session.error = Some(crate::ai::settings::error_message(&error, cx.global::<crate::i18n::I18nManager>().strings()));
+                session.error = Some(crate::ai::settings::error_message(
+                    &error,
+                    cx.global::<crate::i18n::I18nManager>().strings(),
+                ));
                 cx.notify();
                 return;
             }
@@ -1702,8 +1707,12 @@ impl Editor {
             session.mode = PanelMode::Task;
         }
         cx.defer(|cx| {
-            let handle = cx.windows().into_iter()
-                .find_map(|window| window.downcast::<crate::config::preferences::PreferencesWindow>())
+            let handle = cx
+                .windows()
+                .into_iter()
+                .find_map(|window| {
+                    window.downcast::<crate::config::preferences::PreferencesWindow>()
+                })
                 .unwrap_or_else(|| crate::config::open_preferences_window(cx));
             if let Err(error) = handle.update(cx, |preferences, window, cx| {
                 window.activate_window();
