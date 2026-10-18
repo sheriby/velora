@@ -521,6 +521,7 @@ impl I18nStrings {
         strings.ai_panel_context_budget = "上下文预算".into();
         strings.ai_review_title = "修改审阅".into();
         strings.ai_panel_dock = "移至侧栏".into();
+        strings.ai_panel_dock_unavailable = "拓宽窗口以停靠".into();
         strings.ai_panel_float = "浮动窗口".into();
         strings.ai_task_details = "任务详情".into();
         strings.ai_task_return = "返回正文".into();
@@ -1074,6 +1075,7 @@ impl I18nStrings {
             ai_panel_context_budget: "Context budget".into(),
             ai_review_title: "Review changes".into(),
             ai_panel_dock: "Move to sidebar".into(),
+            ai_panel_dock_unavailable: "Widen the window to dock".into(),
             ai_panel_float: "Float window".into(),
             ai_task_details: "Task details".into(),
             ai_task_return: "Back to document".into(),

@@ -88,45 +88,36 @@ impl Editor {
                 "ai-expand",
                 false,
                 cx,
-                |button, _cx| {
+                |button, cx| {
+                    let can_dock = self.ai_sidebar_fits(window, cx);
                     button
-                        .icon(
-                            if self
-                                .ai_session
-                                .as_ref()
-                                .is_some_and(|session| session.expanded)
-                            {
-                                IconName::ExternalLink
-                            } else {
-                                IconName::PanelRightOpen
-                            },
-                        )
-                        .accessibility_label(
-                            if self
-                                .ai_session
-                                .as_ref()
-                                .is_some_and(|session| session.expanded)
-                            {
-                                strings.ai_panel_float.clone()
-                            } else {
-                                strings.ai_panel_dock.clone()
-                            },
-                        )
-                        .tooltip(
-                            if self
-                                .ai_session
-                                .as_ref()
-                                .is_some_and(|session| session.expanded)
-                            {
-                                strings.ai_panel_float.clone()
-                            } else {
-                                strings.ai_panel_dock.clone()
-                            },
-                        )
+                        .icon(if sidebar {
+                            IconName::ExternalLink
+                        } else {
+                            IconName::PanelRightOpen
+                        })
+                        .accessibility_label(if sidebar {
+                            strings.ai_panel_float.clone()
+                        } else if can_dock {
+                            strings.ai_panel_dock.clone()
+                        } else {
+                            format!(
+                                "{} · {}",
+                                strings.ai_panel_dock, strings.ai_panel_dock_unavailable
+                            )
+                        })
+                        .tooltip(if sidebar {
+                            strings.ai_panel_float.clone()
+                        } else if can_dock {
+                            strings.ai_panel_dock.clone()
+                        } else {
+                            strings.ai_panel_dock_unavailable.clone()
+                        })
+                        .disabled(!sidebar && !can_dock)
                 },
-                |editor, window, cx| {
+                move |editor, window, cx| {
                     if let Some(session) = editor.ai_session.as_mut() {
-                        session.expanded = !session.expanded;
+                        session.expanded = !sidebar;
                         session.panel_drag = None;
                         session
                             .input

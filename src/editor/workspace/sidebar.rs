@@ -158,6 +158,20 @@ impl Editor {
         clamp_workspace_panel_width(width, viewport_width)
     }
 
+    pub(crate) fn workspace_navigation_width(&self, window: &Window, cx: &App) -> Pixels {
+        let width = |editor: &Editor| {
+            if editor.workspace.is_open {
+                WORKSPACE_ACTIVITY_WIDTH.to_pixels(window.rem_size())
+                    + px(editor
+                        .current_workspace_panel_width(f32::from(window.viewport_size().width), cx))
+            } else {
+                px(0.0)
+            }
+        };
+        self.active_split_editor()
+            .map_or_else(|| width(self), |active| width(active.read(cx)))
+    }
+
     pub(crate) fn start_workspace_resize(&mut self, pointer_x: f32, width: f32, cx: &mut Context<Self>) {
         self.workspace.resize_drag = Some(WorkspaceResizeDrag {
             start_x: pointer_x,

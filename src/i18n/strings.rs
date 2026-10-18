@@ -736,6 +736,7 @@ pub struct I18nStrings {
     pub ai_panel_context_budget: String,
     pub ai_review_title: String,
     pub ai_panel_dock: String,
+    pub ai_panel_dock_unavailable: String,
     pub ai_panel_float: String,
     pub ai_task_details: String,
     pub ai_task_return: String,

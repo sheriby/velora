@@ -491,6 +491,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) ai_panel_context_budget: Option<String>,
     pub(crate) ai_review_title: Option<String>,
     pub(crate) ai_panel_dock: Option<String>,
+    pub(crate) ai_panel_dock_unavailable: Option<String>,
     pub(crate) ai_panel_float: Option<String>,
     pub(crate) ai_task_details: Option<String>,
     pub(crate) ai_task_return: Option<String>,

@@ -488,6 +488,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_panel_context_budget",
     "ai_review_title",
     "ai_panel_dock",
+    "ai_panel_dock_unavailable",
     "ai_panel_float",
     "ai_task_details",
     "ai_task_return",

@@ -1101,6 +1101,7 @@ impl I18nStringsDe {
             ai_panel_context_budget: self.ai_panel_context_budget.unwrap_or(defaults.ai_panel_context_budget),
             ai_review_title: self.ai_review_title.unwrap_or(defaults.ai_review_title),
             ai_panel_dock: self.ai_panel_dock.unwrap_or(defaults.ai_panel_dock),
+            ai_panel_dock_unavailable: self.ai_panel_dock_unavailable.unwrap_or(defaults.ai_panel_dock_unavailable),
             ai_panel_float: self.ai_panel_float.unwrap_or(defaults.ai_panel_float),
             ai_task_details: self.ai_task_details.unwrap_or(defaults.ai_task_details),
             ai_task_return: self.ai_task_return.unwrap_or(defaults.ai_task_return),

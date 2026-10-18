@@ -6,6 +6,13 @@ use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, resize_handle_appearance};
 
 impl Editor {
+    pub(super) fn ai_sidebar_fits(&self, window: &Window, cx: &App) -> bool {
+        let viewport = window.viewport_size().width;
+        let navigation = self.workspace_navigation_width(window, cx);
+        let minimum_sidebar = (window.rem_size() * 20.0).min(viewport * 0.4);
+        viewport >= navigation + window.rem_size() * 20.0 + minimum_sidebar
+    }
+
     pub(in crate::editor) fn render_ai_assistant(
         &self,
         theme: &crate::theme::Theme,
@@ -41,7 +48,7 @@ impl Editor {
             }
             return None;
         }
-        if session.expanded {
+        if session.expanded && self.ai_sidebar_fits(window, cx) {
             return None;
         }
         let viewport = window.viewport_size();
@@ -129,7 +136,10 @@ impl Editor {
         let focus = layout.focus.clone();
         let viewport = window.viewport_size().width;
         let minimum = (window.rem_size() * 20.0).min(viewport * 0.4);
-        let document_minimum = (window.rem_size() * 32.0).min(viewport - minimum);
+        let document_minimum = (self.workspace_navigation_width(window, cx)
+            + window.rem_size() * 20.0)
+            .max(window.rem_size() * 32.0)
+            .min(viewport - minimum);
         let maximum = (window.rem_size() * 40.0)
             .min(viewport - document_minimum)
             .max(minimum);
@@ -227,6 +237,9 @@ impl Editor {
             .ai_session
             .as_ref()
             .filter(|session| session.visible && session.expanded)?;
+        if !self.ai_sidebar_fits(window, cx) {
+            return None;
+        }
         let height = f32::from(window.viewport_size().height) - 100.0;
         let content = if session.mode == PanelMode::Task {
             self.render_ai_workbench(theme, height, true, window, cx)

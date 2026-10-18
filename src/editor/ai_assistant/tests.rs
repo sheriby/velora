@@ -3860,6 +3860,7 @@ fn ai_sidebar_separator_supports_keyboard_resize_and_clamps_at_narrow_windows(
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
     editor.update_in(cx, |editor, window, cx| {
         window.activate_window();
+        editor.workspace.is_open = false;
         editor.open_ai_assistant(AiCommand::Ask, window, cx);
         editor.ai_session.as_mut().unwrap().expanded = true;
     });
@@ -3957,6 +3958,156 @@ fn ai_split_workspace_uses_the_same_resizable_sidebar_and_menu_escape_scope(
         Some(sidebar),
         "Esc 只关闭菜单，不隐藏分屏侧栏"
     );
+    cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
+}
+
+fn compact_ai_sidebar_chain(cx: &mut TestAppContext, split: bool) {
+    use gpui_kit::test::TestWindowExt as _;
+    let (editor, cx, directory, _, _) = tab_review_fixture(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        if split {
+            editor.split_active_document(
+                crate::editor::workspace::split::SplitDirection::Right,
+                window,
+                cx,
+            );
+        }
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+    });
+    cx.run_until_parked();
+    let identity = editor.update_in(cx, |editor, window, cx| {
+        let session = editor.ai_session.as_mut().unwrap();
+        session.expanded = true;
+        session
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: "保留这份结果。".into(),
+            });
+        session
+            .input
+            .update(cx, |input, cx| input.set_value("未发送的草稿", window, cx));
+        let id = session.saved.id.clone();
+        editor.refresh_ai_conversation(cx);
+        cx.notify();
+        id
+    });
+    cx.simulate_resize(gpui::size(gpui::px(1200.0), gpui::px(800.0)));
+    for _ in 0..4 {
+        draw(cx);
+    }
+    let width = cx.debug_bounds("ai-sidebar").unwrap().size.width;
+    let transcript = editor.read_with(cx, |editor, _| {
+        editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .conversation
+            .as_ref()
+            .unwrap()
+            .entity_id()
+    });
+    cx.simulate_resize(gpui::size(gpui::px(800.0), gpui::px(800.0)));
+    for _ in 0..4 {
+        draw(cx);
+    }
+    assert!(
+        cx.debug_bounds("ai-sidebar").is_none(),
+        "窄窗口不能让双侧栏挤掉正文"
+    );
+    assert!(
+        cx.debug_bounds("ai-floating-workbench").is_some(),
+        "同一任务应临时回到浮窗"
+    );
+    assert!(
+        cx.debug_bounds("workspace-panel").is_some(),
+        "不要改变文件树的展开偏好"
+    );
+    if !split {
+        assert!(cx.debug_bounds("editor-scroll").unwrap().size.width >= gpui::px(320.0));
+    }
+    let dock = cx.update(|window, cx| {
+        let button = window.find("ai-expand");
+        assert_eq!(button.focused(), None, "不可用的停靠按钮不进入 Tab 序列");
+        assert!(
+            button.label().unwrap().contains(
+                &cx.global::<crate::i18n::I18nManager>()
+                    .strings()
+                    .ai_panel_dock_unavailable
+            )
+        );
+        button.bounds().center()
+    });
+    cx.simulate_click(dock, gpui::Modifiers::none());
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-floating-workbench").is_some(),
+        "空间不足时停靠按钮保持不可用，不改变当前布局"
+    );
+    cx.simulate_resize(gpui::size(gpui::px(1200.0), gpui::px(800.0)));
+    for _ in 0..4 {
+        draw(cx);
+    }
+    assert!(cx.debug_bounds("ai-floating-workbench").is_none());
+    assert_eq!(cx.debug_bounds("ai-sidebar").unwrap().size.width, width);
+    editor.read_with(cx, |editor, cx| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(session.saved.id, identity);
+        assert_eq!(session.input.read(cx).value(), "未发送的草稿");
+        assert_eq!(
+            session.conversation.as_ref().unwrap().entity_id(),
+            transcript
+        );
+        assert_eq!(
+            session.saved.messages.last().unwrap().text.as_ref(),
+            "保留这份结果。"
+        );
+    });
+    cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
+}
+
+#[gpui::test]
+fn kit_workspace_compact_ai_preserves_the_document_and_restores_docking(cx: &mut TestAppContext) {
+    compact_ai_sidebar_chain(cx, false);
+}
+
+#[gpui::test]
+fn kit_workspace_compact_ai_preserves_split_groups_and_restores_docking(cx: &mut TestAppContext) {
+    compact_ai_sidebar_chain(cx, true);
+}
+
+#[gpui::test]
+fn kit_workspace_ai_sidebar_resize_reserves_document_space_beyond_navigation(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, directory, _, _) = tab_review_fixture(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor.ai_session.as_mut().unwrap().expanded = true;
+        cx.notify();
+    });
+    cx.simulate_resize(gpui::size(gpui::px(1200.0), gpui::px(800.0)));
+    for _ in 0..4 {
+        draw(cx);
+    }
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.ai_sidebar_layout.as_ref().unwrap().focus, cx);
+    });
+    draw(cx);
+    cx.simulate_keystrokes("end");
+    for _ in 0..4 {
+        draw(cx);
+    }
+    let navigation = cx.debug_bounds("workspace-panel").unwrap();
+    let document = cx.debug_bounds("editor-scroll").unwrap();
+    let sidebar = cx.debug_bounds("ai-sidebar").unwrap();
+    assert!(
+        document.size.width >= gpui::px(320.0),
+        "最大侧栏宽度也要给正文保留空间：{document:?}"
+    );
+    assert_eq!(document.left(), navigation.right());
+    assert_eq!(document.right(), sidebar.left());
     cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
 }
 
