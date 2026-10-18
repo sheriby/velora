@@ -415,6 +415,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "preferences_status_bar_show_sidebar_toggle",
     "preferences_status_bar_show_mode_switch",
     "ai_assistant",
+    "ai_sidebar",
     "preferences_ai_enabled",
     "preferences_ai_connections",
     "preferences_ai_instructions",

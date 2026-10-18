@@ -118,6 +118,7 @@ impl PreferencesWindow {
                 strings.preferences_shortcut_find_in_document.clone()
             }
             ShortcutCommand::OpenAiAssistant => strings.preferences_shortcut_open_ai_assistant.clone(),
+            ShortcutCommand::ToggleAiSidebar => strings.ai_sidebar.clone(),
             ShortcutCommand::AiPolish => format!("AI {}", strings.ai_action_polish),
             ShortcutCommand::AiTranslate => format!("AI {}", strings.ai_action_translate),
             ShortcutCommand::AiSummarize => format!("AI {}", strings.ai_action_summarize),

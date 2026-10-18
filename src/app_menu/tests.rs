@@ -707,4 +707,19 @@ mod tests {
         let items = crate::app_menu::command_menus::file_menu_items(&strings, Vec::new(), false);
         assert!(!items.iter().any(|item| matches!(item, MenuItem::Action { action, .. } if action.as_any().is::<OpenPreferences>() || action.as_any().is::<CheckForUpdates>())), "偏好设置和检查更新应直接出现在 Windows 一级菜单");
     }
+
+    #[test]
+    fn ai_sidebar_menu_entry_is_in_view_and_respects_opt_in() {
+        let command=crate::commands::commands().iter().find(|command|command.id=="ai_sidebar")
+            .expect("视图菜单缺少 AI 侧边栏命令");
+        assert_eq!(command.menu,CommandMenu::View);
+        assert_eq!(command.label(&crate::i18n::I18nStrings::zh_cn()),"AI 侧边栏");
+        assert_eq!(command.label(&crate::i18n::I18nStrings::en_us()),"AI Sidebar");
+        let action=command.boxed_action();
+        for enabled in [false,true] {
+            let menus=build_menus(&ThemeManager::default(),&I18nManager::default(),&[],enabled);
+            let view=menus.iter().find(|menu|menu.name.as_ref()=="View").unwrap();
+            assert_eq!(view.items.iter().any(|item|matches!(item,MenuItem::Action{action: candidate,..} if candidate.as_any().type_id()==action.as_any().type_id())),enabled);
+        }
+    }
 }

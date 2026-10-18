@@ -448,6 +448,7 @@ impl I18nStrings {
         strings.preferences_image_paste_copy_to_named_assets_folder =
             "复制图片到 ./${filename}.assets 文件夹".into();
         strings.ai_assistant = "AI 助手".into();
+        strings.ai_sidebar = "AI 侧边栏".into();
         strings.preferences_ai_enabled = "启用 AI".into();
         strings.preferences_ai_connections = "连接".into();
         strings.preferences_ai_instructions = "指令".into();
@@ -986,6 +987,7 @@ impl I18nStrings {
             preferences_status_bar_show_sidebar_toggle: "Sidebar Toggle".into(),
             preferences_status_bar_show_mode_switch: "Mode Switch".into(),
             ai_assistant: "AI Assistant".into(),
+            ai_sidebar: "AI Sidebar".into(),
             preferences_ai_enabled: "Enable AI".into(),
             preferences_ai_connections: "Connections".into(),
             preferences_ai_instructions: "Instructions".into(),

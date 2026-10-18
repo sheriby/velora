@@ -551,10 +551,7 @@ impl Editor {
             .ai_session
             .as_ref()
             .is_some_and(|session| session.expanded);
-        self.open_ai_assistant(AiCommand::Ask, window, cx);
-        if let Some(session) = self.ai_session.as_mut() {
-            session.expanded = expanded;
-        }
+        self.open_ai_assistant_with_layout(AiCommand::Ask, expanded, window, cx);
         cx.notify();
     }
 
@@ -765,6 +762,54 @@ impl Editor {
         }
         cx.notify();
     }
+    pub(crate) fn on_toggle_ai_sidebar(
+        &mut self,
+        _: &crate::components::ToggleAiSidebar,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !AiFeature::enabled(cx) {
+            return;
+        }
+        if let Some(parent) = self.split_parent.clone() {
+            let handle = window.window_handle();
+            cx.defer(move |cx| {
+                match handle.update(cx, |_, window, cx| {
+                    parent.update(cx, |editor, cx| {
+                        editor.on_toggle_ai_sidebar(&crate::components::ToggleAiSidebar, window, cx)
+                    })
+                }) {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) | Err(error) => eprintln!("切换宿主 AI 侧栏失败：{error}"),
+                }
+            });
+            return;
+        }
+        if self
+            .ai_session
+            .as_ref()
+            .is_some_and(|session| session.visible && session.expanded)
+        {
+            self.hide_ai_panel(cx);
+        } else if let Some(session) = self.ai_session.as_mut() {
+            session.visible = true;
+            session.expanded = true;
+            session.panel_drag = None;
+            session.panel_navigation = false;
+            session.mode = PanelMode::Task;
+            if session.saved.kind == SessionKind::Conversation {
+                session
+                    .input
+                    .update(cx, |input, cx| input.focus(window, cx));
+            } else {
+                session.panel_focus.focus(window);
+            }
+            cx.notify();
+        } else {
+            self.open_ai_assistant_with_layout(AiCommand::Ask, true, window, cx);
+        }
+    }
+
     pub(crate) fn on_open_ai_assistant(
         &mut self,
         _: &crate::components::OpenAiAssistant,
@@ -798,6 +843,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_ai_assistant_with_layout(command, false, window, cx);
+    }
+
+    fn open_ai_assistant_with_layout(
+        &mut self,
+        command: AiCommand,
+        expanded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !crate::ai::settings::AiFeature::enabled(cx) {
             return;
         }
@@ -806,7 +861,7 @@ impl Editor {
             cx.defer(move |cx| {
                 if let Err(error) = handle.update(cx, |_, window, cx| {
                     group.update(cx, |editor, cx| {
-                        editor.open_ai_assistant(command, window, cx)
+                        editor.open_ai_assistant_with_layout(command, expanded, window, cx)
                     })
                 }) {
                     eprintln!("在活动分屏打开 AI 失败：{error}");
@@ -865,6 +920,7 @@ impl Editor {
                     parent.update(cx, |editor, cx| {
                         editor.open_ai_target(
                             command,
+                            expanded,
                             owner_document,
                             target,
                             document,
@@ -883,6 +939,7 @@ impl Editor {
         }
         self.open_ai_target(
             command,
+            expanded,
             owner_document,
             target,
             document,
@@ -896,6 +953,7 @@ impl Editor {
     fn open_ai_target(
         &mut self,
         command: AiCommand,
+        expanded: bool,
         owner_document: uuid::Uuid,
         target: TargetSnapshot,
         document: DocumentSnapshot,
@@ -979,7 +1037,7 @@ impl Editor {
                 .new(|cx| TextField::new("{{selection}} · {{document}} · {{references}}", cx).multiline(4, 8)),
             settings,
             visible: true,
-            expanded: false,
+            expanded,
             mode: PanelMode::Task,
             command,
             origin,

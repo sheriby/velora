@@ -2497,3 +2497,150 @@ fn ai_instruction_conversation_keeps_its_http_prefix_after_language_and_preferen
     assert!(first[0].to_string().contains("Original writing preference"));
     assert!(second.starts_with(first), "继续对话只追加消息");
 }
+
+fn sidebar_menu_chain(cx: &mut TestAppContext, split: bool) {
+    initialize(cx);
+    cx.update(crate::app_menu::init);
+    let action = crate::commands::commands()
+        .iter()
+        .find(|command| command.id == "ai_sidebar")
+        .expect("视图菜单需要独立的 AI 侧边栏入口")
+        .boxed_action();
+    let directory =
+        std::env::temp_dir().join(format!("velora-ai-sidebar-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("note.md");
+    std::fs::write(&path, "alpha one").unwrap();
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha one".into(), Some(path)));
+    if split {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.split_active_document(
+                crate::editor::workspace::split::SplitDirection::Right,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+    }
+    let target = if split {
+        editor
+            .read_with(cx, |editor, _| editor.active_split_editor())
+            .expect("必须实际创建分屏，不能回退成普通窗口测试")
+    } else {
+        editor.clone()
+    };
+    let block = target.read_with(cx, |editor, _| {
+        editor.document.first_root().unwrap().clone()
+    });
+    target.update(cx, |editor, _| editor.focus_block(block.entity_id()));
+    block.update(cx, |block, _| block.selected_range = 0..5);
+    let weak = editor.downgrade();
+    cx.update(|window, cx| {
+        window.activate_window();
+        crate::app_menu::dispatch_menu_action(action.as_ref(), cx);
+    });
+    cx.run_until_parked();
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-sidebar").is_some(),
+        "从视图打开应直接显示侧栏"
+    );
+    let (id, control) = editor.update(cx, |editor, cx| {
+        let session = editor.ai_session.as_mut().unwrap();
+        assert!(session.expanded && session.visible);
+        assert_eq!(session.saved.target.as_ref().unwrap().selection, "alpha");
+        session
+            .input
+            .update(cx, |input, cx| input.set_value("尚未发送的后续要求", cx));
+        session
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: "已有回答".into(),
+            });
+        let document = session
+            .saved
+            .workspace
+            .documents
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+        session
+            .saved
+            .workspace
+            .changes
+            .propose(document, "alpha", "ALPHA")
+            .unwrap();
+        session.saved.running = true;
+        (session.saved.id.clone(), session.control.clone())
+    });
+    for visible in [false, true] {
+        cx.update(|window, cx| {
+            crate::app_menu::dispatch_menu_action_for_editor(action.as_ref(), &weak, window, cx)
+        });
+        cx.run_until_parked();
+        draw(cx);
+        draw(cx);
+        assert_eq!(cx.debug_bounds("ai-sidebar").is_some(), visible);
+        editor.read_with(cx, |editor, cx| {
+            let session = editor.ai_session.as_ref().unwrap();
+            assert_eq!(session.saved.id, id, "开合侧栏不能创建或重置任务");
+            assert_eq!(session.input.read(cx).value(), "尚未发送的后续要求");
+            assert_eq!(session.saved.messages.len(), 1);
+            assert_eq!(session.saved.workspace.changes.proposals.len(), 1);
+        });
+        assert!(!control.cancel.is_cancelled(), "收起侧栏不能停止已有任务");
+    }
+    editor.update_in(cx, |editor, window, cx| editor.new_ai_task(window, cx));
+    cx.run_until_parked();
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-sidebar").is_some(),
+        "在侧栏中新建对话应保留侧栏布局"
+    );
+    editor.update_in(cx, |editor, window, cx| {
+        editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx)
+    });
+    cx.run_until_parked();
+    draw(cx);
+    draw(cx);
+    editor.read_with(cx, |editor, _| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_ne!(session.saved.id, id, "快捷键仍需发起独立对话");
+        assert!(!session.expanded, "快捷键仍以浮动对话打开");
+        assert!(
+            editor
+                .ai_task_sessions
+                .iter()
+                .any(|session| session.saved.id == id
+                    && session.saved.workspace.changes.proposals.len() == 1)
+        );
+    });
+    cx.update(|_, cx| crate::ai::settings::AiFeature::set_enabled(cx, false));
+    draw(cx);
+    cx.update(|window, cx| {
+        crate::app_menu::dispatch_menu_action_for_editor(action.as_ref(), &weak, window, cx)
+    });
+    cx.run_until_parked();
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-sidebar").is_none(),
+        "AI 停用后不能通过旧动作打开侧栏"
+    );
+    cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
+}
+
+#[gpui::test]
+fn ai_sidebar_menu_opens_and_restores_the_same_task(cx: &mut TestAppContext) {
+    sidebar_menu_chain(cx, false);
+}
+
+#[gpui::test]
+fn ai_sidebar_menu_in_a_split_routes_to_the_window_host(cx: &mut TestAppContext) {
+    sidebar_menu_chain(cx, true);
+}

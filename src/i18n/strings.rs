@@ -663,6 +663,7 @@ pub struct I18nStrings {
     pub preferences_status_bar_show_mode_switch: String,
     /// AI 助手(右键菜单/通用标签)。
     pub ai_assistant: String,
+    pub ai_sidebar: String,
     pub preferences_ai_enabled: String,
     pub preferences_ai_connections: String,
     pub preferences_ai_instructions: String,

@@ -13,7 +13,7 @@
 use gpui::Action;
 
 use crate::components::{
-    OpenAiAssistant, BoldSelection, ClearFormatSelection, CloseWindow, CodeSelection, CopyAsHtml, CopyAsMarkdown,
+    OpenAiAssistant, ToggleAiSidebar, BoldSelection, ClearFormatSelection, CloseWindow, CodeSelection, CopyAsHtml, CopyAsMarkdown,
     SplitEditorLeft, SplitEditorRight, SplitEditorUp, SplitEditorDown,
     CloseTab, ExportHtml, ExportPdf, ExportPng, FileHistory, FindInDocument, FindNextMatch,
     FindPreviousMatch, FormatDocument, HighlightSelection, ItalicSelection, LinkSelection,
@@ -89,6 +89,7 @@ static COMMANDS: &[CommandSpec] = &[
     // 应用菜单；Windows 的设置和更新入口放在汉堡菜单一级，退出放在文件菜单末尾。
     command!("preferences", App, menu_preferences, OpenPreferences),
     command!("open_ai_assistant", View, ai_assistant, OpenAiAssistant),
+    command!("ai_sidebar", View, ai_sidebar, ToggleAiSidebar),
     CommandSpec { id: "ai_polish", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_polish), action: || Box::new(crate::components::AiPolish) },
     CommandSpec { id: "ai_translate", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_translate), action: || Box::new(crate::components::AiTranslate) },
     CommandSpec { id: "ai_summarize", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_summarize), action: || Box::new(crate::components::AiSummarize) },
@@ -299,6 +300,7 @@ mod tests {
             view_ids,
             vec![
                 "open_ai_assistant",
+                "ai_sidebar",
                 "split_editor_left", "split_editor_right", "split_editor_up", "split_editor_down",
                 "toggle_sidebar",
                 "toggle_fullscreen",

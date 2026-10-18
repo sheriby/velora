@@ -845,6 +845,8 @@ pub(crate) fn editor_menu_handler(action: &dyn Action) -> Option<EditorMenuHandl
         Some(|editor, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Explain, window, cx))
     } else if action.as_any().is::<crate::components::AiExpand>() {
         Some(|editor, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Expand, window, cx))
+    } else if action.as_any().is::<crate::components::ToggleAiSidebar>() {
+        Some(|editor, window, cx| editor.on_toggle_ai_sidebar(&crate::components::ToggleAiSidebar, window, cx))
     } else if action.as_any().is::<crate::components::OpenAiAssistant>() {
         Some(|editor, window, cx| editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx))
     } else if action.as_any().is::<crate::components::ToggleReadingMode>() {

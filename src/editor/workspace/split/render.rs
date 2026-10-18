@@ -189,6 +189,7 @@ impl Editor {
         }
         root = root
             .on_action(cx.listener(Self::on_open_ai_assistant))
+            .on_action(cx.listener(Self::on_toggle_ai_sidebar))
             .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiPolish>))
             .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiTranslate>))
             .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiSummarize>))
