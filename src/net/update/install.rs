@@ -282,8 +282,26 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
     fn another_running_instance_blocks_update_before_the_current_workspace_exits() {
         let _process_guard = crate::test_support::exclusive_process_probe();
+        const ISOLATED: &str = "VELORA_UPDATE_ISOLATED_TEST";
+        if std::env::var_os(ISOLATED).is_none() {
+            // 全量回归中的其他子进程共享测试程序名，实例计数需要独立的程序身份。
+            let identity = uuid::Uuid::new_v4().simple().to_string();
+            let directory = std::env::temp_dir().join(format!("velora-instance-test-{identity}"));
+            fs::create_dir_all(&directory).expect("独立测试目录");
+            let executable = directory.join(format!("vu-{}{}", &identity[..10], if cfg!(target_os = "windows") { ".exe" } else { "" }));
+            fs::copy(std::env::current_exe().expect("测试程序"), &executable).expect("独立程序副本");
+            let output = Command::new(&executable)
+                .args(["--exact", "net::update::install::tests::another_running_instance_blocks_update_before_the_current_workspace_exits", "--ignored", "--nocapture"])
+                .env(ISOLATED, "1")
+                .output();
+            fs::remove_dir_all(&directory).expect("清理独立测试程序");
+            let output = output.expect("启动独立实例回归");
+            assert!(output.status.success(), "独立实例回归失败：{}\n{}\n{}", output.status, String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            return;
+        }
         struct Probe(std::process::Child);
         impl Drop for Probe {
             fn drop(&mut self) {
