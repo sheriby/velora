@@ -106,6 +106,10 @@ fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> The
 
 #[allow(unused)]
 impl Theme {
+    pub(crate) fn is_dark(&self) -> bool {
+        self.colors.editor_background.l < 0.5
+    }
+
     /// Returns the built-in fallback theme used when no custom theme is loaded.
     pub fn default_theme() -> Self {
         Self {

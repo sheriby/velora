@@ -313,7 +313,7 @@ impl Block {
         let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
         let available_width = effective_image_width(self, viewport_width, d, cx);
 
-        match render_mermaid_svg_for_display(&source, available_width) {
+        match crate::components::render_mermaid_svg_for_theme(&source, available_width, theme.is_dark()) {
             Ok(rendered) => {
                 let display_width = rendered.display_width.max(1.0);
                 let display_height = rendered.display_height.max(1.0);

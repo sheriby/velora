@@ -28,7 +28,7 @@ use crate::components::markdown::inline::{is_single_inline_dollar, looks_like_cu
 use crate::components::BlockKind;
 pub(super) use crate::components::{
     display_math_font_size, inline_math_font_size, is_mermaid_info_string, parse_display_math_source,
-    parse_html_image_block, render_latex_to_svg, render_mermaid_to_svg, sanitize_html_for_export,
+    parse_html_image_block, render_latex_to_svg, render_mermaid_to_svg_for_theme, sanitize_html_for_export,
 };
 use crate::file_url::percent_decode_or_raw;
 pub(super) use crate::theme::{FontWeightDef, Theme};
@@ -1226,7 +1226,7 @@ impl<'a> ExportRewriter<'a> {
             ""
         };
         let body = content.trim_matches(|ch| ch == '\n' || ch == '\r');
-        match render_mermaid_to_svg(body) {
+        match render_mermaid_to_svg_for_theme(body, self.theme.is_dark()) {
             Ok(svg) => {
                 let src = data_uri_for_bytes("image/svg+xml", svg.as_bytes());
                 output.push(Event::Html(CowStr::from(format!(

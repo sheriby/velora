@@ -45,7 +45,7 @@ fn sync_theme(cx: &mut App) {
     let colors = &source.colors;
     let fonts = EditorSettings::fonts(cx);
     let font_size = fonts.ui_size as f32;
-    let mode = if colors.editor_background.l < 0.5 {
+    let mode = if source.is_dark() {
         ThemeMode::Dark
     } else {
         ThemeMode::Light

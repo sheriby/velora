@@ -51,7 +51,6 @@ fn lock_memory_cache() -> Option<std::sync::MutexGuard<'static, MermaidSvgMemory
 
 /// 内存里问一遍：命中就整条路不碰磁盘（不建目录、不读文件、不解析 SVG）。
 fn memory_cached_render(
-    body: &str,
     base_key: &str,
     available_width: f32,
 ) -> Option<MermaidSvgRender> {
@@ -60,7 +59,7 @@ fn memory_cached_render(
         *cache.intrinsic.get(base_key)?
     };
     let scale = mermaid_display_scale(width, available_width);
-    let display_key = mermaid_display_cache_key(body, scale);
+    let display_key = display_cache_key(base_key, scale);
     let cache = lock_memory_cache()?;
     let rendered = cache.renders.get(&display_key)?.clone();
     // 磁盘上那份文件是 `img` 元素要读的东西：缓存目录被清理掉之后，内存里还留着
@@ -199,24 +198,34 @@ pub(crate) fn render_mermaid_svg_for_display(
     render_mermaid_svg_for_display_with(source, available_width, render_mermaid_raw)
 }
 
+pub(crate) fn render_mermaid_svg_for_theme(source: &MermaidSource, available_width: f32, dark: bool) -> anyhow::Result<MermaidSvgRender> {
+    if !dark { return render_mermaid_svg_for_display(source, available_width); }
+    let key = format!("{}-dark", mermaid_cache_key(&source.body));
+    render_mermaid_display_cached(source, available_width, render_mermaid_dark_raw, &key)
+}
+
 fn render_mermaid_svg_for_display_with(
     source: &MermaidSource,
     available_width: f32,
     renderer: MermaidRenderer,
 ) -> anyhow::Result<MermaidSvgRender> {
     let base_key = mermaid_cache_key(&source.body);
+    render_mermaid_display_cached(source, available_width, renderer, &base_key)
+}
+
+fn render_mermaid_display_cached(source: &MermaidSource, available_width: f32, renderer: MermaidRenderer, base_key: &str) -> anyhow::Result<MermaidSvgRender> {
     // 内存里先问一遍：命中就一次磁盘都不碰（这正是每帧渲染要付的那一笔）。
-    if let Some(rendered) = memory_cached_render(&source.body, &base_key, available_width) {
+    if let Some(rendered) = memory_cached_render(base_key, available_width) {
         return Ok(rendered);
     }
 
-    let base_path = mermaid_base_cache_path(&base_key)?;
+    let base_path = mermaid_base_cache_path(base_key)?;
     let base_svg = render_mermaid_to_svg_cached_with(&source.body, &base_path, renderer)?;
-    let intrinsic = mermaid_svg_intrinsic_size(&base_svg)?;
-    remember_intrinsic(&base_key, intrinsic.width);
+    let intrinsic = svg_intrinsic_size(&base_svg)?;
+    remember_intrinsic(base_key, intrinsic.width);
     let scale = mermaid_display_scale(intrinsic.width, available_width);
 
-    let display_key = mermaid_display_cache_key(&source.body, scale);
+    let display_key = display_cache_key(base_key, scale);
     let display_path = mermaid_display_cache_path(&display_key)?;
     if let Some(svg) = read_svg_cache(&display_path) {
         let (start, end) = svg_root_tag_range(&svg)?;
@@ -252,6 +261,12 @@ pub(crate) fn render_mermaid_to_svg(source: &str) -> anyhow::Result<String> {
     render_mermaid_to_svg_cached_with(source, &path, render_mermaid_raw)
 }
 
+pub(crate) fn render_mermaid_to_svg_for_theme(source: &str, dark: bool) -> anyhow::Result<String> {
+    if !dark { return render_mermaid_to_svg(source); }
+    let path = mermaid_base_cache_path(&format!("{}-dark", mermaid_cache_key(source)))?;
+    render_mermaid_to_svg_cached_with(source, &path, render_mermaid_dark_raw)
+}
+
 type MermaidRenderer = fn(&str) -> anyhow::Result<String>;
 
 fn render_mermaid_to_svg_cached_with(
@@ -269,12 +284,20 @@ fn render_mermaid_to_svg_cached_with(
 }
 
 fn render_mermaid_raw(source: &str) -> anyhow::Result<String> {
+    render_mermaid_with_theme(source, false)
+}
+
+fn render_mermaid_dark_raw(source: &str) -> anyhow::Result<String> {
+    render_mermaid_with_theme(source, true)
+}
+
+fn render_mermaid_with_theme(source: &str, dark: bool) -> anyhow::Result<String> {
     if !looks_like_supported_mermaid_source(source) {
         return Err(anyhow::anyhow!("unsupported Mermaid diagram"));
     }
     let config = MermaidConfig::from_value(serde_json::json!({
         "layout": "dagre",
-        "theme": "default",
+        "theme": if dark { "dark" } else { "default" },
         "look": "classic",
         "htmlLabels": false,
         // resvg 按首个可用字体选主字体，Arial 在前会让中文落入任意缺字回退。
@@ -309,10 +332,15 @@ pub(crate) fn mermaid_cache_key(source: &str) -> String {
 ///
 /// scale 是随窗口宽度连续变化的量：按 0.001 分档后进键，拖宽度不再一个
 /// 像素一个新键（缓存目录按「每张图 × 每种宽度」膨胀）。
-pub(crate) fn mermaid_display_cache_key(source: &str, scale: f32) -> String {
+#[cfg(test)]
+fn mermaid_display_cache_key(source: &str, scale: f32) -> String {
+    display_cache_key(&mermaid_cache_key(source), scale)
+}
+
+fn display_cache_key(base_key: &str, scale: f32) -> String {
     let bucketed = ((scale * 1000.0).round() as i64).to_string();
     let mut hasher = DefaultHasher::new();
-    mermaid_cache_key(source).hash(&mut hasher);
+    base_key.hash(&mut hasher);
     bucketed.hash(&mut hasher);
     format!("{MERMAID_SVG_CACHE_VERSION}-{:016x}", hasher.finish())
 }
@@ -378,7 +406,7 @@ pub(crate) fn scale_mermaid_svg_for_display(
     Ok((rewritten, size))
 }
 
-fn mermaid_svg_intrinsic_size(svg: &str) -> anyhow::Result<MermaidSvgSize> {
+pub(crate) fn svg_intrinsic_size(svg: &str) -> anyhow::Result<MermaidSvgSize> {
     let (start, end) = svg_root_tag_range(svg)?;
     svg_root_size(&svg[start..end])
 }
@@ -643,6 +671,25 @@ mod tests {
 
     static TEST_RENDERER_CALLS: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
 
+    #[test]
+    fn themed_mermaid_uses_distinct_svg_and_cache_entries() {
+        let raw = format!("```mermaid\nflowchart LR\n A[Theme {}] --> B[Result]\n```", uuid::Uuid::new_v4());
+        let source = parse_mermaid_fence_source(&raw).unwrap();
+        let light = render_mermaid_svg_for_theme(&source, 600.0, false).unwrap();
+        let dark = render_mermaid_svg_for_theme(&source, 600.0, true).unwrap();
+        assert_ne!(light.path, dark.path, "主题必须进入 SVG 缓存键");
+        assert_ne!(light.svg, dark.svg, "深色图表必须由相应的渲染主题生成");
+    }
+
+    #[test]
+    fn authored_mermaid_theme_remains_authoritative() {
+        let raw = format!("```mermaid\n%%{{init: {{\"theme\": \"dark\"}}}}%%\nflowchart LR\n A[Authored {}] --> B[Result]\n```", uuid::Uuid::new_v4());
+        let source = parse_mermaid_fence_source(&raw).unwrap();
+        let light = render_mermaid_svg_for_theme(&source, 600.0, false).unwrap();
+        let dark = render_mermaid_svg_for_theme(&source, 600.0, true).unwrap();
+        assert_eq!(light.svg, dark.svg, "应用外观只提供默认值，不能覆盖图表自身的主题");
+    }
+
     fn test_renderer(source: &str) -> anyhow::Result<String> {
         let calls = TEST_RENDERER_CALLS.get_or_init(|| Mutex::new(HashMap::new()));
         let mut calls = calls.lock().expect("renderer calls mutex poisoned");
@@ -798,7 +845,7 @@ mod tests {
             .expect("报修图表应生成 SVG");
         assert!(svg.contains("<svg"));
         assert!(svg.contains("</svg>"));
-        let size = mermaid_svg_intrinsic_size(&svg).expect("有效 SVG 尺寸");
+        let size = svg_intrinsic_size(&svg).expect("有效 SVG 尺寸");
         assert!(size.width > 0.0 && size.height > 0.0);
     }
 
@@ -823,7 +870,7 @@ flowchart TD
     fn reported_flowchart_keeps_a_compact_portrait_layout() {
         let source = reported_complex_flowchart();
         let svg = render_mermaid_raw(&source.body).expect("报修图表应生成 SVG");
-        let size = mermaid_svg_intrinsic_size(&svg).expect("有效 SVG 尺寸");
+        let size = svg_intrinsic_size(&svg).expect("有效 SVG 尺寸");
         assert!(
             size.height <= size.width,
             "报修图表应紧凑展示主干与回线，不能拉成长条：{size:?}"

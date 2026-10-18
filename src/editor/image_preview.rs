@@ -25,6 +25,8 @@ pub(super) struct ImageFilePreview {
 
 pub(super) struct MermaidPreview {
     rendered: crate::components::MermaidSvgRender,
+    source: crate::components::MermaidSource,
+    dark: bool,
     scale: Option<f32>,
     viewport: Size<Pixels>,
     pan: Point<Pixels>,
@@ -58,15 +60,18 @@ impl MermaidPreview {
 
 impl Editor {
     pub(super) fn open_mermaid_preview(&mut self, markdown: &str, cx: &mut Context<Self>) {
+        let dark = cx.global::<crate::theme::ThemeManager>().current().is_dark();
         let result = crate::components::parse_mermaid_fence_source(markdown)
             .ok_or_else(|| anyhow::anyhow!("无法读取图表源码"))
             .and_then(|source| {
-                crate::components::render_mermaid_svg_for_display(&source, f32::MAX)
+                crate::components::render_mermaid_svg_for_theme(&source, f32::MAX, dark).map(|rendered| (source, rendered))
             });
         match result {
-            Ok(rendered) => {
+            Ok((source, rendered)) => {
                 self.mermaid_preview = Some(MermaidPreview {
                     rendered,
+                    source,
+                    dark,
                     scale: None,
                     viewport: size(px(1.0), px(1.0)),
                     pan: point(px(0.0), px(0.0)),
@@ -75,6 +80,24 @@ impl Editor {
                 cx.notify();
             }
             Err(error) => self.show_message_modal("Mermaid", error.to_string(), cx),
+        }
+    }
+
+    pub(super) fn sync_mermaid_preview_theme(&mut self, cx: &mut Context<Self>) {
+        let dark = cx.global::<crate::theme::ThemeManager>().current().is_dark();
+        let Some(preview) = self.mermaid_preview.as_mut().filter(|preview| preview.dark != dark) else {
+            return;
+        };
+        match crate::components::render_mermaid_svg_for_theme(&preview.source, f32::MAX, dark) {
+            Ok(rendered) => {
+                preview.rendered = rendered;
+                preview.dark = dark;
+                preview.clamp_pan();
+            }
+            Err(error) => {
+                self.mermaid_preview = None;
+                self.show_message_modal("Mermaid", error.to_string(), cx);
+            }
         }
     }
 
@@ -471,5 +494,54 @@ impl Editor {
             }))
             .child(content)
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::Editor;
+    use crate::theme::ThemeManager;
+    use gpui::{BorrowAppContext as _, TestAppContext};
+
+    #[gpui::test]
+    fn mermaid_preview_theme_change_keeps_its_zoom(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init_with_language_id(cx, "en-US");
+            ThemeManager::init_with_theme_id(cx, "velora-dark");
+            crate::components::init(cx);
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+        editor.update(cx, |editor, cx| {
+            editor.open_mermaid_preview("```mermaid\nflowchart LR\n A-->B\n```", cx)
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+        let path = editor.update(cx, |editor, cx| {
+            editor.zoom_mermaid_preview(2.0, cx);
+            editor
+                .mermaid_preview
+                .as_ref()
+                .unwrap()
+                .rendered
+                .path
+                .clone()
+        });
+        cx.update(|_, cx| {
+            cx.update_global::<ThemeManager, _>(|manager, _| {
+                assert!(manager.set_theme_by_id("forest"))
+            })
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, _| {
+            let preview = editor.mermaid_preview.as_ref().unwrap();
+            assert_ne!(
+                preview.rendered.path, path,
+                "预览已打开时也要按新外观更新图表"
+            );
+            assert_eq!(preview.scale(), 2.0, "换主题不能清除用户缩放");
+            assert_eq!(editor.buffer.text(), "正文");
+        });
     }
 }

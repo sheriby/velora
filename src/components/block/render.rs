@@ -18,7 +18,7 @@ pub(super) use crate::components::{
     inline_math_font_size,
     parse_html_image_block, parse_mermaid_fence_source,
     parse_table_cell_inline_images, render_display_math_svg, render_inline_math_svg,
-    render_mermaid_svg_for_display, resolve_image_source, style_for_node,
+    resolve_image_source, style_for_node,
 };
 use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::{Theme, ThemeColors, ThemeDimensions, ThemeManager};
