@@ -40,7 +40,6 @@ impl Render for Editor {
         }
 
         self.window_handle = Some(window.window_handle());
-        self.sync_ai_surface_visibility(cx);
         #[cfg(not(test))]
         if !self.ai_result_preview && self.split_parent.is_none() { self.maybe_check_updates_on_startup(window, cx); }
         if !self.ai_result_preview && self.system_appearance_subscription.is_none() {
@@ -55,6 +54,7 @@ impl Render for Editor {
         }
         if !self.ai_result_preview && self.split_parent.is_none() { self.install_close_guard(cx, window); }
         self.sync_ai_review_document(cx);
+        self.sync_ai_surface_visibility(cx);
         if self.split_workspace.is_some() {
             return self.render_split_workspace(window, cx);
         }

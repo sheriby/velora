@@ -360,62 +360,227 @@ fn ai_opening_another_selection_keeps_existing_unreviewed_changes(cx: &mut TestA
     });
 }
 
-#[gpui::test]
-fn ai_opening_a_real_document_returns_to_editing_and_keeps_pending_changes(
+fn tab_review_fixture(
     cx: &mut TestAppContext,
+) -> (
+    gpui::Entity<Editor>,
+    &mut VisualTestContext,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
 ) {
     initialize(cx);
-    let directory =
-        std::env::temp_dir().join(format!("velora-ai-review-tabs-{}", uuid::Uuid::new_v4()));
+    let directory = std::env::temp_dir().join(format!("velora-ai-tabs-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&directory).unwrap();
     let first = directory.join("first.md");
     let second = directory.join("second.md");
-    std::fs::write(&first, "原文").unwrap();
+    let middle = (0..24)
+        .map(|index| format!("保留的段落 {index}。\n\n"))
+        .collect::<String>();
+    let source = format!("旧第一段。\n\n{middle}旧第二段。");
+    std::fs::write(&first, &source).unwrap();
     std::fs::write(&second, "另外一篇").unwrap();
     let (editor, cx) =
-        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原文".into(), Some(first)));
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, source, Some(first.clone())));
     editor.update_in(cx, |editor, window, cx| {
-        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        crate::config::EditorSettings::install_test_settings(cx, false);
+        crate::config::EditorSettings::set_autosave_in_memory(false, cx);
+        editor.ensure_current_document_tab(cx);
+        editor.open_workspace_file(second.clone(), window, cx);
+        editor.open_workspace_file(first.clone(), window, cx);
+    });
+    draw(cx);
+    draw(cx);
+    (editor, cx, directory, first, second)
+}
+
+fn propose_tab_changes(editor: &gpui::Entity<Editor>, cx: &mut VisualTestContext) {
+    editor.update(cx, |editor, cx| {
         let session = editor.ai_session.as_mut().unwrap();
         session.mode = PanelMode::Task;
         let id = session.saved.target.as_ref().unwrap().document_id.clone();
         let baseline = session.saved.workspace.documents[&id].clone();
+        let changed = baseline
+            .source
+            .replace("旧第一段。", "新第一段。")
+            .replace("旧第二段。", "新第二段。");
         session
             .saved
             .workspace
             .changes
             .proposals
-            .insert(id, crate::ai::Proposal::new(baseline, "待审阅内容".into()));
+            .insert(id, crate::ai::Proposal::new(baseline, changed));
         editor.refresh_ai_preview(cx);
     });
     draw(cx);
     draw(cx);
-    assert!(cx.debug_bounds("ai-review-workspace").is_some());
+    draw(cx);
+}
+
+#[gpui::test]
+fn ai_returning_to_a_tab_restores_the_same_review_and_allows_acceptance_and_undo(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, directory, first, second) = tab_review_fixture(cx);
+    let original = std::fs::read_to_string(&first).unwrap();
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx)
+    });
+    propose_tab_changes(&editor, cx);
+    editor.update(cx, |editor, cx| editor.move_ai_review_change(true, cx));
+    for _ in 0..5 {
+        draw(cx);
+    }
+    let (tracked, position) = editor.read_with(cx, |editor, cx| {
+        let review = editor.ai_session.as_ref().unwrap().review.as_ref().unwrap();
+        assert_eq!(review.index, 1);
+        (
+            review.tracked.clone(),
+            review.tracked.read(cx).scroll_handle.offset(),
+        )
+    });
+    assert!(
+        position.y < gpui::px(0.0),
+        "夹具应定位到后面的修改，覆盖滚动恢复"
+    );
     editor.update_in(cx, |editor, window, cx| {
         editor.open_workspace_file(second.clone(), window, cx)
     });
     draw(cx);
     draw(cx);
+    assert!(cx.debug_bounds("ai-review-workspace").is_none());
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), "另外一篇"));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(first.clone(), window, cx)
+    });
+    draw(cx);
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-review-workspace").is_some(),
+        "回到有待审阅修改的标签必须恢复红绿预览"
+    );
+    editor.read_with(cx, |editor, cx| {
+        let review = editor.ai_session.as_ref().unwrap().review.as_ref().unwrap();
+        assert_eq!(review.tracked.entity_id(), tracked.entity_id());
+        assert_eq!(review.index, 1);
+        assert_eq!(review.tracked.read(cx).scroll_handle.offset(), position);
+        assert_eq!(editor.buffer.text(), original);
+    });
+    let accept = cx.debug_bounds("ai-review-accept").unwrap().center();
+    cx.simulate_click(accept, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            editor.buffer.text(),
+            original.replace("旧第二段。", "新第二段。")
+        );
+        editor.on_undo(&crate::components::Undo, window, cx);
+        assert_eq!(editor.buffer.text(), original);
+    });
+    assert_eq!(std::fs::read_to_string(first).unwrap(), original);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[gpui::test]
+fn ai_result_arriving_on_another_tab_waits_for_the_task_tab_to_be_reopened(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, directory, first, second) = tab_review_fixture(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.saved.running = true;
+        editor.open_workspace_file(second.clone(), window, cx);
+    });
+    draw(cx);
+    draw(cx);
+    propose_tab_changes(&editor, cx);
+    editor.update(cx, |editor, cx| {
+        editor.ai_session.as_mut().unwrap().saved.running = false;
+        cx.notify();
+    });
+    draw(cx);
+    draw(cx);
     assert!(
         cx.debug_bounds("ai-review-workspace").is_none(),
-        "切换文件不能仍被审阅页面遮挡"
+        "迟到的结果不能覆盖其他标签的正文"
     );
-    assert!(cx.debug_bounds("ai-floating-workbench").is_some());
-    editor.read_with(cx, |editor, _| {
-        assert_eq!(editor.buffer.text(), "另外一篇");
-        assert_eq!(
-            editor
-                .ai_session
-                .as_ref()
-                .unwrap()
-                .saved
-                .workspace
-                .changes
-                .proposals
-                .len(),
-            1
-        );
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(first.clone(), window, cx)
     });
+    draw(cx);
+    draw(cx);
+    assert!(cx.debug_bounds("ai-review-workspace").is_some());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[gpui::test]
+fn ai_explicitly_returning_to_the_document_stays_closed_after_a_tab_round_trip(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, directory, first, second) = tab_review_fixture(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx)
+    });
+    propose_tab_changes(&editor, cx);
+    let options = cx.debug_bounds("ai-options").unwrap().center();
+    cx.simulate_click(options, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    let leave = cx.debug_bounds("ai-options-view").unwrap().center();
+    cx.simulate_click(leave, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(second.clone(), window, cx);
+        editor.open_workspace_file(first.clone(), window, cx);
+    });
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-review-workspace").is_none(),
+        "主动返回正文后不强制重新打开预览"
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[gpui::test]
+fn ai_returning_to_a_tab_in_a_split_group_restores_the_host_review(cx: &mut TestAppContext) {
+    let (editor, cx, directory, first, second) = tab_review_fixture(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.split_active_document(
+            crate::editor::workspace::split::SplitDirection::Right,
+            window,
+            cx,
+        )
+    });
+    draw(cx);
+    draw(cx);
+    let active = editor.read_with(cx, |editor, _| editor.active_split_editor().unwrap());
+    active.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx)
+    });
+    cx.run_until_parked();
+    propose_tab_changes(&editor, cx);
+    active.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(second.clone(), window, cx)
+    });
+    draw(cx);
+    draw(cx);
+    assert!(cx.debug_bounds("ai-review-workspace").is_none());
+    active.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(first.clone(), window, cx)
+    });
+    draw(cx);
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-review-workspace").is_some(),
+        "分屏标签回切也要恢复宿主中的审阅"
+    );
     std::fs::remove_dir_all(directory).unwrap();
 }
 

@@ -299,6 +299,7 @@ impl Editor {
             });
         }
         if !session.review_dirty {
+            self.sync_ai_review_navigation(cx);
             return;
         }
         let selected = session
@@ -332,6 +333,7 @@ impl Editor {
             session.review_dirty = false;
             session.review_open = false;
         }
+        self.sync_ai_review_navigation(cx);
     }
 
     pub(super) fn move_ai_review_change(&mut self, forward: bool, cx: &mut Context<Self>) {

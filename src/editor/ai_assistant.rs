@@ -68,6 +68,8 @@ pub(super) struct AiSession {
     panel_drag: Option<Point<Pixels>>,
     pub(in crate::editor) conversation: Option<Entity<Editor>>,
     review_open: bool,
+    // 标签重载会重建缓冲区，使用稳定的恢复标识区分暂离与主动关闭。
+    review_navigation: Option<uuid::Uuid>,
     history_files: Vec<(PathBuf, String)>,
     skills: crate::ai::skills::SkillCatalog,
     input_tokens: u64,
@@ -160,24 +162,63 @@ impl Editor {
         }
         cx.notify();
     }
+    fn ai_review_navigation_origin(&self, cx: &App) -> uuid::Uuid {
+        self.active_split_editor()
+            .map_or(self.recovery_id, |group| group.read(cx).recovery_id)
+    }
+
+    fn suspend_ai_review_for_navigation(&mut self, origin: uuid::Uuid) {
+        if let Some(session) = self.ai_session.as_mut() {
+            if session.review_open
+                || (session.review.is_none()
+                    && session.saved.running
+                    && session.review_navigation.is_none())
+            {
+                session.review_navigation = Some(origin);
+            }
+            session.review_open = false;
+        }
+    }
+
+    pub(super) fn sync_ai_review_navigation(&mut self, cx: &App) {
+        let Some(destination) = self
+            .ai_session
+            .as_ref()
+            .and_then(|session| session.review_navigation)
+        else {
+            return;
+        };
+        let current = self.ai_review_navigation_origin(cx);
+        if let Some(session) = self.ai_session.as_mut() {
+            if session.review.is_none()
+                && !session.saved.running
+                && session.saved.workspace.changes.proposals.is_empty()
+            {
+                session.review_navigation = None;
+            } else if destination == current {
+                session.review_navigation = None;
+                session.review_open = session.review.is_some();
+            } else {
+                session.review_open = false;
+            }
+        }
+    }
+
     pub(in crate::editor) fn leave_ai_review_for_document_navigation(
         &mut self,
         cx: &mut Context<Self>,
     ) {
-        if let Some(session) = self.ai_session.as_mut() {
-            session.review_open = false;
-        }
+        let origin = self.ai_review_navigation_origin(cx);
+        self.suspend_ai_review_for_navigation(origin);
         if !self.split_initializing
             && let Some(parent) = self.split_parent.clone()
         {
             cx.defer(move |cx| {
                 if let Err(error) = parent.update(cx, |editor, cx| {
-                    if let Some(session) = editor.ai_session.as_mut() {
-                        session.review_open = false;
-                    }
+                    editor.suspend_ai_review_for_navigation(origin);
                     cx.notify();
                 }) {
-                    eprintln!("返回宿主正文失败：{error}");
+                    eprintln!("暂存宿主审阅状态失败：{error}");
                 }
             });
         }
@@ -339,7 +380,10 @@ impl Editor {
             return;
         };
         let root = session.saved.workspace.root.clone();
-        self.leave_ai_review_for_document_navigation(cx);
+        if let Some(session) = self.ai_session.as_mut() {
+            session.review_open = false;
+            session.review_navigation = None;
+        }
         if let Some(group) = self.active_split_editor() {
             let handle = window.window_handle();
             cx.defer(move |cx| {
@@ -529,6 +573,7 @@ impl Editor {
                                 session.stream_index = None;
                                 session.conversation = None;
                                 session.review = None;
+                                session.review_navigation = None;
                                 session.review_dirty = true;
                             }
                             Err(error) => session.error = Some(error.to_string()),
@@ -718,6 +763,7 @@ impl Editor {
             session.saved.workspace.selection_scope = None;
             session.saved.workspace.read_only = false;
             session.saved.workspace.cursor_target = None;
+            session.review_navigation = None;
             session.saved.target = Some(target.clone());
             session
                 .saved
@@ -828,6 +874,7 @@ impl Editor {
                 panel_drag: None,
                 conversation: None,
                 review_open: false,
+                review_navigation: None,
                 history_files: Vec::new(),
                 skills: crate::ai::skills::SkillCatalog::load(&directories),
                 input_tokens: 0,

@@ -436,6 +436,7 @@ impl Editor {
                 move |editor, _, cx| {
                     if let Some(session) = editor.ai_session.as_mut() {
                         session.review_open = true;
+                        session.review_navigation = None;
                     }
                     editor.select_ai_review_document(&selected, cx);
                     cx.notify();

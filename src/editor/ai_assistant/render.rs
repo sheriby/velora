@@ -300,6 +300,7 @@ impl Editor {
                         |editor, window, cx| {
                             if let Some(session) = editor.ai_session.as_mut() {
                                 session.review_open = !session.review_open;
+                                session.review_navigation = None;
                                 session.mode = PanelMode::Task;
                                 session
                                     .input
