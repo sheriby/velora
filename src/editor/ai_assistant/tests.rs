@@ -16,7 +16,7 @@ fn draw(cx: &mut VisualTestContext) {
 }
 
 #[gpui::test]
-fn ai_writing_entry_is_a_compact_command_bar_without_a_conversation(cx: &mut TestAppContext) {
+fn ai_conversation_entry_has_no_redundant_quick_command_row(cx: &mut TestAppContext) {
     initialize(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
     editor.update_in(cx, |editor, window, cx| {
@@ -25,11 +25,9 @@ fn ai_writing_entry_is_a_compact_command_bar_without_a_conversation(cx: &mut Tes
     });
     draw(cx);
     draw(cx);
-    let command = cx.debug_bounds("ai-command-bar").expect("入口应是指令栏");
-    assert!(
-        f32::from(command.size.height) <= 200.0,
-        "入口不承担结果阅读"
-    );
+    assert!(cx.debug_bounds("ai-command-bar").is_none(), "浮动对话不再重复列出五项快捷指令");
+    let panel = cx.debug_bounds("ai-assistant-panel").unwrap();
+    assert!(panel.size.height <= gpui::px(180.0), "空白对话应保持紧凑：panel={panel:?}, composer={:?}, configure={:?}, error={:?}", cx.debug_bounds("ai-composer"), cx.debug_bounds("ai-configure"), cx.debug_bounds("ai-command-error"));
     assert!(
         cx.debug_bounds("ai-content").is_none(),
         "入口不应有对话滚动区"
@@ -636,7 +634,7 @@ fn ai_reference_picker_keeps_multiple_selections_visible_until_done(cx: &mut Tes
     let done = cx.debug_bounds("ai-context-done").unwrap().center();
     cx.simulate_click(done, gpui::Modifiers::none());
     draw(cx);
-    assert!(cx.debug_bounds("ai-command-bar").is_some());
+    assert!(cx.debug_bounds("ai-composer").is_some());
 }
 
 fn native_ui_chain(cx: &mut TestAppContext, command: AiCommand) {
@@ -1778,15 +1776,17 @@ fn ai_sidebar_composer_uses_the_available_width_in_both_sidebar_sizes(cx: &mut T
         let input = cx.debug_bounds("ai-composer-input").unwrap();
         let send = cx.debug_bounds("ai-send").unwrap();
         assert!(
-            input.size.width >= sidebar.size.width - gpui::px(110.0),
+            input.size.width >= sidebar.size.width - gpui::px(64.0),
             "侧栏输入框不能按空内容收缩为窄条"
         );
         assert!(send.right() <= sidebar.right() - gpui::px(8.0));
         assert!(
-            send.right() >= sidebar.right() - gpui::px(16.0),
+            send.right() >= sidebar.right() - gpui::px(32.0),
             "发送按钮应靠齐侧栏右侧"
         );
-        assert!(composer.size.height <= gpui::px(48.0));
+        assert!(composer.size.height <= gpui::px(100.0));
+        assert!(send.top() >= input.bottom(), "发送按钮在卡片底部，不挤占输入行");
+        assert!(send.bottom() <= composer.bottom());
     }
 }
 
@@ -2643,4 +2643,38 @@ fn ai_sidebar_menu_opens_and_restores_the_same_task(cx: &mut TestAppContext) {
 #[gpui::test]
 fn ai_sidebar_menu_in_a_split_routes_to_the_window_host(cx: &mut TestAppContext) {
     sidebar_menu_chain(cx, true);
+}
+
+#[gpui::test]
+fn ai_empty_sidebar_keeps_the_composer_near_the_header_and_groups_its_controls(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor,cx) = cx.add_window_view(|_,cx| Editor::from_markdown(cx,"正文".into(),None));
+    editor.update_in(cx, |editor,window,cx| {
+        editor.open_ai_assistant(AiCommand::Ask,window,cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.expanded = true;
+        session.settings.set_endpoint(crate::ai::settings::Endpoint { id:"fixture".into(), model:"fixture".into(), base_url:"http://localhost:8080/v1".into(), ..Default::default() }).unwrap();
+    });
+    draw(cx); draw(cx);
+    assert!(cx.debug_bounds("ai-command-bar").is_none(), "侧栏也不能重复列出快捷指令");
+    let sidebar = cx.debug_bounds("ai-sidebar").unwrap();
+    let composer = cx.debug_bounds("ai-composer").unwrap();
+    assert!(composer.top() < sidebar.top()+gpui::px(100.0), "空白会话不应把输入推到一整屏空白的底部");
+    let input = cx.debug_bounds("ai-composer-input").unwrap();
+    for selector in ["ai-context", "ai-send"] {
+        let control = cx.debug_bounds(selector).unwrap();
+        assert!(control.top() >= input.bottom(), "引用与发送放在输入卡片底部");
+        assert!(control.left() >= composer.left() && control.right() <= composer.right());
+        assert!(control.bottom() <= composer.bottom());
+    }
+    let send = cx.debug_bounds("ai-send").unwrap();
+    cx.simulate_click(send.center(),gpui::Modifiers::none());
+    editor.read_with(cx, |editor,_| assert!(editor.ai_session.as_ref().unwrap().saved.messages.is_empty()));
+    editor.update(cx, |editor,cx| {
+        editor.ai_session.as_mut().unwrap().saved.messages.push(crate::ai::session::ChatMessage{role:"user".into(),text:"已有对话".into()});
+        cx.notify();
+    });
+    draw(cx); draw(cx);
+    let composer = cx.debug_bounds("ai-composer").unwrap();
+    assert!(composer.bottom() > sidebar.bottom()-gpui::px(32.0), "有对话后输入区固定到底部");
 }

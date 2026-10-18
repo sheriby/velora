@@ -140,11 +140,12 @@ impl Editor {
                 .h_full()
                 .max_h(relative(1.0))
                 .border_0()
-                .border_l_1()
                 .into_any_element()
         };
         Some(
             div()
+                .bg(theme.colors.dialog_surface)
+                .border_l_1().border_color(theme.colors.dialog_border)
                 .w(px(width))
                 .h_full()
                 .flex_shrink_0()
@@ -779,7 +780,7 @@ impl Editor {
                     .rounded(px(6.0))
                     .child(svg().path(path).size(px(15.0)).text_color(color))
             })
-            .when(send_button, |button| button.size(px(30.0)).rounded_full())
+            .when(send_button, |button| button.size(px(28.0)).rounded(px(7.0)))
             .when_some(tooltip, |button, label| {
                 button.tooltip(move |_, cx| {
                     cx.new(|_| crate::components::HoverPreviewTooltip {

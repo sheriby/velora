@@ -990,9 +990,19 @@ impl Editor {
             .unwrap_or_default();
         let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
         let owner = cx.entity().downgrade();
+        let changed_owner = owner.clone();
         let input = cx.new(|cx| {
             TextField::new(strings.ai_custom_placeholder.clone(), cx)
                 .multiline(1, 4)
+                .unframed()
+                .on_change(move |cx| {
+                    let owner = changed_owner.clone();
+                    cx.defer(move |cx| {
+                        if let Err(error) = owner.update(cx, |_,cx| cx.notify()) {
+                            eprintln!("更新 AI 输入状态失败：{error}");
+                        }
+                    });
+                })
                 .on_enter(move |_, _, cx| {
                     let owner = owner.clone();
                     let input_id = cx.entity_id();

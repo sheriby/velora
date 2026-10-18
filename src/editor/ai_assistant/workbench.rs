@@ -22,11 +22,9 @@ impl Editor {
                     .map(|name| name.to_string_lossy().into_owned())
             })
             .unwrap_or_else(|| strings.ai_task_scope_document.clone());
-        let selected = self.active_split_editor().map_or_else(
-            || self.has_text_selection(cx),
-            |group| group.read(cx).has_text_selection(cx),
-        );
         let header = div()
+            .debug_selector(|| "ai-dialog-header".into())
+            .flex_shrink_0()
             .w_full()
             .flex()
             .items_center()
@@ -111,23 +109,6 @@ impl Editor {
                     editor.hide_ai_panel(cx)
                 }),
             );
-        let mut quick = div()
-            .id("ai-command-bar")
-            .debug_selector(|| "ai-command-bar".into())
-            .flex()
-            .flex_wrap()
-            .gap(px(4.0));
-        for command in AiCommand::ALL {
-            quick = quick.child(self.ai_button(
-                ("ai-command", command as usize),
-                command.label(&strings),
-                false,
-                !session.saved.running && (!command.requires_selection() || selected),
-                theme,
-                cx,
-                move |editor, window, cx| editor.open_ai_assistant(command, window, cx),
-            ));
-        }
         let titlebar = div()
             .id("ai-float-titlebar")
             .debug_selector(|| "ai-float-titlebar".into())
@@ -162,18 +143,14 @@ impl Editor {
             .min_h_0()
             .flex()
             .flex_col()
-            .gap(px(10.0))
+            .gap(px(8.0))
             .p(px(12.0))
             .text_size(px(13.0))
+            .line_height(relative(1.4))
             .text_color(theme.colors.dialog_title)
             .bg(theme.colors.dialog_surface)
             .when(!sidebar && has_messages, |panel| panel.h(px(height)))
-            .when(sidebar, |panel| {
-                panel
-                    .h_full()
-                    .border_l_1()
-                    .border_color(theme.colors.dialog_border)
-            })
+            .when(sidebar, |panel| panel.h_full().p(px(16.0)).gap(px(16.0)))
             .when(!sidebar, |panel| {
                 panel
                     .rounded(px(10.0))
@@ -184,8 +161,7 @@ impl Editor {
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .when(!sidebar, |panel| panel.child(titlebar))
-            .child(header)
-            .when(!has_messages, |panel| panel.child(quick));
+            .child(header);
         if session
             .settings
             .active_endpoint()
@@ -243,8 +219,6 @@ impl Editor {
                 body = body.child(conversation.clone());
             }
             panel = panel.child(body);
-        } else if sidebar {
-            panel = panel.child(div().flex_1());
         }
         if session.saved.running {
             let activity = match session.activity.as_str() {
@@ -295,6 +269,9 @@ impl Editor {
                 cx,
                 |editor, _, cx| editor.retry_ai_task(cx),
             ));
+        }
+        if sidebar && !has_messages {
+            panel = panel.child(div().flex_1());
         }
         let owner = cx.entity().downgrade();
         panel = panel.child(
@@ -396,13 +373,12 @@ impl Editor {
         let Some(session) = self.ai_session.as_ref() else {
             return div().into_any_element();
         };
-        div()
-            .id("ai-composer")
-            .debug_selector(|| "ai-composer".into())
+        let has_input = !session.input.read(cx).value().trim().is_empty();
+        let controls = div()
             .w_full()
             .flex()
             .items_center()
-            .gap(px(6.0))
+            .justify_between()
             .child(self.ai_button(
                 "ai-context",
                 "@",
@@ -414,28 +390,54 @@ impl Editor {
             ))
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .when(session.saved.running, |actions| {
+                        actions.child(self.ai_button(
+                            "ai-stop",
+                            "■",
+                            false,
+                            true,
+                            theme,
+                            cx,
+                            |editor, _, cx| editor.stop_ai_task(cx),
+                        ))
+                    })
+                    .when(!session.saved.running || has_input, |actions| {
+                        actions.child(self.ai_button(
+                            "ai-send",
+                            "↑",
+                            has_input,
+                            has_input,
+                            theme,
+                            cx,
+                            |editor, _, cx| editor.send_ai_task(cx),
+                        ))
+                    }),
+            );
+        div()
+            .id("ai-composer")
+            .debug_selector(|| "ai-composer".into())
+            .w_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .p(px(8.0))
+            .rounded(px(10.0))
+            .border_1()
+            .border_color(theme.colors.dialog_border)
+            .bg(theme.colors.dialog_secondary_button_bg)
+            .child(
+                div()
                     .id("ai-composer-input")
                     .debug_selector(|| "ai-composer-input".into())
-                    .flex_1()
+                    .w_full()
                     .min_w_0()
                     .child(session.input.clone()),
             )
-            .when(session.saved.running, |row| {
-                row.child(self.ai_button(
-                    "ai-stop",
-                    "■",
-                    false,
-                    true,
-                    theme,
-                    cx,
-                    |editor, _, cx| editor.stop_ai_task(cx),
-                ))
-            })
-            .child(
-                self.ai_button("ai-send", "↑", true, true, theme, cx, |editor, _, cx| {
-                    editor.send_ai_task(cx)
-                }),
-            )
+            .child(controls)
             .into_any_element()
     }
 

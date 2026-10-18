@@ -39,6 +39,7 @@ pub(crate) struct TextField {
     on_change: Option<Box<dyn Fn(&mut Context<TextField>)>>,
     /// 密钥模式:渲染成圆点(值本身仍是明文,测试连接用得到)。
     masked: bool,
+    framed: bool,
     last_line: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     scroll_x: f32,
@@ -99,6 +100,7 @@ impl TextField {
             on_enter: None,
             on_change: None,
             masked: false,
+            framed: true,
             last_line: None,
             last_bounds: None,
             scroll_x: 0.0,
@@ -112,6 +114,11 @@ impl TextField {
             #[cfg(test)]
             painted_selection: false,
         }
+    }
+
+    pub(crate) fn unframed(mut self) -> Self {
+        self.framed = false;
+        self
     }
 
     pub(crate) fn multiline(mut self, minimum_rows: usize, maximum_rows: usize) -> Self {
@@ -716,18 +723,18 @@ impl Render for TextField {
             .w_full()
             .min_w_0()
             .min_h(px(32.0))
-            .px(px(10.0))
-            .py(px(4.0))
+            .px(px(if self.framed { 10.0 } else { 0.0 }))
+            .py(px(if self.framed { 4.0 } else { 0.0 }))
             .flex()
             .items_center()
             .rounded(px(theme.dimensions.menu_item_radius))
-            .border_1()
+            .border(px(if self.framed { 1.0 } else { 0.0 }))
             .border_color(if focused {
                 theme.colors.dialog_primary_button_bg
             } else {
                 theme.colors.dialog_border
             })
-            .bg(theme.colors.editor_background)
+            .bg(if self.framed { theme.colors.editor_background } else { hsla(0.0, 0.0, 0.0, 0.0) })
             .text_size(px(theme.typography.dialog_body_size))
             .font(font(crate::config::EditorSettings::fonts(cx).ui_family))
             .child(if self.multiline.is_some() {

@@ -527,7 +527,7 @@ impl I18nStrings {
         strings.ai_action_translate = "翻译…".into();
         strings.ai_action_summarize = "摘要".into();
         strings.ai_action_continue = "续写".into();
-        strings.ai_custom_placeholder = "输入要求，可用 @ 引用资料…".into();
+        strings.ai_custom_placeholder = "询问或描述修改…".into();
         strings.ai_panel_retry = "重试".into();
         strings.ai_panel_stop = "停止".into();
         strings.ai_panel_running = "生成中…".into();
@@ -1066,7 +1066,7 @@ impl I18nStrings {
             ai_action_translate: "Translate…".into(),
             ai_action_summarize: "Summarize".into(),
             ai_action_continue: "Continue writing".into(),
-            ai_custom_placeholder: "Ask or give an instruction, use @ to reference notes…".into(),
+            ai_custom_placeholder: "Ask or describe a change…".into(),
             ai_panel_retry: "Retry".into(),
             ai_panel_stop: "Stop".into(),
             ai_panel_running: "Generating…".into(),
