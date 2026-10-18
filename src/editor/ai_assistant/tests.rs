@@ -739,11 +739,11 @@ fn native_ui_chain(cx: &mut TestAppContext, command: AiCommand) {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            prompt.contains(AiCommand::Polish.instruction()),
+            prompt.contains(crate::ai::instructions::default_instruction(AiCommand::Polish, "en-US")),
             "快捷指令必须把完整任务要求发给模型"
         );
-        assert!(prompt.contains("必须调用 propose_edit"));
-        assert!(prompt.contains("不要重复列出原文"));
+        assert!(prompt.contains("propose_edit"));
+        assert!(prompt.contains("Do not repeat"));
         assert!(prompt.contains("# 原文\n\n保留的内容"));
         let tools = requests[0].get("tools").unwrap().to_string();
         assert!(tools.contains("propose_edit"));
@@ -2393,4 +2393,107 @@ fn ai_settings_saved_elsewhere_refreshes_configuration_without_resetting_the_con
         assert_eq!(session.saved.id, id);
         assert_eq!(session.input.read(cx).value(), "尚未发出");
     });
+}
+
+#[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+fn ai_instruction_conversation_keeps_its_http_prefix_after_language_and_preferences_change(
+    cx: &mut TestAppContext,
+) {
+    use std::io::Write;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        let mut requests = Vec::new();
+        for _ in 0..2 {
+            let start = std::time::Instant::now();
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && start.elapsed() < std::time::Duration::from_secs(10) =>
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(2))
+                    }
+                    Err(error) => panic!("未收到指令请求：{error}"),
+                }
+            };
+            requests.push(crate::ai::runtime::protocol_tests::read_request(&mut stream).1);
+            let body = format!(
+                "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+                serde_json::json!({"choices":[{"index":0,"delta":{"role":"assistant","content":"OK"},"finish_reason":null}]}),
+                serde_json::json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})
+            );
+            write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+        }
+        requests
+    });
+    initialize(cx);
+    let mut settings = crate::ai::settings::AiSettings {
+        enabled: true,
+        ..Default::default()
+    };
+    settings
+        .set_endpoint(crate::ai::settings::Endpoint {
+            id: "fixture".into(),
+            name: "Fixture".into(),
+            base_url: format!("http://{address}/v1"),
+            model: "fixture".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    settings
+        .quick_instructions
+        .insert("conversation".into(), "Original writing preference".into());
+    let path = crate::ai::settings::settings_path().unwrap();
+    settings.save_at(&path).unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .input
+            .update(cx, |field, cx| field.set_value("First request", cx));
+        editor.send_ai_task(cx);
+    });
+    for _ in 0..10 {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(50));
+        draw(cx);
+    }
+    assert!(!editor.read_with(cx, |editor, _| {
+        editor.ai_session.as_ref().unwrap().saved.running
+    }));
+    settings
+        .quick_instructions
+        .insert("conversation".into(), "Changed preference".into());
+    settings.save_at(&path).unwrap();
+    cx.update(|_, cx| crate::i18n::I18nManager::init_with_language_id(cx, "zh-CN"));
+    editor.update(cx, |editor, cx| {
+        editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .input
+            .update(cx, |field, cx| field.set_value("Second request", cx));
+        editor.send_ai_task(cx);
+    });
+    for _ in 0..10 {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(50));
+        draw(cx);
+    }
+    let requests = server.join().unwrap();
+    let first = requests[0]["messages"].as_array().unwrap();
+    let second = requests[1]["messages"].as_array().unwrap();
+    assert_eq!(
+        first[0], second[0],
+        "修改设置和界面语言不能重写已开始对话的系统前缀"
+    );
+    assert!(first[0].to_string().contains("Original writing preference"));
+    assert!(second.starts_with(first), "继续对话只追加消息");
 }

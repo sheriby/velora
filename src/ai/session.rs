@@ -22,6 +22,8 @@ pub(crate) enum SessionKind {
 pub(crate) struct SavedSession {
     #[serde(default)]
     pub kind: SessionKind,
+    #[serde(default)]
+    pub prompt_profile: Option<super::instructions::PromptProfile>,
     pub format: u32,
     #[serde(default)]
     pub sequence: u64,
@@ -57,6 +59,7 @@ impl SavedSession {
     pub fn new(workspace: AiWorkspace) -> Self {
         Self {
             kind: SessionKind::Conversation,
+            prompt_profile: None,
             format: 1,
             sequence: 0,
             id: uuid::Uuid::new_v4().to_string(),

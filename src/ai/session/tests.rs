@@ -12,6 +12,9 @@ fn ai_session_restores_pending_changes_and_marks_running_tasks_interrupted() {
     let mut workspace = AiWorkspace::new(Some(root.clone()), vec![document.clone()]).unwrap();
     workspace.changes.propose(document, "原文", "建议").unwrap();
     let mut session = SavedSession::new(workspace);
+    session.prompt_profile = Some(crate::ai::instructions::PromptProfile::capture(
+        crate::ai::AiCommand::Polish, "en-US", &crate::ai::settings::AiSettings::default(), "",
+    ));
     session.running = true;
     session.messages.push(ChatMessage {
         role: "user".into(),
@@ -21,6 +24,7 @@ fn ai_session_restores_pending_changes_and_marks_running_tasks_interrupted() {
     let saved = session.save_at(&path);
     assert!(saved.is_ok(), "{saved:?}");
     let restored = SavedSession::load_at(&path, Some(&root)).unwrap();
+    assert_eq!(restored.prompt_profile, session.prompt_profile, "历史恢复后沿用原指令快照");
     assert!(!restored.running);
     assert!(restored.interrupted);
     assert_eq!(restored.messages[0].text, "请修订");

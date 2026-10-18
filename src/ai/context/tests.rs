@@ -46,24 +46,10 @@ fn ai_prompt_cache_keeps_workspace_prefix_stable_across_instructions_tab_order_a
     second["cursor"]["byte_offset"] = 20.into();
     second["selection"]["text"] = "乙".into();
     second["near_cursor"]["content"] = "另一处".into();
-    let left = super::task_prompt(
-        "解释这一处",
-        &first,
-        None,
-        &[],
-        true,
-        crate::ai::AiCommand::Ask,
-    );
-    let right = super::task_prompt(
-        "润色另一处",
-        &second,
-        None,
-        &[],
-        true,
-        crate::ai::AiCommand::Ask,
-    );
-    let left_prefix = left.split("当前编辑器状态").next().unwrap();
-    let right_prefix = right.split("当前编辑器状态").next().unwrap();
+    let left = super::task_prompt("解释这一处", &first, None, &[], true, None);
+    let right = super::task_prompt("润色另一处", &second, None, &[], true, None);
+    let left_prefix = left.split("<editor_context>").next().unwrap();
+    let right_prefix = right.split("<editor_context>").next().unwrap();
     assert_eq!(
         left_prefix, right_prefix,
         "光标、指令和标签展示顺序不能破坏固定前缀"
@@ -84,22 +70,8 @@ fn ai_prompt_cache_sends_the_frozen_target_only_at_the_start_of_a_task() {
     };
     let context = serde_json::json!({"workspace_path":"/notes", "open_tabs":[],
         "active_tab":{"document_id":"a.md"}, "cursor":{"byte_offset":12}});
-    let first = super::task_prompt(
-        "润色",
-        &context,
-        Some(&target),
-        &[],
-        true,
-        crate::ai::AiCommand::Ask,
-    );
-    let next = super::task_prompt(
-        "语气自然一些",
-        &context,
-        Some(&target),
-        &[],
-        false,
-        crate::ai::AiCommand::Ask,
-    );
+    let first = super::task_prompt("润色", &context, Some(&target), &[], true, None);
+    let next = super::task_prompt("语气自然一些", &context, Some(&target), &[], false, None);
     assert!(first.contains("最初的选区原文"));
     assert!(
         !next.contains("最初的选区原文"),
@@ -118,7 +90,10 @@ fn ai_prompt_cache_quick_requirements_precede_the_variable_document_and_selectio
         None,
         &[],
         true,
-        crate::ai::AiCommand::Polish,
+        Some(crate::ai::instructions::default_instruction(
+            crate::ai::AiCommand::Polish,
+            "en-US",
+        )),
     );
     context["workspace_path"] = "/second".into();
     context["selection"]["text"] = "独立选区乙".into();
@@ -128,9 +103,13 @@ fn ai_prompt_cache_quick_requirements_precede_the_variable_document_and_selectio
         None,
         &[],
         true,
-        crate::ai::AiCommand::Polish,
+        Some(crate::ai::instructions::default_instruction(
+            crate::ai::AiCommand::Polish,
+            "en-US",
+        )),
     );
-    let stable = crate::ai::AiCommand::Polish.instruction();
+    let stable =
+        crate::ai::instructions::default_instruction(crate::ai::AiCommand::Polish, "en-US");
     assert!(
         first.starts_with(stable) && second.starts_with(stable),
         "同一快捷指令的固定任务要求必须先于变化的文档资料"

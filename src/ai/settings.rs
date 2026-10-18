@@ -60,6 +60,7 @@ pub(crate) struct AiSettings {
     pub endpoints: Vec<Endpoint>,
     pub default_endpoint: String,
     pub instructions: Vec<CustomInstruction>,
+    pub quick_instructions: std::collections::BTreeMap<String, String>,
     pub excluded_paths: Vec<String>,
     pub disabled_skills: Vec<String>,
 }

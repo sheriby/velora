@@ -5,14 +5,16 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod context;
-pub(crate) mod runtime;
+pub(crate) mod instructions;
 pub(crate) mod providers;
+pub(crate) mod runtime;
 pub(crate) mod session;
 pub(crate) mod settings;
 pub(crate) mod skills;
 pub(crate) mod workspace;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum AiCommand {
     Ask,
     Polish,
@@ -23,6 +25,17 @@ pub(crate) enum AiCommand {
 }
 
 impl AiCommand {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Ask => "conversation",
+            Self::Polish => "polish",
+            Self::Expand => "expand",
+            Self::Translate => "translate",
+            Self::Summarize => "summarize",
+            Self::Explain => "explain",
+        }
+    }
+
     pub fn is_reading_task(self) -> bool {
         matches!(self, Self::Summarize | Self::Explain | Self::Translate)
     }
@@ -54,37 +67,6 @@ impl AiCommand {
             Self::Translate => strings.ai_action_translate.clone(),
             Self::Summarize => strings.ai_action_summarize.clone(),
             Self::Explain => strings.ai_action_explain.clone(),
-        }
-    }
-
-    pub fn instruction(self) -> &'static str {
-        match self {
-            Self::Ask => "回答用户关于文档的问题。",
-            Self::Summarize => concat!(
-                "对选区生成摘要；无选区时读取并概括当前文档。先识别内容类型和主要问题，再提炼核心结论、关键事实、决策与未决事项；不要逐段复述。",
-                "通常用一段短文或 3—5 个要点，短选区相应缩短，不为凑条目重复内容。保留重要的数字、日期、条件和不确定性，不把计划说成已完成，不把新增功能说成修复。",
-                "只依据已读内容；需要其他文档时按需读取并附可跳转的来源，不编造引用。直接给出摘要，不写开场白、原文对照或执行过程。只供阅读，不生成正文修改。"
-            ),
-            Self::Explain => concat!(
-                "解释指定选区，结合附近上下文识别它在本文中的作用。先用简明语言说明核心含义，再仅展开理解所必需的细节。",
-                "代码说明目的、输入输出与关键逻辑；公式说明符号、关系和适用条件；术语结合本文语境说明，必要时给一个贴切的小例子。不要机械逐句翻译或复制选区充当解释。",
-                "选区本身信息不足时按需读取当前文档或相关笔记，引用外部于选区的资料时附来源；区分原文事实与解释性推断，不确定时明确说明。只回答，不插入或修改正文。"
-            ),
-            Self::Translate => concat!(
-                "把指定选区翻译为单独给出的目标语言。译文应自然、准确，保留原意、文体、语气、逻辑关系和限定条件；同一术语前后一致，不擅自删减或扩充。",
-                "保留 Markdown 层级、列表、链接目标、图片路径、代码标识符、代码内容、公式、占位符与引用标记；只翻译其中需要翻译的自然语言。",
-                "直接输出译文，不附原文、对照表、开场白或解释，除非用户明确要求。内容已是目标语言时保持原意，不做额外润色。仅供阅读，不插入或替换正文。"
-            ),
-            Self::Polish => concat!(
-                "润色指定选区。先理解文体、读者与上下文，在保留作者原意和语气的前提下，修正错别字、语法、标点和不自然表达，改善冗余、衔接及句子结构。",
-                "保留事实、数字、专名、论证强度和不确定性，不加入新观点，不为显得正式而堆砌术语，也不要将自然表达改成模板化文风。已经清晰的内容不必强行改写。",
-                "保留 Markdown 结构、链接与路径、代码、公式及引用标记；只提出完成任务所需的局部修改，不格式化全文，不改变选区外内容。"
-            ),
-            Self::Expand => concat!(
-                "扩写指定选区，在保留原意、文体和已有框架的基础上补充有用内容。如果选区是提纲，就沿既有层级填充适当的论点、解释、步骤或例子；如果是段落，就补足必要背景与论证。",
-                "新增内容必须服务原主题，有具体信息，避免重复、套话和无关延伸。需要依据时按需查阅相关文档并给出来源；不编造数据、引文、经历或已经完成的事实。关键资料不足时指出缺口或提出必要的问题。",
-                "保留已有标题层级、Markdown 写法、链接、代码、公式与引用；只能修改指定选区，不改其他段落或文档。"
-            ),
         }
     }
 }
