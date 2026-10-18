@@ -529,7 +529,8 @@ impl PreferencesWindow {
         self.refresh_ai_preferences_dirty(cx);
         if !self.has_unsaved_changes() { return; }
         self.save_error = None;
-        if let Err(error) = self.save_ai_preferences(cx) { self.save_error = Some(error.to_string()); cx.notify(); return; }
+        // AI 页保存失败不再阻断其余偏好：主题/键位等照常落盘，错误单独展示。
+        let ai_save_error = self.save_ai_preferences(cx).err().map(|error| error.to_string());
         let preferences = match save_preferences_from_window(
             self.startup_open,
             &self.selected_theme_id,
@@ -577,6 +578,11 @@ impl PreferencesWindow {
                 return;
             }
         };
+
+        if let Some(error) = ai_save_error {
+            self.save_error = Some(error);
+            cx.notify();
+        }
 
         // 同步新设置到全局缓存并刷新（roadmap H1）。
         EditorSettings::set_tree_sort(cx, self.tree_sort);

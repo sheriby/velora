@@ -1872,3 +1872,96 @@ fn ai_preferences_can_choose_a_default_clear_a_key_and_delete_a_connection(cx: &
     assert_eq!(saved.endpoints.len(),1); assert_eq!(saved.default_endpoint,"one");
     cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
 }
+
+#[gpui::test]
+fn ai_preferences_foreign_writes_conflict_instead_of_overwriting(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-ai-preferences-conflict-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    init_preferences_test_app(cx);
+    crate::config::load_or_create_app_preferences().unwrap();
+    let mut settings = crate::ai::settings::AiSettings::default();
+    settings.enabled = true;
+    settings.set_endpoint(crate::ai::settings::Endpoint { id: "local".into(), name: "本地模型".into(), base_url: "http://localhost:11434/v1".into(), model: "old-model".into(), api_key: "test-api-key".into(), ..Default::default() }).unwrap();
+    let path = crate::ai::settings::settings_path().unwrap();
+    settings.save_at(&path).unwrap();
+    let handle = cx.update(|cx| open_preferences_window_with_size(cx, AppPreferences::default(), default_theme_options(), "偏好设置".into(), gpui::size(px(1000.0), px(1200.0))));
+    let mut window_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+    window_cx.update(|window, cx| window.draw(cx).clear());
+    window_cx.run_until_parked();
+    let nav = window_cx.debug_bounds("preferences-nav-ai").unwrap();
+    window_cx.simulate_click(nav.center(), gpui::Modifiers::none());
+    window_cx.update(|window, cx| window.draw(cx).clear());
+    window_cx.run_until_parked();
+    let field = window_cx.debug_bounds("preferences-ai-model").unwrap();
+    window_cx.simulate_click(field.center(), gpui::Modifiers::none());
+    window_cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-a" } else { "ctrl-a" });
+    window_cx.simulate_input("edited-model");
+    window_cx.update(|window, cx| window.draw(cx).clear());
+    window_cx.run_until_parked();
+    // 持有草稿期间，别的窗口（助手面板/另一偏好窗）写入了同一文件。
+    let mut foreign = crate::ai::settings::AiSettings::load_at(&path).unwrap();
+    foreign.endpoints[0].model = "foreign-model".into();
+    foreign.save_at(&path).unwrap();
+    let save = window_cx.debug_bounds("preferences-save").unwrap();
+    window_cx.simulate_click(save.center(), gpui::Modifiers::none());
+    window_cx.run_until_parked();
+    handle
+        .update(cx, |preferences, _, _| {
+            assert!(
+                preferences.save_error.as_deref().is_some_and(|error| error.contains("其他窗口")),
+                "应报冲突：{:?}",
+                preferences.save_error
+            );
+        })
+        .unwrap();
+    assert_eq!(
+        crate::ai::settings::AiSettings::load_at(&path).unwrap().endpoints[0].model,
+        "foreign-model",
+        "冲突时不得用陈旧快照覆盖别的窗口刚写入的配置"
+    );
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+}
+
+#[gpui::test]
+fn preferences_save_still_persists_main_settings_when_the_ai_page_fails(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-ai-preferences-unblocked-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    init_preferences_test_app(cx);
+    crate::config::load_or_create_app_preferences().unwrap();
+    let mut settings = crate::ai::settings::AiSettings::default();
+    settings.enabled = true;
+    settings.set_endpoint(crate::ai::settings::Endpoint { id: "local".into(), name: "local".into(), base_url: "http://localhost:11434/v1".into(), model: "model".into(), api_key: "test-key".into(), ..Default::default() }).unwrap();
+    settings.save_at(&crate::ai::settings::settings_path().unwrap()).unwrap();
+    let handle = cx.update(|cx| open_preferences_window_with_size(cx, AppPreferences::default(), default_theme_options(), "偏好设置".into(), gpui::size(px(1000.0), px(1200.0))));
+    let mut window_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+    window_cx.update(|window, cx| window.draw(cx).clear());
+    window_cx.run_until_parked();
+    let nav = window_cx.debug_bounds("preferences-nav-ai").unwrap();
+    window_cx.simulate_click(nav.center(), gpui::Modifiers::none());
+    window_cx.update(|window, cx| window.draw(cx).clear());
+    window_cx.run_until_parked();
+    let advanced = window_cx.debug_bounds("preferences-ai-advanced").unwrap();
+    window_cx.simulate_click(advanced.center(), gpui::Modifiers::none());
+    window_cx.update(|window, cx| window.draw(cx).clear());
+    window_cx.run_until_parked();
+    let field = window_cx.debug_bounds("preferences-ai-context").unwrap();
+    window_cx.simulate_click(field.center(), gpui::Modifiers::none());
+    window_cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-a" } else { "ctrl-a" });
+    window_cx.simulate_input("invalid");
+    // 同时改一项与 AI 无关的主偏好。
+    handle.update(cx, |preferences, _, _| preferences.smart_punctuation = true).unwrap();
+    let save = window_cx.debug_bounds("preferences-save").unwrap();
+    window_cx.simulate_click(save.center(), gpui::Modifiers::none());
+    window_cx.run_until_parked();
+    handle
+        .update(cx, |preferences, _, _| {
+            assert!(preferences.save_error.is_some(), "AI 草稿无效应报错展示");
+        })
+        .unwrap();
+    let persisted = crate::config::load_or_create_app_preferences().unwrap();
+    assert!(
+        persisted.smart_punctuation,
+        "AI 页失败不应阻断其余偏好落盘"
+    );
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+}

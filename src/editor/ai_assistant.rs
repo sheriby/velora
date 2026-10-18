@@ -1872,7 +1872,13 @@ impl Editor {
         });
         cx.spawn(async move |owner, cx| {
             let result = save.await;
+            let bumped = result.is_ok();
             if let Err(error) = owner.update(cx, |editor, cx| {
+                if bumped {
+                    // 面板写入也推进版本号：其他窗口的会话与打开着的偏好页
+                    // 按版本重载，不再持旧快照把这笔写入回滚掉。
+                    crate::ai::settings::AiFeature::bump_revision(cx);
+                }
                 if let Some(session) = editor.ai_session_mut(&id) {
                     session.settings_saving = false;
                     match result {

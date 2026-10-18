@@ -321,6 +321,14 @@ impl PreferencesWindow {
         };
         let settings = state.staged(cx)?;
         if settings != state.saved {
+            // 本页只在本页首次进入时读盘；持有草稿期间助手面板或别的窗口
+            // 可能写过 ai.json。整文件覆盖会把那笔修改静默回滚，先比对磁盘
+            // 与载入快照，不一致时报冲突，让用户重开本页拿到最新内容。
+            if let Ok(disk) = AiSettings::load() {
+                if disk != state.saved {
+                    anyhow::bail!("AI 配置已被其他窗口修改，请关闭本页后重新打开再保存");
+                }
+            }
             settings.save_at(&crate::ai::settings::settings_path()?)?;
         }
         self.stop_ai_preferences_probe();

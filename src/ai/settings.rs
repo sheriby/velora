@@ -238,6 +238,15 @@ impl AiFeature {
             .map_or(0, |feature| feature.revision)
     }
 
+    /// 配置内容变化（不含开关）也推进版本号：按版本刷新的会话与偏好页
+    /// 才能感知别的窗口/助手面板写入的连接与指令。
+    pub fn bump_revision(cx: &mut gpui::App) {
+        let enabled = Self::enabled(cx);
+        let revision = Self::revision(cx).wrapping_add(1);
+        cx.set_global(Self { enabled, revision });
+        cx.refresh_windows();
+    }
+
     pub fn set_enabled(cx: &mut gpui::App, enabled: bool) {
         let revision = Self::revision(cx).wrapping_add(1);
         cx.set_global(Self { enabled, revision });
