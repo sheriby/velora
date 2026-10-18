@@ -30,9 +30,9 @@ More screenshots: [Workspace and tabs](assets/screenshots/workspace.png) · [Spl
 
 ### AI document assistant
 
-- **On demand** — open a short instruction bar from a selection, the editor context menu or `⌘J` / `Ctrl+J`; work in the document area and open task details when needed.
-- **Markdown tasks** — polish, proofread, translate, summarize and continue writing; search workspace notes as needed, use `@file` / `@folder` to choose sources, and navigate to references.
-- **Review before applying** — preview formatted revisions in the document area, switch files in the review list, and accept or reject individual edits, files or all changes; accepted edits support normal undo. Reading mode still allows questions and proposals.
+- **On demand** — open a movable floating conversation from a selection, the editor context menu or `⌘J` / `Ctrl+J`; move the same conversation to the sidebar when needed.
+- **Markdown tasks** — summarize, explain, translate, polish and expand, with other tasks handled through conversation; search workspace notes as needed, use `@file` / `@folder` to choose sources, and navigate to references.
+- **Review before applying** — keep reading results in the conversation and review additions and deletions in place, switch files in the review list, and accept or reject individual edits, files or all changes; accepted edits support normal undo. Reading mode still allows questions and proposals.
 - **Your models and instructions** — multiple connections, API keys in the configuration file, custom instructions and Skills loaded on demand. Sessions and pending changes stay local; configure models in Preferences → AI and use the assistant's `⋯` menu for history, instructions and Skills. See the [AI usage guide](docs/ai.md).
 
 ### Workspace & knowledge
