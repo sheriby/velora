@@ -124,14 +124,18 @@ impl Editor {
                 || (session.visible
                     && (session.panel_focus.contains_focused(window, cx)
                         || session.input.read(cx).focus_handle(cx).is_focused(window)
+                        || session
+                            .instruction_body
+                            .read(cx)
+                            .focus_handle(cx)
+                            .is_focused(window)
                         || [
                             &session.language,
                             &session.instruction_name,
-                            &session.instruction_body,
                             &session.context_input,
                         ]
                         .iter()
-                        .any(|field| field.read(cx).is_focused(window))))
+                        .any(|field| field.read(cx).focus_handle(cx).is_focused(window))))
         })
     }
 

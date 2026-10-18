@@ -483,6 +483,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) ai_panel_skills: Option<String>,
     pub(crate) ai_panel_save_instruction: Option<String>,
     pub(crate) ai_panel_instruction_name: Option<String>,
+    pub(crate) ai_panel_instruction_body: Option<String>,
+    pub(crate) ai_panel_target_language: Option<String>,
     pub(crate) ai_panel_context_budget: Option<String>,
     pub(crate) ai_review_title: Option<String>,
     pub(crate) ai_panel_dock: Option<String>,

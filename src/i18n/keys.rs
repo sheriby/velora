@@ -480,6 +480,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_panel_skills",
     "ai_panel_save_instruction",
     "ai_panel_instruction_name",
+    "ai_panel_instruction_body",
+    "ai_panel_target_language",
     "ai_panel_context_budget",
     "ai_review_title",
     "ai_panel_dock",

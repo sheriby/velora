@@ -30,7 +30,9 @@
 
 `SavedSession:kind` 区分快捷指令和用户对话，并随历史持久化。快捷结果在浮窗和侧栏均不挂载追问输入框，停靠不会改变类型；重试快捷指令清空模型历史和旧提议，重新执行。旧记录携带只读或选区权限时归入快捷指令。用户对话的选区是参考资料，不设置 `selection_scope`；可在一次任务里对多篇文档提出修改。侧栏用户对话允许活动文档变化，快捷指令仍执行各自的阅读或选区约束。
 
-对话输入复用 `components/text_field` 的可选多行模式：布局、鼠标落点、选区与 IME 共用换行后的字形坐标；短输入保持一行，长输入在限定行数内增长和滚动。换行只改变显示，不改写文本；输入撤销采用小段文本增量，IME 组词归为一次编辑。
+对话和自定义指令正文使用 Kit `TextareaState`，语言、指令名称与资料路径使用 `InputState`，由会话持有状态与订阅。通用的布局、选区、IME 和输入撤销由 Kit 负责；对话输入随内容增长，并在持有当前窗口的 `InputEnter` 动作中提交，组词回车与 Shift+Enter 不发送。指令正文中的回车只换行，表单修改不进入文档撤销栈。
+
+资料候选与手动添加的路径使用同一份 Kit `Checkbox` 列表。候选顺序不随勾选改变，额外路径放在顶部；选择状态只维护在会话的 `references` 中。
 
 默认要求集中在 `resources/ai/prompts/en-US/` 与 `resources/ai/prompts/zh-CN/`，`ai/instructions.rs:default_instruction` 按界面语言选择，未知语言回退英文；界面标签与任务正文分开。`PromptProfile:capture` 装配固定系统要求、通用写作偏好、Skills 目录与快捷任务正文。润色、扩写附带独立的工具交付要求，自定义任务正文不会移除工具层的阅读或选区权限。`ai_polish_sends_full_task_requirements_and_keeps_the_document_unchanged_without_a_proposal` 通过本地 HTTP 夹具检查实际请求和工具范围，并验证没有修改建议时正文保持不变，防止只发送按钮标签。
 
@@ -82,7 +84,7 @@ Agent 读取了某篇待审阅文档后，后续提议会记录对它的依赖�
 
 偏好设置用默认连接下拉与折叠高级区控制信息密度，连接草稿独立保留，未完成的输入不阻止切换连接，保存时统一校验。删除连接后恢复已有草稿，不重新创建字段覆盖输入。停用 AI 时保留连接草稿和已清空的 Key；无效数字预算沿用上一个有效值。
 
-指令编辑位于偏好设置的独立页签，复用原生多行 `TextField`；`pages_ai/instructions.rs:InstructionDraft` 维护当前编辑项，切换时暂存到 `AiSettings:quick_instructions`。空白或等同当前语言默认值的正文不生成覆盖项，恢复默认仅移除当前项。语言切换先暂存自定义草稿，再加载新语言的默认要求，未保存内容不写入配置。
+指令编辑位于偏好设置的独立页签，复用 Kit `Textarea`；`pages_ai/instructions.rs:InstructionDraft` 维护当前编辑项，切换时暂存到 `AiSettings:quick_instructions`。空白或等同当前语言默认值的正文不生成覆盖项，恢复默认仅移除当前项。语言切换先暂存自定义草稿，再加载新语言的默认要求，未保存内容不写入配置。
 
 API Key 与连接一起保存在 `ai.json` 的 `endpoints[].api_key` 字段，可以在设置中保存，也可以直接编辑文件；空字符串用于无需鉴权的本地服务。保存仍使用既有原子写入，失败时保留原配置。Unix 文件权限限制为当前用户读写；调试输出隐藏密钥，会话记录不保存密钥。删除连接同时移除其配置中的 Key。
 

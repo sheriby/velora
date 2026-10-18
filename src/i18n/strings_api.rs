@@ -513,6 +513,8 @@ impl I18nStrings {
         strings.ai_panel_skills = "任务说明".into();
         strings.ai_panel_save_instruction = "保存指令".into();
         strings.ai_panel_instruction_name = "指令名称".into();
+        strings.ai_panel_instruction_body = "指令内容".into();
+        strings.ai_panel_target_language = "译为".into();
         strings.ai_panel_context_budget = "上下文预算".into();
         strings.ai_review_title = "修改审阅".into();
         strings.ai_panel_dock = "移至侧栏".into();
@@ -1061,6 +1063,8 @@ impl I18nStrings {
             ai_panel_skills: "Skills".into(),
             ai_panel_save_instruction: "Save instruction".into(),
             ai_panel_instruction_name: "Instruction name".into(),
+            ai_panel_instruction_body: "Instruction content".into(),
+            ai_panel_target_language: "Translate to".into(),
             ai_panel_context_budget: "Context budget".into(),
             ai_review_title: "Review changes".into(),
             ai_panel_dock: "Move to sidebar".into(),

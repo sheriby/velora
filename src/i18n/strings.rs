@@ -728,6 +728,8 @@ pub struct I18nStrings {
     pub ai_panel_skills: String,
     pub ai_panel_save_instruction: String,
     pub ai_panel_instruction_name: String,
+    pub ai_panel_instruction_body: String,
+    pub ai_panel_target_language: String,
     pub ai_panel_context_budget: String,
     pub ai_review_title: String,
     pub ai_panel_dock: String,

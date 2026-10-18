@@ -601,6 +601,7 @@ fn ai_returning_to_a_tab_in_a_split_group_restores_the_host_review(cx: &mut Test
 
 #[gpui::test]
 fn ai_reference_picker_keeps_multiple_selections_visible_until_done(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
     initialize(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
     editor.update_in(cx, |editor, window, cx| {
@@ -611,8 +612,7 @@ fn ai_reference_picker_keeps_multiple_selections_visible_until_done(cx: &mut Tes
     });
     draw(cx);
     draw(cx);
-    let first = cx.debug_bounds("ai-context-choice-0").unwrap().center();
-    cx.simulate_click(first, gpui::Modifiers::none());
+    cx.update(|window, cx| window.click("ai-context-source:alpha.md", cx));
     draw(cx);
     editor.read_with(cx, |editor, _| {
         assert!(
@@ -620,8 +620,7 @@ fn ai_reference_picker_keeps_multiple_selections_visible_until_done(cx: &mut Tes
             "选择一篇资料后不应立即关闭选择器"
         )
     });
-    let second = cx.debug_bounds("ai-context-choice-1").unwrap().center();
-    cx.simulate_click(second, gpui::Modifiers::none());
+    cx.update(|window, cx| window.click("ai-context-source:beta.md", cx));
     draw(cx);
     editor.read_with(cx, |editor, _| {
         assert_eq!(
@@ -629,8 +628,7 @@ fn ai_reference_picker_keeps_multiple_selections_visible_until_done(cx: &mut Tes
             ["alpha.md", "beta.md"]
         )
     });
-    let first = cx.debug_bounds("ai-context-choice-0").unwrap().center();
-    cx.simulate_click(first, gpui::Modifiers::none());
+    cx.update(|window, cx| window.click("ai-context-source:alpha.md", cx));
     draw(cx);
     editor.read_with(cx, |editor, _| {
         assert_eq!(
@@ -3109,4 +3107,220 @@ fn ai_composer_uses_native_multiline_input_and_does_not_submit_ime_composition(
             assert_eq!(editor.buffer.text(), "保留正文。");
         })
         .unwrap();
+}
+
+#[gpui::test]
+fn ai_auxiliary_fields_have_native_roles_and_keep_edits_out_of_the_document(
+    cx: &mut TestAppContext,
+) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "保留正文。".into(), None))
+        })
+        .unwrap()
+    });
+    let (name, body, context, language) = handle
+        .update(cx, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_mut().unwrap();
+            session.mode = PanelMode::Instruction;
+            (
+                session.instruction_name.clone(),
+                session.instruction_body.clone(),
+                session.context_input.clone(),
+                session.language.clone(),
+            )
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    draw(&mut visual);
+    draw(&mut visual);
+    visual.update(|window, cx| {
+        assert_eq!(
+            window
+                .try_find(("input", name.entity_id()))
+                .and_then(|field| field.role()),
+            Some(gpui::Role::TextInput),
+            "指令名称应使用标准单行输入"
+        );
+        assert_eq!(
+            window
+                .try_find(("input", body.entity_id()))
+                .and_then(|field| field.role()),
+            Some(gpui::Role::MultilineTextInput),
+            "指令内容应使用标准多行输入"
+        );
+        body.update(cx, |field, cx| field.focus(window, cx));
+        window.input("保留原意", cx);
+        window.press("enter", cx);
+        window.input("修正语法", cx);
+        window.press("secondary-a", cx);
+        window.press("secondary-c", cx);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("保留原意\n修正语法".into())
+        );
+        window.press("secondary-x", cx);
+        window.press("secondary-z", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .update(cx, |editor, _, cx| {
+            assert_eq!(body.read(cx).value(), "保留原意\n修正语法");
+            assert_eq!(editor.buffer.text(), "保留正文。");
+            assert!(
+                editor
+                    .ai_session
+                    .as_ref()
+                    .unwrap()
+                    .saved
+                    .messages
+                    .is_empty(),
+                "指令内容中的回车不能发送 AI 请求"
+            );
+            editor.ai_session.as_mut().unwrap().mode = PanelMode::Context;
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    visual.update(|window, cx| {
+        assert_eq!(
+            window
+                .try_find(("input", context.entity_id()))
+                .and_then(|field| field.role()),
+            Some(gpui::Role::TextInput)
+        );
+        context.update(cx, |field, cx| field.focus(window, cx));
+        window.input("@\"folder name/note.md\"", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .update(cx, |editor, _, cx| {
+            let session = editor.ai_session.as_mut().unwrap();
+            assert_eq!(
+                session.context_input.read(cx).value(),
+                "@\"folder name/note.md\""
+            );
+        })
+        .unwrap();
+    draw(&mut visual);
+    visual.update(|window, cx| window.click("ai-context-add", cx));
+    visual.run_until_parked();
+    handle
+        .update(cx, |editor, _, cx| {
+            let session = editor.ai_session.as_mut().unwrap();
+            assert_eq!(session.saved.references, ["folder name/note.md"]);
+            assert!(session.context_input.read(cx).value().is_empty());
+            session.mode = PanelMode::Task;
+            session.command = AiCommand::Translate;
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    visual.update(|window, cx| {
+        assert_eq!(
+            window
+                .try_find(("input", language.entity_id()))
+                .and_then(|field| field.role()),
+            Some(gpui::Role::TextInput)
+        );
+        language.update(cx, |field, cx| field.focus(window, cx));
+        window.press("secondary-a", cx);
+        window.input("日本語", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .read_with(cx, |editor, cx| {
+            assert_eq!(language.read(cx).value(), "日本語");
+            assert_eq!(editor.buffer.text(), "保留正文。");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn ai_context_sources_are_checkable_and_share_one_selection_list(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "保留正文。".into(), None))
+        })
+        .unwrap()
+    });
+    let editor = handle.update(cx, |_, _, cx| cx.entity()).unwrap();
+    let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Context;
+        session.saved.references = vec!["a.md".into()];
+        session.context_candidates = vec!["a.md".into(), "b.md".into()];
+        window.focus(&session.panel_focus, cx);
+        cx.notify();
+    });
+    draw(cx);
+    draw(cx);
+    cx.update(|window, cx| {
+        assert_eq!(
+            window
+                .try_find("ai-context-source:a.md")
+                .and_then(|row| row.role()),
+            Some(gpui::Role::CheckBox),
+            "资料应显示为可勾选的同一份列表"
+        );
+        assert!(
+            window.try_find(("ai-context-remove", 0usize)).is_none(),
+            "所选资料不再重复显示为另一排按钮"
+        );
+        window.click("ai-context-source:a.md", cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .saved
+                .references
+                .is_empty()
+        )
+    });
+    draw(cx);
+    cx.update(|window, cx| window.click("ai-context-source:b.md", cx));
+    draw(cx);
+    cx.update(|window, cx| {
+        // Kit 的 Checkbox 保留鼠标操作前的焦点，键盘路径通过 Tab 进入。
+        for _ in 0..16 {
+            window.press("tab", cx);
+            if window.find("ai-context-source:b.md").focused() == Some(true) {
+                break;
+            }
+        }
+        assert_eq!(
+            window.find("ai-context-source:b.md").focused(),
+            Some(true),
+            "资料选择应能通过 Tab 到达"
+        );
+        window.press("space", cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .saved
+                .references
+                .is_empty(),
+            "再次按空格应取消选中"
+        );
+        assert_eq!(editor.buffer.text(), "保留正文。");
+    });
 }

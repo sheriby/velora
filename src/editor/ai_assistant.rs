@@ -11,10 +11,15 @@ use crate::ai::session::{ChatMessage, SavedSession, SessionKind, TargetSnapshot}
 use crate::ai::settings::{AiFeature, AiSettings};
 use crate::ai::workspace::AiWorkspace;
 use crate::ai::{AiCommand, DocumentSnapshot};
-use crate::components::TextField;
-use gpui_kit::component::input::{Enter as InputEnter, InputEvent, Textarea, TextareaState};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{button::{Button, ButtonVariants}, checkbox::Checkbox, Disableable, Sizable};
+use gpui_kit::component::input::{
+    Enter as InputEnter, Input, InputEvent, InputState, Textarea, TextareaState,
+};
+use gpui_kit::component::{
+    Disableable, Sizable,
+    button::{Button, ButtonVariants},
+    checkbox::Checkbox,
+};
 
 mod apply;
 mod context;
@@ -40,10 +45,11 @@ pub(super) struct AiSession {
     input: Entity<TextareaState>,
     _input_subscription: Subscription,
     composer_focus: FocusHandle,
-    language: Entity<TextField>,
-    instruction_name: Entity<TextField>,
-    instruction_body: Entity<TextField>,
-    context_input: Entity<TextField>,
+    language: Entity<InputState>,
+    instruction_name: Entity<InputState>,
+    instruction_body: Entity<TextareaState>,
+    context_input: Entity<InputState>,
+    _field_subscriptions: Vec<Subscription>,
     settings: AiSettings,
     visible: bool,
     expanded: bool,
@@ -381,7 +387,12 @@ impl Editor {
         cx.notify();
     }
 
-    fn add_ai_context(&mut self, path: Option<String>, cx: &mut Context<Self>) {
+    fn add_ai_context(
+        &mut self,
+        path: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = self.ai_session.as_mut() else {
             return;
         };
@@ -412,7 +423,7 @@ impl Editor {
                 }
                 session
                     .context_input
-                    .update(cx, |input, cx| input.set_value("", cx));
+                    .update(cx, |input, cx| input.set_value("", window, cx));
             }
             Err(error) => session.error = Some(error.to_string()),
         }
@@ -1066,6 +1077,35 @@ impl Editor {
         if let Some(previous) = self.ai_session.take() {
             self.stash_ai_session(previous);
         }
+        let language = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("English / 简体中文")
+                .default_value(strings.ai_panel_translate_default.clone())
+        });
+        let instruction_name = cx.new(|cx| InputState::new(window, cx));
+        let context_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("@notes.md / @\"folder name\""));
+        let instruction_body = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("{{selection}} · {{document}} · {{references}}")
+                .auto_grow(4, 8)
+        });
+        let mut field_subscriptions = Vec::new();
+        for field in [&language, &instruction_name, &context_input] {
+            field_subscriptions.push(cx.subscribe(field, |_, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }));
+        }
+        field_subscriptions.push(cx.subscribe(
+            &instruction_body,
+            |_, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            },
+        ));
         self.ai_session = Some(AiSession {
             document: owner_document,
             panel_navigation: false,
@@ -1073,17 +1113,11 @@ impl Editor {
             input,
             _input_subscription: input_subscription,
             composer_focus: cx.focus_handle(),
-            language: cx.new(|cx| {
-                let mut field = TextField::new("English / 简体中文", cx);
-                // 默认翻译目标随界面语言；占位符罗列的是可填的语言名本身。
-                field.set_value(&strings.ai_panel_translate_default, cx);
-                field
-            }),
-            instruction_name: cx.new(|cx| TextField::new(strings.ai_panel_instruction_name, cx)),
-            context_input: cx.new(|cx| TextField::new("@notes.md / @\"folder name\"", cx)),
-            instruction_body: cx.new(|cx| {
-                TextField::new("{{selection}} · {{document}} · {{references}}", cx).multiline(4, 8)
-            }),
+            language,
+            instruction_name,
+            context_input,
+            instruction_body,
+            _field_subscriptions: field_subscriptions,
             settings,
             visible: true,
             expanded,
@@ -1489,7 +1523,7 @@ impl Editor {
             if session.command == AiCommand::Translate {
                 context.insert(
                     "target_language".into(),
-                    session.language.read(cx).value().into(),
+                    session.language.read(cx).value().as_str().into(),
                 );
             }
         }

@@ -1,6 +1,7 @@
 use super::*;
 use gpui::prelude::FluentBuilder;
 use gpui_kit::component::ThemeStyled as _;
+use gpui_kit::component::form::{Field, Form};
 
 impl Editor {
     pub(super) fn render_ai_workbench(
@@ -310,7 +311,16 @@ impl Editor {
             panel = panel.child(self.render_ai_pending_actions(theme, cx));
         }
         if session.command == AiCommand::Translate && !has_messages {
-            panel = panel.child(session.language.clone());
+            panel = panel.child(
+                Form::vertical().child(
+                    Field::new()
+                        .label(strings.ai_panel_target_language.clone())
+                        .child(
+                            Input::new(&session.language)
+                                .aria_label(strings.ai_panel_target_language.clone()),
+                        ),
+                ),
+            );
         }
         if session.error.is_some() {
             panel = panel.child(self.ai_button(

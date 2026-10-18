@@ -1,5 +1,5 @@
 use super::*;
-use gpui::prelude::FluentBuilder;
+use gpui_kit::component::form::{Field, Form};
 
 impl Editor {
     pub(in crate::editor) fn render_ai_assistant(
@@ -504,15 +504,16 @@ impl Editor {
                                 false,
                                 cx,
                                 |button, _cx| button.label(instruction_label),
-                                move |editor, _, cx| {
+                                move |editor, window, cx| {
                                     if let Some(session) = editor.ai_session.as_mut() {
                                         session.instruction_name.update(cx, |field, cx| {
-                                            field.set_value(&instruction.name, cx)
+                                            field.set_value(instruction.name.clone(), window, cx)
                                         });
                                         session.instruction_body.update(cx, |field, cx| {
-                                            field.set_value(&instruction.prompt, cx)
+                                            field.set_value(instruction.prompt.clone(), window, cx)
                                         });
                                     }
+                                    cx.notify();
                                 },
                             ))
                             .child(self.ai_button(
@@ -541,96 +542,120 @@ impl Editor {
                     );
                 }
                 content = content
-                    .child(session.instruction_name.clone())
-                    .child(session.instruction_body.clone())
-                    .child(self.ai_button(
+                    .child(
+                        Form::vertical()
+                            .child(
+                                Field::new()
+                                    .label(strings.ai_panel_instruction_name.clone())
+                                    .child(
+                                        Input::new(&session.instruction_name)
+                                            .aria_label(strings.ai_panel_instruction_name.clone()),
+                                    ),
+                            )
+                            .child(
+                                Field::new()
+                                    .label(strings.ai_panel_instruction_body.clone())
+                                    .child(
+                                        Textarea::new(&session.instruction_body)
+                                            .aria_label(strings.ai_panel_instruction_body.clone()),
+                                    ),
+                            ),
+                    )
+                    .child(div().flex().justify_end().child(self.ai_button(
                         "ai-instruction-save",
                         false,
                         cx,
-                        |button, _cx| {
+                        |button, cx| {
                             button
                                 .label(strings.ai_panel_save_instruction.clone())
                                 .primary()
-                                .disabled(!(!session.settings_saving))
+                                .disabled(
+                                    session.settings_saving
+                                        || session
+                                            .instruction_name
+                                            .read(cx)
+                                            .value()
+                                            .trim()
+                                            .is_empty()
+                                        || session
+                                            .instruction_body
+                                            .read(cx)
+                                            .value()
+                                            .trim()
+                                            .is_empty(),
+                                )
                         },
                         |editor, _, cx| editor.save_ai_instruction(cx),
-                    ));
+                    )));
             }
             PanelMode::Context => {
-                content = content
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(theme.colors.dialog_muted)
-                            .child(strings.ai_panel_files_scope.clone()),
-                    )
-                    .child(session.context_input.clone())
-                    .child(self.ai_button(
-                        "ai-context-add",
-                        false,
-                        cx,
-                        |button, _cx| {
-                            button
-                                .label(strings.ai_panel_add_context.clone())
-                                .disabled(!(!session.saved.running))
-                        },
-                        |editor, _, cx| editor.add_ai_context(None, cx),
-                    ));
-                let mut selected = div().flex().flex_wrap().gap(px(4.0));
-                for (index, path) in session.saved.references.iter().enumerate() {
+                content = content.child(
+                    Form::vertical().child(
+                        Field::new()
+                            .label(strings.ai_panel_sources.clone())
+                            .description(strings.ai_panel_files_scope.clone())
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div().flex_1().min_w_0().child(
+                                            Input::new(&session.context_input)
+                                                .aria_label(strings.ai_panel_sources.clone())
+                                                .disabled(session.saved.running),
+                                        ),
+                                    )
+                                    .child(self.ai_button(
+                                        "ai-context-add",
+                                        false,
+                                        cx,
+                                        |button, cx| {
+                                            button
+                                                .label(strings.ai_panel_add_context.clone())
+                                                .outline()
+                                                .disabled(
+                                                    session.saved.running
+                                                        || session
+                                                            .context_input
+                                                            .read(cx)
+                                                            .value()
+                                                            .trim()
+                                                            .is_empty(),
+                                                )
+                                        },
+                                        |editor, window, cx| {
+                                            editor.add_ai_context(None, window, cx)
+                                        },
+                                    )),
+                            ),
+                    ),
+                );
+                let paths = session
+                    .saved
+                    .references
+                    .iter()
+                    .filter(|path| !session.context_candidates.contains(path))
+                    .chain(session.context_candidates.iter());
+                let mut sources = div().flex().flex_col().gap_1();
+                for path in paths {
+                    let selected = session.saved.references.contains(path);
                     let path = path.clone();
-                    let path_label = path.clone();
-                    selected = selected.child(self.ai_button(
-                        ("ai-context-remove", index),
-                        false,
-                        cx,
-                        |button, _cx| {
-                            button
-                                .label(path_label)
-                                .icon(IconName::Close)
-                                .outline()
-                                .disabled(!(!session.saved.running))
-                        },
-                        move |editor, _, cx| {
-                            if let Some(session) = editor.ai_session.as_mut() {
-                                session
-                                    .saved
-                                    .references
-                                    .retain(|selected| selected != &path);
-                            }
-                            cx.notify();
-                        },
-                    ));
-                }
-                content = content.child(selected);
-                for (index, path) in session.context_candidates.iter().enumerate() {
-                    let chosen = session.saved.references.contains(path);
-                    let path = path.clone();
-                    let path_label = path.clone();
-                    content = content.child(
-                        self.ai_button(
-                            ("ai-context-choice", index),
-                            false,
-                            cx,
-                            |button, _cx| {
-                                button
-                                    .label(path_label)
-                                    .icon(if chosen {
-                                        IconName::Check
-                                    } else {
-                                        IconName::Plus
-                                    })
-                                    .disabled(!(!session.saved.running))
-                            },
-                            move |editor, _, cx| editor.add_ai_context(Some(path.clone()), cx),
-                        )
-                        .w_full()
-                        .when(chosen, |button| {
-                            button.bg(theme.colors.dialog_secondary_button_hover)
-                        }),
+                    sources = sources.child(
+                        Checkbox::new(SharedString::from(format!("ai-context-source:{path}")))
+                            .label(path.clone())
+                            .checked(selected)
+                            .disabled(session.saved.running)
+                            .w_full()
+                            .px_1()
+                            .py_1()
+                            .on_click(cx.listener(move |editor, _, window, cx| {
+                                editor.add_ai_context(Some(path.clone()), window, cx);
+                            })),
                     );
                 }
-                content = content.child(self.ai_button(
+                content = content.child(sources);
+                content = content.child(div().flex().justify_end().child(self.ai_button(
                     "ai-context-done",
                     false,
                     cx,
@@ -644,7 +669,7 @@ impl Editor {
                         }
                         cx.notify();
                     },
-                ));
+                )));
             }
             PanelMode::Task => {}
         }

@@ -1093,6 +1093,8 @@ impl I18nStringsDe {
             ai_panel_skills: self.ai_panel_skills.unwrap_or(defaults.ai_panel_skills),
             ai_panel_save_instruction: self.ai_panel_save_instruction.unwrap_or(defaults.ai_panel_save_instruction),
             ai_panel_instruction_name: self.ai_panel_instruction_name.unwrap_or(defaults.ai_panel_instruction_name),
+            ai_panel_instruction_body: self.ai_panel_instruction_body.unwrap_or(defaults.ai_panel_instruction_body),
+            ai_panel_target_language: self.ai_panel_target_language.unwrap_or(defaults.ai_panel_target_language),
             ai_panel_context_budget: self.ai_panel_context_budget.unwrap_or(defaults.ai_panel_context_budget),
             ai_review_title: self.ai_review_title.unwrap_or(defaults.ai_review_title),
             ai_panel_dock: self.ai_panel_dock.unwrap_or(defaults.ai_panel_dock),
