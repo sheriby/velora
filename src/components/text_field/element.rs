@@ -189,6 +189,7 @@ impl Element for TextFieldElement {
         self.input.update(cx, |input, _| {
             input.painted_caret = state.cursor.is_some();
             input.painted_selection = state.selection.is_some();
+            input.painted_marked = state.marked.is_some();
         });
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             if let Some(selection) = state.selection.take() {

@@ -59,8 +59,15 @@ impl Layout {
         else {
             return 0;
         };
+        // 点击/Down 越过末行可视高度时,closest_index_for_position 对超出换行
+        // 高度的 y 会返回 Err(0),把落点送回逻辑行行首;先把局部 y 夹进该行
+        // 最后一个可视行,让越界落点按 x 自然映射到行尾。
+        let row_height = row.line.size(self.line_height).height;
+        let local_y = (position.y - row.y)
+            .max(px(0.0))
+            .min(row_height - self.line_height);
         let offset = match row.line.closest_index_for_position(
-            point(position.x, (position.y - row.y).max(px(0.0))),
+            point(position.x, local_y),
             self.line_height,
         ) {
             Ok(index) | Err(index) => index,
@@ -384,6 +391,7 @@ impl Element for TextAreaElement {
         self.input.update(cx, |input, _| {
             input.painted_caret = state.cursor.is_some();
             input.painted_selection = !state.selection.is_empty();
+            input.painted_marked = !state.marked.is_empty();
         });
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for rectangle in state.selection.drain(..) {
