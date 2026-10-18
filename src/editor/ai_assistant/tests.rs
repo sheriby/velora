@@ -2646,7 +2646,7 @@ fn ai_sidebar_menu_in_a_split_routes_to_the_window_host(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
-fn ai_empty_sidebar_keeps_the_composer_near_the_header_and_groups_its_controls(cx: &mut TestAppContext) {
+fn ai_sidebar_keeps_the_composer_at_the_bottom_across_empty_conversation_and_error_states(cx: &mut TestAppContext) {
     initialize(cx);
     let (editor,cx) = cx.add_window_view(|_,cx| Editor::from_markdown(cx,"正文".into(),None));
     editor.update_in(cx, |editor,window,cx| {
@@ -2659,7 +2659,8 @@ fn ai_empty_sidebar_keeps_the_composer_near_the_header_and_groups_its_controls(c
     assert!(cx.debug_bounds("ai-command-bar").is_none(), "侧栏也不能重复列出快捷指令");
     let sidebar = cx.debug_bounds("ai-sidebar").unwrap();
     let composer = cx.debug_bounds("ai-composer").unwrap();
-    assert!(composer.top() < sidebar.top()+gpui::px(100.0), "空白会话不应把输入推到一整屏空白的底部");
+    assert!(composer.bottom() > sidebar.bottom()-gpui::px(24.0), "空白会话的输入也应固定在侧栏底部");
+    let empty_composer = composer;
     let input = cx.debug_bounds("ai-composer-input").unwrap();
     for selector in ["ai-context", "ai-send"] {
         let control = cx.debug_bounds(selector).unwrap();
@@ -2676,5 +2677,11 @@ fn ai_empty_sidebar_keeps_the_composer_near_the_header_and_groups_its_controls(c
     });
     draw(cx); draw(cx);
     let composer = cx.debug_bounds("ai-composer").unwrap();
-    assert!(composer.bottom() > sidebar.bottom()-gpui::px(32.0), "有对话后输入区固定到底部");
+    assert_eq!(composer,empty_composer,"第一条消息出现不能移动输入卡片");
+    editor.update(cx, |editor,cx| {
+        editor.ai_session.as_mut().unwrap().error = Some("连接暂时不可用".into());
+        cx.notify();
+    });
+    draw(cx); draw(cx);
+    assert_eq!(cx.debug_bounds("ai-composer"),Some(empty_composer),"错误和重试按钮不能挤占输入卡片的底部位置");
 }

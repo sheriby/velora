@@ -219,6 +219,8 @@ impl Editor {
                 body = body.child(conversation.clone());
             }
             panel = panel.child(body);
+        } else if sidebar {
+            panel = panel.child(div().min_h_0().flex_1());
         }
         if session.saved.running {
             let activity = match session.activity.as_str() {
@@ -246,6 +248,17 @@ impl Editor {
         if session.command == AiCommand::Translate && !has_messages {
             panel = panel.child(session.language.clone());
         }
+        if session.error.is_some() {
+            panel = panel.child(self.ai_button(
+                "ai-retry",
+                strings.ai_panel_retry.clone(),
+                false,
+                !session.saved.running,
+                theme,
+                cx,
+                |editor, _, cx| editor.retry_ai_task(cx),
+            ));
+        }
         if session.saved.kind == SessionKind::Conversation || !has_messages {
             panel = panel.child(self.render_ai_composer(theme, cx));
         } else if session.saved.running {
@@ -258,20 +271,6 @@ impl Editor {
                 cx,
                 |editor, _, cx| editor.stop_ai_task(cx),
             ));
-        }
-        if session.error.is_some() {
-            panel = panel.child(self.ai_button(
-                "ai-retry",
-                strings.ai_panel_retry.clone(),
-                false,
-                !session.saved.running,
-                theme,
-                cx,
-                |editor, _, cx| editor.retry_ai_task(cx),
-            ));
-        }
-        if sidebar && !has_messages {
-            panel = panel.child(div().flex_1());
         }
         let owner = cx.entity().downgrade();
         panel = panel.child(
