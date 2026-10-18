@@ -724,6 +724,8 @@ pub struct I18nStrings {
     pub ai_history_quick_commands: String,
     pub ai_panel_new_chat: String,
     pub ai_panel_copy: String,
+    pub ai_panel_latest: String,
+    pub ai_diagram_preview: String,
     pub ai_panel_sources: String,
     pub ai_panel_skills: String,
     pub ai_panel_save_instruction: String,

@@ -479,6 +479,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) ai_history_quick_commands: Option<String>,
     pub(crate) ai_panel_new_chat: Option<String>,
     pub(crate) ai_panel_copy: Option<String>,
+    pub(crate) ai_panel_latest: Option<String>,
+    pub(crate) ai_diagram_preview: Option<String>,
     pub(crate) ai_panel_sources: Option<String>,
     pub(crate) ai_panel_skills: Option<String>,
     pub(crate) ai_panel_save_instruction: Option<String>,

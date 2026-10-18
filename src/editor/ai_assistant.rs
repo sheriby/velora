@@ -24,6 +24,7 @@ use gpui_kit::component::{
 mod apply;
 mod context;
 mod experience;
+mod messages;
 pub(in crate::editor) mod inline_review;
 mod render;
 mod workbench;
@@ -67,7 +68,7 @@ pub(super) struct AiSession {
     panel_focus: FocusHandle,
     panel_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
     panel_drag: Option<Point<Pixels>>,
-    pub(in crate::editor) conversation: Option<Entity<Editor>>,
+    pub(in crate::editor) conversation: Option<Entity<messages::MessageTranscript>>,
     review_open: bool,
     // 标签重载会重建缓冲区，使用稳定的恢复标识区分暂离与主动关闭。
     review_navigation: Option<uuid::Uuid>,
@@ -497,6 +498,7 @@ impl Editor {
                 session.saved.rollback_failed_conversation_round();
             }
         }
+        self.refresh_ai_conversation(cx);
         self.send_ai_task(window, cx);
     }
 
@@ -1414,6 +1416,7 @@ impl Editor {
             session
                 .input
                 .update(cx, |input, cx| input.set_value("", window, cx));
+            self.refresh_ai_conversation(cx);
             cx.notify();
             return;
         }
@@ -1641,6 +1644,7 @@ impl Editor {
             }
             background.await;
         }));
+        self.refresh_ai_conversation(cx);
         self.persist_ai_session(cx);
         cx.notify();
     }
@@ -1766,6 +1770,8 @@ impl Editor {
         }
         if finished {
             self.refresh_ai_preview(cx);
+        } else {
+            self.refresh_ai_conversation(cx);
         }
         if checkpoint || finished {
             self.persist_ai_session(cx);
@@ -1827,47 +1833,15 @@ impl Editor {
         let Some(session) = self.ai_session.as_ref() else {
             return;
         };
-        let mut text = String::new();
-        for message in &session.saved.messages {
-            if message.text.is_empty() {
-                continue;
-            }
-            if !text.is_empty() {
-                text.push_str("\n\n");
-            }
-            if message.role == "user" {
-                for line in message.text.lines() {
-                    text.push_str("> ");
-                    text.push_str(line);
-                    text.push('\n');
-                }
-            } else {
-                text.push_str(&message.text);
-            }
-        }
-        if text.is_empty()
-            || session
-                .conversation
-                .as_ref()
-                .is_some_and(|preview| preview.read(cx).buffer.text() == text)
-        {
+        if let Some(conversation) = &session.conversation {
+            conversation.update(cx, |view, cx| view.sync(&session.saved, cx));
             return;
         }
-        let base = session
-            .saved
-            .workspace
-            .root
-            .as_ref()
-            .map(|root| root.join(".ai-response.md"));
-        let window_handle = self.window_handle;
-        let preview = cx.new(|cx| {
-            let mut editor = Editor::from_markdown(cx, text, base);
-            editor.reading_mode.set(true);
-            editor.ai_result_preview = true;
-            editor.ai_compact_preview = true;
-            editor.window_handle = window_handle;
-            editor
-        });
+        if session.saved.messages.is_empty() {
+            return;
+        }
+        let owner = cx.weak_entity();
+        let preview = cx.new(|cx| messages::MessageTranscript::new(owner, &session.saved, cx));
         if let Some(session) = self.ai_session.as_mut() {
             session.conversation = Some(preview);
         }

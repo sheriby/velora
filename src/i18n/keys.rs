@@ -476,6 +476,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_history_quick_commands",
     "ai_panel_new_chat",
     "ai_panel_copy",
+    "ai_panel_latest",
+    "ai_diagram_preview",
     "ai_panel_sources",
     "ai_panel_skills",
     "ai_panel_save_instruction",

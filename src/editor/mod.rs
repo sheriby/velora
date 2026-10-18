@@ -81,7 +81,6 @@ pub struct Editor {
     ai_surface_visible: std::rc::Rc<std::cell::Cell<bool>>,
     ai_review_marks: Vec<ai_assistant::inline_review::ReviewMark>,
     ai_review_binding: Option<ai_assistant::inline_review::ReviewBinding>,
-    ai_compact_preview: bool,
     document: DocumentTree,
     /// 文档文本的**唯一事实源**：块树是它上面的一份投影，保存写的是它。
     buffer: buffer::TextBuffer,
@@ -833,7 +832,6 @@ impl Editor {
             ai_surface_visible: Default::default(),
             ai_review_marks: Vec::new(),
             ai_review_binding: None,
-            ai_compact_preview: false,
             source_mode_fallback_required,
             code_document: false,
             pending_focus,

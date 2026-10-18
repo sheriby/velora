@@ -1089,6 +1089,8 @@ impl I18nStringsDe {
             ai_history_quick_commands: self.ai_history_quick_commands.unwrap_or(defaults.ai_history_quick_commands),
             ai_panel_new_chat: self.ai_panel_new_chat.unwrap_or(defaults.ai_panel_new_chat),
             ai_panel_copy: self.ai_panel_copy.unwrap_or(defaults.ai_panel_copy),
+            ai_panel_latest: self.ai_panel_latest.unwrap_or(defaults.ai_panel_latest),
+            ai_diagram_preview: self.ai_diagram_preview.unwrap_or(defaults.ai_diagram_preview),
             ai_panel_sources: self.ai_panel_sources.unwrap_or(defaults.ai_panel_sources),
             ai_panel_skills: self.ai_panel_skills.unwrap_or(defaults.ai_panel_skills),
             ai_panel_save_instruction: self.ai_panel_save_instruction.unwrap_or(defaults.ai_panel_save_instruction),

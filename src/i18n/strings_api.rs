@@ -509,6 +509,8 @@ impl I18nStrings {
         strings.ai_history_quick_commands = "快捷指令".into();
         strings.ai_panel_new_chat = "新任务".into();
         strings.ai_panel_copy = "复制".into();
+        strings.ai_panel_latest = "最新消息".into();
+        strings.ai_diagram_preview = "预览图表".into();
         strings.ai_panel_sources = "来源".into();
         strings.ai_panel_skills = "任务说明".into();
         strings.ai_panel_save_instruction = "保存指令".into();
@@ -1059,6 +1061,8 @@ impl I18nStrings {
             ai_history_quick_commands: "Quick commands".into(),
             ai_panel_new_chat: "New task".into(),
             ai_panel_copy: "Copy".into(),
+            ai_panel_latest: "Latest messages".into(),
+            ai_diagram_preview: "Preview diagram".into(),
             ai_panel_sources: "Sources".into(),
             ai_panel_skills: "Skills".into(),
             ai_panel_save_instruction: "Save instruction".into(),

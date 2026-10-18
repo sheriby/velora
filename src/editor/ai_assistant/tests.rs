@@ -3324,3 +3324,416 @@ fn ai_context_sources_are_checkable_and_share_one_selection_list(cx: &mut TestAp
         assert_eq!(editor.buffer.text(), "保留正文。");
     });
 }
+
+#[gpui::test]
+fn ai_streaming_and_completed_messages_use_the_same_native_transcript(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    initialize(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "保留正文。".into(), None));
+    let session_id = editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.expanded = true;
+        session.saved.running = true;
+        session
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: "**第一段**".into(),
+            });
+        let id = session.saved.id.clone();
+        editor.refresh_ai_preview(cx);
+        cx.notify();
+        id
+    });
+    draw(cx);
+    draw(cx);
+    cx.update(|window, _| {
+        assert_eq!(
+            window
+                .try_find("ai-message-stream")
+                .and_then(|list| list.role()),
+            Some(gpui::Role::Group),
+            "生成中也应使用同一套消息列表"
+        );
+        assert_eq!(
+            window
+                .try_find(format!("ai-message:{session_id}:0"))
+                .and_then(|row| row.role()),
+            Some(gpui::Role::ListItem)
+        );
+    });
+    let original = editor.read_with(cx, |editor, _| {
+        editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .conversation
+            .clone()
+            .unwrap()
+    });
+    editor.update(cx, |editor, cx| {
+        let session = editor.ai_session.as_mut().unwrap();
+        session.saved.messages[0].text = "**第一段**\n\n第二段。".into();
+        session.saved.running = false;
+        editor.refresh_ai_preview(cx);
+        cx.notify();
+    });
+    draw(cx);
+    draw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .conversation
+                .as_ref()
+                .unwrap()
+                .entity_id(),
+            original.entity_id(),
+            "生成结束不能重建阅读视图或丢失滚动位置"
+        );
+        assert_eq!(editor.buffer.text(), "保留正文。");
+    });
+    cx.update(|window, _| {
+        assert_eq!(
+            window.find("ai-message-stream").role(),
+            Some(gpui::Role::Group)
+        )
+    });
+}
+
+#[gpui::test]
+fn ai_message_updates_do_not_pull_the_reader_away_from_earlier_messages(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    initialize(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "保留正文。".into(), None));
+    let session_id = editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.expanded = true;
+        session.saved.running = true;
+        session.saved.messages = (0..40)
+            .map(|index| crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: format!("## 第 {index} 条\n\n{}", "需要阅读的内容。".repeat(20)).into(),
+            })
+            .collect();
+        let id = session.saved.id.clone();
+        editor.refresh_ai_preview(cx);
+        cx.notify();
+        id
+    });
+    draw(cx);
+    draw(cx);
+    let prepared = editor.read_with(cx, |editor, cx| {
+        let view = editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .conversation
+            .as_ref()
+            .unwrap()
+            .read(cx);
+        (0..40)
+            .filter(|index| view.message_state(*index).is_some())
+            .count()
+    });
+    assert!(
+        prepared < 20,
+        "不能为未显示的整段历史预建富文本状态：{prepared}"
+    );
+    cx.update(|window, _| {
+        assert_eq!(
+            window
+                .try_find("ai-message-stream")
+                .and_then(|list| list.role()),
+            Some(gpui::Role::Group)
+        );
+        assert!(
+            window
+                .try_find(format!("ai-message:{session_id}:39"))
+                .is_some(),
+            "首次显示应跟随最新消息"
+        );
+    });
+    editor.update(cx, |editor, cx| {
+        editor
+            .ai_session
+            .as_mut()
+            .unwrap()
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: "新的回答。".into(),
+            });
+        editor.refresh_ai_preview(cx);
+        cx.notify();
+    });
+    draw(cx);
+    draw(cx);
+    cx.update(|window, _| {
+        assert!(
+            window
+                .try_find(format!("ai-message:{session_id}:40"))
+                .is_some(),
+            "处于最新位置时追加消息应自动跟随"
+        )
+    });
+    let first = format!("ai-message:{session_id}:0");
+    // 连续滚动会让惰性列表逐步量出先前尚未显示的消息。
+    for _ in 0..40 {
+        cx.update(|window, cx| {
+            window.scroll(
+                "ai-message-stream",
+                gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(400.0))),
+                cx,
+            )
+        });
+        draw(cx);
+        if cx.update(|window, _| window.try_find(first.clone()).is_some()) {
+            break;
+        }
+    }
+    cx.update(|window, _| {
+        assert!(
+            window.try_find(first.clone()).is_some(),
+            "向上滚动后应能看到早期消息"
+        )
+    });
+    editor.update(cx, |editor, cx| {
+        let session = editor.ai_session.as_mut().unwrap();
+        session.saved.messages.last_mut().unwrap().text = "追加的最新内容。\n\n".repeat(100).into();
+        editor.refresh_ai_preview(cx);
+        cx.notify();
+    });
+    draw(cx);
+    draw(cx);
+    cx.update(|window, _| {
+        assert!(
+            window.try_find(first.clone()).is_some(),
+            "最新消息变化不能抢走早期消息的阅读位置"
+        )
+    });
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.buffer.text(), "保留正文。")
+    });
+}
+
+#[gpui::test]
+fn ai_native_message_selection_copies_rendered_text_and_never_edits_the_document(
+    cx: &mut TestAppContext,
+) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "正文不可修改。".into(), None))
+        })
+        .unwrap()
+    });
+    let editor = handle.update(cx, |_, _, cx| cx.entity()).unwrap();
+    let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor
+            .ai_session
+            .as_mut()
+            .unwrap()
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: "**结果** 与 `代码`。".into(),
+            });
+        editor.refresh_ai_preview(cx);
+        cx.notify();
+    });
+    draw(cx);
+    draw(cx);
+    let content = editor.read_with(cx, |editor, cx| {
+        editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .conversation
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .message_state(0)
+            .unwrap()
+    });
+    cx.update(|window, cx| {
+        let focus = content.read(cx).focus_handle().clone();
+        window.focus(&focus, cx);
+        window.press("secondary-a", cx);
+        assert_eq!(
+            content.read(cx).selected_text().trim(),
+            "结果 与 代码。",
+            "选区应属于结果视图"
+        );
+        window.press("secondary-c", cx);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("结果 与 代码。".into())
+        );
+        window.input("不应输入", cx);
+    });
+    draw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.buffer.text(), "正文不可修改。")
+    });
+    content.read_with(cx, |content, _| {
+        assert_eq!(content.rendered_text().as_str().trim(), "结果 与 代码。")
+    });
+}
+
+#[gpui::test]
+fn ai_native_messages_keep_inline_math_display_math_and_mermaid_preview(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor
+            .ai_session
+            .as_mut()
+            .unwrap()
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: "行内 $E=mc^2$。\n\n$$\nx^2\n$$\n\n```mermaid\nflowchart LR\n A-->B\n```"
+                    .into(),
+            });
+        editor.refresh_ai_preview(cx);
+        cx.notify();
+    });
+    for _ in 0..8 {
+        draw(cx);
+    }
+    assert!(
+        cx.debug_bounds("ai-math-inline").is_some(),
+        "行内公式应复用现有渲染器"
+    );
+    assert!(
+        cx.debug_bounds("ai-math-display").is_some(),
+        "块公式应继续渲染"
+    );
+    let diagram = cx
+        .debug_bounds("ai-mermaid-diagram")
+        .expect("图表应在资源完成后出现")
+        .center();
+    cx.simulate_click(diagram, gpui::Modifiers::none());
+    draw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.mermaid_preview.is_some(),
+            "阅读消息中的图表仍能打开预览"
+        );
+        assert_eq!(editor.buffer.text(), "正文");
+    });
+}
+
+#[gpui::test]
+fn ai_native_messages_keep_parenthesized_math_in_readonly_paragraphs(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "正文不可修改。".into(), None))
+        })
+        .unwrap()
+    });
+    let editor = handle.update(cx, |_, _, cx| cx.entity()).unwrap();
+    let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+    let source = "保留 \\(x^2\\) 与正文。";
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor
+            .ai_session
+            .as_mut()
+            .unwrap()
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: source.into(),
+            });
+        editor.refresh_ai_preview(cx);
+        cx.notify();
+    });
+    for _ in 0..6 {
+        draw(cx);
+    }
+    let paragraph = cx
+        .debug_bounds("ai-parenthesized-math")
+        .expect("混排的括号公式应继续按原语法渲染")
+        .center();
+    cx.simulate_click(paragraph, gpui::Modifiers::none());
+    draw(cx);
+    cx.update(|window, cx| {
+        window.press("secondary-a", cx);
+        window.input("误改", cx);
+        window.press("secondary-c", cx);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(source.into()),
+            "阅读结果仍应可复制而不能输入修改"
+        );
+    });
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.buffer.text(), "正文不可修改。")
+    });
+}
+
+#[gpui::test]
+fn ai_message_repaint_reuses_code_highlights_and_code_copy_keeps_the_source(
+    cx: &mut TestAppContext,
+) {
+    use crate::components::markdown::code_highlight::CODE_HIGHLIGHT_CALLS;
+    use gpui_kit::test::TestWindowExt as _;
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    let code = "fn count(text: &str) -> usize { text.len() }";
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor
+            .ai_session
+            .as_mut()
+            .unwrap()
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: format!("```rust\n{code}\n```").into(),
+            });
+        editor.refresh_ai_preview(cx);
+        cx.notify();
+    });
+    for _ in 0..4 {
+        draw(cx);
+    }
+    let before = CODE_HIGHLIGHT_CALLS.with(std::cell::Cell::get);
+    for _ in 0..6 {
+        draw(cx);
+    }
+    let after = CODE_HIGHLIGHT_CALLS.with(std::cell::Cell::get);
+    assert_eq!(after, before, "无内容或主题变化的绘制不能重复执行代码高亮");
+    cx.update(|window, cx| {
+        window.click("ai-code-copy", cx);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(code.into())
+        );
+    });
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), "正文"));
+}

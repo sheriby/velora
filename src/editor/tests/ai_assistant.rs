@@ -493,10 +493,9 @@ fn ai_answer_links_open_workspace_sources_without_making_the_answer_editable(
                 .unwrap()
                 .clone()
         });
-    preview.update(cx, |preview, cx| {
-        assert!(preview.is_read_only());
-        preview.defer_open_link("note.md".into(), cx);
-    });
+    redraw(cx);
+    redraw(cx);
+    preview.update_in(cx, |preview, window, cx| preview.open_link(0, "note.md", window, cx));
     cx.run_until_parked();
     editor.read_with(cx, |editor, _| {
         assert_eq!(
@@ -504,8 +503,8 @@ fn ai_answer_links_open_workspace_sources_without_making_the_answer_editable(
             Some(root.join("note.md").as_path())
         )
     });
-    preview.read_with(cx, |preview, _| {
-        assert_eq!(preview.buffer.text(), "参考 [note](note.md)")
+    preview.read_with(cx, |preview, cx| {
+        assert_eq!(preview.message_state(0).unwrap().read(cx).rendered_text().as_str().trim(), "参考 note")
     });
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -573,9 +572,14 @@ fn ai_completed_answers_all_keep_their_markdown_previews(cx: &mut TestAppContext
                 }),
             );
         editor.refresh_ai_preview(cx);
-        let conversation=editor.ai_session.as_ref().unwrap().conversation.as_ref().unwrap().read(cx);
-        assert_eq!(conversation.buffer.text(),"**第一条**\n\n`第二条`");
-        assert!(conversation.is_read_only());
+    });
+    redraw(cx);
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let conversation = editor.ai_session.as_ref().unwrap().conversation.as_ref().unwrap().read(cx);
+        assert_eq!(conversation.message_state(0).unwrap().read(cx).rendered_text().as_str().trim(), "第一条");
+        assert_eq!(conversation.message_state(1).unwrap().read(cx).rendered_text().as_str().trim(), "第二条");
+        assert_eq!(editor.buffer.text(), "正文");
     });
 }
 

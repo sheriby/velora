@@ -259,28 +259,7 @@ impl Editor {
                 .w_full()
                 .min_h_0()
                 .flex_1();
-            if session.saved.running {
-                let mut messages = div().flex().flex_col().gap(px(14.0)).p(px(8.0));
-                for message in session
-                    .saved
-                    .messages
-                    .iter()
-                    .filter(|message| !message.text.is_empty())
-                {
-                    messages = messages.child(
-                        div()
-                            .w_full()
-                            .when(message.role == "user", |row| {
-                                row.text_color(theme.colors.dialog_muted)
-                            })
-                            .child(gpui::SharedString::new(message.text.clone())),
-                    );
-                }
-                body = body
-                    .overflow_y_scroll()
-                    .track_scroll(&session.scroll)
-                    .child(messages);
-            } else if let Some(conversation) = &session.conversation {
+            if let Some(conversation) = &session.conversation {
                 body = body.child(conversation.clone());
             }
             panel = panel.child(body);

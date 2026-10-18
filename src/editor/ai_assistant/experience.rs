@@ -124,6 +124,7 @@ impl Editor {
                 || (session.visible
                     && (session.panel_focus.contains_focused(window, cx)
                         || session.input.read(cx).focus_handle(cx).is_focused(window)
+                        || session.conversation.as_ref().is_some_and(|view| view.read(cx).contains_focus(window, cx))
                         || session
                             .instruction_body
                             .read(cx)
