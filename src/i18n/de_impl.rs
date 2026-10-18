@@ -1029,6 +1029,10 @@ impl I18nStringsDe {
                 .ai_assistant
                 .unwrap_or(defaults.ai_assistant),
             preferences_ai_enabled: self.preferences_ai_enabled.unwrap_or(defaults.preferences_ai_enabled),
+            preferences_ai_connections: self.preferences_ai_connections.unwrap_or(defaults.preferences_ai_connections),
+            preferences_ai_instructions: self.preferences_ai_instructions.unwrap_or(defaults.preferences_ai_instructions),
+            preferences_ai_writing_preferences: self.preferences_ai_writing_preferences.unwrap_or(defaults.preferences_ai_writing_preferences),
+            preferences_ai_restore_instruction: self.preferences_ai_restore_instruction.unwrap_or(defaults.preferences_ai_restore_instruction),
             preferences_ai_custom_provider: self.preferences_ai_custom_provider.unwrap_or(defaults.preferences_ai_custom_provider),
             preferences_ai_advanced: self.preferences_ai_advanced.unwrap_or(defaults.preferences_ai_advanced),
             preferences_ai_key_required: self.preferences_ai_key_required.unwrap_or(defaults.preferences_ai_key_required),

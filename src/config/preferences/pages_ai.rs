@@ -4,7 +4,12 @@ use crate::ai::runtime::{RunControl, RunOutput};
 use crate::ai::settings::{AiSettings, Endpoint, Protocol};
 use crate::components::TextField;
 
+mod instructions;
+
 pub(super) struct AiPreferences {
+    instruction: instructions::InstructionDraft,
+    show_instructions: bool,
+    pub(super) instruction_menu_open: bool,
     settings: AiSettings,
     saved: AiSettings,
     draft: Option<ConnectionDraft>,
@@ -67,6 +72,7 @@ impl AiPreferences {
 
     fn staged(&self, cx: &App) -> anyhow::Result<AiSettings> {
         let mut settings = self.settings.clone();
+        self.instruction.stage(&mut settings, cx);
         settings.excluded_paths = self
             .excluded
             .read(cx)
@@ -133,7 +139,11 @@ impl PreferencesWindow {
                 Ok(settings) => {
                     let endpoint = settings.active_endpoint().cloned();
                     let excluded = self.ai_field(&settings.excluded_paths.join(", "), false, cx);
+                    let instruction = instructions::InstructionDraft::new(&settings, cx);
                     self.ai_preferences = Some(AiPreferences {
+                        instruction,
+                        show_instructions: false,
+                        instruction_menu_open: false,
                         saved: settings.clone(),
                         settings,
                         draft: None,
@@ -275,6 +285,7 @@ impl PreferencesWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.refresh_ai_instruction_locale(cx);
         if self.nav == PreferencesNav::Ai
             && let Some(field) = self
                 .ai_preferences
@@ -417,6 +428,14 @@ impl PreferencesWindow {
             .gap(px(12.0))
             .child(enabled_row);
         if !state.settings.enabled {
+            return self.settings_card(
+                theme,
+                vec![div().w_full().p(px(16.0)).child(content).into_any_element()],
+            );
+        }
+        content = content.child(self.ai_preferences_tabs(theme, strings, cx));
+        if state.show_instructions {
+            content = content.child(self.render_ai_instruction_editor(theme, strings, cx));
             return self.settings_card(
                 theme,
                 vec![div().w_full().p(px(16.0)).child(content).into_any_element()],

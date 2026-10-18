@@ -976,7 +976,7 @@ impl Editor {
             instruction_name: cx.new(|cx| TextField::new(strings.ai_panel_instruction_name, cx)),
             context_input: cx.new(|cx| TextField::new("@notes.md / @\"folder name\"", cx)),
             instruction_body: cx
-                .new(|cx| TextField::new("{{selection}} · {{document}} · {{references}}", cx)),
+                .new(|cx| TextField::new("{{selection}} · {{document}} · {{references}}", cx).multiline(4, 8)),
             settings,
             visible: true,
             expanded: false,

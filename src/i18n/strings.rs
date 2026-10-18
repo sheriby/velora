@@ -664,6 +664,10 @@ pub struct I18nStrings {
     /// AI 助手(右键菜单/通用标签)。
     pub ai_assistant: String,
     pub preferences_ai_enabled: String,
+    pub preferences_ai_connections: String,
+    pub preferences_ai_instructions: String,
+    pub preferences_ai_writing_preferences: String,
+    pub preferences_ai_restore_instruction: String,
     pub preferences_ai_default_connection: String,
     pub preferences_ai_url_invalid: String,
     pub preferences_ai_context_invalid: String,

@@ -449,6 +449,10 @@ impl I18nStrings {
             "复制图片到 ./${filename}.assets 文件夹".into();
         strings.ai_assistant = "AI 助手".into();
         strings.preferences_ai_enabled = "启用 AI".into();
+        strings.preferences_ai_connections = "连接".into();
+        strings.preferences_ai_instructions = "指令".into();
+        strings.preferences_ai_writing_preferences = "通用写作偏好".into();
+        strings.preferences_ai_restore_instruction = "恢复默认".into();
         strings.preferences_ai_custom_provider = "自定义服务".into();
         strings.preferences_ai_advanced = "高级".into();
         strings.preferences_ai_key_required = "请填写 API Key".into();
@@ -983,6 +987,10 @@ impl I18nStrings {
             preferences_status_bar_show_mode_switch: "Mode Switch".into(),
             ai_assistant: "AI Assistant".into(),
             preferences_ai_enabled: "Enable AI".into(),
+            preferences_ai_connections: "Connections".into(),
+            preferences_ai_instructions: "Instructions".into(),
+            preferences_ai_writing_preferences: "Writing preferences".into(),
+            preferences_ai_restore_instruction: "Restore default".into(),
             preferences_ai_custom_provider: "Custom service".into(),
             preferences_ai_advanced: "Advanced".into(),
             preferences_ai_key_required: "Enter an API key".into(),

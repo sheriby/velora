@@ -405,3 +405,228 @@ fn ai_provider_disabling_preserves_a_cleared_key_and_paused_connection_draft(
         "停用时保留尚未填写完的连接，而不阻止关闭"
     );
 }
+
+#[gpui::test]
+fn ai_preferences_customizes_quick_instructions_as_multiline_unsaved_drafts(
+    cx: &mut TestAppContext,
+) {
+    let directory =
+        std::env::temp_dir().join(format!("velora-ai-prompts-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&directory);
+    let path = crate::ai::settings::settings_path().unwrap();
+    crate::ai::settings::AiSettings {
+        enabled: true,
+        ..Default::default()
+    }
+    .save_at(&path)
+    .unwrap();
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init_with_language_id(cx, "en-US");
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+        crate::config::EditorSettings::init(cx, true);
+        crate::ai::settings::AiFeature::init(cx);
+    });
+    let (preferences, cx) = cx
+        .add_window_view(|_, cx| PreferencesWindow::new(AppPreferences::default(), Vec::new(), cx));
+    preferences.update_in(cx, |preferences, window, cx| {
+        window.activate_window();
+        preferences.set_nav_ai(&gpui::ClickEvent::default(), window, cx);
+    });
+    for _ in 0..2 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let tab = cx
+        .debug_bounds("preferences-ai-instructions-tab")
+        .expect("AI 偏好设置需要独立的指令页");
+    cx.simulate_click(tab.center(), gpui::Modifiers::none());
+    for _ in 0..2 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let menu = cx.debug_bounds("preferences-ai-command-menu").unwrap();
+    cx.simulate_click(menu.center(), gpui::Modifiers::none());
+    for _ in 0..2 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let polish = cx.debug_bounds("preferences-ai-command-polish").unwrap();
+    cx.simulate_click(polish.center(), gpui::Modifiers::none());
+    for _ in 0..2 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let body = cx.debug_bounds("preferences-ai-instruction-body").unwrap();
+    assert!(
+        body.size.height > gpui::px(100.0),
+        "任务要求需要可换行的编辑区"
+    );
+    cx.simulate_click(body.center(), gpui::Modifiers::none());
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-a"
+    } else {
+        "ctrl-a"
+    });
+    cx.simulate_input("保留术语。");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("保留链接。");
+    cx.run_until_parked();
+    preferences.read_with(cx, |preferences, cx| {
+        let staged = preferences
+            .ai_preferences
+            .as_ref()
+            .unwrap()
+            .staged(cx)
+            .unwrap();
+        assert_eq!(
+            staged.quick_instructions["polish"],
+            "保留术语。\n保留链接。"
+        );
+    });
+    assert!(
+        crate::ai::settings::AiSettings::load_at(&path)
+            .unwrap()
+            .quick_instructions
+            .is_empty(),
+        "未保存的指令不能改变实际配置"
+    );
+    for selector in ["preferences-ai-command-summarize", "preferences-ai-command-polish"] {
+        let menu = cx.debug_bounds("preferences-ai-command-menu").unwrap();
+        cx.simulate_click(menu.center(), gpui::Modifiers::none());
+        for _ in 0..2 {
+            cx.update(|window, cx| window.draw(cx).clear());
+            cx.run_until_parked();
+        }
+        let item = cx
+            .debug_bounds(selector)
+            .unwrap();
+        cx.simulate_click(item.center(), gpui::Modifiers::none());
+        for _ in 0..2 {
+            cx.update(|window, cx| window.draw(cx).clear());
+            cx.run_until_parked();
+        }
+    }
+    preferences.read_with(cx, |preferences, cx| {
+        assert_eq!(
+            preferences
+                .ai_preferences
+                .as_ref()
+                .unwrap()
+                .instruction
+                .field
+                .read(cx)
+                .value(),
+            "保留术语。\n保留链接。",
+            "切换指令不能丢弃草稿"
+        );
+    });
+    preferences.update(cx, |preferences, cx| {
+        preferences.save_ai_preferences(cx).unwrap()
+    });
+    let saved = crate::ai::settings::AiSettings::load_at(&path).unwrap();
+    assert_eq!(saved.quick_instructions["polish"], "保留术语。\n保留链接。");
+    for _ in 0..2 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let reset = cx
+        .debug_bounds("preferences-ai-restore-instruction")
+        .unwrap();
+    cx.simulate_click(reset.center(), gpui::Modifiers::none());
+    preferences.read_with(cx, |preferences, cx| {
+        assert!(
+            !preferences
+                .ai_preferences
+                .as_ref()
+                .unwrap()
+                .staged(cx)
+                .unwrap()
+                .quick_instructions
+                .contains_key("polish")
+        );
+    });
+    assert_eq!(
+        crate::ai::settings::AiSettings::load_at(&path)
+            .unwrap()
+            .quick_instructions,
+        saved.quick_instructions
+    );
+    preferences.update(cx, |preferences, cx| {
+        preferences.save_ai_preferences(cx).unwrap()
+    });
+    assert!(
+        crate::ai::settings::AiSettings::load_at(&path)
+            .unwrap()
+            .quick_instructions
+            .is_empty()
+    );
+    cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
+}
+
+#[gpui::test]
+fn ai_preferences_updates_default_instruction_language_without_overwriting_a_custom_draft(
+    cx: &mut TestAppContext,
+) {
+    let directory =
+        std::env::temp_dir().join(format!("velora-ai-prompt-locale-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&directory);
+    let path = crate::ai::settings::settings_path().unwrap();
+    crate::ai::settings::AiSettings {
+        enabled: true,
+        ..Default::default()
+    }
+    .save_at(&path)
+    .unwrap();
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init_with_language_id(cx, "en-US");
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+        crate::config::EditorSettings::init(cx, true);
+    });
+    let (preferences, cx) = cx
+        .add_window_view(|_, cx| PreferencesWindow::new(AppPreferences::default(), Vec::new(), cx));
+    preferences.update_in(cx, |preferences, window, cx| {
+        preferences.set_nav_ai(&gpui::ClickEvent::default(), window, cx)
+    });
+    cx.update(|_, cx| crate::i18n::I18nManager::init_with_language_id(cx, "zh-CN"));
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    preferences.update(cx, |preferences, cx| {
+        let state = preferences.ai_preferences.as_ref().unwrap();
+        assert_eq!(
+            state.instruction.field.read(cx).value(),
+            crate::ai::instructions::default_instruction(crate::ai::AiCommand::Ask, "zh-CN")
+        );
+        assert!(
+            state.staged(cx).unwrap().quick_instructions.is_empty(),
+            "切换语言的默认要求不能被误存为自定义指令"
+        );
+        state
+            .instruction
+            .field
+            .update(cx, |field, cx| field.set_value("保持自然，避免套话。", cx));
+    });
+    cx.update(|_, cx| crate::i18n::I18nManager::init_with_language_id(cx, "en-US"));
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    preferences.read_with(cx, |preferences, cx| {
+        let state = preferences.ai_preferences.as_ref().unwrap();
+        assert_eq!(
+            state.instruction.field.read(cx).value(),
+            "保持自然，避免套话。"
+        );
+        assert_eq!(
+            state.staged(cx).unwrap().quick_instructions["conversation"],
+            "保持自然，避免套话。"
+        );
+    });
+    assert!(
+        crate::ai::settings::AiSettings::load_at(&path)
+            .unwrap()
+            .quick_instructions
+            .is_empty(),
+        "取消设置不保存语言切换中的草稿"
+    );
+    cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
+}

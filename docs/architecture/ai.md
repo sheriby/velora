@@ -30,7 +30,7 @@
 
 对话输入复用 `components/text_field` 的可选多行模式：布局、鼠标落点、选区与 IME 共用换行后的字形坐标；短输入保持一行，长输入在限定行数内增长和滚动。换行只改变显示，不改写文本；输入撤销采用小段文本增量，IME 组词归为一次编辑。
 
-五个任务的完整默认要求集中在 `AiCommand:instruction`；界面标签与发送给模型的任务正文分开。润色、扩写在发起快捷任务时附带工具交付与简短回复约束，后续自然语言对话仍可解释修改。`ai_polish_sends_full_task_requirements_and_keeps_the_document_unchanged_without_a_proposal` 通过本地 HTTP 夹具检查实际请求和工具范围，并验证没有修改建议时正文保持不变，防止只发送按钮标签。
+默认要求集中在 `resources/ai/prompts/en-US/` 与 `resources/ai/prompts/zh-CN/`，`ai/instructions.rs:default_instruction` 按界面语言选择，未知语言回退英文；界面标签与任务正文分开。`PromptProfile:capture` 装配固定系统要求、通用写作偏好、Skills 目录与快捷任务正文。润色、扩写附带独立的工具交付要求，自定义任务正文不会移除工具层的阅读或选区权限。`ai_polish_sends_full_task_requirements_and_keeps_the_document_unchanged_without_a_proposal` 通过本地 HTTP 夹具检查实际请求和工具范围，并验证没有修改建议时正文保持不变，防止只发送按钮标签。
 
 操作图标需要在 `main.rs:VeloraAssets` 注册；磁盘上存在 SVG 并不代表产品能加载。AI 资源回归使用正式资源源逐一解析并栅格化，断言实际存在可见像素。
 
@@ -80,6 +80,8 @@ Agent 读取了某篇待审阅文档后，后续提议会记录对它的依赖�
 
 偏好设置用默认连接下拉与折叠高级区控制信息密度，连接草稿独立保留，未完成的输入不阻止切换连接，保存时统一校验。删除连接后恢复已有草稿，不重新创建字段覆盖输入。停用 AI 时保留连接草稿和已清空的 Key；无效数字预算沿用上一个有效值。
 
+指令编辑位于偏好设置的独立页签，复用原生多行 `TextField`；`pages_ai/instructions.rs:InstructionDraft` 维护当前编辑项，切换时暂存到 `AiSettings:quick_instructions`。空白或等同当前语言默认值的正文不生成覆盖项，恢复默认仅移除当前项。语言切换先暂存自定义草稿，再加载新语言的默认要求，未保存内容不写入配置。
+
 API Key 与连接一起保存在 `ai.json` 的 `endpoints[].api_key` 字段，可以在设置中保存，也可以直接编辑文件；空字符串用于无需鉴权的本地服务。保存仍使用既有原子写入，失败时保留原配置。Unix 文件权限限制为当前用户读写；调试输出隐藏密钥，会话记录不保存密钥。删除连接同时移除其配置中的 Key。
 
 macOS 配置文件为 `~/Library/Application Support/app.velora.velora/ai.json`，例如：
@@ -119,5 +121,7 @@ macOS 配置文件为 `~/Library/Application Support/app.velora.velora/ai.json`�
 ## 请求前缀
 
 `ai/context.rs:task_prompt` 将固定要求与易变资料分开：内置快捷指令的完整要求置于首轮最前；工作区路径、标签身份与显式资料按稳定顺序排列，原始选区只在首轮写入。当前活动文档、光标、选区与邻近正文随后提供，本次要求放在末尾。用户对话后续轮次只追加本轮状态和要求，不重新注入原始选区，也不改写已发送的历史。固定系统指令和工具定义不随光标变化；Skills 目录按标识排序，避免目录枚举顺序干扰前缀。
+
+每个任务在首次有效发送时创建并持久化 `SavedSession:prompt_profile`，续聊、快捷重试与历史恢复复用原快照。修改偏好设置、界面语言或 Skills 目录不会重装既有系统前缀，新任务使用新设置；旧版无快照的记录在下一次发送时补建。本地 HTTP 回归实际发送两轮请求，检查修改偏好与语言后系统及消息前缀仍逐字相同。
 
 三种协议的本地 HTTP 用例检查工具续轮和新一轮对话的消息前缀、系统指令及工具定义；Anthropic 断点元数据移动时，检查正文前缀保持一致。服务端缓存是否命中不由客户端测试保证；上下文预算触发的历史压缩仍按运行时规则处理。
