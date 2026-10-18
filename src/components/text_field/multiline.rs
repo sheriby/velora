@@ -161,7 +161,7 @@ fn shape(
         background_color: None,
         underline: None,
         strikethrough: None,
-        font_size: None,
+
     };
     let lines = match window.text_system().shape_text(
         text,

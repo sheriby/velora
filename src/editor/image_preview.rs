@@ -429,7 +429,8 @@ impl Editor {
         };
         let content = if let Some(image) = &preview.image {
             img(image.clone())
-                .image_scale(preview.zoom)
+                .w(px(image.size(0).width.0 as f32 * preview.zoom))
+                .h(px(image.size(0).height.0 as f32 * preview.zoom))
                 .id(("image-file-preview-image", image.id.0))
                 .debug_selector(|| "image-file-preview-image".into())
                 .max_w(relative(preview.zoom))

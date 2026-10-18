@@ -17,12 +17,13 @@
 ## 2. 门禁与跑法
 
 ```bash
+git submodule update --init --recursive
 cargo build                 # 零警告
 cargo test --bin velora     # 全绿
 ```
 
 - **两条都要跑**：vendored gpui 里有只在测试构建存在的代码（`#[cfg(any(test, feature = "test-support"))]`），只跑测试会漏掉生产构建的编译错误。
-- `cargo test -p gpui` / 在 `vendor/gpui` 里单独跑 gpui 测试**跑不通**（非 workspace 成员 + 本地补丁），不要当门禁。
+- `cargo test -p gpui` 不是主仓命令。`vendor/gpui` 是独立工作区，包名为 `gpui-pre`；依赖包自身的完整测试另有资源约束，不能代替应用门禁，见子仓 README。
 - **门禁只在收尾跑，不要改一版跑一版**：中途用 `cargo test --bin velora <关键词>`（单条/单组，秒级）；`cargo build` 是分钟级，反复跑纯磨时间。只看某个测试的打印时，若 `--nocapture` 的输出被工具链包装吃掉，直接跑 `target/debug/deps/velora-*` 加测试名比重链接快。
 - 不动代码的改动（文档、注释、AGENTS.md、CHANGELOG）不跑构建与测试。
 - 构建警告清零：警告当缺陷处理。clippy 不作门禁，但 `Cargo.toml` 的 `[lints.clippy]` 放开过哪些要心里有数。
@@ -79,18 +80,18 @@ cargo test --bin velora update_flow_ -- --test-threads=1
 完整说明以 [vendor/README.md](../../vendor/README.md) 为准，涵盖发布包基线、修改原因、平台差异、全部源码文件及升级验证。旧补丁已逐项移植或由新版上游替代；Windows 完整 IME 日志、选择器目录失败回退与原 client GUID，以及 Linux 兼容字段均已补齐。具体迁移状态及原生验证边界只维护在该 README。不能只依赖“本地补丁”注释或 vendor 引入后的提交记录。下列编号保留代码注释中的引用关系（例如 CF_HTML 指向本节第 9 条），细节不再维护第二份。
 
 1. **焦点句柄清理**：`window.rs:FocusMap` 与 `app.rs:release_dropped_focus_handles`，只在发生最后引用释放时清理焦点表。
-2. **逐段字号**：`TextRun` / `FontRun` / `ShapedRun` 的字号覆盖贯穿 shaping、缓存与绘制；macOS、Windows、Noop 已接入；CosmicText 保留旧版字段兼容，尚不处理字号覆盖，项目不支持 Linux。
+2. **逐段字号**：普通 `TextRun` 保持上游结构，显式 `FontSizedTextRun` 与后端 `FontRun` / `ShapedRun` 的字号覆盖贯穿 shaping、缓存与绘制；macOS、Windows、Noop 已接入；CosmicText 保留旧版字段兼容，尚不处理字号覆盖，项目不支持 Linux。
 3. **测试帧数据**：`Frame::clear` 清理 `debug_bounds` 与 `debug_hovered`；Div 记录悬停事实，`VisualTestContext::debug_hovered` 提供查询，均受测试门控。
 4. **真实平台 shaping 测试入口**：macOS 测试直接使用 `gpui-pre-apple` 的公开 `AppleTextSystem`，不再从核心反向引用平台实现。
 5. **Windows 着色器内嵌**：`directx_renderer.rs:build_shader_blob` 在 `debug_assertions` 路径从内存编译 HLSL，并展开 include；非调试断言路径仍使用既有预编译字节。
 6. **Windows 前台任务预算**：`WindowsPlatformInner::run_foreground_task` 新版上游已有 10 ms 批次预算，本地不再重放旧调度补丁。
 7. **文件选择器**：Windows 打开/保存使用新版上游的 STA 线程与 owner 保护，保留目录失败回退和原 client GUID；`PathPromptOptions::directory` 在 Windows、macOS、Linux portal 接入起始目录。固定 client GUID 只隔离壳层旧状态，不会永久消除不可达目录的等待。
 8. **无追踪实体读**：`Entity::read_untracked` 跳过 accessed 登记，调用方自行保证必要的重绘通知。
-9. **HTML 剪贴板**：`ClipboardItem` 增加 HTML 载荷；Windows 读取 CF_HTML 片段，读取入口有 2 MiB 上限及 `GlobalLock` 空指针检查；macOS 支持写入 HTML，读取仍在应用层。Windows 未增加 HTML 写入。
+9. **HTML 剪贴板**：完整移至应用的 `components/markdown/html_paste.rs`，`ClipboardItem` 恢复原版结构；Windows 读取入口保留 2 MiB 上限、内存锁定保护和剪贴板代数检查，macOS 支持读写。Windows 未增加 HTML 写入。
 10. **macOS 标签拖动与拖窗**：内容视图禁用默认鼠标拖窗，`MacWindow::start_window_move` 保留事件并延后发起原生拖窗，临时允许移动后恢复，避免嵌套事件循环重入。
 11. **中文排版**：`LineWrapper` 共用行首/行末禁则，`WrappedLine::wrap_at_boundaries` 接收合法及紧急断点；`add_horizontal_spacing` / `spacing_before` 提供不修改原文的视觉留白。
-12. **图片布局**：`Img::image_scale` 缩放固有宽高，百分比宽度的高度交给宽高比推导。
-13. **外部拖放载荷**：`ExternalPaths::new` 为原生文件拖放回归提供构造入口，复制、移动和打开仍由应用实现。
+12. **图片布局**：缩放由应用的尺寸和容器比例实现；底层仅保留百分比宽度时高度按宽高比推导的修复。
+13. **外部拖放载荷**：直接使用新版上游公开的 `ExternalPaths` 元组构造器，不再保留底层构造补丁。
 14. **测试窗口观察**：TestWindow 支持读取标题、记录移动请求与调用控件命中回调；`VisualTestContext` 提供对应查询。
 15. **构建兼容与裁剪**：使用新版发布包清单；核心的宿主 manifest 特性避免与应用资源重复嵌入。
 

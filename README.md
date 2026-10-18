@@ -112,6 +112,7 @@ cargo install --locked sccache --version 0.17.0
 Then:
 
 ```bash
+git submodule update --init --recursive
 cargo build
 cargo run                       # launch with an empty window
 cargo run /path/to/workspace    # open a folder as a workspace

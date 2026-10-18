@@ -120,7 +120,7 @@ pub(super) fn real_label_widths(
                     background_color: None,
                     underline: None,
                     strikethrough: None,
-                    font_size: None,
+
                 };
                 window
                     .text_system()

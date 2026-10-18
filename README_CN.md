@@ -114,6 +114,7 @@ cargo install --locked sccache --version 0.17.0
 然后：
 
 ```bash
+git submodule update --init --recursive
 cargo build
 cargo run                       # 空窗口启动
 cargo run /路径/到/工作区        # 以指定文件夹为工作区打开

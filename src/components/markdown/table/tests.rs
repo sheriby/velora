@@ -59,15 +59,15 @@ mod tests {
                         });
                         let (display, runs, code_ranges) = block.read_with(cx, |block, _cx| {
                             let display = SharedString::from(block.display_text().to_string());
-                            let base = TextRun {
+                            let base = gpui::FontSizedTextRun::from(TextRun {
                                 len: display.len(),
                                 font: font(".SystemUIFont"),
                                 color: Hsla::from(rgba(0x000000ff)),
                                 background_color: None,
                                 underline: None,
                                 strikethrough: None,
-                                font_size: None,
-                            };
+
+                            });
                             let runs = crate::components::block::element::build_text_runs(
                                 block,
                                 &display,
@@ -91,7 +91,7 @@ mod tests {
 
                         let mut shaped = window
                             .text_system()
-                            .shape_text(
+                            .shape_text_with_font_sizes(
                                 display.clone(),
                                 px(theme.typography.text_size),
                                 &runs,

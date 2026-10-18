@@ -6,6 +6,7 @@ thread_local! {
 pub(super) use std::ops::Range;
 pub(super) use std::rc::Rc;
 
+pub(super) use gpui::FontSizedTextRun as TextRun;
 pub(super) use gpui::*;
 
 pub(super) use super::{
@@ -50,25 +51,37 @@ fn prose_spacing(
         while ranges.peek().is_some_and(|range| range.end <= index) {
             ranges.next();
         }
-        let code = ranges.peek().filter(|range| range.contains(&index)).map(|range| range.start);
+        let code = ranges
+            .peek()
+            .filter(|range| range.contains(&index))
+            .map(|range| range.start);
         let character = grapheme.chars().next().unwrap();
         if let Some((before, previous_code)) = previous {
             let mut gap = px(0.0);
             if previous_code != code {
-                if previous_code.is_some() { gap += code_gap; }
-                if code.is_some() { gap += code_gap; }
+                if previous_code.is_some() {
+                    gap += code_gap;
+                }
+                if code.is_some() {
+                    gap += code_gap;
+                }
             }
-            if previous_code.is_none() && code.is_none()
-                && !before.is_whitespace() && !character.is_whitespace()
+            if previous_code.is_none()
+                && code.is_none()
+                && !before.is_whitespace()
+                && !character.is_whitespace()
             {
                 gap += letter_spacing;
             }
             if !(previous_code.is_some() && code.is_some())
-                && ((is_han(before) && is_latin(character)) || (is_latin(before) && is_han(character)))
+                && ((is_han(before) && is_latin(character))
+                    || (is_latin(before) && is_han(character)))
             {
                 gap += autospace;
             }
-            if gap > px(0.0) { spacing.push((index, gap)); }
+            if gap > px(0.0) {
+                spacing.push((index, gap));
+            }
         }
         previous = Some((character, code));
     }
@@ -101,8 +114,13 @@ pub(crate) fn add_render_spacing(
                 range.start.saturating_sub(line_start)..range.end.min(line_end) - line_start
             })
             .collect();
-        let spacing =
-            prose_spacing(&line.text, &ranges, letter_spacing, code_gap, font_size * 0.25);
+        let spacing = prose_spacing(
+            &line.text,
+            &ranges,
+            letter_spacing,
+            code_gap,
+            font_size * 0.25,
+        );
         line.add_horizontal_spacing(&spacing);
         line_start += line.len() + 1;
     }
@@ -116,10 +134,14 @@ fn inline_code_background_bounds(
     padding: Point<Pixels>,
 ) -> Bounds<Pixels> {
     Bounds::from_corners(
-        point(segment.left() - padding.x,
-            (segment.top() + baseline - ascent - padding.y).max(segment.top() + px(1.0))),
-        point(segment.right() + padding.x,
-            (segment.top() + baseline + descent + padding.y).min(segment.bottom() - px(1.0))),
+        point(
+            segment.left() - padding.x,
+            (segment.top() + baseline - ascent - padding.y).max(segment.top() + px(1.0)),
+        ),
+        point(
+            segment.right() + padding.x,
+            (segment.top() + baseline + descent + padding.y).min(segment.bottom() - px(1.0)),
+        ),
     )
 }
 
@@ -243,7 +265,8 @@ pub(crate) fn build_text_runs(
             link_color
         } else if inline_style.code && show_inline_code_backgrounds {
             code_text
-        } else if inline_style.bold && !input.is_source_raw_mode()
+        } else if inline_style.bold
+            && !input.is_source_raw_mode()
             && !matches!(input.kind(), BlockKind::Heading { .. })
         {
             link_color
@@ -279,14 +302,16 @@ pub(crate) fn build_text_runs(
         }
 
         runs.push(TextRun {
-            len: end - start,
-            font,
-            color: run_color,
-            background_color,
-            underline,
-            strikethrough,
-            // 行内代码跟随「代码块字体大小」设置（显示态与编辑态
-            // 必须同字号，否则点击进入编辑的瞬间字号会跳变）。
+            run: gpui::TextRun {
+                len: end - start,
+                font,
+                color: run_color,
+                background_color,
+                underline,
+                strikethrough,
+                // 行内代码跟随「代码块字体大小」设置（显示态与编辑态
+                // 必须同字号，否则点击进入编辑的瞬间字号会跳变）。
+            },
             font_size: inline_style.code.then_some(code_font_size),
         });
     }
@@ -381,19 +406,21 @@ fn build_code_text_runs(
         }
 
         runs.push(TextRun {
-            len: end - start,
-            font,
-            color: run_color,
-            background_color: base_run.background_color,
-            underline: (is_marked || highlighted_underline).then_some(UnderlineStyle {
-                color: Some(run_color),
-                thickness: underline_thickness,
-                wavy: false,
-            }),
-            strikethrough: highlighted_strikethrough.then_some(StrikethroughStyle {
-                color: Some(run_color),
-                thickness: underline_thickness,
-            }),
+            run: gpui::TextRun {
+                len: end - start,
+                font,
+                color: run_color,
+                background_color: base_run.background_color,
+                underline: (is_marked || highlighted_underline).then_some(UnderlineStyle {
+                    color: Some(run_color),
+                    thickness: underline_thickness,
+                    wavy: false,
+                }),
+                strikethrough: highlighted_strikethrough.then_some(StrikethroughStyle {
+                    color: Some(run_color),
+                    thickness: underline_thickness,
+                }),
+            },
             font_size: None,
         });
     }
@@ -481,12 +508,8 @@ pub(crate) fn matching_bracket_pair(text: &str, cursor: usize) -> Option<(usize,
             (cursor - c.len_utf8(), c, Dir::Backward)
         }
         _ => match at {
-            Some(c) if PAIRS.iter().any(|(open, _)| *open == c) => {
-                (cursor, c, Dir::Forward)
-            }
-            Some(c) if PAIRS.iter().any(|(_, close)| *close == c) => {
-                (cursor, c, Dir::Backward)
-            }
+            Some(c) if PAIRS.iter().any(|(open, _)| *open == c) => (cursor, c, Dir::Forward),
+            Some(c) if PAIRS.iter().any(|(_, close)| *close == c) => (cursor, c, Dir::Backward),
             _ => return None,
         },
     };
@@ -961,7 +984,6 @@ pub(crate) fn footnote_at_position<'a>(
 ///
 /// Supports multi-line text (used by code blocks) via hard `\n` breaks.
 /// Each `\n` produces a separate `WrappedLine` from the text shaper.
-
 pub(crate) use code_input::*;
 
 mod code_input;

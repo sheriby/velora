@@ -158,7 +158,7 @@ async fn core_repair_focus_island_relearns_its_real_height(cx: &mut TestAppConte
 #[gpui::test]
 async fn scrollbar_reaches_the_end_when_the_last_source_line_is_visible(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    let source = include_str!("../../../vendor/gpui-pre-macos/src/platform.rs");
+    let source = include_str!("../../../vendor/gpui/crates/gpui_macos/src/platform.rs");
     let path = temp_markdown_path("scrollbar-source-platform").with_extension("rs");
     let (editor, cx) =
         cx.add_window_view(|_window, cx| Editor::from_file_source(cx, source.into(), Some(path)));

@@ -1389,7 +1389,7 @@ fn drop_external_tree_paths(
 ) {
     cx.simulate_event(gpui::FileDropEvent::Entered {
         position,
-        paths: gpui::ExternalPaths::new(paths),
+        paths: gpui::ExternalPaths(paths.into_iter().collect()),
     });
     redraw(cx);
     cx.simulate_event(gpui::FileDropEvent::Submit { position });

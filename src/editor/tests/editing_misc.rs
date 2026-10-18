@@ -255,12 +255,13 @@ async fn tree_paste_writes_clipboard_image_with_date_hash_name(cx: &mut TestAppC
     let _ = std::fs::remove_dir_all(root);
 }
 
-#[test]
-fn copy_as_html_item_carries_html_flavor() {
-    // roadmap F2 增强：纯文本 flavor 保留 HTML 源码，同时附带 text/html flavor。
+#[gpui::test]
+fn copy_as_html_preserves_the_plain_html_source(cx: &mut TestAppContext) {
     let html = "<h1>Title</h1>".to_string();
-    let item = crate::editor::workspace::copy_as_html_clipboard_item(html.clone());
-    assert_eq!(item.html(), Some(html.as_str()));
+    cx.update(|cx| {
+        crate::components::markdown::html_paste::write_html_to_clipboard(&html, cx).expect("复制 HTML");
+        assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()), Some(html));
+    });
 }
 
 #[gpui::test]

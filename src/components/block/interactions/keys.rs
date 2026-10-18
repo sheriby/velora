@@ -225,6 +225,11 @@ impl Block {
             return;
         }
 
+        let clipboard_change = if plain_only || cx.is_test() {
+            None
+        } else {
+            Some(crate::components::markdown::html_paste::clipboard_change_count())
+        };
         if let Some(item) = cx.read_from_clipboard() {
             if let Some(source) = Self::pasted_image_source_from_clipboard(&item) {
                 let (leading, trailing) = self.paste_image_split();
@@ -259,10 +264,8 @@ impl Block {
             let text = if plain_only {
                 text
             } else {
-                crate::components::markdown::html_paste::maybe_markdown_from_clipboard(
-                    item.html(),
-                    &text,
-                )
+                let html = clipboard_change.and_then(crate::components::markdown::html_paste::clipboard_html);
+                crate::components::markdown::html_paste::maybe_markdown_from_clipboard(html.as_deref(), &text)
             };
             if !plain_only && let Some(source) = Self::pasted_image_source_from_text(&text) {
                 let (leading, trailing) = self.paste_image_split();

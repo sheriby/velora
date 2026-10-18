@@ -5,7 +5,10 @@
 //! are still outside the runtime-safe subset continue to use raw-Markdown
 //! fallback paths.
 
-use gpui::{App, Entity, FontStyle, FontWeight, Pixels, SharedString, TextRun, Window, px};
+use gpui::{
+    App, Entity, FontSizedTextRun as TextRun, FontStyle, FontWeight, Pixels, SharedString, Window,
+    px,
+};
 
 use crate::components::{Block, InlineTextTree};
 use crate::config::preferences::FontPreferences;
@@ -351,7 +354,10 @@ impl TableColumnLayout {
             return Self::equal(column_count);
         }
 
-        let fractions = widths.into_iter().map(|width| width / assigned_sum).collect();
+        let fractions = widths
+            .into_iter()
+            .map(|width| width / assigned_sum)
+            .collect();
         Self { fractions }
     }
 }
@@ -405,14 +411,20 @@ fn measure_preferred_column_widths(
     let mut preferred_widths = vec![Pixels::ZERO; column_count];
 
     for (column, cell) in table.header.iter().enumerate() {
-        preferred_widths[column] = preferred_widths[column]
-            .max(measure_cell_preferred_width(cell, style_headers, window, theme, fonts));
+        preferred_widths[column] = preferred_widths[column].max(measure_cell_preferred_width(
+            cell,
+            style_headers,
+            window,
+            theme,
+            fonts,
+        ));
     }
 
     for row in &table.rows {
         for (column, cell) in row.iter().enumerate().take(column_count) {
-            preferred_widths[column] = preferred_widths[column]
-                .max(measure_cell_preferred_width(cell, false, window, theme, fonts));
+            preferred_widths[column] = preferred_widths[column].max(measure_cell_preferred_width(
+                cell, false, window, theme, fonts,
+            ));
         }
     }
 
@@ -439,12 +451,14 @@ fn measure_cell_preferred_width(
         font.weight = FontWeight::BOLD;
     }
     let base_run = TextRun {
-        len: display_text.len(),
-        font,
-        color: theme.colors.text_default,
-        background_color: None,
-        underline: None,
-        strikethrough: None,
+        run: gpui::TextRun {
+            len: display_text.len(),
+            font,
+            color: theme.colors.text_default,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        },
         font_size: None,
     };
     let runs = measurement_runs(&cache, &base_run, fonts);
@@ -452,7 +466,7 @@ fn measure_cell_preferred_width(
 
     let text_width = window
         .text_system()
-        .shape_text(display_text, font_size, &runs, None, None)
+        .shape_text_with_font_sizes(display_text, font_size, &runs, None, None)
         .ok()
         .map(|mut lines| {
             // 列宽必须按渲染管线算：正文渲染在折行前会给行加水平间距（行内代码
@@ -525,12 +539,14 @@ fn measurement_runs(
         }
 
         runs.push(TextRun {
-            len: end - start,
-            font,
-            color: base_run.color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            run: gpui::TextRun {
+                len: end - start,
+                font,
+                color: base_run.color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            },
             font_size: inline_style.code.then_some(px(fonts.code_size as f32)),
         });
     }

@@ -111,7 +111,7 @@ scripts/ fixtures/       夹具生成、打包脚本；fixtures/perf 不进版�
 10. **导出块结构只算一份**：markdown → HTML 的块结构由 pulldown-cmark 认定，改写只在它的事件流上；不允许行扫描重猜块结构。唯一例外是**字节等价的词法归一**（同字节数、偏移不动、判据只借 `BlockKind` 解析器一处、字面区取自 pulldown 自己的事件流），见 `heading_separators_for_parse`（src/export/html.rs）。
 11. **一个动作只有一处实现**：快捷键、正文右键菜单、选中工具栏、命令面板四条入口汇到编辑器层同一组函数，可用判定也只有一份。新增命令要四条一起有，键位仪式八处见 workspace-ui.md §9。
 12. **所有提示用应用内模态**，禁系统原生弹窗（源码审计测试守卫）。
-13. **GPUI 限制**：svg 不继承父 div 的 text_color；`.id()` 后元素变 Stateful（if/else 分支需 `into_any_element` 统一）；`TextRun` 逐段字号是本地补丁；焦点句柄不在当前渲染帧内时按键派发回退根节点（收起面板要把焦点交还正文）；`is_focused` 判不出窗口切走，画光标要加 `is_window_active`。
+13. **GPUI 限制**：svg 不继承父 div 的 text_color；`.id()` 后元素变 Stateful（if/else 分支需 `into_any_element` 统一）；`FontSizedTextRun` 显式字号接口是本地补丁；焦点句柄不在当前渲染帧内时按键派发回退根节点（收起面板要把焦点交还正文）；`is_focused` 判不出窗口切走，画光标要加 `is_window_active`。
 14. **`cargo build` 与 `cargo test --bin velora` 都要过**：vendored gpui 里有只在测试构建存在的代码，只跑测试会漏掉生产构建错误。
 
 ## 定位索引：要改 X 去哪

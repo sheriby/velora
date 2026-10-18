@@ -578,8 +578,11 @@ impl Editor {
             async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
                 let html = worker.await;
                 if weak_editor
-                    .update(cx, |_editor, cx| {
-                        cx.write_to_clipboard(copy_as_html_clipboard_item(html));
+                    .update(cx, |editor, cx| {
+                        if let Err(error) = crate::components::markdown::html_paste::write_html_to_clipboard(&html, cx) {
+                            let title = cx.global::<I18nManager>().strings().menu_copy_as_html.clone();
+                            editor.show_message_modal(title, error.to_string(), cx);
+                        }
                         cx.notify();
                     })
                     .is_err()

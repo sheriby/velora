@@ -155,6 +155,9 @@ bench = false
 cocoa = "0.26"
 objc = "0.2"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_System_Memory"] }
+
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 gpui-apple = { package = "gpui-pre-apple", version = "=0.3.9", features = ["font-kit"] }
 
@@ -222,11 +225,9 @@ serde = { opt-level = 3 }
 serde_json = { opt-level = 3 }
 
 [patch.crates-io]
-gpui-pre = { path = "vendor/gpui-pre" }
-gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
-gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
-gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
-gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
-gpui-pre-wgpu = { path = "vendor/gpui-pre-wgpu" }
-gpui-base = { path = "vendor/gpui-base" }
-gpui-component = { path = "vendor/gpui-component" }
+gpui-pre = { path = "vendor/gpui/crates/gpui" }
+gpui-pre-macos = { path = "vendor/gpui/crates/gpui_macos" }
+gpui-pre-apple = { path = "vendor/gpui/crates/gpui_apple" }
+gpui-pre-windows = { path = "vendor/gpui/crates/gpui_windows" }
+gpui-pre-linux = { path = "vendor/gpui/crates/gpui_linux" }
+gpui-pre-wgpu = { path = "vendor/gpui/crates/gpui_wgpu" }

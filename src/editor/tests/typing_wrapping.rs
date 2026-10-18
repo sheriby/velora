@@ -410,7 +410,7 @@ async fn shaped_text_wrapping_respects_punctuation_rules(cx: &mut TestAppContext
             background_color: None,
             underline: None,
             strikethrough: None,
-            font_size: None,
+
         };
         for width in (1..920).step_by(2) {
             cx.update(|window, _cx| {

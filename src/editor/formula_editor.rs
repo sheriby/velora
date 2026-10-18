@@ -168,7 +168,7 @@ fn formula_draft_line(
         background_color: None,
         underline: None,
         strikethrough: None,
-        font_size: None,
+
     };
     if line.is_empty() {
         return FormulaDraftLine {

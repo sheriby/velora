@@ -1,0 +1,5 @@
+[submodule "gpui"]
+	path = vendor/gpui
+	url = https://github.com/sheriby/velora-gpui.git
+	branch = main
+	shallow = true

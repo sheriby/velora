@@ -31,24 +31,30 @@ pub(crate) fn html_to_markdown_or(html: &str, text_fallback: &str) -> String {
     converted.to_string()
 }
 
-/// Reads `public.html` from the macOS pasteboard, if present. GPUI does not fill
-/// the HTML flavor of the clipboard item on macOS, so the pasteboard is read
-/// directly.
+/// 读取与纯文本同一次复制产生的 HTML。
+#[cfg(target_os = "macos")]
+pub(crate) fn clipboard_html(expected_change: u64) -> Option<String> {
+    use cocoa::{appkit::NSPasteboard, base::nil};
+    let pasteboard = unsafe { NSPasteboard::generalPasteboard(nil) };
+    read_pasteboard_html(pasteboard, expected_change)
+}
+
 #[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)]
-pub(crate) fn clipboard_html() -> Option<String> {
-    use objc::{class, msg_send, sel, sel_impl};
+fn read_pasteboard_html(pasteboard: cocoa::base::id, expected_change: u64) -> Option<String> {
+    use cocoa::appkit::NSPasteboardTypeHTML;
+    use objc::{msg_send, sel, sel_impl};
 
     unsafe {
-        let pasteboard: *mut objc::runtime::Object =
-            msg_send![class!(NSPasteboard), generalPasteboard];
         if pasteboard.is_null() {
             return None;
         }
-        // NSPasteboardTypeHTML is the UTI string "public.html".
-        let html_type: *mut objc::runtime::Object =
-            msg_send![class!(NSString), stringWithUTF8String: "public.html"];
-        let data: *mut objc::runtime::Object = msg_send![pasteboard, dataForType: html_type];
+        let change: isize = msg_send![pasteboard, changeCount];
+        if change as u64 != expected_change {
+            return None;
+        }
+        let data: *mut objc::runtime::Object =
+            msg_send![pasteboard, dataForType: NSPasteboardTypeHTML];
         if data.is_null() {
             return None;
         }
@@ -58,24 +64,163 @@ pub(crate) fn clipboard_html() -> Option<String> {
         }
         let bytes: *const u8 = msg_send![data, bytes];
         let bytes = std::slice::from_raw_parts(bytes, length);
-        Some(String::from_utf8_lossy(bytes).into_owned())
+        let html = String::from_utf8_lossy(bytes).into_owned();
+        let change: isize = msg_send![pasteboard, changeCount];
+        (change as u64 == expected_change).then_some(html)
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn clipboard_html() -> Option<String> {
+#[cfg(target_os = "macos")]
+fn append_html_to_pasteboard(pasteboard: cocoa::base::id, html: &str) -> anyhow::Result<()> {
+    use cocoa::{
+        appkit::{NSPasteboard, NSPasteboardTypeHTML},
+        base::{NO, nil},
+        foundation::NSData,
+    };
+    unsafe {
+        let data = NSData::dataWithBytes_length_(nil, html.as_ptr().cast(), html.len() as u64);
+        anyhow::ensure!(
+            pasteboard.setData_forType(data, NSPasteboardTypeHTML) != NO,
+            "无法写入 HTML 剪贴板"
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn write_html_to_clipboard(html: &str, cx: &mut gpui::App) -> anyhow::Result<()> {
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(html.to_owned()));
+    #[cfg(target_os = "macos")]
+    if !cx.is_test() {
+        use cocoa::{appkit::NSPasteboard, base::nil};
+        let pasteboard = unsafe { NSPasteboard::generalPasteboard(nil) };
+        append_html_to_pasteboard(pasteboard, html)?;
+    }
+    Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+fn application_html_clipboard_preserves_plain_text_and_rich_flavor() {
+    use cocoa::{
+        appkit::{NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString},
+        base::nil,
+        foundation::{NSAutoreleasePool, NSData, NSString},
+    };
+    unsafe {
+        let pool = NSAutoreleasePool::new(nil);
+        let pasteboard = NSPasteboard::pasteboardWithUniqueName(nil);
+        assert!(!pasteboard.is_null(), "系统应提供独立测试剪贴板");
+        pasteboard.clearContents();
+        let plain = objc::rc::StrongPtr::new(NSString::alloc(nil).init_str("正文"));
+        assert!(pasteboard.setString_forType(*plain, NSPasteboardTypeString) != cocoa::base::NO);
+        append_html_to_pasteboard(pasteboard, "<strong>正文</strong>").expect("添加 HTML 味道");
+        let data = pasteboard.dataForType(NSPasteboardTypeHTML);
+        let html = if data.is_null() {
+            None
+        } else {
+            Some(
+                std::slice::from_raw_parts(data.bytes().cast::<u8>(), data.length() as usize)
+                    .to_vec(),
+            )
+        };
+        let actual_plain = pasteboard.stringForType(NSPasteboardTypeString);
+        assert!(!actual_plain.is_null(), "HTML 写入后应保留纯文本");
+        let actual_plain = std::ffi::CStr::from_ptr(actual_plain.UTF8String())
+            .to_string_lossy()
+            .into_owned();
+        let change = pasteboard.changeCount() as u64;
+        let actual_html = read_pasteboard_html(pasteboard, change);
+        pasteboard.clearContents();
+        append_html_to_pasteboard(pasteboard, "<em>新的复制</em>").expect("更新测试剪贴板");
+        let stale_html = read_pasteboard_html(pasteboard, change);
+        pasteboard.releaseGlobally();
+        pool.drain();
+        assert_eq!(html.as_deref(), Some("<strong>正文</strong>".as_bytes()));
+        assert_eq!(actual_plain, "正文");
+        assert_eq!(actual_html.as_deref(), Some("<strong>正文</strong>"));
+        assert!(stale_html.is_none(), "不能混用两次复制的 HTML 和纯文本");
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn clipboard_html(expected_change: u64) -> Option<String> {
+    use windows::{
+        Win32::{
+            Foundation::{GetLastError, HGLOBAL},
+            System::{
+                DataExchange::{
+                    CloseClipboard, GetClipboardData, GetClipboardSequenceNumber,
+                    IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
+                },
+                Memory::{GlobalLock, GlobalSize, GlobalUnlock},
+            },
+        },
+        core::w,
+    };
+    unsafe {
+        let format = RegisterClipboardFormatW(w!("HTML Format"));
+        if format == 0 || IsClipboardFormatAvailable(format).is_err() {
+            return None;
+        }
+        if let Err(error) = OpenClipboard(None) {
+            log::debug!("无法读取 HTML 剪贴板，使用纯文本：{error}");
+            return None;
+        }
+        let html = (|| {
+            if u64::from(GetClipboardSequenceNumber()) != expected_change {
+                return None;
+            }
+            let handle = HGLOBAL(GetClipboardData(format).ok()?.0);
+            let length = GlobalSize(handle);
+            if length == 0 || length > 2 * 1024 * 1024 {
+                return None;
+            }
+            let bytes = GlobalLock(handle);
+            if bytes.is_null() {
+                return None;
+            }
+            let html = cf_html_fragment(std::slice::from_raw_parts(bytes.cast::<u8>(), length));
+            // 最后一次解锁返回零并不表示失败，必须同时检查系统错误码。
+            if GlobalUnlock(handle).is_err() && GetLastError().0 != 0 {
+                log::warn!("无法解锁 HTML 剪贴板内存");
+            }
+            html
+        })();
+        if let Err(error) = CloseClipboard() {
+            log::warn!("无法关闭 HTML 剪贴板读取：{error}");
+        }
+        html
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub(crate) fn clipboard_html(_expected_change: u64) -> Option<String> {
     None
 }
 
-/// Paste decision: convert the pasteboard HTML when it carries real Markdown
-/// structure, otherwise keep the plain-text flavor untouched. `item_html` is
-/// the HTML flavor of the clipboard item, which GPUI fills on Windows.
+pub(crate) fn clipboard_change_count() -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        use cocoa::{appkit::NSPasteboard, base::nil};
+        unsafe { NSPasteboard::generalPasteboard(nil).changeCount() as u64 }
+    }
+    #[cfg(target_os = "windows")]
+    unsafe {
+        u64::from(windows::Win32::System::DataExchange::GetClipboardSequenceNumber())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        0
+    }
+}
+
+/// HTML 有可转换结构时优先使用，否则保留纯文本。系统读取由调用方处理。
 pub(crate) fn maybe_markdown_from_clipboard(item_html: Option<&str>, plain: &str) -> String {
-    let html = item_html.map(str::to_string).or_else(clipboard_html);
-    let Some(html) = html else {
+    let Some(html) = item_html else {
         return plain.to_string();
     };
-    html_to_markdown_or(&html, plain)
+    html_to_markdown_or(html, plain)
 }
 
 fn convert(html: &str) -> String {
@@ -360,14 +505,12 @@ mod tests {
         assert_eq!(table.rows.len(), 1);
     }
 
-    // `gpui` 的 `cf_html_fragment` 只有 Velora 这一个调用方，且 gpui 包在仓库外
-    // （`[patch.crates-io]` 指过来的 vendor 目录）不能单独跑测试，所以它的检查
-    // 落在用得着它的地方。
+    // CF_HTML 的字节偏移只在应用这一处解析，读剪贴板和转换测试共用。
     #[test]
     fn windows_clipboard_payload_yields_the_markup() {
         // 一段 Chrome 形状的 `CF_HTML`：头部偏移是字节偏移。
         let payload = "Version:0.9\nStartHTML:0000000131\nEndHTML:0000000267\nStartFragment:0000000164\nEndFragment:0000000234\nSourceURL:https://example.com/\n<html><body>\n<!--StartFragment--><table border=\"1\"><tbody><tr><td>A</td><td>B</td></tr></tbody></table><!--EndFragment-->\n</body></html>";
-        let fragment = gpui::cf_html_fragment(payload.as_bytes()).expect("必须取出选中的那段标记");
+        let fragment = super::cf_html_fragment(payload.as_bytes()).expect("必须取出选中的那段标记");
         assert_eq!(
             fragment,
             "<table border=\"1\"><tbody><tr><td>A</td><td>B</td></tr></tbody></table>"
@@ -384,7 +527,7 @@ mod tests {
     fn windows_clipboard_payload_without_fragment_offsets_yields_the_markup() {
         let payload = "Version:0.9\nStartHTML:0000000052\nEndHTML:0000000089\n<html><body><p>text</p></body></html>";
         let fragment =
-            gpui::cf_html_fragment(payload.as_bytes()).expect("没有片段偏移时取整段标记");
+            super::cf_html_fragment(payload.as_bytes()).expect("没有片段偏移时取整段标记");
         assert_eq!(fragment, "<html><body><p>text</p></body></html>");
     }
 
@@ -396,7 +539,7 @@ mod tests {
             "Version:0.9\nStartFragment:0000000164\nEndFragment:0000000164\n<html></html>",
         ] {
             assert!(
-                gpui::cf_html_fragment(payload.as_bytes()).is_none(),
+                super::cf_html_fragment(payload.as_bytes()).is_none(),
                 "actual payload: {payload}"
             );
         }
@@ -409,9 +552,54 @@ mod tests {
     fn windows_clipboard_payload_with_invalid_utf8_yields_nothing() {
         let payload = b"Version:0.9\n<p>\xc3\x28\xe6\x97</p>";
         assert!(
-            gpui::cf_html_fragment(payload).is_none(),
+            super::cf_html_fragment(payload).is_none(),
             "actual: {:?}",
-            gpui::cf_html_fragment(payload)
+            super::cf_html_fragment(payload)
         );
     }
+}
+
+#[cfg(any(test, target_os = "windows"))]
+/// Extracts the HTML from a `CF_HTML` clipboard payload. Returns `None` when
+/// the payload holds no markup.
+pub(crate) fn cf_html_fragment(payload: &[u8]) -> Option<String> {
+    // The header is ASCII key/value lines; the markup starts at the first `<`.
+    let header_end = payload
+        .iter()
+        .position(|byte| *byte == b'<')
+        .unwrap_or(payload.len());
+
+    let start = offset(payload, header_end, "StartFragment")
+        .or_else(|| offset(payload, header_end, "StartHTML"))
+        .unwrap_or(header_end);
+    let end = offset(payload, header_end, "EndFragment")
+        .or_else(|| offset(payload, header_end, "EndHTML"))
+        .unwrap_or(payload.len());
+    let (start, end) = (start.min(payload.len()), end.min(payload.len()));
+    if start >= end {
+        return None;
+    }
+
+    // A payload that is not valid UTF-8 (a Chinese-locale Word or Write clipboard
+    // writes its declared code page) is not a flavor we can show: decoding it
+    // lossily would put U+FFFD runs into the document and let them be saved back.
+    // Reporting no flavor lets the paste fall back to the plain-text one.
+    let fragment = String::from_utf8(payload[start..end].to_vec()).ok()?;
+    let fragment = fragment.trim().to_string();
+    if fragment.is_empty() {
+        None
+    } else {
+        Some(fragment)
+    }
+}
+
+/// Reads one header value. `header_end` bounds the search to the header, so a
+/// `StartHTML` mentioned inside the markup itself cannot be picked up.
+#[cfg(any(test, target_os = "windows"))]
+fn offset(payload: &[u8], header_end: usize, key: &str) -> Option<usize> {
+    let header = std::str::from_utf8(&payload[..header_end]).ok()?;
+    header.split(['\r', '\n']).find_map(|line| {
+        let value = line.strip_prefix(key)?.strip_prefix(':')?;
+        value.trim().parse().ok()
+    })
 }

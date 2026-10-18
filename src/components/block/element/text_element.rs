@@ -81,9 +81,14 @@ impl Element for BlockTextElement {
         let wrap_prose = !is_placeholder
             && !input.is_source_raw_mode()
             && (input.kind() == BlockKind::Paragraph || input.kind().is_list_item());
-        let code_ranges: Vec<_> = input.inline_spans().iter().filter(|span| span.style.code)
-            .map(|span| span.range.clone()).collect();
-        let space_prose = !is_placeholder && !input.is_source_raw_mode() && !input.kind().is_code_block();
+        let code_ranges: Vec<_> = input
+            .inline_spans()
+            .iter()
+            .filter(|span| span.style.code)
+            .map(|span| span.range.clone())
+            .collect();
+        let space_prose =
+            !is_placeholder && !input.is_source_raw_mode() && !input.kind().is_code_block();
         let style = window.text_style();
 
         let (display_text, text_color): (SharedString, Hsla) = if is_placeholder {
@@ -99,12 +104,14 @@ impl Element for BlockTextElement {
         };
 
         let run = TextRun {
-            len: display_text.len(),
-            font: style.font(),
-            color: text_color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            run: gpui::TextRun {
+                len: display_text.len(),
+                font: style.font(),
+                color: text_color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            },
             font_size: None,
         };
 
@@ -151,12 +158,14 @@ impl Element for BlockTextElement {
         style_font.weight.hash(&mut fingerprint_hasher);
         style_font.style.hash(&mut fingerprint_hasher);
         let font_fingerprint = fingerprint_hasher.finish();
-        let theme_fingerprint =
-            std::sync::Arc::as_ptr(&theme) as usize as u64;
+        let theme_fingerprint = std::sync::Arc::as_ptr(&theme) as usize as u64;
         let memo_key_base = ShapeMemoKey {
             generation: input.display_generation(),
             render_generation: input.render_generation(),
-            marked_range: input.marked_range.as_ref().map(|range| (range.start, range.end)),
+            marked_range: input
+                .marked_range
+                .as_ref()
+                .map(|range| (range.start, range.end)),
             highlight_generation: input.highlight_generation(),
             wrap_width: None,
             wrap_prose,
@@ -213,10 +222,7 @@ impl Element for BlockTextElement {
                 // centered_width 固定），直接返回保守下界，跳过 shape。
                 if text_wrap_width.is_some_and(|width| width <= px(2.0)) {
                     let estimate_lines = display_text.split('\n').count().max(1) as f32;
-                    return Size::new(
-                        px(1.0),
-                        px(estimate_lines * f32::from(line_height)),
-                    );
+                    return Size::new(px(1.0), px(estimate_lines * f32::from(line_height)));
                 }
                 if let Some(memo) = cached_memo.as_ref()
                     && memo.key == key
@@ -271,97 +277,92 @@ impl Element for BlockTextElement {
                 // WrappedLine 条目，块高度不再爆炸，超出部分裁切显示），
                 // 其余行照常按容器宽换行。没有超长行时保持整块一次 shape
                 // 的原路径。
-                let mut lines: Vec<WrappedLine> =
-                    if let Some(plan) = long_line_plan
-                        .as_ref()
-                        .filter(|plan| !plan.long_lines.is_empty())
-                    {
-                        let expanded = input_entity.update(closure_cx, |block, _block_cx| {
-                            block.expanded_long_lines.clone()
-                        });
-                        let mut all_lines = Vec::with_capacity(plan.ranges.len());
-                        for (line_idx, range) in plan.ranges.iter().enumerate() {
-                            let line_src = &display_text[range.clone()];
-                            let collapsed_long =
-                                plan.is_long(line_idx) && !expanded.contains(&line_idx);
-                            let (shaped_text, line_runs, line_wrap_width) = if collapsed_long {
-                                let char_count = line_src.chars().count();
-                                let cut_end = if char_count
-                                    > crate::components::LONG_LINE_DISPLAY_CHARS
-                                {
-                                    line_src
-                                        .char_indices()
-                                        .nth(crate::components::LONG_LINE_DISPLAY_CHARS)
-                                        .map(|(offset, _)| offset)
-                                        .unwrap_or(line_src.len())
-                                } else {
-                                    line_src.len()
-                                };
-                                let mut line_runs = slice_runs_for_range(
-                                    &runs,
-                                    range.start..range.start + cut_end,
-                                );
-                                let shaped_text = if cut_end < line_src.len() {
-                                    let marker = format!(
-                                        " ⋯⋯（本行共 {char_count} 字符，已截断；点行号展开）"
-                                    );
-                                    // 截断提示沿用行尾样式，保证 marker 字节有 run 覆盖，
-                                    // 否则 shape_text 会把没有 run 的尾部直接丢掉。
-                                    if let Some(last) = line_runs.last() {
-                                        let mut marker_run = last.clone();
-                                        marker_run.len = marker.len();
-                                        line_runs.push(marker_run);
-                                    }
-                                    format!("{}{marker}", &line_src[..cut_end])
-                                } else {
-                                    line_src.to_string()
-                                };
-                                (shaped_text, line_runs, None)
+                let mut lines: Vec<WrappedLine> = if let Some(plan) = long_line_plan
+                    .as_ref()
+                    .filter(|plan| !plan.long_lines.is_empty())
+                {
+                    let expanded = input_entity.update(closure_cx, |block, _block_cx| {
+                        block.expanded_long_lines.clone()
+                    });
+                    let mut all_lines = Vec::with_capacity(plan.ranges.len());
+                    for (line_idx, range) in plan.ranges.iter().enumerate() {
+                        let line_src = &display_text[range.clone()];
+                        let collapsed_long =
+                            plan.is_long(line_idx) && !expanded.contains(&line_idx);
+                        let (shaped_text, line_runs, line_wrap_width) = if collapsed_long {
+                            let char_count = line_src.chars().count();
+                            let cut_end = if char_count > crate::components::LONG_LINE_DISPLAY_CHARS
+                            {
+                                line_src
+                                    .char_indices()
+                                    .nth(crate::components::LONG_LINE_DISPLAY_CHARS)
+                                    .map(|(offset, _)| offset)
+                                    .unwrap_or(line_src.len())
                             } else {
-                                (
-                                    line_src.to_string(),
-                                    slice_runs_for_range(&runs, range.clone()),
-                                    text_wrap_width,
-                                )
+                                line_src.len()
                             };
-                            // 空源行 shape 不出条目会破坏「layout 行 ↔ 源行」
-                            // 一一对应，用单个空格兜底（宽度贡献可忽略，索引
-                            // 映射走原始行范围表，不受影响）。
-                            let shaped_text = if shaped_text.is_empty() {
-                                " ".to_string()
-                            } else {
-                                shaped_text
-                            };
-                            match window.text_system().shape_text(
-                                shaped_text.into(),
-                                font_size,
-                                &line_runs,
-                                line_wrap_width,
-                                None,
-                            ) {
-                                Ok(line) => {
-                                    debug_assert!(
-                                        line.len() <= 1,
-                                        "按行 shape 每个源行应恰好产出一条 WrappedLine"
-                                    );
-                                    all_lines.extend(line);
+                            let mut line_runs =
+                                slice_runs_for_range(&runs, range.start..range.start + cut_end);
+                            let shaped_text = if cut_end < line_src.len() {
+                                let marker =
+                                    format!(" ⋯⋯（本行共 {char_count} 字符，已截断；点行号展开）");
+                                // 截断提示沿用行尾样式，保证 marker 字节有 run 覆盖，
+                                // 否则 shape_text 会把没有 run 的尾部直接丢掉。
+                                if let Some(last) = line_runs.last() {
+                                    let mut marker_run = last.clone();
+                                    marker_run.len = marker.len();
+                                    line_runs.push(marker_run);
                                 }
-                                Err(_) => return Size::default(),
-                            }
-                        }
-                        all_lines
-                    } else {
-                        match window.text_system().shape_text(
-                            display_text.clone(),
+                                format!("{}{marker}", &line_src[..cut_end])
+                            } else {
+                                line_src.to_string()
+                            };
+                            (shaped_text, line_runs, None)
+                        } else {
+                            (
+                                line_src.to_string(),
+                                slice_runs_for_range(&runs, range.clone()),
+                                text_wrap_width,
+                            )
+                        };
+                        // 空源行 shape 不出条目会破坏「layout 行 ↔ 源行」
+                        // 一一对应，用单个空格兜底（宽度贡献可忽略，索引
+                        // 映射走原始行范围表，不受影响）。
+                        let shaped_text = if shaped_text.is_empty() {
+                            " ".to_string()
+                        } else {
+                            shaped_text
+                        };
+                        match window.text_system().shape_text_with_font_sizes(
+                            shaped_text.into(),
                             font_size,
-                            &runs,
-                            text_wrap_width,
+                            &line_runs,
+                            line_wrap_width,
                             None,
                         ) {
-                            Ok(lines) => lines.into_vec(),
+                            Ok(line) => {
+                                debug_assert!(
+                                    line.len() <= 1,
+                                    "按行 shape 每个源行应恰好产出一条 WrappedLine"
+                                );
+                                all_lines.extend(line);
+                            }
                             Err(_) => return Size::default(),
                         }
-                    };
+                    }
+                    all_lines
+                } else {
+                    match window.text_system().shape_text_with_font_sizes(
+                        display_text.clone(),
+                        font_size,
+                        &runs,
+                        text_wrap_width,
+                        None,
+                    ) {
+                        Ok(lines) => lines.into_vec(),
+                        Err(_) => return Size::default(),
+                    }
+                };
                 if space_prose {
                     add_render_spacing(
                         &mut lines,
@@ -378,9 +379,15 @@ impl Element for BlockTextElement {
                             .is_some_and(|width| line.unwrapped_layout.width > width)
                         {
                             use unicode_segmentation::UnicodeSegmentation;
-                            let emergency_breaks: Vec<_> = line.text.grapheme_indices(true)
-                                .map(|(index, _)| index).collect();
-                            line.wrap_at_boundaries(&prose_line_breaks(&line.text), &emergency_breaks);
+                            let emergency_breaks: Vec<_> = line
+                                .text
+                                .grapheme_indices(true)
+                                .map(|(index, _)| index)
+                                .collect();
+                            line.wrap_at_boundaries(
+                                &prose_line_breaks(&line.text),
+                                &emergency_breaks,
+                            );
                         }
                     }
                 }
@@ -456,16 +463,18 @@ impl Element for BlockTextElement {
             (line_start..line_start + lines.len().max(1))
                 .map(|line_number| {
                     let label = line_number.to_string();
-                    window.text_system().shape_line(
+                    window.text_system().shape_line_with_font_sizes(
                         SharedString::from(label.clone()),
                         font_size,
                         &[TextRun {
-                            len: label.len(),
-                            font: style.font(),
-                            color: run_color,
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
+                            run: gpui::TextRun {
+                                len: label.len(),
+                                font: style.font(),
+                                color: run_color,
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            },
                             font_size: None,
                         }],
                         None,
@@ -608,21 +617,37 @@ impl Element for BlockTextElement {
                     span.range.clone(),
                     text_align,
                 ) {
-                    let (line_idx, _) = wrapped_line_for_y(
-                        &lines, line_height, segment.top() - text_bounds.top(),
-                    ).expect("code fragment belongs to a shaped line");
+                    let (line_idx, _) =
+                        wrapped_line_for_y(&lines, line_height, segment.top() - text_bounds.top())
+                            .expect("code fragment belongs to a shaped line");
                     let layout = &lines[line_idx];
-                    let row_idx = ((segment.top() - text_bounds.top() - wrapped_line_top(&lines, line_height, line_idx)) / line_height) as usize;
+                    let row_idx = ((segment.top()
+                        - text_bounds.top()
+                        - wrapped_line_top(&lines, line_height, line_idx))
+                        / line_height) as usize;
                     let row_end = wrap_boundary_offset(layout, row_idx).unwrap_or(layout.len());
-                    let end = span.range.end.saturating_sub(shared_ranges[line_idx].start).min(row_end);
-                    let code_run = layout.runs().iter().find(|run| run.font_size.is_some())
+                    let end = span
+                        .range
+                        .end
+                        .saturating_sub(shared_ranges[line_idx].start)
+                        .min(row_end);
+                    let code_run = layout
+                        .runs()
+                        .iter()
+                        .find(|run| run.font_size.is_some())
                         .expect("inline code has a font-size run");
                     let code_size = code_run.font_size.unwrap();
                     let code_ascent = cx.text_system().ascent(code_run.font_id, code_size);
-                    let code_descent = px(f32::from(cx.text_system().descent(code_run.font_id, code_size)).abs());
-                    let baseline = (line_height - layout.ascent() - layout.descent()) / 2.0 + layout.ascent();
+                    let code_descent =
+                        px(f32::from(cx.text_system().descent(code_run.font_id, code_size)).abs());
+                    let baseline =
+                        (line_height - layout.ascent() - layout.descent()) / 2.0 + layout.ascent();
                     let mut quad_bounds = inline_code_background_bounds(
-                        segment, baseline, code_ascent, code_descent, point(pad_x, pad_y),
+                        segment,
+                        baseline,
+                        code_ascent,
+                        code_descent,
+                        point(pad_x, pad_y),
                     );
                     quad_bounds.size.width -= layout.spacing_before(end);
                     code_quads.push({
@@ -645,7 +670,11 @@ impl Element for BlockTextElement {
             let shared_ranges = input.shared_hard_line_ranges();
             for range in &input.search_highlight_ranges {
                 let is_active = active_range.as_ref().is_some_and(|active| active == range);
-                let color = if is_active { active_color } else { highlight_color };
+                let color = if is_active {
+                    active_color
+                } else {
+                    highlight_color
+                };
                 for segment in range_segment_bounds(
                     &lines,
                     text_bounds,
@@ -768,7 +797,11 @@ impl Element for BlockTextElement {
         }
 
         if !prepaint.long_line_markers.is_empty() {
-            let marker_color = cx.global::<ThemeManager>().current_arc().colors.text_placeholder;
+            let marker_color = cx
+                .global::<ThemeManager>()
+                .current_arc()
+                .colors
+                .text_placeholder;
             for (line_idx, expanded) in &prepaint.long_line_markers {
                 let Some(y_top) = line_number_tops.get(*line_idx) else {
                     continue;

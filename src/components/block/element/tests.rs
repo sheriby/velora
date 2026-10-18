@@ -8,7 +8,7 @@
     };
     use gpui::{
         AppContext, Bounds, Hsla, Modifiers, MouseButton, MouseDownEvent, SharedString,
-        TestAppContext, TextAlign, TextRun, VisualTestContext, font, point, px, rgba, size,
+        TestAppContext, TextAlign, FontSizedTextRun as TextRun, VisualTestContext, font, point, px, rgba, size,
     };
 
     #[test]
@@ -53,15 +53,14 @@
                 });
                 block.read_with(cx, |block, _cx| {
                     let text: SharedString = block.display_text().to_string().into();
-                    let base = TextRun {
+                    let base = TextRun { run: gpui::TextRun {
                         len: text.len(),
                         font: font(".SystemUIFont"),
                         color: theme.colors.text_default,
                         background_color: None,
                         underline: None,
                         strikethrough: None,
-                        font_size: None,
-                    };
+}, font_size: None };
                     let runs = super::build_text_runs(
                         block,
                         &text,
@@ -177,18 +176,17 @@
         cx.update(|window, _app| {
             window
                 .text_system()
-                .shape_text(
+                .shape_text_with_font_sizes(
                     text.to_string().into(),
                     px(16.0),
-                    &[TextRun {
+                    &[TextRun { run: gpui::TextRun {
                         len: text.len(),
                         font: font(".SystemUIFont"),
                         color: Hsla::from(rgba(0xffffffff)),
                         background_color: None,
                         underline: None,
                         strikethrough: None,
-                        font_size: None,
-                    }],
+}, font_size: None }],
                     Some(width),
                     None,
                 )
@@ -214,18 +212,17 @@
             for font_size in [px(12.0), px(16.0), px(32.0)] {
                 for label in ["25", "100", "10000"] {
                     let shape = |text: &str| {
-                        window.text_system().shape_line(
+                        window.text_system().shape_line_with_font_sizes(
                             text.to_string().into(),
                             font_size,
-                            &[TextRun {
+                            &[TextRun { run: gpui::TextRun {
                                 len: text.len(),
                                 font: font("monospace"),
                                 color: Hsla::from(rgba(0xffffffff)),
                                 background_color: None,
                                 underline: None,
                                 strikethrough: None,
-                                font_size: None,
-                            }],
+}, font_size: None }],
                             None,
                         )
                     };
@@ -461,15 +458,14 @@
 
         block.read_with(cx, |block, _cx| {
             let display_text: SharedString = block.display_text().to_string().into();
-            let base_run = TextRun {
+            let base_run = TextRun { run: gpui::TextRun {
                 len: display_text.len(),
                 font: font(".SystemUIFont"),
                 color: Hsla::from(rgba(0xffffffff)),
                 background_color: None,
                 underline: None,
                 strikethrough: None,
-                font_size: None,
-            };
+}, font_size: None };
             let runs = super::build_text_runs(
                 block,
                 &display_text,
@@ -512,15 +508,14 @@
 
         cx.update(|window, app| {
             let display_text: SharedString = block.read(app).display_text().to_string().into();
-            let base_run = TextRun {
+            let base_run = TextRun { run: gpui::TextRun {
                 len: display_text.len(),
                 font: font(".SystemUIFont"),
                 color: Hsla::from(rgba(0xffffffff)),
                 background_color: None,
                 underline: None,
                 strikethrough: None,
-                font_size: None,
-            };
+}, font_size: None };
             let runs = block.read_with(app, |block, _| {
                 super::build_text_runs(
                     block,
@@ -549,7 +544,7 @@
 
             let lines = window
                 .text_system()
-                .shape_text(display_text.clone(), px(16.0), &runs, None, None)
+                .shape_text_with_font_sizes(display_text.clone(), px(16.0), &runs, None, None)
                 .expect("text should shape");
             let layout = &lines[0];
             let code_shaped = layout
@@ -582,15 +577,14 @@
     fn mac_platform_text_system_applies_per_run_font_size() {
         // 真实 CoreText 的逐段字号：步进必须按字号缩放，且 ShapedRun 要带上字号
         // 供绘制取用（测试平台的 NoopTextSystem 只是模拟这条契约）。
-        let run_with = |len: usize, family: &'static str, font_size: Option<gpui::Pixels>| TextRun {
+        let run_with = |len: usize, family: &'static str, font_size: Option<gpui::Pixels>| TextRun { run: gpui::TextRun {
             len,
             font: font(family),
             color: Hsla::from(rgba(0xffffffff)),
             background_color: None,
             underline: None,
             strikethrough: None,
-            font_size,
-        };
+}, font_size: font_size };
         let text = "plain code";
         let runs = [
             run_with("plain ".len(), "Menlo", None),
@@ -633,7 +627,7 @@
     fn vendored_text_system_keeps_the_per_run_font_size_patch() {
         // 行内代码跟随「代码块字体大小」依赖 vendored gpui 的本地补丁：逐段字号
         // 必须一路走到各平台排版层；静态守卫补充当前系统无法执行的另一平台。
-        let mac = include_str!("../../../../vendor/gpui-pre-apple/src/text_system.rs");
+        let mac = include_str!("../../../../vendor/gpui/crates/gpui_apple/src/text_system.rs");
         assert!(
             mac.contains("run.font_size.unwrap_or(font_size)"),
             "mac 排版层应把逐段字号用于字体实例"
@@ -647,7 +641,7 @@
             "mac 排版层应把逐段字号写回 ShapedRun"
         );
 
-        let windows = include_str!("../../../../vendor/gpui-pre-windows/src/direct_write.rs");
+        let windows = include_str!("../../../../vendor/gpui/crates/gpui_windows/src/direct_write.rs");
         assert!(
             windows.contains("run.font_size.unwrap_or(font_size).as_f32()"),
             "windows 排版层应把逐段字号写进 DirectWrite 布局"
@@ -808,15 +802,14 @@
         });
 
         cx.update(|_window, app| {
-            let make_base_run = |len: usize| TextRun {
+            let make_base_run = |len: usize| TextRun { run: gpui::TextRun {
                 len,
                 font: font(".SystemUIFont"),
                 color: Hsla::from(rgba(0xffffffff)),
                 background_color: None,
                 underline: None,
                 strikethrough: None,
-                font_size: None,
-            };
+}, font_size: None };
             // 数学块应有高亮结果（sync_code_highlight 产出），从而走代码 run 管线。
             assert!(math_block.read(app).code_highlight_result().is_some());
             let theme = crate::theme::Theme::default_theme();

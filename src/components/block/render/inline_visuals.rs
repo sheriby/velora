@@ -59,7 +59,6 @@ impl Block {
             ImageResolvedSource::Local(path) => img(path),
             ImageResolvedSource::Remote(uri) => img(uri),
         }
-        .image_scale(scale)
         .debug_selector(|| "image-content".to_string())
         .when(fit_container_width, |this| this.w_full())
         .max_w(relative(1.0))

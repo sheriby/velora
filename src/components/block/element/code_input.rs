@@ -1,4 +1,5 @@
 use super::*;
+use gpui::TextRun;
 
 pub struct BlockTextElement {
     pub(crate) input: Entity<Block>,
@@ -95,7 +96,6 @@ impl Element for CodeLanguageInputElement {
             background_color: None,
             underline: None,
             strikethrough: None,
-            font_size: None,
         };
 
         let runs = if let Some(marked_range) = input

@@ -621,7 +621,7 @@ async fn formula_editor_mouse_click_and_drag_select(cx: &mut TestAppContext) {
             background_color: None,
             underline: None,
             strikethrough: None,
-            font_size: None,
+
         };
         window
             .text_system()
@@ -721,7 +721,7 @@ async fn formula_editor_double_click_selects_word(cx: &mut TestAppContext) {
             background_color: None,
             underline: None,
             strikethrough: None,
-            font_size: None,
+
         };
         window
             .text_system()

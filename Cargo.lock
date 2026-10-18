@@ -2496,6 +2496,8 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e9955b6f4b048fd50ca15fc8e225d80bb00ba9ebc8fecdddde5ad26dbef9270"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2536,6 +2538,8 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "465a363235cd4062ef5f0953fc096fc764ed6f53dfbd9f409f669f93ea3b1ff9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -8827,6 +8831,7 @@ dependencies = [
  "url",
  "usvg 0.45.1",
  "uuid",
+ "windows 0.62.2",
  "yoagent",
 ]
 

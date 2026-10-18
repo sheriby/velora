@@ -71,14 +71,14 @@
 
 - svg 不继承父 `div` 的文字颜色。
 - `.id()` 之后元素类型变成 Stateful，`if` / `else` 两个分支要 `into_any_element` 统一类型。
-- `TextRun` 的逐段字号是本地补丁，Linux 未接。
+- `FontSizedTextRun` 的显式逐段字号接口是本地补丁，Linux 未接。
 - 一个动作只有一处实现：新增命令要键位、正文右键菜单、选中工具栏、命令面板四条入口一起有（见 `docs/architecture/workspace-ui.md` 的「命令、动作与键位」一节）。
 - 提示一律应用内模态，不用系统原生弹窗。
 
 ## 3 测试
 
 - 没有顶层 Rust `tests/` 目标：全部是 bin crate 内的 `#[cfg(test)]` 模块；命令是 `cargo test --bin velora`（这个包没有 lib 目标），单条跑 `cargo test --bin velora <测试名> -- --nocapture`。
-- `cargo build` 与 `cargo test` **都要跑**：仓库内自带的 GPUI（`vendor/gpui-pre` 及平台包）里只在测试构建存在的代码，会让只跑测试漏掉生产构建错误。`cargo test -p gpui` 跑不通，别当门禁。两条都在收尾各跑一次，中途只跑相关那组（见 §4）。
+- `cargo build` 与 `cargo test` **都要跑**：仓库内自带的 GPUI（`vendor/gpui/crates/gpui` 及平台包）里只在测试构建存在的代码，会让只跑测试漏掉生产构建错误。`cargo test -p gpui` 跑不通，别当门禁。两条都在收尾各跑一次，中途只跑相关那组（见 §4）。
 - 无窗口测试的文本系统是等宽模拟（`NoopTextSystem`）：那里只断言结构与偏移，别断言像素宽度与字形。要真实宽度就在窗口里用 `window.text_system().shape_text` 量。
 - 断言几何之前先 `redraw`（`window.draw(cx).clear()` 加 `run_until_parked`）：命中测试读的是上一帧写下的 `last_bounds` / `last_layout`，没画过就是 0。
 - 要计时用 GPUI 自己的 `cx.background_executor().timer(..)`，不要用 `smol::Timer::after(..)`——后者不被 GPUI 的调度器跟踪，`run_until_parked` 会以为没事可做。

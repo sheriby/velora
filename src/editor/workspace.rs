@@ -648,12 +648,6 @@ pub(crate) fn clipboard_image_extension(format: gpui::ImageFormat) -> &'static s
     }
 }
 
-/// 复制为 HTML 的剪贴板载荷：纯文本仍为 HTML 源码，另加 text/html 富文本
-/// flavor 供 Word/浏览器等富文本目标使用（roadmap F2 增强）。
-pub(crate) fn copy_as_html_clipboard_item(html: String) -> ClipboardItem {
-    ClipboardItem::new_string_with_html(html.clone(), html)
-}
-
 
 // 各子模块的自由函数/类型经此聚合，供根与兄弟模块(含 tests)按原路径引用。
 pub(super) use file_tree::*;

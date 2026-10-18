@@ -941,7 +941,7 @@ impl DocumentMenuGeometry {
                 background_color: None,
                 underline: None,
                 strikethrough: None,
-                font_size: None,
+
             };
             match window.text_system().shape_text(
                 label.to_string().into(),

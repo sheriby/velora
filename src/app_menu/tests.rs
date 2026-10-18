@@ -50,7 +50,7 @@ mod tests {
     #[test]
     fn windows_manifest_is_embedded_only_by_velora_in_builds_and_tests() {
         let manifest: toml::Value = toml::from_str(include_str!("../../Cargo.toml")).expect("应用 Cargo 配置");
-        let core: toml::Value = toml::from_str(include_str!("../../vendor/gpui-pre/Cargo.toml")).expect("GPUI Cargo 配置");
+        let core: toml::Value = toml::from_str(include_str!("../../vendor/gpui/crates/gpui/Cargo.toml")).expect("GPUI Cargo 配置");
         assert!(include_str!("../../resources/windows/velora.rc").contains("1 RT_MANIFEST"));
         assert!(include_str!("../../resources/windows/velora.manifest.xml").contains("Microsoft.Windows.Common-Controls"));
         for section in ["dependencies", "dev-dependencies"] {
@@ -60,14 +60,14 @@ mod tests {
         let defaults = core["features"]["default"].as_array().expect("GPUI 默认特性");
         assert!(defaults.iter().any(|feature| feature.as_str() == Some("windows-manifest-provided-by-host")),
             "Kit 会合并开启 GPUI 默认特性，核心必须保留宿主 manifest 的优先权");
-        assert!(include_str!("../../vendor/gpui-pre/build.rs").contains("not(feature = \"windows-manifest-provided-by-host\")"),
+        assert!(include_str!("../../vendor/gpui/crates/gpui/build.rs").contains("not(feature = \"windows-manifest-provided-by-host\")"),
             "核心构建脚本应跳过宿主已提供的 manifest");
     }
 
     // macOS 门禁也要发现 Windows 补丁被漏带；这组源码守卫不代替原生系统验收。
     #[test]
     fn vendored_windows_ime_diagnostics_cover_committed_and_composing_text() {
-        let source = include_str!("../../vendor/gpui-pre-windows/src/events.rs");
+        let source = include_str!("../../vendor/gpui/crates/gpui_windows/src/events.rs");
         for event in [
             "handled_by_app=",
             "WM_CHAR {input:?}",
@@ -85,8 +85,37 @@ mod tests {
     }
 
     #[test]
+    fn kit_components_use_upstream_text_runs_without_local_overrides() {
+        let manifest: toml::Value = toml::from_str(include_str!("../../Cargo.toml")).expect("应用依赖");
+        for package in ["gpui-base", "gpui-component"] {
+            assert!(manifest["patch"]["crates-io"].get(package).is_none(), "组件层应直接使用上游发布包：{package}");
+        }
+        let core = include_str!("../../vendor/gpui/crates/gpui/src/text_system.rs");
+        let text_run = core.split_once("pub struct TextRun {").expect("TextRun").1.split('}').next().expect("字段");
+        assert!(!text_run.contains("font_size"), "字号扩展不能改变普通 TextRun 的构造契约");
+    }
+
+    #[test]
+    fn gpui_submodule_is_declared_and_every_build_workflow_fetches_it() {
+        let modules = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/.gitmodules"))
+            .unwrap_or_default();
+        assert!(modules.contains("[submodule \"gpui\"]"), "GPUI 源码应由独立子模块记录提交");
+        assert!(modules.contains("https://github.com/sheriby/velora-gpui.git"), "公开子模块应支持无 SSH 密钥检出");
+        let manifest: toml::Value = toml::from_str(include_str!("../../Cargo.toml")).expect("应用依赖");
+        for package in ["gpui-pre", "gpui-pre-apple", "gpui-pre-macos", "gpui-pre-windows", "gpui-pre-linux", "gpui-pre-wgpu"] {
+            assert!(manifest["patch"]["crates-io"][package]["path"].as_str().is_some_and(|path| path.starts_with("vendor/gpui/crates/")), "{package} 应来自同一子模块");
+        }
+        for (name, workflow) in [
+            ("ci", include_str!("../../.github/workflows/ci.yml")),
+            ("release", include_str!("../../.github/workflows/release.yml")),
+        ] {
+            assert_eq!(workflow.matches("uses: actions/checkout@").count(), workflow.matches("submodules: recursive").count(), "{name} 的全部检出步骤必须获取子模块");
+        }
+    }
+
+    #[test]
     fn vendored_windows_file_dialogs_keep_folder_fallback_and_persisted_identity() {
-        let source = include_str!("../../vendor/gpui-pre-windows/src/platform.rs");
+        let source = include_str!("../../vendor/gpui/crates/gpui_windows/src/platform.rs");
         assert!(
             source.contains("fn shell_folder_item("),
             "起始目录解析失败应回退默认目录，不能中断打开或保存"
@@ -130,7 +159,7 @@ mod tests {
                 "新增核心字段时不能遗漏平台构造器：{package}"
             );
         }
-        let portal = include_str!("../../vendor/gpui-pre-linux/src/linux/platform.rs");
+        let portal = include_str!("../../vendor/gpui/crates/gpui_linux/src/linux/platform.rs");
         let open = portal
             .split_once("fn prompt_for_paths(")
             .expect("打开入口")
@@ -142,12 +171,9 @@ mod tests {
             open.contains("options.directory") && open.contains(".current_folder("),
             "Linux 打开选择器保留原有起始目录能力"
         );
-        let clipboard = include_str!("../../vendor/gpui-pre-linux/src/linux/wayland/clipboard.rs");
-        assert!(
-            clipboard.contains("html: None"),
-            "Wayland 图片载荷补齐核心 HTML 字段"
-        );
-        let text = include_str!("../../vendor/gpui-pre-wgpu/src/cosmic_text_system.rs");
+        let clipboard = include_str!("../../vendor/gpui/crates/gpui_linux/src/linux/wayland/clipboard.rs");
+        assert!(!clipboard.contains("html: None"), "HTML 载荷留在应用层，不再要求平台补字段");
+        let text = include_str!("../../vendor/gpui/crates/gpui_wgpu/src/cosmic_text_system.rs");
         assert!(
             text.contains("font_size: None"),
             "CosmicText 仍按整行字号排版，补齐结果字段"

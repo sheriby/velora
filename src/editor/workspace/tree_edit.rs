@@ -726,7 +726,7 @@ impl Editor {
                                 background_color: None,
                                 underline: None,
                                 strikethrough: None,
-                                font_size: None,
+
                             }],
                             None,
                         )
