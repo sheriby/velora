@@ -6,6 +6,7 @@ impl PreferencesWindow {
         &self,
         id: &'static str,
         label: String,
+        icon: gpui_kit::assets::IconName,
         selected: bool,
         _theme: &Theme,
         on_click: fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>),
@@ -15,8 +16,9 @@ impl PreferencesWindow {
             .debug_selector(move || id.to_string())
             .ghost()
             .selected(selected)
+            .icon(icon)
             .accessibility_label(label.clone())
-            .child(div().w_full().text_left().child(label))
+            .child(div().flex_1().min_w_0().text_left().child(label))
             .w_full()
             .justify_start()
             .on_click(cx.listener(on_click))
@@ -258,63 +260,4 @@ impl PreferencesWindow {
             .on_click(cx.listener(on_click))
     }
 
-    pub(crate) fn theme_dropdown_item(
-        index: usize,
-        label: String,
-        selected: bool,
-        preview: (Hsla, Hsla, Hsla),
-        theme: &Theme,
-        on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let c = &theme.colors;
-        let d = &theme.dimensions;
-        let t = &theme.typography;
-        let (surface, text, accent) = preview;
-        div()
-            .id(("preferences-theme-option", index))
-            .w_full()
-            .min_h(px(38.0))
-            .px(px(10.0))
-            .flex()
-            .items_center()
-            .gap(px(10.0))
-            .rounded(px(d.menu_item_radius))
-            .cursor_pointer()
-            .bg(if selected {
-                c.selection
-            } else {
-                c.dialog_secondary_button_bg
-            })
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .text_size(px(t.dialog_body_size))
-            .text_color(c.dialog_body)
-            .child(
-                div()
-                    .w(px(36.0))
-                    .h(px(24.0))
-                    .px(px(5.0))
-                    .flex_shrink_0()
-                    .flex()
-                    .flex_col()
-                    .justify_center()
-                    .gap(px(3.0))
-                    .rounded(px(4.0))
-                    .border(px(1.0))
-                    .border_color(c.dialog_border)
-                    .bg(surface)
-                    .child(div().w(px(20.0)).h(px(3.0)).rounded(px(2.0)).bg(text))
-                    .child(div().w(px(12.0)).h(px(3.0)).rounded(px(2.0)).bg(accent)),
-            )
-            .child(div().flex_1().min_w(px(0.0)).truncate().child(SharedString::from(label)))
-            .when(selected, |this| {
-                this.child(
-                    svg()
-                        .path("icon/workspace/check.svg")
-                        .size(px(10.0))
-                        .text_color(c.dialog_primary_button_bg),
-                )
-            })
-            .on_click(cx.listener(on_click))
-    }
 }

@@ -191,6 +191,18 @@ pub struct I18nStrings {
     /// Preferences window title.
     pub preferences_window_title: String,
     /// File preferences navigation label.
+    pub preferences_group_startup: String,
+    pub preferences_group_workspace: String,
+    pub preferences_group_saving: String,
+    pub preferences_group_history: String,
+    pub preferences_group_updates: String,
+    pub preferences_group_editing: String,
+    pub preferences_group_fonts: String,
+    pub preferences_group_interface: String,
+    pub preferences_group_document: String,
+    pub preferences_group_code: String,
+    pub preferences_writing_width: String,
+    pub preferences_number_invalid: String,
     pub preferences_nav_file: String,
     /// Theme preferences navigation label.
     pub preferences_nav_theme: String,

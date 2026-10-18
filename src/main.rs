@@ -85,6 +85,8 @@ fn apply_dock_icon() {
     }
 }
 
+gpui_kit::assets::icon_assets!(VeloraUiIcons, [Image, Keyboard, Sparkles, AppWindow]);
+
 struct VeloraAssets;
 
 fn open_startup_window(cx: &mut App, startup_open: config::StartupOpenPreference) {
@@ -352,12 +354,19 @@ impl AssetSource for VeloraAssets {
             "icon/titlebar/menu-hamburger.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/titlebar/menu-hamburger.svg"
             )))),
-            _ => gpui_kit::assets::Assets.load(path),
+            _ => match VeloraUiIcons.load(path)? {
+                Some(asset) => Ok(Some(asset)),
+                None => gpui_kit::assets::Assets.load(path),
+            },
         }
     }
 
     fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
-        gpui_kit::assets::Assets.list(path)
+        let mut assets = gpui_kit::assets::Assets.list(path)?;
+        assets.extend(VeloraUiIcons.list(path)?);
+        assets.sort();
+        assets.dedup();
+        Ok(assets)
     }
 }
 

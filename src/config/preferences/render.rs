@@ -1,6 +1,7 @@
 use super::*;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::Disableable as _;
+use gpui_kit::assets::IconName;
 impl Render for PreferencesWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.system_font_families.is_empty() {
@@ -24,9 +25,10 @@ impl Render for PreferencesWindow {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
+        self.controls.sync_locale(cx.global::<I18nManager>().current_language_id());
         self.apply_ai_preferences_focus(window, cx);
         self.refresh_ai_preferences_dirty(cx);
-        let can_save = self.has_unsaved_changes();
+        let can_save = self.has_unsaved_changes() && !self.controls.has_invalid_number();
         let window_title =
             SharedString::from(format!("Velora - {}", strings.preferences_window_title));
         window.set_window_title(window_title.as_ref());
@@ -43,48 +45,53 @@ impl Render for PreferencesWindow {
                 PreferencesNav::Window => strings.preferences_nav_window.clone(),
             };
 
-            // 侧边栏：左对齐 + 选中强调条（旧版把标签右对齐地堆在 30% 宽的栏里，
-            // 看起来像没有设计）。
-            let nav_items: [(&'static str, String, bool, fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>)); 7] = [
+            let nav_items: [(&'static str, String, IconName, bool, fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>)); 7] = [
                 (
                     "preferences-nav-file",
                     strings.preferences_nav_file.clone(),
+                    IconName::FileText,
                     self.nav == PreferencesNav::File,
                     Self::set_nav_file,
                 ),
                 (
                     "preferences-nav-theme",
                     strings.preferences_nav_theme.clone(),
+                    IconName::Palette,
                     self.nav == PreferencesNav::Theme,
                     Self::set_nav_theme,
                 ),
                 (
                     "preferences-nav-image",
                     strings.preferences_nav_image.clone(),
+                    IconName::Image,
                     self.nav == PreferencesNav::Image,
                     Self::set_nav_image,
                 ),
                 (
                     "preferences-nav-ai",
                     "AI".into(),
+                    IconName::Sparkles,
                     self.nav == PreferencesNav::Ai,
                     Self::set_nav_ai,
                 ),
                 (
                     "preferences-nav-shortcuts",
                     strings.preferences_nav_shortcuts.clone(),
+                    IconName::Keyboard,
                     self.nav == PreferencesNav::Shortcuts,
                     Self::set_nav_shortcuts,
                 ),
                 (
                     "preferences-nav-status-bar",
                     strings.preferences_nav_status_bar.clone(),
+                    IconName::PanelBottom,
                     self.nav == PreferencesNav::StatusBar,
                     Self::set_nav_status_bar,
                 ),
                 (
                     "preferences-nav-window",
                     strings.preferences_nav_window.clone(),
+                    IconName::AppWindow,
                     self.nav == PreferencesNav::Window,
                     Self::set_nav_window,
                 ),
@@ -95,13 +102,14 @@ impl Render for PreferencesWindow {
                 .flex_shrink_0()
                 .px(px(12.0))
                 .py(px(16.0))
+                .bg(c.dialog_secondary_button_bg)
                 .flex()
                 .flex_col()
                 .gap(px(2.0))
                 .border_r(px(d.dialog_border_width))
                 .border_color(c.dialog_border);
-            for (id, label, selected, handler) in nav_items {
-                sidebar = sidebar.child(self.nav_button(id, label, selected, &theme, handler, cx));
+            for (id, label, icon, selected, handler) in nav_items {
+                sidebar = sidebar.child(self.nav_button(id, label, icon, selected, &theme, handler, cx));
             }
 
             // 页面内容：错误条 + 卡片；内容列 flex_shrink_0、高度按内容算，
@@ -115,13 +123,13 @@ impl Render for PreferencesWindow {
                 page_column = page_column.child(self.error_banner(&theme, error));
             }
             page_column = page_column.child(match self.nav {
-                PreferencesNav::File => self.render_startup_page(&theme, &strings, cx),
-                PreferencesNav::Theme => self.render_theme_page(&theme, &strings, cx),
-                PreferencesNav::Image => self.render_image_page(&theme, &strings, cx),
+                PreferencesNav::File => self.render_startup_page(&theme, &strings, window, cx),
+                PreferencesNav::Theme => self.render_theme_page(&theme, &strings, window, cx),
+                PreferencesNav::Image => self.render_image_page(&theme, &strings, window, cx),
                 PreferencesNav::Ai => self.render_ai_page(&theme, &strings, cx),
                 PreferencesNav::Shortcuts => self.render_shortcuts_page(&theme, &strings, cx),
                 PreferencesNav::StatusBar => self.render_status_bar_page(&theme, &strings, cx),
-                PreferencesNav::Window => self.render_window_page(&theme, &strings, cx),
+                PreferencesNav::Window => self.render_window_page(&theme, &strings, window, cx),
             });
 
             let footer = div()
@@ -184,7 +192,10 @@ impl Render for PreferencesWindow {
                                         .flex_1()
                                         .min_h(px(0.0))
                                         .overflow_y_scroll()
-                                        .on_scroll_wheel(cx.listener(|this, _, _, cx| {
+                                        .on_scroll_wheel(cx.listener(|this, _, window, cx| {
+                                            if gpui_kit::base::GlobalState::is_in_deferred_context(cx) {
+                                                window.dispatch_action(Box::new(gpui_kit::base::actions::Cancel), cx);
+                                            }
                                             if this.close_dropdowns() {
                                                 cx.notify();
                                             }

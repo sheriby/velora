@@ -99,7 +99,7 @@ fn sync_theme(cx: &mut App) {
         theme.colors.danger = colors.dialog_danger_button_bg;
         theme.colors.danger_hover = colors.dialog_danger_button_hover;
         theme.colors.danger_foreground = colors.dialog_danger_button_text;
-        theme.colors.group_box = colors.dialog_surface;
+        theme.colors.group_box = colors.dialog_secondary_button_bg;
         theme.colors.group_box_foreground = colors.dialog_body;
         theme.colors.link = colors.text_link;
         theme.colors.link_hover = colors.text_link;

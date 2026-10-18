@@ -254,6 +254,18 @@ impl I18nStringsDe {
             preferences_window_title: self
                 .preferences_window_title
                 .unwrap_or(defaults.preferences_window_title),
+            preferences_group_startup: self.preferences_group_startup.unwrap_or(defaults.preferences_group_startup),
+            preferences_group_workspace: self.preferences_group_workspace.unwrap_or(defaults.preferences_group_workspace),
+            preferences_group_saving: self.preferences_group_saving.unwrap_or(defaults.preferences_group_saving),
+            preferences_group_history: self.preferences_group_history.unwrap_or(defaults.preferences_group_history),
+            preferences_group_updates: self.preferences_group_updates.unwrap_or(defaults.preferences_group_updates),
+            preferences_group_editing: self.preferences_group_editing.unwrap_or(defaults.preferences_group_editing),
+            preferences_group_fonts: self.preferences_group_fonts.unwrap_or(defaults.preferences_group_fonts),
+            preferences_group_interface: self.preferences_group_interface.unwrap_or(defaults.preferences_group_interface),
+            preferences_group_document: self.preferences_group_document.unwrap_or(defaults.preferences_group_document),
+            preferences_group_code: self.preferences_group_code.unwrap_or(defaults.preferences_group_code),
+            preferences_writing_width: self.preferences_writing_width.unwrap_or(defaults.preferences_writing_width),
+            preferences_number_invalid: self.preferences_number_invalid.unwrap_or(defaults.preferences_number_invalid),
             preferences_nav_file: self
                 .preferences_nav_file
                 .unwrap_or(defaults.preferences_nav_file),

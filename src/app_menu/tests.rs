@@ -799,4 +799,15 @@ mod tests {
             assert_eq!(view.items.iter().any(|item|matches!(item,MenuItem::Action{action: candidate,..} if candidate.as_any().type_id()==action.as_any().type_id())),enabled);
         }
     }
+
+#[test]
+fn kit_settings_icons_are_available_without_loading_the_full_catalog() {
+    use gpui::AssetSource;
+    for path in ["icons/image.svg", "icons/keyboard.svg", "icons/sparkles.svg", "icons/app-window.svg"] {
+        assert!(matches!(crate::VeloraAssets.load(path), Ok(Some(_))), "设置图标应可加载：{path}");
+    }
+    assert_eq!(crate::VeloraAssets.list("icons").unwrap().len(),
+        gpui_kit::assets::Assets.list("icons").unwrap().len() + 4,
+        "只嵌入实际使用的补充图标");
+}
 }

@@ -13,6 +13,7 @@
     use crate::i18n::I18nManager;
     use crate::theme::{ThemeCatalogEntry, ThemeManager};
     use gpui::TestAppContext;
+    use gpui_kit::test::TestWindowExt as _;
     use gpui::px;
     use std::collections::BTreeMap;
 
@@ -142,17 +143,17 @@
             (
                 "preferences-ui-font",
                 "preferences-ui-font-option-0",
-                "ui-font-larger",
+                "preferences-ui-font-size",
             ),
             (
                 "preferences-markdown-font",
                 "preferences-markdown-font-option-1",
-                "markdown-font-larger",
+                "preferences-markdown-font-size",
             ),
             (
                 "preferences-code-font",
                 "preferences-code-font-option-0",
-                "code-font-larger",
+                "preferences-code-font-size",
             ),
         ] {
             let bounds = preferences_cx.debug_bounds(button).expect("字体按钮应可见");
@@ -167,6 +168,7 @@
             preferences_cx.run_until_parked();
             let bounds = preferences_cx.debug_bounds(larger).expect("字号按钮应可见");
             preferences_cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+            preferences_cx.update(|window, cx| window.press("up", cx));
             preferences_cx.update(|window, cx| window.draw(cx).clear(cx));
             preferences_cx.run_until_parked();
         }
@@ -225,52 +227,20 @@
             "preferences-markdown-font",
             "preferences-code-font",
         ] {
-            handle
-                .update(cx, |preferences, _window, cx| {
-                    preferences.theme_dropdown_open = false;
-                    preferences.writing_width_dropdown_open = false;
-                    preferences.ui_font_dropdown_open = false;
-                    preferences.markdown_font_dropdown_open = false;
-                    preferences.code_font_dropdown_open = false;
-                    cx.notify();
-                })
-                .expect("偏好窗口应可更新");
-            preferences_cx.update(|window, cx| window.draw(cx).clear(cx));
+            preferences_cx.update(|window, cx| {
+                window.press("escape", cx);
+                window.render_frame(cx);
+            });
             preferences_cx.run_until_parked();
-            let before = preferences_cx
-                .debug_bounds("code-font-larger")
+            let before = preferences_cx.debug_bounds("preferences-code-font-size")
                 .expect("代码字号控件应绘制");
-            handle
-                .update(cx, |preferences, window, cx| match button {
-                    "preferences-theme-dropdown" => {
-                        preferences.toggle_theme_dropdown(&gpui::ClickEvent::default(), window, cx)
-                    }
-                    "preferences-writing-width" => preferences.toggle_writing_width_dropdown(
-                        &gpui::ClickEvent::default(),
-                        window,
-                        cx,
-                    ),
-                    "preferences-ui-font" => preferences.toggle_ui_font_dropdown(
-                        &gpui::ClickEvent::default(),
-                        window,
-                        cx,
-                    ),
-                    "preferences-markdown-font" => preferences.toggle_markdown_font_dropdown(
-                        &gpui::ClickEvent::default(),
-                        window,
-                        cx,
-                    ),
-                    _ => preferences.toggle_code_font_dropdown(
-                        &gpui::ClickEvent::default(),
-                        window,
-                        cx,
-                    ),
-                })
-                .expect("下拉应能展开");
-            preferences_cx.update(|window, cx| window.draw(cx).clear(cx));
+            let bounds = preferences_cx.debug_bounds(button).expect("选择器应可见");
+            preferences_cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+            preferences_cx.update(|window, cx| window.render_frame(cx));
             preferences_cx.run_until_parked();
+            preferences_cx.update(|window, _cx| assert_eq!(window.find(button).expanded(), Some(true)));
             assert_eq!(
-                preferences_cx.debug_bounds("code-font-larger"),
+                preferences_cx.debug_bounds("preferences-code-font-size"),
                 Some(before),
                 "展开 {button} 不应撑高设置行或挤走后续控件"
             );
@@ -287,7 +257,7 @@
                 AppPreferences::default(),
                 default_theme_options(),
                 "偏好设置".into(),
-                gpui::size(px(880.0), px(560.0)),
+                gpui::size(px(880.0), px(360.0)),
             )
         });
         let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
@@ -297,11 +267,14 @@
                 preferences.system_font_families = (0..120)
                     .map(|index| format!("BIZ UDGothic {index:03}"))
                     .collect();
-                preferences.ui_font_dropdown_open = true;
                 cx.notify();
             })
             .expect("偏好窗口应可更新");
         preferences_cx.update(|window, cx| window.draw(cx).clear(cx));
+        preferences_cx.run_until_parked();
+        let trigger = preferences_cx.debug_bounds("preferences-ui-font").expect("字体选择器应可见");
+        preferences_cx.simulate_click(trigger.center(), gpui::Modifiers::none());
+        preferences_cx.update(|window, cx| window.render_frame(cx));
         preferences_cx.run_until_parked();
         let first = preferences_cx
             .debug_bounds("preferences-ui-font-option-0")
@@ -330,9 +303,7 @@
         assert!(
             preferences_cx
                 .debug_bounds("preferences-ui-font-option-0")
-                .expect("字体列表仍应绘制")
-                .top()
-                < first.top(),
+                .is_none_or(|bounds| bounds.top() < first.top()),
             "字体列表本身应随滚轮滚动"
         );
         for delta in [-100_000.0, -70.0, 100_000.0, 70.0] {
@@ -354,21 +325,20 @@
         let page = preferences_cx
             .debug_bounds("preferences-page-scroll")
             .expect("页面应可滚动");
-        preferences_cx.simulate_mouse_move(page.center(), None, gpui::Modifiers::none());
+        let outside = gpui::point(page.left() + px(8.0), page.center().y);
+        preferences_cx.simulate_mouse_move(outside, None, gpui::Modifiers::none());
         preferences_cx.simulate_event(gpui::ScrollWheelEvent {
-            position: page.center(),
+            position: outside,
             delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-70.0))),
             modifiers: gpui::Modifiers::none(),
             touch_phase: gpui::TouchPhase::default(),
         });
         preferences_cx.update(|window, cx| window.draw(cx).clear(cx));
         preferences_cx.run_until_parked();
+        preferences_cx.update(|window, _cx| assert_eq!(window.find("preferences-ui-font").expanded(), Some(false), "菜单外滚动页面时应收起菜单"));
         handle
             .update(cx, |preferences, _window, _cx| {
-                assert!(
-                    !preferences.ui_font_dropdown_open,
-                    "菜单外滚动页面时应收起菜单"
-                );
+
                 assert_ne!(
                     preferences.page_scroll.offset(),
                     before,
@@ -392,29 +362,25 @@
         });
         let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
         handle
-            .update(cx, |preferences, window, cx| {
+            .update(cx, |preferences, _window, cx| {
                 preferences.nav = PreferencesNav::Theme;
                 preferences.system_font_families = (0..120)
                     .map(|index| format!("BIZ UDGothic {index:03}"))
                     .collect();
-                preferences.toggle_code_font_dropdown(&gpui::ClickEvent::default(), window, cx);
+                cx.notify();
             })
             .expect("偏好窗口应可更新");
         preferences_cx.update(|window, cx| window.draw(cx).clear(cx));
         preferences_cx.run_until_parked();
-        let menu = preferences_cx
-            .debug_bounds("preferences-code-font-list")
-            .expect("代码字体菜单应绘制");
-        let height = preferences_cx.update(|window, _cx| window.viewport_size().height);
-        assert!(
-            menu.top() >= px(0.0) && menu.bottom() <= height,
-            "菜单应完全落在窗口内"
-        );
-        assert!(menu.size.height <= px(240.0), "长列表应有高度上限");
-        let first = preferences_cx
-            .debug_bounds("preferences-code-font-option-0")
+        let trigger = preferences_cx.debug_bounds("preferences-code-font").expect("代码字体选择器应可见");
+        preferences_cx.simulate_click(trigger.center(), gpui::Modifiers::none());
+        preferences_cx.update(|window, cx| window.render_frame(cx));
+        preferences_cx.run_until_parked();
+        let first = preferences_cx.debug_bounds("preferences-code-font-option-0")
             .expect("首个字体应绘制");
-        assert!(menu.contains(&first.center()), "首个选项应在菜单中可点击");
+        let height = preferences_cx.update(|window, _| window.viewport_size().height);
+        assert!(first.top() >= px(0.0) && first.bottom() <= height, "首个字体应落在窗口内");
+        assert!(preferences_cx.debug_bounds("preferences-code-font-option-119").is_none(), "长字体列表应虚拟化");
         preferences_cx.simulate_click(first.center(), gpui::Modifiers::none());
         preferences_cx.update(|window, cx| window.draw(cx).clear(cx));
         preferences_cx.run_until_parked();
@@ -425,7 +391,7 @@
                     preferences.fonts.ui_family, ".SystemUIFont",
                     "点击浮层不应点到其下的 UI 字体控件"
                 );
-                assert!(!preferences.code_font_dropdown_open);
+
             })
             .expect("偏好窗口应可更新");
     }
@@ -566,9 +532,12 @@
         let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
         visual.update(|window, cx| {
             window.render_frame(cx);
-            for _ in 0..8 {
+            for _ in 0..40 {
                 window.press("tab", cx);
+                window.render_frame(cx);
+                if window.find("preferences-update-startup").focused() == Some(true) { break; }
             }
+            assert_eq!(window.find("preferences-update-startup").focused(), Some(true));
             window.press("space", cx);
         });
         visual.run_until_parked();
@@ -643,6 +612,135 @@
                     "{theme} 的主按钮不能继续使用 Kit 默认配色");
                 assert_eq!(kit.colors.button_primary_foreground, source.dialog_primary_button_text);
                 assert_eq!(kit.colors.button_primary_hover, source.dialog_primary_button_hover);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn preferences_startup_choice_can_be_changed_from_the_keyboard(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| open_preferences_window_with_state(
+            cx, AppPreferences::default(), default_theme_options(), "Preferences".into(),
+        ));
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        visual.update(|window, cx| window.render_frame(cx));
+        let bounds = visual.debug_bounds("preferences-startup-dropdown").unwrap();
+        visual.simulate_click(bounds.center(), gpui::Modifiers::none());
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            window.press("down", cx);
+            window.press("enter", cx);
+        });
+        visual.run_until_parked();
+        assert_eq!(handle.read_with(cx, |preferences, _| preferences.startup_open).ok(),
+            Some(StartupOpenPreference::LastOpenedFile),
+            "下拉选择必须支持方向键与确认，不能只支持点击列表项");
+    }
+
+    #[gpui::test]
+    fn preferences_history_count_accepts_direct_numeric_input(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| open_preferences_window_with_size(
+            cx, AppPreferences::default(), default_theme_options(), "Preferences".into(),
+            gpui::size(px(1000.0), px(1500.0)),
+        ));
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("preferences-history-count").is_some(),
+                "历史数量应提供可直接编辑的数字输入，不能只能逐次加减");
+            window.click("preferences-history-count", cx);
+            window.press("secondary-a", cx);
+            window.input("50", cx);
+        });
+        visual.run_until_parked();
+        handle.read_with(cx, |preferences, _| {
+            assert_eq!(preferences.file_history.max_entries, 50);
+            assert!(preferences.has_unsaved_changes());
+        }).unwrap();
+        assert_eq!(crate::config::read_app_preferences().unwrap().file_history.max_entries, 30);
+    }
+
+    #[gpui::test]
+    fn empty_numeric_preference_blocks_save_and_recovers_after_correction(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| open_preferences_window_with_size(
+            cx, AppPreferences::default(), default_theme_options(), "Preferences".into(),
+            gpui::size(px(1000.0), px(1500.0)),
+        ));
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            window.click("preferences-history-count", cx);
+            window.press("secondary-a", cx);
+            window.press("backspace", cx);
+        });
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("preferences-save").focused(), None, "数字为空时保存不能进入键盘焦点序列");
+        });
+        visual.update(|window, cx| window.input("40", cx));
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("preferences-save").focused(), Some(false), "修正后保存应重新接受键盘焦点");
+        });
+        handle.read_with(cx, |preferences, _| {
+            assert_eq!(preferences.file_history.max_entries, 40);
+            assert!(preferences.save_error.is_none());
+        }).expect("数字修正应保留草稿");
+    }
+
+    #[gpui::test]
+    fn theme_preferences_pair_each_font_with_its_size_and_fit_the_default_window(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| open_preferences_window_with_state(
+            cx, AppPreferences::default(), default_theme_options(), "Preferences".into(),
+        ));
+        handle.update(cx, |preferences, _, cx| {
+            preferences.nav = PreferencesNav::Theme;
+            cx.notify();
+        }).unwrap();
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+        let page = visual.debug_bounds("preferences-page-scroll").unwrap();
+        for (font, size) in [
+            ("preferences-ui-font", "preferences-ui-font-size"),
+            ("preferences-markdown-font", "preferences-markdown-font-size"),
+            ("preferences-code-font", "preferences-code-font-size"),
+        ] {
+            let font = visual.debug_bounds(font);
+            let size = visual.debug_bounds(size);
+            assert!(font.zip(size).is_some_and(|(font, size)| {
+                font.center().y == size.center().y
+                    && font.left() < size.left()
+                    && font.top() >= page.top() && size.bottom() <= page.bottom()
+            }), "字体与字号应同行，默认窗口无需滚动就能看到三种字体");
+        }
+    }
+
+    #[gpui::test]
+    fn kit_preferences_missing_fonts_keep_their_saved_name(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| open_preferences_window_with_state(
+            cx, AppPreferences::default(), default_theme_options(), "Preferences".into(),
+        ));
+        handle.update(cx, |preferences, _, cx| {
+            preferences.system_font_families = vec!["Available Font".into()];
+            preferences.nav = PreferencesNav::Theme;
+            cx.notify();
+        }).unwrap();
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        for _ in 0..3 {
+            visual.update(|window, cx| {
+                window.render_frame(cx);
+                assert_eq!(window.find("preferences-code-font").value(), Some(if cfg!(target_os = "windows") { "Consolas" } else { "Menlo" }),
+                    "字体未安装时仍应显示已保存的名称，不能呈现空选择");
             });
         }
     }
@@ -1274,6 +1372,31 @@
     }
 
     #[gpui::test]
+    fn window_zoom_supports_keyboard_selection(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| open_preferences_window_with_state(
+            cx, AppPreferences::default(), default_theme_options(), "Preferences".into(),
+        ));
+        handle.update(cx, |preferences, _, cx| {
+            preferences.nav = PreferencesNav::Window;
+            cx.notify();
+        }).expect("窗口页应可打开");
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        visual.update(|window, cx| window.render_frame(cx));
+        let bounds = visual.debug_bounds("preferences-zoom-dropdown").expect("缩放选项应可见");
+        visual.simulate_click(bounds.center(), gpui::Modifiers::none());
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            window.press("down", cx);
+            window.press("enter", cx);
+        });
+        visual.run_until_parked();
+        assert_eq!(handle.read_with(cx, |preferences, _| preferences.zoom_percent).ok(), Some(110),
+            "方向键确认应修改缩放草稿");
+    }
+
+    #[gpui::test]
     async fn window_page_exposes_zoom_and_default_size_controls(cx: &mut TestAppContext) {
         // roadmap H1 批次二：偏好设置「窗口」分组页（缩放 + 默认窗口尺寸）；
         // 打开位置下拉与「记住窗口位置与大小」开关也放在这一页。
@@ -1300,9 +1423,6 @@
 
                 // 切到窗口页并展开三个下拉（渲染路径由窗口自身的绘制触发）。
                 preferences.nav = PreferencesNav::Window;
-                preferences.zoom_dropdown_open = true;
-                preferences.window_size_dropdown_open = true;
-                preferences.window_open_position_dropdown_open = true;
                 cx.notify();
 
                 // 改动进入未保存状态并可通过保存路径持久化。
@@ -1334,12 +1454,16 @@
         handle
             .update(&mut preferences_cx, |preferences, _window, cx| {
                 preferences.nav = PreferencesNav::Window;
-                preferences.zoom_dropdown_open = true;
                 cx.notify();
             })
             .expect("preferences window should update");
         preferences_cx.run_until_parked();
 
+        preferences_cx.update(|window, cx| window.render_frame(cx));
+        let trigger = preferences_cx.debug_bounds("preferences-zoom-dropdown").expect("缩放选择器应可见");
+        preferences_cx.simulate_click(trigger.center(), gpui::Modifiers::none());
+        preferences_cx.update(|window, cx| window.render_frame(cx));
+        preferences_cx.run_until_parked();
         let item = preferences_cx
             .debug_bounds("preferences-zoom-125")
             .expect("「125%」下拉项应渲染");
@@ -1349,7 +1473,7 @@
         handle
             .update(&mut preferences_cx, |preferences, _window, _cx| {
                 assert_eq!(preferences.zoom_percent, 125, "点选后应写入 125%");
-                assert!(!preferences.zoom_dropdown_open, "点选后下拉应收起");
+
                 assert!(preferences.has_unsaved_changes(), "应进入待保存状态");
             })
             .expect("preferences window should update");
@@ -1818,10 +1942,12 @@ async fn installing_settings_reads_the_config_file_once(cx: &mut gpui::TestAppCo
         crate::config::load_or_create_app_preferences().expect("默认偏好");
         let handle = cx.update(|cx| open_preferences_window_with_size(cx, AppPreferences::default(), default_theme_options(), "偏好设置".into(), gpui::size(px(1000.0), px(1500.0))));
         let mut window_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
-        for selector in ["preferences-history-interval-more", "preferences-history-count-less", "preferences-history-days-more"] {
+        for (selector, key) in [("preferences-history-interval", "up"), ("preferences-history-count", "down"), ("preferences-history-days", "up")] {
             window_cx.update(|window, cx| window.draw(cx).clear(cx)); window_cx.run_until_parked();
             let control = window_cx.debug_bounds(selector).expect("历史参数控件必须可见");
             window_cx.simulate_click(control.center(), gpui::Modifiers::none());
+            window_cx.update(|window, cx| window.press(key, cx));
+            window_cx.run_until_parked();
         }
         handle.update(cx, |preferences, window, cx| {
             assert!(preferences.has_unsaved_changes());

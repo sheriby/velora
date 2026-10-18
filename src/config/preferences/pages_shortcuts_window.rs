@@ -514,218 +514,189 @@ impl PreferencesWindow {
     }
 
     pub(crate) fn render_window_page(
-        &self,
-        theme: &Theme,
+        &mut self,
+        _theme: &Theme,
         strings: &crate::i18n::I18nStrings,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let zoom_selected = format!("{}%", self.zoom_percent);
-        let mut zoom_dropdown = div()
-            .relative()
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .child(Self::dropdown_button(
-                "preferences-zoom-dropdown",
-                zoom_selected.into(),
-                theme,
-                Self::toggle_zoom_dropdown,
-                cx,
-            ));
-        if self.zoom_dropdown_open {
-            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
-            for percent in [80i64, 90, 100, 110, 125, 150] {
-                let is_selected = self.zoom_percent == percent;
-                list = list.child(Self::dropdown_item(
-                    gpui::SharedString::from(format!("preferences-zoom-{percent}")),
-                    format!("{percent}%"),
-                    is_selected,
-                    theme,
-                    move |this, _, _, cx| {
-                        this.zoom_percent = percent;
-                        this.zoom_dropdown_open = false;
-                        cx.notify();
-                    },
-                    cx,
-                ));
-            }
-            zoom_dropdown = zoom_dropdown.child(self.dropdown_menu("preferences-zoom-dropdown", list, theme));
-        }
-
-        let size_selected = format!(
-            "{} × {}",
-            self.default_window_width, self.default_window_height
+        use super::controls::PreferenceChoice;
+        let zoom = self.choice_field(
+            "preferences-zoom-dropdown",
+            strings.preferences_window_zoom.clone(),
+            self.zoom_percent.to_string(),
+            |preferences| {
+                let mut values = vec![80i64, 90, 100, 110, 125, 150];
+                if !values.contains(&preferences.zoom_percent) {
+                    values.push(preferences.zoom_percent);
+                    values.sort_unstable();
+                }
+                values
+                    .into_iter()
+                    .map(|percent| {
+                        PreferenceChoice::new(
+                            percent.to_string(),
+                            format!("{percent}%"),
+                            format!("preferences-zoom-{percent}"),
+                        )
+                    })
+                    .collect()
+            },
+            false,
+            window,
+            cx,
+            |preferences, value| {
+                if let Ok(percent) = value.parse() {
+                    preferences.zoom_percent = percent;
+                }
+            },
         );
-        let mut size_dropdown = div()
-            .relative()
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .child(Self::dropdown_button(
-                "preferences-window-size-dropdown",
-                size_selected.into(),
-                theme,
-                Self::toggle_window_size_dropdown,
-                cx,
-            ));
-        if self.window_size_dropdown_open {
-            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
-            for (width, height) in [(900i64, 600i64), (1080, 720), (1280, 800), (1440, 900)] {
-                let is_selected =
-                    self.default_window_width == width && self.default_window_height == height;
-                list = list.child(Self::dropdown_item(
-                    gpui::SharedString::from(format!("preferences-window-size-{width}x{height}")),
-                    format!("{width} × {height}"),
-                    is_selected,
-                    theme,
-                    move |this, _, _, cx| {
-                        this.default_window_width = width;
-                        this.default_window_height = height;
-                        this.window_size_dropdown_open = false;
-                        cx.notify();
-                    },
-                    cx,
-                ));
-            }
-            size_dropdown = size_dropdown.child(self.dropdown_menu("preferences-window-size-dropdown", list, theme));
-        }
-
-        let open_position_selected = match self.window_open_position {
-            WindowOpenPosition::Remember => {
-                strings.preferences_window_open_position_remember.clone()
-            }
-            WindowOpenPosition::Center => strings.preferences_window_open_position_center.clone(),
-        };
-        let mut open_position_dropdown = div()
-            .relative()
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .child(Self::dropdown_button(
-                "preferences-window-open-position-dropdown",
-                open_position_selected,
-                theme,
-                Self::toggle_window_open_position_dropdown,
-                cx,
-            ));
-        if self.window_open_position_dropdown_open {
-            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
-            for (position, label) in [
-                (
-                    WindowOpenPosition::Remember,
-                    strings.preferences_window_open_position_remember.clone(),
-                ),
-                (
-                    WindowOpenPosition::Center,
-                    strings.preferences_window_open_position_center.clone(),
-                ),
-            ] {
-                let is_selected = self.window_open_position == position;
-                list = list.child(Self::dropdown_item(
-                    gpui::SharedString::from(format!(
-                        "preferences-window-open-position-{}",
-                        position.as_str()
-                    )),
-                    label,
-                    is_selected,
-                    theme,
-                    move |this, _, _, cx| {
-                        this.window_open_position = position;
-                        this.window_open_position_dropdown_open = false;
-                        cx.notify();
-                    },
-                    cx,
-                ));
-            }
-            open_position_dropdown = open_position_dropdown.child(self.dropdown_menu("preferences-window-open-position-dropdown", list, theme));
-        }
-
-        let remember_toggle = Switch::new("preferences-remember-window")
-            .checked(self.remember_window_bounds)
-            .on_click(cx.listener(|this, _event, _window, cx| {
-                this.remember_window_bounds = !this.remember_window_bounds;
-                cx.notify();
-            }));
-
-        self.settings_card(
-            theme,
+        let size = self.choice_field(
+            "preferences-window-size-dropdown",
+            strings.preferences_window_default_size.clone(),
+            format!(
+                "{}x{}",
+                self.default_window_width, self.default_window_height
+            ),
+            |preferences| {
+                let mut values = vec![(900i64, 600i64), (1080, 720), (1280, 800), (1440, 900)];
+                let current = (
+                    preferences.default_window_width,
+                    preferences.default_window_height,
+                );
+                if !values.contains(&current) {
+                    values.push(current);
+                    values.sort_unstable();
+                }
+                values
+                    .into_iter()
+                    .map(|(width, height)| {
+                        PreferenceChoice::new(
+                            format!("{width}x{height}"),
+                            format!("{width} × {height}"),
+                            format!("preferences-window-size-{width}x{height}"),
+                        )
+                    })
+                    .collect()
+            },
+            false,
+            window,
+            cx,
+            |preferences, value| {
+                if let Some((width, height)) = value.split_once('x') {
+                    if let (Ok(width), Ok(height)) = (width.parse(), height.parse()) {
+                        preferences.default_window_width = width;
+                        preferences.default_window_height = height;
+                    }
+                }
+            },
+        );
+        let position_choices = vec![
+            PreferenceChoice::new(
+                "remember",
+                strings.preferences_window_open_position_remember.clone(),
+                "preferences-window-open-position-remember",
+            ),
+            PreferenceChoice::new(
+                "center",
+                strings.preferences_window_open_position_center.clone(),
+                "preferences-window-open-position-center",
+            ),
+        ];
+        let position = self.choice_field(
+            "preferences-window-open-position-dropdown",
+            strings.preferences_window_open_position.clone(),
+            self.window_open_position.as_str(),
+            |_| position_choices,
+            false,
+            window,
+            cx,
+            |preferences, value| {
+                preferences.window_open_position = if value == "center" {
+                    WindowOpenPosition::Center
+                } else {
+                    WindowOpenPosition::Remember
+                };
+            },
+        );
+        let remember = Self::boolean_field(
+            "preferences-remember-window",
+            strings.preferences_window_remember_bounds.clone(),
+            self.remember_window_bounds,
+            cx,
+            |preferences, value| preferences.remember_window_bounds = value,
+        );
+        Self::preference_group(
+            "preferences-window-fields",
+            String::new(),
             vec![
-                self.settings_row(theme, strings.preferences_window_zoom.clone(), zoom_dropdown),
-                self.settings_row(
-                    theme,
-                    strings.preferences_window_default_size.clone(),
-                    size_dropdown,
-                ),
-                self.settings_row(
-                    theme,
-                    strings.preferences_window_open_position.clone(),
-                    open_position_dropdown,
-                ),
-                self.settings_row(
-                    theme,
-                    strings.preferences_window_remember_bounds.clone(),
-                    remember_toggle,
-                ),
+                Self::preference_row(strings.preferences_window_zoom.clone(), zoom),
+                Self::preference_row(strings.preferences_window_default_size.clone(), size),
+                Self::preference_row(strings.preferences_window_open_position.clone(), position),
+                Self::preference_row(strings.preferences_window_remember_bounds.clone(), remember),
             ],
         )
     }
 
     pub(crate) fn render_status_bar_page(
         &self,
-        theme: &Theme,
+        _theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // 状态栏开关：五个都在同一张卡片里（侧栏按钮、模式切换之前只存着没入口）。
-        let switch = |id: &'static str,
-                      checked: bool,
-                      on_click: fn(&mut Self, &bool, &mut Window, &mut Context<Self>),
-                      cx: &mut Context<Self>| {
-            Switch::new(id).checked(checked).on_click(cx.listener(on_click))
-        };
-
-        self.settings_card(
-            theme,
+        Self::preference_group(
+            "preferences-status-bar-fields",
+            String::new(),
             vec![
-                self.settings_row(
-                    theme,
+                Self::preference_row(
                     strings.preferences_status_bar_enabled.clone(),
-                    switch("preferences-status-bar-enabled", self.status_bar_enabled, |this, _, _, cx| {
-                        this.status_bar_enabled = !this.status_bar_enabled;
-                        cx.notify();
-                    }, cx),
+                    Self::boolean_field(
+                        "preferences-status-bar-enabled",
+                        strings.preferences_status_bar_enabled.clone(),
+                        self.status_bar_enabled,
+                        cx,
+                        |preferences, value| preferences.status_bar_enabled = value,
+                    ),
                 ),
-                self.settings_row(
-                    theme,
+                Self::preference_row(
                     strings.preferences_status_bar_show_word_count.clone(),
-                    switch("preferences-status-bar-word-count", self.status_bar_show_word_count, |this, _, _, cx| {
-                        this.status_bar_show_word_count = !this.status_bar_show_word_count;
-                        cx.notify();
-                    }, cx),
+                    Self::boolean_field(
+                        "preferences-status-bar-word-count",
+                        strings.preferences_status_bar_show_word_count.clone(),
+                        self.status_bar_show_word_count,
+                        cx,
+                        |preferences, value| preferences.status_bar_show_word_count = value,
+                    ),
                 ),
-                self.settings_row(
-                    theme,
+                Self::preference_row(
                     strings.preferences_status_bar_show_cursor_position.clone(),
-                    switch("preferences-status-bar-cursor-position", self.status_bar_show_cursor_position, |this, _, _, cx| {
-                        this.status_bar_show_cursor_position = !this.status_bar_show_cursor_position;
-                        cx.notify();
-                    }, cx),
+                    Self::boolean_field(
+                        "preferences-status-bar-cursor-position",
+                        strings.preferences_status_bar_show_cursor_position.clone(),
+                        self.status_bar_show_cursor_position,
+                        cx,
+                        |preferences, value| preferences.status_bar_show_cursor_position = value,
+                    ),
                 ),
-                self.settings_row(
-                    theme,
+                Self::preference_row(
                     strings.preferences_status_bar_show_sidebar_toggle.clone(),
-                    switch("preferences-status-bar-sidebar-toggle", self.status_bar_show_sidebar_toggle, |this, _, _, cx| {
-                        this.status_bar_show_sidebar_toggle = !this.status_bar_show_sidebar_toggle;
-                        cx.notify();
-                    }, cx),
+                    Self::boolean_field(
+                        "preferences-status-bar-sidebar-toggle",
+                        strings.preferences_status_bar_show_sidebar_toggle.clone(),
+                        self.status_bar_show_sidebar_toggle,
+                        cx,
+                        |preferences, value| preferences.status_bar_show_sidebar_toggle = value,
+                    ),
                 ),
-                self.settings_row(
-                    theme,
+                Self::preference_row(
                     strings.preferences_status_bar_show_mode_switch.clone(),
-                    switch("preferences-status-bar-mode-switch", self.status_bar_show_mode_switch, |this, _, _, cx| {
-                        this.status_bar_show_mode_switch = !this.status_bar_show_mode_switch;
-                        cx.notify();
-                    }, cx),
+                    Self::boolean_field(
+                        "preferences-status-bar-mode-switch",
+                        strings.preferences_status_bar_show_mode_switch.clone(),
+                        self.status_bar_show_mode_switch,
+                        cx,
+                        |preferences, value| preferences.status_bar_show_mode_switch = value,
+                    ),
                 ),
             ],
         )
