@@ -3,6 +3,7 @@
 //! 实时刷新。
 
 use gpui::*;
+use gpui_kit::component::{Selectable as _, button::Button};
 
 use crate::theme::Theme;
 
@@ -244,7 +245,7 @@ impl Editor {
         let mut rows = Vec::new();
         for (index, entry) in entries.iter().enumerate() {
             let is_selected = index == selected;
-            let confirm = cx.listener(move |editor, _event: &MouseDownEvent, _window, cx| {
+            let confirm = cx.listener(move |editor, _event: &ClickEvent, _window, cx| {
                 editor.confirm_latex_completion(index, cx);
             });
             // 预览渲染失败就退化成命令名文本，不出空格子。
@@ -265,25 +266,19 @@ impl Editor {
                         .into_any_element(),
                 };
             rows.push(
-                div()
-                    .id(gpui::ElementId::Name(format!("latex-entry-{index}").into()))
+                Button::new(gpui::ElementId::Name(
+                    format!("latex-entry-{index}").into(),
+                ))
                     .debug_selector(move || format!("latex-entry-{index}"))
                     .h(px(30.0))
                     .w_full()
                     .overflow_hidden()
-                    .flex()
-                    .items_center()
                     .gap(px(8.0))
                     .px(px(8.0))
                     .rounded(px(4.0))
-                    .cursor_pointer()
-                    .bg(if is_selected {
-                        c.selection
-                    } else {
-                        hsla(0.0, 0.0, 0.0, 0.0)
-                    })
-                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .on_mouse_down(MouseButton::Left, confirm)
+                    .selected(is_selected)
+                    .accessibility_label(format!("\\{}", entry.name))
+                    .on_click(confirm)
                     .child(
                         div()
                             .min_w(px(96.0))

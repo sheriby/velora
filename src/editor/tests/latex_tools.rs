@@ -34,6 +34,48 @@ fn math_block_entity(
         .map(|visible| visible.entity.clone())
 }
 
+/// 补全里的每一行都得是标准按钮：自绘行只有 hover 底色，辅助技术看不到
+/// 「\alpha」这些候选，也读不出当前选中哪一条。
+#[gpui::test]
+fn latex_completion_rows_expose_native_semantics(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\\al\n$$\n".into(), None));
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    let cursor = math.read_with(cx, |block, _cx| {
+        block.display_text().find("\\al").expect("\\al 在块里") + "\\al".len()
+    });
+    math.update(cx, |block, block_cx| block.move_to(cursor, block_cx));
+    editor.update(cx, |editor, cx| {
+        editor.update_latex_completion_for_block(&math, cx);
+    });
+    redraw(cx);
+    cx.update(|window, _| {
+        let row = window.try_find("latex-entry-0").expect("第一行候选");
+        assert_eq!(row.role(), Some(gpui::Role::Button), "候选行必须是标准按钮");
+        assert!(
+            row.label().is_some_and(|label| label.contains("alpha")),
+            "候选行要报出命令名"
+        );
+    });
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), "$$\n\\al\n$$\n"));
+    // 鼠标点一行也要确认：按钮化之后确认发生在松开，路径与按下不同。
+    let row = cx.debug_bounds("latex-entry-0").expect("第一行候选");
+    cx.simulate_click(row.center(), Modifiers::none());
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.buffer.text().contains("\\alpha"),
+            "点击候选行应确认补全：{}",
+            editor.buffer.text()
+        )
+    });
+}
+
 /// 数学块里打 `\al` 弹补全，Enter 确认 `\alpha ` 并落在尾随空格之后。
 #[gpui::test]
 async fn latex_completion_confirms_template_in_math_block(cx: &mut TestAppContext) {
