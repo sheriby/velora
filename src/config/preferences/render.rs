@@ -119,9 +119,6 @@ impl Render for PreferencesWindow {
             if let Some(error) = self.save_error.clone() {
                 page_column = page_column.child(self.error_banner(&theme, error));
             }
-            if let Some(error) = self.shortcut_error.clone() {
-                page_column = page_column.child(self.error_banner(&theme, error));
-            }
             page_column = page_column.child(match self.nav {
                 PreferencesNav::File => self.render_startup_page(&theme, &strings, window, cx),
                 PreferencesNav::Theme => self.render_theme_page(&theme, &strings, window, cx),

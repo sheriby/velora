@@ -2341,3 +2341,123 @@ fn folder_icon_style_select_respects_save_cancel_and_reopening(cx: &mut TestAppC
         .unwrap();
     cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
 }
+
+#[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+fn shortcut_controls_support_keyboard_recording_conflicts_and_reset(cx: &mut TestAppContext) {
+    init_preferences_test_app(cx);
+    let handle = cx.update(|cx| {
+        open_preferences_window_with_size(
+            cx,
+            AppPreferences::default(),
+            default_theme_options(),
+            "Preferences".into(),
+            gpui::size(px(1000.0), px(900.0)),
+        )
+    });
+    handle
+        .update(cx, |preferences, _, cx| {
+            preferences.nav = PreferencesNav::Shortcuts;
+            cx.notify();
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    let command = crate::components::ShortcutCommand::SaveDocument;
+    let record_id = ("preferences-shortcut-record", command as u32);
+    let reset_id = ("preferences-shortcut-reset", command as u32);
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.try_find(record_id).and_then(|button| button.role()),
+            Some(gpui::Role::Button),
+            "快捷键录制需要标准按钮语义"
+        );
+    });
+    for _ in 0..40 {
+        visual.simulate_keystrokes("tab");
+        let focused = visual.update(|window, cx| {
+            window.render_frame(cx);
+            window.find(record_id).focused() == Some(true)
+        });
+        if focused {
+            break;
+        }
+    }
+    visual.update(|window, cx| {
+        assert_eq!(window.find(record_id).focused(), Some(true));
+        window.press("enter", cx);
+    });
+    handle
+        .read_with(cx, |preferences, _| {
+            assert_eq!(preferences.recording_shortcut, Some(command))
+        })
+        .unwrap();
+    let conflict = crate::components::resolved_shortcut_keys(
+        &BTreeMap::new(),
+        crate::components::ShortcutCommand::NewDocument,
+    )
+    .first()
+    .unwrap()
+    .clone();
+    visual.update(|window, cx| window.press(&conflict, cx));
+    handle
+        .read_with(cx, |preferences, _| {
+            assert!(
+                preferences.shortcut_error.is_some(),
+                "冲突应保留录制状态并显示错误"
+            );
+            assert_eq!(preferences.recording_shortcut, Some(command));
+            assert!(preferences.keybindings.is_empty());
+        })
+        .unwrap();
+    visual.update(|window, cx| window.press("ctrl-alt-shift-9", cx));
+    handle
+        .read_with(cx, |preferences, _| {
+            assert!(preferences.shortcut_error.is_none());
+            assert!(preferences.recording_shortcut.is_none());
+            assert_eq!(
+                preferences.keybindings.get("save_document"),
+                Some(&vec!["ctrl-alt-shift-9".into()])
+            );
+        })
+        .unwrap();
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(reset_id).role(), Some(gpui::Role::Button));
+        window.click(reset_id, cx);
+    });
+    handle
+        .read_with(cx, |preferences, _| {
+            assert!(preferences.keybindings.is_empty());
+            assert!(!preferences.has_unsaved_changes());
+        })
+        .unwrap();
+}
+
+
+#[test]
+fn shortcut_keycaps_distinguish_forward_and_backward_delete() {
+    use gpui_kit::component::kbd::Kbd;
+    let forward = gpui::Keystroke::parse("ctrl-delete").unwrap();
+    let backward = gpui::Keystroke::parse("ctrl-backspace").unwrap();
+    let displayed_forward = super::PreferencesWindow::shortcut_display_stroke(forward.clone());
+    let displayed_backward = super::PreferencesWindow::shortcut_display_stroke(backward.clone());
+    assert_eq!(
+        Kbd::format(&displayed_forward),
+        if cfg!(target_os = "macos") {
+            "⌃⌦"
+        } else {
+            "Ctrl+Delete"
+        }
+    );
+    assert_eq!(
+        Kbd::format(&displayed_backward),
+        if cfg!(target_os = "macos") {
+            "⌃⌫"
+        } else {
+            "Ctrl+Backspace"
+        }
+    );
+    assert_eq!(forward.unparse(), "ctrl-delete", "显示转换不能修改真实绑定");
+    assert_eq!(backward.unparse(), "ctrl-backspace");
+}

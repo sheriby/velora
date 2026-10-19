@@ -156,6 +156,7 @@ Kit 0.7.3 `TitleBar::on_close_window` 仅 Linux 生效，因此这里组合标�
 ## 10. 配置 / 主题 / i18n
 
 - **配置根目录**：`VeloraConfigDirs::from_system`（`directories::ProjectDirs`）；子项有语言包目录、主题目录、`.history`、最近列表、`config.toml`、恢复快照目录。**测试必须用 `override_test_config_root` 独占目录**（线程局部 RAII），否则读写 config.toml 的用例互相污染（典型症状：单独跑绿、整套跑红）。
+- 快捷键偏好页（`config/preferences/pages_shortcuts_window.rs`）按 Kit `GroupBox`／`Form`／`Field` 分组，组合键用 `Kbd`，录制与重置用标准 `Button`；冲突与 Esc 提示仅跟随正在录制的字段。录制、冲突检测、恢复默认及保存／取消仍读写原有键位模型；macOS 前删／后删的符号适配仅用于显示，不改动实际按键名。
 - `config.toml`：启动/语言/主题/导出/快捷键/editor 段。**运行时镜像是 `EditorSettings` Global**（渲染路径零磁盘 IO）；setter 同时更新全局与持久化。窗口 frame 存取也在这里。
 - 在线更新由 `editor/update.rs:UpdateSession` 保存进程级下载互斥和待安装计划。原生菜单入口延后到窗口事件结束后执行；最后一个窗口关闭也走 `request_quit_application`，统一经过保存守卫和安装助手启动，更新会话只在仍有窗口时继续发起退出，避免重复交接。准备或启动安装失败时清理所有窗口及分组的下载状态，保留通知以便重试，优先在活动编辑器显示应用内错误；文档窗口均已关闭时新开编辑器承载错误。
 - `current_window_candidates` 仅保留 `cx.windows()` 中仍存活的句柄，平台活动窗口与层叠列表可能晚于关窗回调更新，过期句柄不能让保存后安装中断。外部查询、下载、进程占用检查和安装交由 `UpdateBackend`，生产固定使用 `SystemUpdateBackend`，测试可注入内存数据及安装记录桩；演练命令见 testing-and-build.md。
