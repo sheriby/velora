@@ -5,14 +5,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui::*;
+use gpui::prelude::FluentBuilder as _;
+use gpui_kit::assets::IconName;
 
 use super::Editor;
 use crate::i18n::I18nManager;
-use crate::theme::Theme;
 use gpui_kit::component::{
-    ActiveTheme as _,
+    ActiveTheme as _, Icon,
     input::{Enter as InputEnter, Escape as InputEscape, Input, InputEvent, InputState},
     list::ListItem,
+    scroll::ScrollableElement as _,
+    tooltip::Tooltip,
 };
 
 /// Overlay state for the quick switcher. `None` while closed.
@@ -21,6 +24,7 @@ pub(in crate::editor) struct QuickOpenState {
     pub(super) selected: usize,
     pub(super) results: Vec<PathBuf>,
     pub(super) input: Entity<InputState>,
+    scroll: ScrollHandle,
     _subscription: Subscription,
 }
 
@@ -37,12 +41,9 @@ impl Editor {
     /// Top-centered overlay panel: query line + fuzzy result rows.
     pub(super) fn render_quick_open_overlay(
         &self,
-        theme: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let c = &theme.colors;
-        let d = &theme.dimensions;
         let strings = cx.global::<I18nManager>().strings();
         let placeholder = strings.quick_open_placeholder.clone();
         let no_results = strings.quick_open_no_results.clone();
@@ -60,32 +61,40 @@ impl Editor {
         if results.is_empty() {
             rows.push(
                 div()
-                    .px(px(10.0))
-                    .h(px(theme.typography.ui_text_size(28.0).max(28.0)))
-                    .flex()
-                    .items_center()
-                    .text_size(px(theme.typography.ui_text_size(12.0)))
-                    .text_color(c.dialog_muted)
+                    .p_3()
+                    .text_color(cx.theme().muted_foreground)
                     .child(no_results)
                     .into_any_element(),
             );
         } else {
-            let first = state.selected.saturating_sub(5);
-            for (offset, path) in results.iter().skip(first).take(12).enumerate() {
-                let selected = first + offset == state.selected;
+            for (index, path) in results.iter().enumerate() {
+                let selected = index == state.selected;
                 let label = path
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.to_string_lossy().into_owned());
                 let directory = path
                     .parent()
-                    .map(|parent| parent.to_string_lossy().into_owned())
+                    .map(|parent| {
+                        self.workspace_root_path()
+                            .and_then(|root| parent.strip_prefix(root).ok())
+                            .unwrap_or(parent)
+                            .to_string_lossy()
+                            .into_owned()
+                    })
                     .unwrap_or_default();
                 let entry_path = path.clone();
+                let full_path = path.to_string_lossy().into_owned();
                 rows.push(
                     ListItem::new(Arc::<Path>::from(entry_path.clone()))
-                        .accessibility_label(format!("{label} {directory}"))
+                        .accessibility_label(full_path.clone())
+                        .role(Role::ListBoxOption)
+                        .aria_selected(selected)
                         .selected(selected)
+                        .rounded_md()
+                        .tooltip(move |window, cx| {
+                            Tooltip::new(full_path.clone()).build(window, cx)
+                        })
                         .child(
                             div()
                                 .w_full()
@@ -94,15 +103,17 @@ impl Editor {
                                 .items_center()
                                 .gap_2()
                                 .child(div().flex_1().min_w_0().truncate().child(label))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(directory),
-                                ),
+                                .when(!directory.is_empty(), |row| {
+                                    row.child(
+                                        div()
+                                            .max_w(relative(0.5))
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_sm()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(directory),
+                                    )
+                                }),
                         )
                         .on_click(cx.listener(move |editor, event, window, cx| {
                             editor.quick_open = None;
@@ -133,6 +144,7 @@ impl Editor {
             .flex_col()
             .items_center()
             .pt(px(64.0))
+            .px_4()
             .on_mouse_down(MouseButton::Left, {
                 let editor = cx.entity().downgrade();
                 move |_, _, cx| {
@@ -148,14 +160,15 @@ impl Editor {
                     .debug_selector(|| "quick-open-panel".into())
                     .w_full()
                     .max_w(px(560.0))
+                    .max_h(relative(1.0))
+                    .min_h_0()
+                    .overflow_hidden()
                     .flex()
                     .flex_col()
-                    .p(px(8.0))
-                    .gap(px(4.0))
-                    .bg(c.dialog_surface)
-                    .border(px(d.dialog_border_width))
-                    .border_color(c.dialog_border)
-                    .rounded(px(d.dialog_radius))
+                    .bg(cx.theme().popover)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .rounded(cx.theme().radius_lg)
                     .shadow_lg()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .capture_key_down(cx.listener(|editor, event: &KeyDownEvent, window, cx| {
@@ -181,23 +194,57 @@ impl Editor {
                         cx.listener(|editor, _: &InputEscape, _, cx| editor.close_quick_open(cx)),
                     )
                     .child(
-                        Input::new(&input)
-                            .id("quick-open-input")
-                            .accessibility_id("quick-open-input")
-                            .aria_label(placeholder)
-                            .on_paste(move |clipboard, window, cx| {
-                                let Some(text) =
-                                    clipboard.text().filter(|text| text.contains(['\r', '\n']))
-                                else {
-                                    return false;
-                                };
-                                input.update(cx, |input, cx| {
-                                    input.replace(text.replace(['\r', '\n'], " "), window, cx)
-                                });
-                                true
-                            }),
+                        div()
+                            .px_3()
+                            .flex_shrink_0()
+                            .border_b_1()
+                            .border_color(cx.theme().border)
+                            .child(
+                                Input::new(&input)
+                                    .id("quick-open-input")
+                                    .accessibility_id("quick-open-input")
+                                    .aria_label(placeholder)
+                                    .prefix(
+                                        Icon::new(IconName::Search)
+                                            .text_color(cx.theme().muted_foreground),
+                                    )
+                                    .appearance(false)
+                                    .p_0()
+                                    .on_paste(move |clipboard, window, cx| {
+                                        let Some(text) = clipboard
+                                            .text()
+                                            .filter(|text| text.contains(['\r', '\n']))
+                                        else {
+                                            return false;
+                                        };
+                                        input.update(cx, |input, cx| {
+                                            input.replace(
+                                                text.replace(['\r', '\n'], " "),
+                                                window,
+                                                cx,
+                                            )
+                                        });
+                                        true
+                                    }),
+                            ),
                     )
-                    .children(rows),
+                    .child(
+                        div()
+                            .id("quick-open-results")
+                            .debug_selector(|| "quick-open-results".into())
+                            .role(Role::ListBox)
+                            .relative()
+                            .w_full()
+                            .min_h_0()
+                            .max_h(rems(18.75))
+                            .flex()
+                            .flex_col()
+                            .p_1()
+                            .overflow_y_scroll()
+                            .track_scroll(&state.scroll)
+                            .children(rows)
+                            .vertical_scrollbar(&state.scroll),
+                    ),
             )
             .into_any_element()
     }
@@ -242,6 +289,7 @@ impl Editor {
             selected: 0,
             results: Vec::new(),
             input,
+            scroll: ScrollHandle::new(),
             _subscription: subscription,
         });
         window.focus(&focus, cx);
@@ -285,6 +333,7 @@ impl Editor {
         if let Some(state) = self.quick_open.as_mut() {
             state.results = files;
             state.selected = state.selected.min(state.results.len().saturating_sub(1));
+            state.scroll.scroll_to_item(state.selected);
         }
         cx.notify();
     }
@@ -300,6 +349,7 @@ impl Editor {
         let current = state.selected as isize;
         let next = (current + delta).rem_euclid(len as isize) as usize;
         state.selected = next;
+        state.scroll.scroll_to_item(next);
         cx.notify();
     }
 

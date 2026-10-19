@@ -207,6 +207,42 @@ async fn quick_open_panel_floats_top_centered_over_the_document(cx: &mut TestApp
     );
 }
 
+#[gpui::test]
+async fn quick_open_keeps_the_last_result_visible_in_a_short_window(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let root = temp_fixture_dir().join(format!("quick-open-short-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let root = crate::file_url::canonical_path(&root);
+    for index in 0..12 {
+        std::fs::write(root.join(format!("note-{index:02}.md")), "# 笔记\n").unwrap();
+    }
+    cx.on_quit({
+        let root = root.clone();
+        move || std::fs::remove_dir_all(root).unwrap()
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.simulate_resize(gpui::size(px(680.0), px(340.0)));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_quick_open(window, cx)
+    });
+    redraw(cx);
+    let overlay = cx.debug_bounds("quick-open-overlay").unwrap();
+    let panel = cx.debug_bounds("quick-open-panel").unwrap();
+    assert!(
+        panel.bottom() <= overlay.bottom(),
+        "快速打开不能越过可用区域：{panel:?}，区域 {overlay:?}"
+    );
+    cx.simulate_keystrokes("up");
+    redraw(cx);
+    cx.update(|window, _| {
+        let row = window.find(Arc::<std::path::Path>::from(root.join("note-11.md")));
+        assert!(row.visible());
+        assert!(row.bounds().top() >= panel.top() && row.bounds().bottom() <= panel.bottom());
+    });
+}
+
 /// 组词期间的回车不能打开候选文件；提交后同一按键沿用预览打开。
 #[gpui::test]
 async fn quick_open_ignores_enter_during_ime_composition(cx: &mut TestAppContext) {
