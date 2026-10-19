@@ -1,5 +1,10 @@
 use super::*;
-use gpui_kit::component::{button::{Button, ButtonVariants}, Selectable};
+use gpui_kit::component::{
+    Selectable, Sizable as _,
+    alert::Alert,
+    button::{Button, ButtonVariants},
+    scroll::ScrollableElement as _,
+};
 
 impl PreferencesWindow {
     pub(crate) fn nav_button(
@@ -38,24 +43,17 @@ impl PreferencesWindow {
             .into_any_element()
     }
 
-    /// 页面顶部的错误条（保存失败、快捷键冲突）。
-    pub(crate) fn error_banner(&self, theme: &Theme, message: String) -> AnyElement {
-        let c = &theme.colors;
-        let d = &theme.dimensions;
-        let t = &theme.typography;
+    pub(crate) fn render_save_feedback(&self, message: String, max_height: Pixels) -> AnyElement {
+        // Scrollable 默认填满父项，固定操作区必须显式使用内容高度。
         div()
+            .id("preferences-save-feedback")
+            .debug_selector(|| "preferences-save-feedback".into())
             .w_full()
             .flex_shrink_0()
-            .px(px(12.0))
-            .py(px(8.0))
-            .rounded(px((d.dialog_radius - 4.0).max(4.0)))
-            .border(px(d.dialog_border_width))
-            .border_color(c.dialog_danger_button_bg)
-            .bg(c.dialog_surface)
-            .text_size(px(t.dialog_body_size))
-            .text_color(c.dialog_danger_button_bg)
-            .child(SharedString::from(message))
+            .h_auto()
+            .max_h(max_height)
+            .overflow_y_scrollbar()
+            .child(Alert::error("preferences-save-error", message).small())
             .into_any_element()
     }
-
 }

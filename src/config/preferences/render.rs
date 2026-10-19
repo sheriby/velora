@@ -1,6 +1,7 @@
 use super::*;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::Disableable as _;
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::assets::IconName;
 impl Render for PreferencesWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -112,24 +113,26 @@ impl Render for PreferencesWindow {
                 sidebar = sidebar.child(self.nav_button(id, label, icon, selected, &theme, handler, cx));
             }
 
-            // 页面内容：错误条 + 卡片；内容列 flex_shrink_0、高度按内容算，
+            // 内容列 flex_shrink_0、高度按内容算，
             // 这样外层 overflow_y_scroll 才有东西可滚（旧版套了一层 flex_1，
             // 高度被压成视口高度，于是「文件」和「窗口」两页永远滚不动）。
-            let mut page_column = div().w_full().flex_shrink_0().flex().flex_col().gap(px(14.0));
-            if let Some(error) = self.save_error.clone() {
-                page_column = page_column.child(self.error_banner(&theme, error));
-            }
-            page_column = page_column.child(match self.nav {
-                PreferencesNav::File => self.render_startup_page(&theme, &strings, window, cx),
-                PreferencesNav::Theme => self.render_theme_page(&theme, &strings, window, cx),
-                PreferencesNav::Image => self.render_image_page(&theme, &strings, window, cx),
-                PreferencesNav::Ai => self.render_ai_page(&theme, &strings, window, cx),
-                PreferencesNav::Shortcuts => self.render_shortcuts_page(&theme, &strings, cx),
-                PreferencesNav::StatusBar => self.render_status_bar_page(&theme, &strings, cx),
-                PreferencesNav::Window => self.render_window_page(&theme, &strings, window, cx),
-            });
+            let page_column = div()
+                .w_full()
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap(px(14.0))
+                .child(match self.nav {
+                    PreferencesNav::File => self.render_startup_page(&theme, &strings, window, cx),
+                    PreferencesNav::Theme => self.render_theme_page(&theme, &strings, window, cx),
+                    PreferencesNav::Image => self.render_image_page(&theme, &strings, window, cx),
+                    PreferencesNav::Ai => self.render_ai_page(&theme, &strings, window, cx),
+                    PreferencesNav::Shortcuts => self.render_shortcuts_page(&theme, &strings, cx),
+                    PreferencesNav::StatusBar => self.render_status_bar_page(&theme, &strings, cx),
+                    PreferencesNav::Window => self.render_window_page(&theme, &strings, window, cx),
+                });
 
-            let footer = div()
+            let footer_actions = div()
                 .w_full()
                 .flex_shrink_0()
                 .flex()
@@ -151,6 +154,20 @@ impl Render for PreferencesWindow {
                         .disabled(!can_save)
                         .on_click(cx.listener(Self::save)),
                 );
+
+            // 长错误不能挤走保存按钮与设置项。
+            let footer = div()
+                .w_full()
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .when_some(self.save_error.clone(), |footer, error| {
+                    footer.child(
+                        self.render_save_feedback(error, window.viewport_size().height * 0.25),
+                    )
+                })
+                .child(footer_actions);
 
             div()
                 .size_full()
@@ -194,7 +211,8 @@ impl Render for PreferencesWindow {
                                         }))
                                         .flex()
                                         .flex_col()
-                                        .child(page_column),
+                                        .child(page_column)
+                                        .vertical_scrollbar(&self.page_scroll),
                                 )
                                 .child(footer),
                         ),

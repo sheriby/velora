@@ -2535,3 +2535,96 @@ fn saving_preferences_preserves_kit_keys_and_replaces_only_editor_shortcuts(
     });
     cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
 }
+
+#[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+fn save_failure_remains_visible_after_scrolling_and_allows_retry(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-save-feedback-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    cx.on_quit({
+        let root = root.clone();
+        move || std::fs::remove_dir_all(root).unwrap()
+    });
+    init_preferences_test_app(cx);
+    crate::config::load_or_create_app_preferences().unwrap();
+    let path = VeloraConfigDirs::from_root(&root).app_config_file();
+    let original = std::fs::read(&path).unwrap();
+    let handle = cx.update(|cx| {
+        open_preferences_window_with_size(
+            cx,
+            AppPreferences::default(),
+            default_theme_options(),
+            "Preferences".into(),
+            gpui::size(px(880.0), px(420.0)),
+        )
+    });
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    visual.update(|window, cx| window.render_frame(cx));
+    handle
+        .update(cx, |preferences, _, cx| {
+            preferences.autosave = !preferences.autosave;
+            let maximum = preferences.page_scroll.max_offset();
+            assert!(maximum.y > px(0.0), "夹具必须有可滚动的长设置页");
+            preferences
+                .page_scroll
+                .set_offset(gpui::point(px(0.0), -maximum.y));
+            cx.notify();
+        })
+        .unwrap();
+    visual.update(|window, cx| window.render_frame(cx));
+    let before_offset = handle
+        .read_with(cx, |preferences, _| preferences.page_scroll.offset())
+        .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    let initial_save = visual.debug_bounds("preferences-save").unwrap();
+    visual.simulate_click(initial_save.center(), gpui::Modifiers::none());
+    visual.run_until_parked();
+    visual.update(|window, cx| window.render_frame(cx));
+    let viewport = visual.update(|window, _| window.viewport_size());
+    let feedback = visual.debug_bounds("preferences-save-feedback");
+    assert!(
+        feedback
+            .is_some_and(|bounds| bounds.top() >= px(0.0) && bounds.bottom() <= viewport.height),
+        "保存失败反馈必须留在可见区域，不能藏到已滚走的页面顶部：{feedback:?}"
+    );
+    let feedback = feedback.unwrap();
+    let save = visual.debug_bounds("preferences-save").unwrap();
+    assert!(feedback.bottom() <= save.top(), "错误反馈不能盖住重试按钮");
+    handle
+        .read_with(cx, |preferences, _| {
+            assert!(preferences.save_error.is_some());
+            assert!(preferences.has_unsaved_changes());
+            assert_eq!(
+                preferences.page_scroll.offset(),
+                before_offset,
+                "失败反馈不能抢走字段的滚动位置"
+            );
+        })
+        .unwrap();
+    handle.update(cx, |preferences, _, cx| {
+        preferences.save_error = Some("无法保存设置".into());
+        cx.notify();
+    }).unwrap();
+    visual.update(|window, cx| window.render_frame(cx));
+    let save = visual.debug_bounds("preferences-save").unwrap();
+    assert!(save.bottom() <= viewport.height, "短错误也不能把保存按钮挤出视口：{save:?}");
+    std::fs::remove_dir(&path).unwrap();
+    std::fs::write(&path, original).unwrap();
+    visual.simulate_click(save.center(), gpui::Modifiers::none());
+    visual.run_until_parked();
+    visual.update(|window, cx| window.render_frame(cx));
+    assert!(visual.debug_bounds("preferences-save-feedback").is_none());
+    handle
+        .read_with(cx, |preferences, _| {
+            assert!(preferences.save_error.is_none());
+            assert!(!preferences.has_unsaved_changes());
+            assert_eq!(
+                read_app_preferences_with_dirs(&VeloraConfigDirs::from_root(&root))
+                    .unwrap()
+                    .autosave,
+                preferences.autosave
+            );
+        })
+        .unwrap();
+}

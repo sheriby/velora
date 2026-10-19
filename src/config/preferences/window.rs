@@ -37,7 +37,7 @@ pub(crate) struct PreferencesWindow {
     pub(super) focus_handle: FocusHandle,
     pub(super) recording_shortcut: Option<ShortcutCommand>,
     pub(super) shortcut_error: Option<String>,
-    /// 保存失败时在本页顶部内联显示，不弹系统原生对话框（用户要求）。
+    /// 保存失败贴近固定保存区显示，避免提示随设置页滚出视口。
     pub(super) save_error: Option<String>,
     /// 右侧内容区的滚动位置（单测用它验「真的能滚」）。
     pub(super) page_scroll: ScrollHandle,
