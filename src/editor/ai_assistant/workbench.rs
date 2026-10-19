@@ -1,6 +1,5 @@
 use super::*;
 use gpui::prelude::FluentBuilder;
-use gpui_kit::component::ThemeStyled as _;
 use gpui_kit::component::form::{Field, Form};
 use gpui_kit::component::menu::DropdownMenu as _;
 
@@ -546,9 +545,7 @@ impl Editor {
             .when(
                 session.composer_focus.contains_focused(window, cx),
                 |composer| {
-                    composer
-                        .border_color(theme.colors.dialog_primary_button_bg)
-                        .focus_ring_style(window, cx)
+                    composer.border_color(theme.colors.dialog_primary_button_bg)
                 },
             )
             .into_any_element()

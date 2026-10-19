@@ -103,6 +103,12 @@ fn sync_theme(cx: &mut App) {
         theme.font_family = fonts.ui_family.into();
         theme.mono_font_family = fonts.code_family.into();
         theme.mono_font_size = px(fonts.code_size as f32);
+        // 统一使用细焦点线；外扩粗环会把分段控件和整块输入卡片框成强调色。
+        theme.focus_ring = false;
+        theme.colors.button = colors.dialog_surface;
+        theme.colors.button_hover = colors.dialog_secondary_button_hover;
+        theme.colors.button_active = colors.dialog_secondary_button_hover;
+        theme.colors.button_foreground = colors.dialog_body;
         theme.colors.background = colors.editor_background;
         theme.colors.foreground = colors.dialog_body;
         theme.colors.border = colors.dialog_border;
@@ -271,6 +277,41 @@ mod tests {
     use gpui::{BorrowAppContext as _, TestAppContext};
     use gpui_kit::component::Theme as ComponentTheme;
 
+    #[gpui::test]
+    fn kit_controls_keep_theme_text_and_quiet_focus_after_theme_switches(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            ThemeManager::init_with_theme_id(cx, "forest");
+            super::init(cx);
+        });
+        let mut violations = Vec::new();
+        for theme_id in [
+            "forest",
+            "velora-light",
+            "paper",
+            "midnight",
+            "ink",
+            "velora-dark",
+        ] {
+            cx.update(|cx| {
+                cx.update_global::<ThemeManager, _>(|manager, _| {
+                    assert!(manager.set_theme_by_id(theme_id));
+                })
+            });
+            cx.read(|cx| {
+                let source = cx.global::<ThemeManager>().current_arc();
+                let kit = ComponentTheme::global(cx);
+                if kit.button_foreground != source.colors.dialog_body
+                    || kit.tokens.button_foreground != source.colors.dialog_body.into()
+                {
+                    violations.push(format!("{theme_id}：普通按钮仍使用 Kit 默认文字颜色"));
+                }
+                if kit.focus_ring {
+                    violations.push(format!("{theme_id}：控件仍启用外扩粗焦点环"));
+                }
+            });
+        }
+        assert!(violations.is_empty(), "{}", violations.join("\n"));
+    }
     #[gpui::test]
     fn kit_list_hover_tracks_each_velora_theme(cx: &mut TestAppContext) {
         cx.update(|cx| {

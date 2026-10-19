@@ -151,7 +151,7 @@ impl PreferencesWindow {
             .relative()
             .rounded(gpui_kit::component::Theme::global(cx).radius)
             .child(tabs)
-            .when(focused, |group| group.focus_ring_style(window, cx))
+            .when(focused && window.last_input_was_keyboard(), |group| group.focus_ring_style(window, cx))
             .on_key_down(
                 cx.listener(|preferences, event: &KeyDownEvent, window, cx| {
                     if event.keystroke.modifiers != Modifiers::none() {
