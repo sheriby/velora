@@ -175,7 +175,8 @@ pub(super) fn render_command_palette_overlay(
     });
     let owner = cx.entity().downgrade();
     let confirm_owner = owner.clone();
-    let confirmed_list = list.clone();
+    // 回调保存在列表模型内，只捕获身份，避免通过回调持有列表自身。
+    let confirmed_list_id = list.entity_id();
     // Command 未公开查询框的组词状态；独立 Input 在确认前检查 IME，候选仍交给 Command。
     let content = Command::new(&list)
         .searchable(false)
@@ -230,7 +231,7 @@ pub(super) fn render_command_palette_overlay(
                 if editor
                     .command_palette
                     .as_ref()
-                    .is_some_and(|state| state.list == confirmed_list)
+                    .is_some_and(|state| state.list.entity_id() == confirmed_list_id)
                 {
                     editor.run_palette_command(spec.boxed_action(), window, cx);
                 }

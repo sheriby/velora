@@ -68,6 +68,26 @@ fn open_palette(editor: &Entity<Editor>, cx: &mut VisualTestContext) {
 }
 
 #[gpui::test]
+async fn closing_the_palette_releases_its_command_state(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(DOC, cx);
+    redraw(cx);
+    select(&editor, 0, 0..5, cx);
+    open_palette(&editor, cx);
+    let state = editor.read_with(cx, |editor, _| {
+        editor.command_palette.as_ref().unwrap().list.downgrade()
+    });
+    cx.simulate_keystrokes("escape");
+    for _ in 0..3 {
+        redraw(cx);
+    }
+    assert!(
+        state.upgrade().is_none(),
+        "关闭并移除旧帧后，命令模型不能通过自身回调保留列表实体"
+    );
+}
+
+#[gpui::test]
 async fn palette_query_edits_at_the_caret_and_undo_preserves_the_document(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) = open_editor(DOC, cx);
