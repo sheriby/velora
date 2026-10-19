@@ -354,7 +354,6 @@ pub(crate) enum SearchInputKind {
 /// 由 Editor 输入适配器处理的浮层草稿。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OverlayInputKind {
-    QuickOpen,
     CommandPalette,
     /// 公式编辑器弹窗的草稿输入（多行，允许换行）。
     FormulaEditor,

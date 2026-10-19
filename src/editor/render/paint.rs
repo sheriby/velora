@@ -767,7 +767,7 @@ impl Render for Editor {
         // 浮层叠在正文上而不是顶替它：以前这里直接把 content_area 换成浮层，
         // 背后的文档整块消失（⌘P / ⇧⌘P 一开就是一块灰板）。
         let content_area = if self.quick_open.is_some() {
-            let overlay = self.render_quick_open_overlay(&theme, cx);
+            let overlay = self.render_quick_open_overlay(&theme, window, cx);
             div()
                 .relative()
                 .w_full()

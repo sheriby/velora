@@ -1189,9 +1189,8 @@ async fn browsing_entries_keep_a_single_preview_tab(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| editor.toggle_quick_open(window, cx));
     });
-    editor.update_in(cx, |editor, window, cx| {
-        editor.replace_text_in_range(None, "gamma.md", window, cx);
-    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.simulate_input("gamma.md");
     cx.run_until_parked();
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
@@ -2123,4 +2122,69 @@ fn history_workspace_replace_records_a_checkpoint_and_original_disk_bytes(cx: &m
     let versions = crate::config::file_history::list_versions(&path, Default::default(), std::time::SystemTime::now()).expect("历史");
     assert!(versions.iter().any(|version| std::fs::read(&version.path).expect("版本") == "替换前\r\n".as_bytes()));
     assert!(versions.iter().any(|version| version.source == crate::config::file_history::HistorySource::Manual && std::fs::read(&version.path).expect("检查点") == "替换后\r\n".as_bytes()));
+}
+
+#[gpui::test]
+async fn quick_open_native_rows_keep_fuzzy_order_and_preview_opening(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_review_workspace_app(cx);
+    let redraw = |cx: &mut gpui::VisualTestContext| {
+        cx.run_until_parked();
+        for _ in 0..2 {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+        }
+    };
+    let root = review_workspace_fixture(cx, "quick-open-native");
+    let root = crate::file_url::canonical_path(&root);
+    for name in ["alphabet.md", "alpha.md", "other.md"] {
+        std::fs::write(root.join(name), "# 内容\n").unwrap();
+    }
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_quick_open(window, cx)
+    });
+    redraw(cx);
+    cx.simulate_input("am");
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.quick_open.as_ref().unwrap().results,
+            vec![root.join("alpha.md"), root.join("alphabet.md")]
+        );
+    });
+    cx.simulate_keystrokes("up");
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.quick_open.as_ref().unwrap().selected, 1);
+    });
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.file_path, Some(root.join("alphabet.md")));
+        assert!(
+            editor
+                .workspace
+                .open_documents
+                .iter()
+                .any(|tab| tab.preview)
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_quick_open(window, cx)
+    });
+    redraw(cx);
+    cx.simulate_input("am");
+    redraw(cx);
+    cx.update(|window, cx| {
+        window.click(
+            std::sync::Arc::<std::path::Path>::from(root.join("alpha.md")),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.file_path, Some(root.join("alpha.md")));
+        assert_eq!(editor.workspace.open_documents.len(), 1);
+        assert!(editor.workspace.open_documents.first().unwrap().preview);
+    });
 }

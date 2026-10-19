@@ -1,6 +1,32 @@
 use super::common::*;
 
 #[gpui::test]
+async fn quick_open_edits_at_the_caret_and_undo_stays_in_the_query(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文保持不变".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_quick_open(window, cx)
+    });
+    redraw(cx);
+    cx.simulate_input("alpha");
+    cx.simulate_keystrokes("left backspace");
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.quick_open.as_ref().unwrap().query, "alpa");
+        assert_eq!(editor.buffer.text(), "正文保持不变");
+    });
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-z"
+    } else {
+        "ctrl-z"
+    });
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.quick_open.as_ref().unwrap().query, "alpha");
+        assert_eq!(editor.buffer.text(), "正文保持不变");
+    });
+}
+
+#[gpui::test]
 async fn workspace_tree_and_quick_open_load_independently(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-async-tree-{}", uuid::Uuid::new_v4()));
@@ -181,10 +207,7 @@ async fn quick_open_panel_floats_top_centered_over_the_document(cx: &mut TestApp
     );
 }
 
-/// 组合期间那颗回车属于输入法提交候选词，不该拿去确认文件（与命令面板同一条判据）。
-///
-/// 探针直接喂 `on_quick_open_key_down`：⌘P 的按键要经窗口焦点路由，夹具里结果列表
-/// 为空时确认本身是早退，走 `simulate_keystrokes` 会两头都「通过」而钉不住行为。
+/// 组词期间的回车不能打开候选文件；提交后同一按键沿用预览打开。
 #[gpui::test]
 async fn quick_open_ignores_enter_during_ime_composition(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -192,66 +215,41 @@ async fn quick_open_ignores_enter_during_ime_composition(cx: &mut TestAppContext
         "velora-quick-open-ime-enter-{}",
         uuid::Uuid::new_v4()
     ));
-    std::fs::create_dir_all(&root).expect("create root");
-    let root = std::fs::canonicalize(&root).unwrap_or(root);
-    std::fs::write(root.join("alpha.md"), "# Alpha\n").expect("write alpha");
-
-    let (editor, cx) =
-        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("alpha.md"), "# Alpha\n").unwrap();
+    let cleanup = root.clone();
+    cx.on_quit(move || std::fs::remove_dir_all(cleanup).unwrap());
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
     editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
     editor.update_in(cx, |editor, window, cx| {
         editor.toggle_quick_open(window, cx)
     });
     redraw(cx);
     cx.simulate_input("alpha");
-
-    let enter = gpui::KeyDownEvent {
-        prefer_character_input: false,
-        keystroke: gpui::Keystroke::parse("enter").expect("valid enter keystroke"),
-        is_held: false,
-    };
-    let opened_before = editor.read_with(cx, |editor, _| editor.file_path.clone());
-
-    editor.update_in(cx, |editor, window, cx| {
-        let state = editor.quick_open.as_mut().expect("面板应开着");
-        state.marked_range = Some(5..5);
-        assert!(
-            !state.results.is_empty(),
-            "前置：候选列表要有条目，否则确认本身就是早退"
-        );
-        editor.on_quick_open_key_down(&enter, window, cx);
+    let input = editor.read_with(cx, |editor, _| {
+        let state = editor.quick_open.as_ref().unwrap();
+        assert!(!state.results.is_empty());
+        state.input.clone()
     });
-    redraw(cx);
-    assert!(
-        editor.read_with(cx, |editor, _| editor.quick_open.is_some()),
-        "组合期间这颗回车该只交还给输入法"
-    );
-    assert_eq!(
-        editor.read_with(cx, |editor, _| editor.file_path.clone()),
-        opened_before,
-        "组合期间不该把高亮那条文件打开"
-    );
-
-    // 对照：组合落定之后同一颗回车照旧确认。
-    editor.update_in(cx, |editor, window, cx| {
-        editor
-            .quick_open
-            .as_mut()
-            .expect("面板应还开着")
-            .marked_range = None;
-        editor.on_quick_open_key_down(&enter, window, cx);
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.replace_and_mark_text_in_range(Some(0..5), "alpha", Some(5..5), window, cx);
+        })
     });
+    cx.simulate_keystrokes("enter");
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.quick_open.is_some(), "组词回车不能确认文件");
+        assert!(editor.file_path.is_none());
+    });
+    cx.update(|window, cx| input.update(cx, |input, cx| input.unmark_text(window, cx)));
+    cx.simulate_keystrokes("enter");
     redraw(cx);
-    assert!(
-        editor.read_with(cx, |editor, _| editor.quick_open.is_none()),
-        "组合结束后该确认并打开高亮的那条"
-    );
-    let _ = std::fs::remove_dir_all(root);
+    editor.read_with(cx, |editor, _| assert!(editor.quick_open.is_none()));
 }
 
 #[gpui::test]
 async fn quick_open_accepts_ime_text_for_non_ascii_file_names(cx: &mut TestAppContext) {
-    // roadmap E9：⌘P 输入接 EntityInputHandler，中文文件名可直接用输入法拼写。
+    // Kit 输入处理器直接承接中文输入法提交。
     init_editor_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-quick-open-ime-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).expect("create root");
@@ -270,21 +268,20 @@ async fn quick_open_accepts_ime_text_for_non_ascii_file_names(cx: &mut TestAppCo
     // 输入法提交路径：key_char → replace_text_in_range（同 macOS insertText）。
     cx.simulate_input("笔记");
 
-    editor.read_with(cx, |editor, _cx| {
+    editor.read_with(cx, |editor, cx| {
         let state = editor.quick_open.as_ref().expect("quick open stays open");
         assert_eq!(state.query, "笔记");
-        assert_eq!(state.selected_range, 6..6);
-        assert_eq!(state.marked_range, None);
+        assert_eq!(state.input.read(cx).selected_range(), 6..6);
         assert_quick_open_result(&state.results, "笔记.md");
     });
 
     // 纯 ASCII 也必须只插入一次（输入处理器接管后不再走手动按键插入）。
     cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-a" } else { "ctrl-a" });
     cx.simulate_input("alpha");
-    editor.read_with(cx, |editor, _cx| {
+    editor.read_with(cx, |editor, cx| {
         let state = editor.quick_open.as_ref().expect("quick open stays open");
         assert_eq!(state.query, "alpha");
-        assert_eq!(state.selected_range, 5..5);
+        assert_eq!(state.input.read(cx).selected_range(), 5..5);
         assert_quick_open_result(&state.results, "alpha.md");
     });
 
@@ -310,33 +307,39 @@ async fn quick_open_composition_commit_backspace_and_escape_edit_the_query(
     });
     redraw(cx);
 
-    // 拼音组合中：marked_range 覆盖组合串，结果先按拼音过滤。
-    editor.update_in(cx, |editor, window, cx| {
-        editor.replace_and_mark_text_in_range(None, "biji", Some(0..4), window, cx);
+    // 组合串由 Kit 控件保留；提交之后再刷新候选文件。
+    let input = editor.read_with(cx, |editor, _| {
+        editor.quick_open.as_ref().unwrap().input.clone()
     });
-    editor.read_with(cx, |editor, _cx| {
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.replace_and_mark_text_in_range(None, "biji", Some(0..4), window, cx);
+        })
+    });
+    editor.read_with(cx, |editor, cx| {
         let state = editor.quick_open.as_ref().expect("quick open stays open");
-        assert_eq!(state.query, "biji");
-        assert_eq!(state.marked_range, Some(0..4));
+        assert_eq!(state.input.read(cx).value().as_ref(), "biji");
+        assert!(state.query.is_empty());
     });
 
     // 提交：输入法用候选词覆盖组合串，并刷新结果。
-    editor.update_in(cx, |editor, window, cx| {
-        editor.replace_text_in_range(None, "笔记", window, cx);
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.replace_text_in_range(None, "笔记", window, cx);
+        })
     });
-    editor.read_with(cx, |editor, _cx| {
+    editor.read_with(cx, |editor, _| {
         let state = editor.quick_open.as_ref().expect("quick open stays open");
         assert_eq!(state.query, "笔记");
-        assert_eq!(state.marked_range, None);
         assert_quick_open_result(&state.results, "笔记.md");
     });
 
     // 退格删掉整个汉字（按字素，而不是按字节）。
     cx.simulate_keystrokes("backspace");
-    editor.read_with(cx, |editor, _cx| {
+    editor.read_with(cx, |editor, cx| {
         let state = editor.quick_open.as_ref().expect("quick open stays open");
         assert_eq!(state.query, "笔");
-        assert_eq!(state.selected_range, 3..3);
+        assert_eq!(state.input.read(cx).selected_range(), 3..3);
     });
 
     // escape 关闭面板并清空查询。

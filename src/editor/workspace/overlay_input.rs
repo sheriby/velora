@@ -18,24 +18,12 @@ impl Editor {
         {
             return Some(OverlayInputKind::CommandPalette);
         }
-        if self
-            .quick_open
-            .as_ref()
-            .and_then(|state| state.focus.as_ref())
-            .is_some_and(|focus| focus.is_focused(window))
-        {
-            return Some(OverlayInputKind::QuickOpen);
-        }
+
         None
     }
 
     pub(crate) fn input_text(&self, kind: OverlayInputKind) -> &str {
         match kind {
-            OverlayInputKind::QuickOpen => self
-                .quick_open
-                .as_ref()
-                .map(|state| state.query.as_str())
-                .unwrap_or_default(),
             OverlayInputKind::CommandPalette => self
                 .command_palette
                 .as_ref()
@@ -51,11 +39,6 @@ impl Editor {
 
     pub(crate) fn input_selection(&self, kind: OverlayInputKind) -> Range<usize> {
         match kind {
-            OverlayInputKind::QuickOpen => self
-                .quick_open
-                .as_ref()
-                .map(|state| state.selected_range.clone())
-                .unwrap_or_default(),
             OverlayInputKind::CommandPalette => self
                 .command_palette
                 .as_ref()
@@ -76,10 +59,6 @@ impl Editor {
 
     pub(crate) fn input_marked(&self, kind: OverlayInputKind) -> Option<Range<usize>> {
         match kind {
-            OverlayInputKind::QuickOpen => self
-                .quick_open
-                .as_ref()
-                .and_then(|state| state.marked_range.clone()),
             OverlayInputKind::CommandPalette => self
                 .command_palette
                 .as_ref()
@@ -91,8 +70,7 @@ impl Editor {
         }
     }
 
-    /// Applies an edit to the focused single-line overlay input (search query,
-    /// search replace, or quick switcher) and refreshes what that input drives.
+    /// 更新仍由编辑器持有的浮层草稿；Kit 输入不经过此适配器。
     pub(crate) fn replace_overlay_input_text(
         &mut self,
         kind: impl Into<OverlayInputKind>,
@@ -103,35 +81,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let kind = kind.into();
-        let (old, was_marked) = match kind {
-            OverlayInputKind::QuickOpen => (
-                self.quick_open
-                    .as_ref()
-                    .map(|state| state.query.clone())
-                    .unwrap_or_default(),
-                self.quick_open
-                    .as_ref()
-                    .is_some_and(|state| state.marked_range.is_some()),
-            ),
-            OverlayInputKind::CommandPalette => (
-                self.command_palette
-                    .as_ref()
-                    .map(|state| state.query.clone())
-                    .unwrap_or_default(),
-                self.command_palette
-                    .as_ref()
-                    .is_some_and(|state| state.marked_range.is_some()),
-            ),
-            OverlayInputKind::FormulaEditor => (
-                self.formula_editor
-                    .as_ref()
-                    .map(|state| state.draft.clone())
-                    .unwrap_or_default(),
-                self.formula_editor
-                    .as_ref()
-                    .is_some_and(|state| state.marked_range.is_some()),
-            ),
-        };
+        let old = self.input_text(kind).to_owned();
         let start = range.start.min(old.len());
         let end = range.end.min(old.len()).max(start);
         if !old.is_char_boundary(start) || !old.is_char_boundary(end) {
@@ -156,17 +106,6 @@ impl Editor {
             .unwrap_or(inserted_end..inserted_end);
         let marked_range = (marked && !inserted.is_empty()).then_some(start..inserted_end);
         match kind {
-            OverlayInputKind::QuickOpen => {
-                if let Some(state) = self.quick_open.as_mut() {
-                    state.query = updated;
-                    state.selected_range = selection;
-                    state.marked_range = marked_range;
-                    state.selected = 0;
-                }
-                if !marked && (self.input_text(kind) != old.as_str() || was_marked) {
-                    self.refresh_quick_open_results(cx);
-                }
-            }
             OverlayInputKind::CommandPalette => {
                 if let Some(state) = self.command_palette.as_mut() {
                     state.query = updated;
@@ -204,23 +143,5 @@ impl Editor {
             }
         }
         cx.notify();
-    }
-
-    /// Applies an edit to the quick switcher query (roadmap E9).
-    pub(crate) fn replace_quick_open_input_text(
-        &mut self,
-        range: Range<usize>,
-        new_text: &str,
-        selected_in_inserted: Option<Range<usize>>,
-        cx: &mut Context<Self>,
-    ) {
-        self.replace_overlay_input_text(
-            OverlayInputKind::QuickOpen,
-            range,
-            new_text,
-            selected_in_inserted,
-            false,
-            cx,
-        );
     }
 }

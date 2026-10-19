@@ -50,11 +50,6 @@ impl EntityInputHandler for Editor {
         };
         let was_marked = self.input_marked(kind).is_some();
         match kind {
-            OverlayInputKind::QuickOpen => {
-                if let Some(state) = self.quick_open.as_mut() {
-                    state.marked_range = None;
-                }
-            }
             OverlayInputKind::CommandPalette => {
                 if let Some(state) = self.command_palette.as_mut() {
                     state.marked_range = None;
@@ -67,11 +62,6 @@ impl EntityInputHandler for Editor {
             }
         }
         if was_marked {
-            match kind {
-                OverlayInputKind::QuickOpen => self.refresh_quick_open_results(cx),
-                OverlayInputKind::CommandPalette => {}
-                OverlayInputKind::FormulaEditor => {}
-            }
             cx.notify();
         }
     }

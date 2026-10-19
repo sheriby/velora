@@ -1,25 +1,27 @@
 //! Quick file switcher (⌘P / roadmap E1): fuzzy-match workspace file names
 //! and open the selection in the current window.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use gpui::*;
-use unicode_segmentation::UnicodeSegmentation;
 
 use super::Editor;
-use super::workspace::OverlayInputKind;
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
+use gpui_kit::component::{
+    ActiveTheme as _,
+    input::{Enter as InputEnter, Escape as InputEscape, Input, InputEvent, InputState},
+    list::ListItem,
+};
 
 /// Overlay state for the quick switcher. `None` while closed.
-#[derive(Default)]
 pub(in crate::editor) struct QuickOpenState {
     pub(super) query: String,
-    pub(super) focus: Option<FocusHandle>,
     pub(super) selected: usize,
     pub(super) results: Vec<PathBuf>,
-    pub(super) selected_range: std::ops::Range<usize>,
-    pub(super) marked_range: Option<std::ops::Range<usize>>,
+    pub(super) input: Entity<InputState>,
+    _subscription: Subscription,
 }
 
 impl Editor {
@@ -36,17 +38,23 @@ impl Editor {
     pub(super) fn render_quick_open_overlay(
         &self,
         theme: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let strings = cx.global::<I18nManager>().strings();
+        let placeholder = strings.quick_open_placeholder.clone();
+        let no_results = strings.quick_open_no_results.clone();
         let Some(state) = self.quick_open.as_ref() else {
             return div().into_any_element();
         };
-        let Some(focus) = state.focus.clone() else {
-            return div().into_any_element();
-        };
+        let input = state.input.clone();
+        if input.read(cx).presentation().placeholder().as_ref() != placeholder.as_str() {
+            input.update(cx, |input, cx| {
+                input.set_placeholder(placeholder.clone(), window, cx)
+            });
+        }
         let mut rows: Vec<AnyElement> = Vec::new();
         let results = &state.results;
         if results.is_empty() {
@@ -58,14 +66,13 @@ impl Editor {
                     .items_center()
                     .text_size(px(theme.typography.ui_text_size(12.0)))
                     .text_color(c.dialog_muted)
-                    .child(strings.quick_open_no_results.clone())
+                    .child(no_results)
                     .into_any_element(),
             );
         } else {
             let first = state.selected.saturating_sub(5);
             for (offset, path) in results.iter().skip(first).take(12).enumerate() {
-                let index = first + offset;
-                let selected = index == state.selected;
+                let selected = first + offset == state.selected;
                 let label = path
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
@@ -76,43 +83,26 @@ impl Editor {
                     .unwrap_or_default();
                 let entry_path = path.clone();
                 rows.push(
-                    div()
-                        .id(("quick-open-row", index))
-                        .w_full()
-                        .px(px(10.0))
-                        .h(px(theme.typography.ui_text_size(30.0).max(30.0)))
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .rounded(px(5.0))
-                        .cursor_pointer()
-                        .bg(if selected {
-                            c.selection
-                        } else {
-                            gpui::hsla(0.0, 0.0, 0.0, 0.0)
-                        })
-                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    ListItem::new(Arc::<Path>::from(entry_path.clone()))
+                        .accessibility_label(format!("{label} {directory}"))
+                        .selected(selected)
                         .child(
                             div()
-                                .max_w(px(260.0))
-                                .min_w(px(0.0))
-                                .truncate()
-                                .text_size(px(theme.typography.ui_text_size(12.5)))
-                                .text_color(if selected {
-                                    c.text_default
-                                } else {
-                                    c.dialog_body
-                                })
-                                .child(label),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .truncate()
-                                .text_size(px(theme.typography.ui_text_size(10.5)))
-                                .text_color(c.dialog_muted)
-                                .child(directory),
+                                .w_full()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(div().flex_1().min_w_0().truncate().child(label))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(directory),
+                                ),
                         )
                         .on_click(cx.listener(move |editor, event, window, cx| {
                             editor.quick_open = None;
@@ -146,7 +136,10 @@ impl Editor {
             .on_mouse_down(MouseButton::Left, {
                 let editor = cx.entity().downgrade();
                 move |_, _, cx| {
-                    let _ = editor.update(cx, |editor, cx| editor.close_quick_open(cx));
+                    if let Err(error) = editor.update(cx, |editor, cx| editor.close_quick_open(cx))
+                    {
+                        eprintln!("关闭快速打开面板失败：{error}");
+                    }
                 }
             })
             .child(
@@ -165,52 +158,44 @@ impl Editor {
                     .rounded(px(d.dialog_radius))
                     .shadow_lg()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .capture_key_down(cx.listener(|editor, event: &KeyDownEvent, window, cx| {
+                        if event.keystroke.modifiers != Modifiers::none()
+                            || editor.quick_open_is_composing(window, cx)
+                        {
+                            return;
+                        }
+                        let delta = match event.keystroke.key.as_str() {
+                            "up" => -1,
+                            "down" => 1,
+                            _ => return,
+                        };
+                        editor.quick_open_move_selection(delta, cx);
+                        cx.stop_propagation();
+                    }))
+                    .on_action(cx.listener(|editor, _: &InputEnter, window, cx| {
+                        if !editor.quick_open_is_composing(window, cx) {
+                            editor.quick_open_confirm(window, cx);
+                        }
+                    }))
+                    .on_action(
+                        cx.listener(|editor, _: &InputEscape, _, cx| editor.close_quick_open(cx)),
+                    )
                     .child(
-                        div()
+                        Input::new(&input)
                             .id("quick-open-input")
-                            .relative()
-                            .track_focus(&focus)
-                            .w_full()
-                            .h(px(theme.typography.ui_text_size(34.0).max(34.0)))
-                            .px(px(10.0))
-                            .flex()
-                            .items_center()
-                            .rounded(px(6.0))
-                            .border_1()
-                            .border_color(c.dialog_border)
-                            .bg(c.editor_background)
-                            .text_size(px(theme.typography.ui_text_size(13.0)))
-                            .text_color(if state.query.is_empty() {
-                                c.dialog_muted
-                            } else {
-                                c.text_default
-                            })
-                            .child(if state.query.is_empty() {
-                                strings.quick_open_placeholder.clone()
-                            } else {
-                                state.query.clone()
-                            })
-                            // 输入走编辑器的单行输入处理器：与搜索框共用 IME 路由，
-                            // 中文文件名可直接用输入法拼写（roadmap E9）。
-                            .child(
-                                canvas(|_, _, _| (), {
-                                    let focus = focus.clone();
-                                    let input_editor = cx.entity();
-                                    move |bounds, _, window, cx| {
-                                        window.handle_input(
-                                            &focus,
-                                            ElementInputHandler::new(bounds, input_editor.clone()),
-                                            cx,
-                                        );
-                                    }
-                                })
-                                .absolute()
-                                .top_0()
-                                .right_0()
-                                .bottom_0()
-                                .left_0(),
-                            )
-                            .on_key_down(cx.listener(Self::on_quick_open_key_down)),
+                            .accessibility_id("quick-open-input")
+                            .aria_label(placeholder)
+                            .on_paste(move |clipboard, window, cx| {
+                                let Some(text) =
+                                    clipboard.text().filter(|text| text.contains(['\r', '\n']))
+                                else {
+                                    return false;
+                                };
+                                input.update(cx, |input, cx| {
+                                    input.replace(text.replace(['\r', '\n'], " "), window, cx)
+                                });
+                                true
+                            }),
                     )
                     .children(rows),
             )
@@ -223,13 +208,43 @@ impl Editor {
             return;
         }
         self.dismiss_contextual_overlays(cx);
-        let mut state = QuickOpenState::default();
-        // 记住打开前的正文焦点，关闭时还回去。
         self.overlay_focus_restore_target = self.focused_edit_target_entity_id(window, cx);
-        let focus = cx.focus_handle();
+        let input = cx.new(|cx| InputState::new(window, cx));
+        let focus = input.read(cx).focus_handle(cx);
+        let subscription = cx.subscribe_in(
+            &input,
+            window,
+            |editor, source, event: &InputEvent, window, cx| {
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let value = source.read(cx).value().to_string();
+                let composing = source.update(cx, |input, cx| {
+                    input.marked_text_range(window, cx).is_some()
+                });
+                let Some(state) = editor
+                    .quick_open
+                    .as_mut()
+                    .filter(|state| state.input == *source)
+                else {
+                    return;
+                };
+                state.query = value;
+                state.selected = 0;
+                if !composing {
+                    editor.refresh_quick_open_results(cx);
+                }
+                cx.notify();
+            },
+        );
+        self.quick_open = Some(QuickOpenState {
+            query: String::new(),
+            selected: 0,
+            results: Vec::new(),
+            input,
+            _subscription: subscription,
+        });
         window.focus(&focus, cx);
-        state.focus = Some(focus);
-        self.quick_open = Some(state);
         self.refresh_quick_open_results(cx);
     }
 
@@ -307,78 +322,15 @@ impl Editor {
         );
     }
 
-    /// Handles keystrokes on the quick-open overlay. Typing goes through the
-    /// editor's `EntityInputHandler` (see `OverlayInputKind::QuickOpen`), so
-    /// IME composition works for non-ASCII file names; this handler only owns
-    /// navigation, confirm, delete, and clipboard shortcuts.
-    pub(super) fn on_quick_open_key_down(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let key = event.keystroke.key.to_ascii_lowercase();
-        let secondary = event.keystroke.modifiers.secondary();
-        match key.as_str() {
-            "escape" => {
-                self.close_quick_open(cx);
-            }
-            "up" => {
-                self.quick_open_move_selection(-1, cx);
-            }
-            "down" => {
-                self.quick_open_move_selection(1, cx);
-            }
-            "enter" => {
-                // 与命令面板同一条判据：组合期间的回车交还输入法，别拿去确认文件。
-                if self.overlay_is_composing(OverlayInputKind::QuickOpen) {
-                    return;
-                }
-                self.quick_open_confirm(window, cx);
-            }
-            "backspace" => {
-                // 组合期间由输入法自己处理退格，避免双删。
-                if self.overlay_is_composing(OverlayInputKind::QuickOpen) {
-                    return;
-                }
-                let Some(state) = self.quick_open.as_ref() else {
-                    return;
-                };
-                let text = state.query.clone();
-                let selected = state.selected_range.clone();
-                let end = selected.end.min(text.len());
-                let range = if selected.start == selected.end {
-                    let start = text[..end]
-                        .grapheme_indices(true)
-                        .last()
-                        .map(|(start, _)| start)
-                        .unwrap_or(end);
-                    start..end
-                } else {
-                    selected.start.min(text.len())..end
-                };
-                self.replace_quick_open_input_text(range, "", None, cx);
-            }
-            "a" if secondary => {
-                if let Some(state) = self.quick_open.as_mut() {
-                    state.marked_range = None;
-                    state.selected_range = 0..state.query.len();
-                }
-                cx.notify();
-            }
-            "v" if secondary => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    let range = self
-                        .quick_open
-                        .as_ref()
-                        .map(|state| state.selected_range.clone())
-                        .unwrap_or_default();
-                    self.replace_quick_open_input_text(range, &text, None, cx);
-                }
-            }
-            _ => return,
-        }
-        cx.stop_propagation();
+    fn quick_open_is_composing(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.quick_open
+            .as_ref()
+            .map(|state| state.input.clone())
+            .is_some_and(|input| {
+                input.update(cx, |input, cx| {
+                    input.marked_text_range(window, cx).is_some()
+                })
+            })
     }
 }
 
