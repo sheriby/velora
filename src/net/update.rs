@@ -235,7 +235,9 @@ pub(crate) fn select_release(
 
 fn update_client(timeout: Duration) -> anyhow::Result<reqwest::blocking::Client> {
     let mut builder = reqwest::blocking::Client::builder();
-    // 后台线程拿不到 `cx`，代理直接读盘上的那份设置。
+    // 后台线程拿不到 `cx`，代理直接读盘上的那份设置。测试里直连：同进程并发跑的
+    // 用例可能刚把代理写进配置，套上去会让本地假服务器请求一路超时。
+    #[cfg(not(test))]
     if let Some(proxy) = crate::net::proxy::reqwest_proxy_from_disk() {
         builder = builder.proxy(proxy);
     }

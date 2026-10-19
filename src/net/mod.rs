@@ -30,7 +30,15 @@ pub(crate) fn http_client_install_error() -> Option<&'static str> {
 }
 
 pub(crate) fn install_http_client(cx: &mut App) {
+    // 测试进程里所有用例共用这一个客户端：别把某个用例配的代理带进来，否则
+    // 后来跑的网络用例会被导去那个地址、一路卡到超时。
+    #[cfg(not(test))]
     let proxy = proxy::reqwest_proxy(cx);
+    #[cfg(test)]
+    let proxy = {
+        let _ = cx;
+        None
+    };
     match ReqwestTransportHttpClient::new(
         proxy,
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",

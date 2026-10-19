@@ -65,7 +65,23 @@ pub(crate) fn reqwest_proxy_from_disk() -> Option<reqwest::Proxy> {
 /// 把当前设置落到进程环境，供第三方 HTTP 客户端读取。
 ///
 /// 只在启动与保存偏好这两处调用：改的是整个进程的环境，此时没有并发读它的线程。
+///
+/// 测试里不执行：`cargo test` 的全部用例跑在同一个进程里，改环境变量会把并发跑的
+/// 其它用例的 HTTP 请求一起导到那个代理上——本地全绿、CI 上整批测试卡到超时。
 pub(crate) fn apply_environment(cx: &App) {
+    #[cfg(test)]
+    {
+        let _ = cx;
+        return;
+    }
+    #[cfg(not(test))]
+    {
+        apply_environment_now(cx)
+    }
+}
+
+#[cfg(not(test))]
+fn apply_environment_now(cx: &App) {
     let Some(url) = configured_url(cx) else {
         return;
     };
