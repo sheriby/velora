@@ -1655,6 +1655,26 @@ fn workspace_tree_empty_directories_keep_native_row_and_disclosure_semantics(
         assert_eq!(disclosure.role(), Some(gpui::Role::Button));
         disclosure.bounds().center()
     });
+    let icon_selector: &'static str =
+        Box::leak(format!("workspace-node-icon-{hash}").into_boxed_str());
+    let icon = cx.debug_bounds(icon_selector).expect("目录图标");
+    let disclosure = cx.update(|window, _| window.find(("workspace-node-toggle", hash)).bounds());
+    let chevron_selector: &'static str =
+        Box::leak(format!("workspace-node-chevron-{hash}").into_boxed_str());
+    let chevron = cx.debug_bounds(chevron_selector).expect("树箭头图形");
+    assert!(chevron.size.width < icon.size.width && chevron.size.width >= icon.size.width * 0.75,
+        "箭头应比文件夹略小，仍保持清晰：箭头 {chevron:?}，图标 {icon:?}");
+    assert_eq!(chevron.center().y, icon.center().y, "箭头图形与图标同轴");
+    assert_eq!(
+        disclosure.center().y,
+        icon.center().y,
+        "箭头与文件夹图标垂直居中"
+    );
+    let file_hash = super::super::stable_node_hash(&file_node_id(&root.join("z.md")));
+    let file_selector: &'static str =
+        Box::leak(format!("workspace-node-icon-{file_hash}").into_boxed_str());
+    let file_icon = cx.debug_bounds(file_selector).expect("同级文件图标");
+    assert_eq!(file_icon.left(), icon.left(), "同级文件与目录的图标列对齐");
     cx.simulate_click(toggle, gpui::Modifiers::none());
     for _ in 0..2 {
         cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -1856,4 +1876,38 @@ fn workspace_tree_failed_directory_does_not_keep_a_loading_row(cx: &mut TestAppC
             "扫描失败后不能继续表示正在加载"
         );
     });
+}
+
+#[test]
+fn workspace_folder_icons_distinguish_styles_and_expansion_and_are_embedded() {
+    use crate::config::FolderIconStyle;
+    use gpui::AssetSource as _;
+    let mut paths = std::collections::HashSet::new();
+    for style in [FolderIconStyle::Blue, FolderIconStyle::Outline] {
+        let closed = Editor::workspace_folder_icon_path(style, false);
+        let expanded = Editor::workspace_folder_icon_path(style, true);
+        assert_ne!(
+            closed, expanded,
+            "展开与收起的文件夹必须有不同图形：{style:?}"
+        );
+        for path in [closed, expanded] {
+            assert!(paths.insert(path.clone()), "两种图标样式不能共用同一个图形");
+            let bytes = crate::VeloraAssets
+                .load(&path)
+                .unwrap()
+                .expect("图标随安装包嵌入");
+            let svg = std::str::from_utf8(&bytes).unwrap();
+            assert!(svg.contains("<svg"));
+            assert!(
+                svg.contains(r#"viewBox="0 0 24 24""#),
+                "文件夹使用相同的尺寸基准"
+            );
+            if style == FolderIconStyle::Blue {
+                assert!(
+                    svg.contains(r#"fill="currentColor""#) && !svg.contains(r#"fill="none""#),
+                    "蓝色文件夹展开和收起均使用实心图形"
+                );
+            }
+        }
+    }
 }

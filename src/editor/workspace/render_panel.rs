@@ -293,7 +293,7 @@ impl Editor {
             div()
                 .text_size(px(t.dialog_body_size))
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(c.text_default)
+                .text_color(c.dialog_body)
                 .child(title.to_string())
         });
 

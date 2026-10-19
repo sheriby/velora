@@ -125,7 +125,7 @@ impl Editor {
                         .justify_start()
                         .accessibility_label(format!("{label} · {parent_label}"))
                         .tooltip(path.to_string_lossy().into_owned())
-                        .child(Self::render_workspace_folder_icon(theme, cx))
+                        .child(Self::render_workspace_folder_icon(theme, false, cx))
                         .child(
                             div()
                                 .flex_1()

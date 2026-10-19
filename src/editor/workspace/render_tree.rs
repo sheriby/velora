@@ -1,7 +1,6 @@
 use super::render_panel::workspace_tree_drop_target;
 use super::*;
 use gpui::prelude::FluentBuilder as _;
-use gpui_kit::assets::IconName;
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::{
     ActiveTheme as _, Sizable as _,
@@ -20,17 +19,36 @@ impl Editor {
         }
     }
 
-    pub(in crate::editor) fn render_workspace_folder_icon(theme: &Theme, cx: &App) -> AnyElement {
-        let icon = match crate::config::EditorSettings::folder_icon_style(cx) {
-            crate::config::FolderIconStyle::Blue => gpui_kit::component::Icon::default()
-                .path("icon/workspace/folder.svg")
-                .text_color(theme.colors.workspace_folder_icon),
-            crate::config::FolderIconStyle::Outline => {
-                gpui_kit::component::Icon::new(IconName::Folder)
-                    .text_color(theme.colors.dialog_muted)
+    pub(in crate::editor) fn workspace_folder_icon_path(
+        style: crate::config::FolderIconStyle,
+        expanded: bool,
+    ) -> SharedString {
+        match (style, expanded) {
+            (crate::config::FolderIconStyle::Blue, false) => "icon/workspace/folder.svg",
+            (crate::config::FolderIconStyle::Blue, true) => "icon/workspace/folder-open.svg",
+            (crate::config::FolderIconStyle::Outline, false) => "icon/workspace/folder-outline.svg",
+            (crate::config::FolderIconStyle::Outline, true) => {
+                "icon/workspace/folder-open-outline.svg"
             }
-        };
-        icon.size_4().flex_none().into_any_element()
+        }
+        .into()
+    }
+
+    pub(in crate::editor) fn render_workspace_folder_icon(
+        theme: &Theme,
+        expanded: bool,
+        cx: &App,
+    ) -> AnyElement {
+        let style = crate::config::EditorSettings::folder_icon_style(cx);
+        gpui_kit::component::Icon::default()
+            .path(Self::workspace_folder_icon_path(style, expanded))
+            .text_color(match style {
+                crate::config::FolderIconStyle::Blue => theme.colors.workspace_folder_icon,
+                crate::config::FolderIconStyle::Outline => theme.colors.dialog_muted,
+            })
+            .size_4()
+            .flex_none()
+            .into_any_element()
     }
 
     pub(crate) fn render_workspace_files_tree(
@@ -278,12 +296,21 @@ impl Editor {
             Button::new(("workspace-node-toggle", hash))
                 .xsmall()
                 .ghost()
+                .size_5()
+                .p_0()
+                .flex_none()
                 .tab_stop(false)
-                .icon(if expanded {
-                    IconName::ChevronDown
-                } else {
-                    IconName::ChevronRight
-                })
+                .child(
+                    svg()
+                        .path(if expanded {
+                            "icon/workspace/tree-chevron-down.svg"
+                        } else {
+                            "icon/workspace/tree-chevron-right.svg"
+                        })
+                        .size_3p5()
+                        .text_color(theme.colors.dialog_muted)
+                        .debug_selector(move || format!("workspace-node-chevron-{hash}")),
+                )
                 .accessibility_label(format!(
                     "{} {}",
                     if expanded { "Collapse" } else { "Expand" },
@@ -299,7 +326,7 @@ impl Editor {
             div().size_5().flex_none().into_any_element()
         };
         let icon = match &node.kind {
-            WorkspaceTreeKind::Directory(_) => Some(Self::render_workspace_folder_icon(theme, cx)),
+            WorkspaceTreeKind::Directory(_) => Some(Self::render_workspace_folder_icon(theme, expanded, cx)),
             WorkspaceTreeKind::Heading { .. } => None,
             kind => {
                 let path = match kind {
@@ -326,15 +353,23 @@ impl Editor {
                 )
             }
         };
+        let icon = icon.map(|icon| {
+            div()
+                .id(("workspace-node-icon", hash))
+                .debug_selector(move || format!("workspace-node-icon-{hash}"))
+                .mr_1p5()
+                .flex_none()
+                .child(icon)
+        });
         let content = div()
             .flex()
             .items_center()
             .w_full()
             .min_w_0()
-            .gap_1()
+            .gap_0()
             .pl(Self::workspace_tree_indent(depth))
             .pr_2()
-            .child(disclosure)
+            .child(div().w_5().flex_none().mr_0p5().child(disclosure))
             .children(icon)
             .child(
                 div()
@@ -345,7 +380,7 @@ impl Editor {
                         matches!(node.kind, WorkspaceTreeKind::Heading { .. }),
                         |label| {
                             label.text_xs().text_color(if selected {
-                                theme.colors.text_default
+                                theme.colors.dialog_body
                             } else {
                                 theme.colors.dialog_muted
                             })

@@ -400,7 +400,7 @@ pub(crate) fn render_custom_titlebar_for_target_os<T: 'static>(
                     .truncate()
                     .text_size(px(theme.dimensions.menu_text_size))
                     .font_weight(t.dialog_button_weight.to_font_weight())
-                    .text_color(c.text_default)
+                    .text_color(c.dialog_body)
                     .child(breadcrumb.clone()),
             )
             .on_click(|event, window, _cx| {

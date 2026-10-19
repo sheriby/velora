@@ -101,7 +101,7 @@
 | `dialog_surface` | 颜色 | 对话框面板 |
 | `dialog_border` | 颜色 | 对话框边框 |
 | `dialog_title` | 颜色 | 对话框标题 |
-| `dialog_body` | 颜色 | 对话框正文 |
+| `dialog_body` | 颜色 | 界面主文字与对话框正文；Kit 控件、导航和标签共用，区别于文档 `text_default` |
 | `dialog_muted` | 颜色 | 对话框次要文字 |
 | `dialog_primary_button_bg` | 颜色 | 对话框：primary_button_bg |
 | `dialog_primary_button_hover` | 颜色 | 对话框：primary_button_hover |

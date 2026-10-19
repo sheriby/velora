@@ -644,7 +644,11 @@ impl Editor {
                 }
         );
         let icon = if is_directory {
-            Self::render_workspace_folder_icon(theme, cx)
+            let expanded = match &edit.kind {
+                WorkspaceEditKind::Rename { source, .. } => self.workspace.expanded.contains(&file_node_id(source)),
+                _ => false,
+            };
+            Self::render_workspace_folder_icon(theme, expanded, cx)
         } else {
             let path = if is_markdown_document(Path::new(&edit.draft)) {
                 MARKDOWN_ICON
@@ -715,9 +719,9 @@ impl Editor {
                     .pl(Self::workspace_tree_indent(depth))
                     .flex()
                     .items_center()
-                    .gap_1()
-                    .child(div().w_5().flex_shrink_0())
-                    .child(icon)
+                    .gap_0()
+                    .child(div().w_5().mr_0p5().flex_shrink_0())
+                    .child(div().mr_1p5().flex_none().child(icon))
                     .child(input),
             )
             .children(edit.error.as_ref().map(|error| {

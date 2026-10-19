@@ -15,6 +15,7 @@ struct BuiltinPalette {
     panel: u32,
     panel_hover: u32,
     text: u32,
+    ui_text: u32,
     muted: u32,
     line: u32,
     accent: u32,
@@ -89,14 +90,14 @@ fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> The
     c.dialog_surface = color(palette.window);
     c.dialog_border = color(palette.line);
     c.dialog_title = color(palette.text);
-    c.dialog_body = color(palette.text);
+    c.dialog_body = color(palette.ui_text);
     c.dialog_muted = color(palette.muted);
     c.dialog_primary_button_bg = color(palette.accent);
     c.dialog_primary_button_hover = color(palette.accent);
     c.dialog_primary_button_text = color(if palette.dark { 0x171b22ff } else { 0xffffffff });
     c.dialog_secondary_button_bg = color(palette.panel);
     c.dialog_secondary_button_hover = color(palette.panel_hover);
-    c.dialog_secondary_button_text = color(palette.text);
+    c.dialog_secondary_button_text = color(palette.ui_text);
     c.status_bar_background = color(palette.panel);
     c.status_bar_text = color(palette.text);
     c.status_bar_text_dim = color(palette.muted);
@@ -212,7 +213,7 @@ impl Theme {
                 dialog_primary_button_text: Hsla::from(rgba(0x1f1f1fff)),
                 dialog_secondary_button_bg: Hsla::from(rgba(0x20232bff)),
                 dialog_secondary_button_hover: Hsla::from(rgba(0x292c35ff)),
-                dialog_secondary_button_text: Hsla::from(rgba(0xf5f5f5ff)),
+                dialog_secondary_button_text: Hsla::from(rgba(0xc5c9d1ff)),
                 dialog_danger_button_bg: Hsla::from(rgba(0xd13438ff)),
                 dialog_danger_button_hover: Hsla::from(rgba(0xa4262cff)),
                 dialog_danger_button_text: Hsla::from(rgba(0xffffffff)),
@@ -470,14 +471,14 @@ impl Theme {
                 dialog_surface: Hsla::from(rgba(0xffffffff)),
                 dialog_border: Hsla::from(rgba(0xe6e8edff)),
                 dialog_title: Hsla::from(rgba(0x201f1eff)),
-                dialog_body: Hsla::from(rgba(0x323130ff)),
+                dialog_body: Hsla::from(rgba(0x565d68ff)),
                 dialog_muted: Hsla::from(rgba(0x777d89ff)),
                 dialog_primary_button_bg: Hsla::from(rgba(0x6558d3ff)),
                 dialog_primary_button_hover: Hsla::from(rgba(0x574bc2ff)),
                 dialog_primary_button_text: Hsla::from(rgba(0xffffffff)),
                 dialog_secondary_button_bg: Hsla::from(rgba(0xf8f9fbff)),
                 dialog_secondary_button_hover: Hsla::from(rgba(0xf1f3f6ff)),
-                dialog_secondary_button_text: Hsla::from(rgba(0x242424ff)),
+                dialog_secondary_button_text: Hsla::from(rgba(0x565d68ff)),
                 dialog_danger_button_bg: Hsla::from(rgba(0xd13438ff)),
                 dialog_danger_button_hover: Hsla::from(rgba(0xa4262cff)),
                 dialog_danger_button_text: Hsla::from(rgba(0xffffffff)),
@@ -501,6 +502,7 @@ impl Theme {
                 panel: 0xf7f2e9ff,
                 panel_hover: 0xefe7dbff,
                 text: 0x2c2924ff,
+                ui_text: 0x625d55ff,
                 muted: 0x756e65ff,
                 line: 0xe4dacbff,
                 accent: 0x9b603fff,
@@ -552,6 +554,7 @@ impl Theme {
                 panel: 0xf5f8f3ff,
                 panel_hover: 0xe8f0e3ff,
                 text: 0x303831ff,
+                ui_text: 0x56635aff,
                 muted: 0x657269ff,
                 line: 0xdde7d8ff,
                 accent: 0x287a3dff,
@@ -601,6 +604,7 @@ impl Theme {
                 panel: 0x1d2633ff,
                 panel_hover: 0x263244ff,
                 text: 0xe8edf4ff,
+                ui_text: 0xbfcbd9ff,
                 muted: 0x9caabeff,
                 line: 0x344254ff,
                 accent: 0x8bb6e9ff,
@@ -638,6 +642,7 @@ impl Theme {
                 panel: 0x201d1dff,
                 panel_hover: 0x2c2725ff,
                 text: 0xeee8ddff,
+                ui_text: 0xc7beb3ff,
                 muted: 0xaea398ff,
                 line: 0x3b3430ff,
                 accent: 0xd6a079ff,

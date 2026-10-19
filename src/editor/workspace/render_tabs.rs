@@ -156,7 +156,7 @@ impl Editor {
                             .on_key_down(cx.listener(Self::on_document_tab_key_down))
                     })
                     .text_color(if active {
-                        c.text_default
+                        c.dialog_body
                     } else {
                         c.dialog_muted
                     })

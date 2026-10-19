@@ -4,6 +4,60 @@ mod tests {
     use gpui::{Hsla, Rgba, WindowAppearance, rgba};
 
     #[test]
+    fn builtin_interface_text_is_softer_than_document_text_and_keeps_contrast() {
+        fn luminance(color: Hsla) -> f32 {
+            let color = Rgba::from(color);
+            let linear = |channel: f32| {
+                if channel <= 0.04045 {
+                    channel / 12.92
+                } else {
+                    ((channel + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+        }
+        for theme in [
+            Theme::light_theme(),
+            Theme::forest_theme(),
+            Theme::paper_theme(),
+            Theme::default_theme(),
+            Theme::midnight_theme(),
+            Theme::ink_theme(),
+        ] {
+            let text = luminance(theme.colors.dialog_body);
+            let document = luminance(theme.colors.text_default);
+            if theme.is_dark() {
+                assert!(
+                    text < document && text <= 0.70,
+                    "{} 的界面文字不应与正文一样亮",
+                    theme.name
+                );
+            } else {
+                assert!(
+                    text > document && text >= 0.09,
+                    "{} 的界面文字过深，缺少层级",
+                    theme.name
+                );
+            }
+            for background in [
+                theme.colors.editor_background,
+                theme.colors.dialog_surface,
+                theme.colors.dialog_secondary_button_bg,
+                theme.colors.dialog_secondary_button_hover,
+                theme.colors.selection,
+            ] {
+                let background = luminance(background);
+                let contrast = (text.max(background) + 0.05) / (text.min(background) + 0.05);
+                assert!(
+                    contrast >= 4.5,
+                    "{} 的界面文字对比度不足：{contrast}",
+                    theme.name
+                );
+            }
+        }
+    }
+
+    #[test]
     fn image_scale_baseline_falls_back_for_legacy_themes_and_keeps_custom_limits() {
         // 旧主题未填写图片上限时，也应采用新的缩放基准；显式配置的尺寸继续保留。
         let mut value = serde_json::to_value(Theme::default_theme()).expect("序列化主题");
