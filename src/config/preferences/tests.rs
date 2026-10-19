@@ -2450,24 +2450,6 @@ fn shortcut_controls_support_keyboard_recording_conflicts_and_reset(cx: &mut Tes
             assert_eq!(preferences.recording_shortcut, Some(command))
         })
         .unwrap();
-    let conflict = crate::components::resolved_shortcut_keys(
-        &BTreeMap::new(),
-        crate::components::ShortcutCommand::NewDocument,
-    )
-    .first()
-    .unwrap()
-    .clone();
-    visual.update(|window, cx| window.press(&conflict, cx));
-    handle
-        .read_with(cx, |preferences, _| {
-            assert!(
-                preferences.shortcut_error.is_some(),
-                "冲突应保留录制状态并显示错误"
-            );
-            assert_eq!(preferences.recording_shortcut, Some(command));
-            assert!(preferences.keybindings.is_empty());
-        })
-        .unwrap();
     visual.update(|window, cx| window.press("ctrl-alt-shift-9", cx));
     handle
         .read_with(cx, |preferences, _| {
@@ -2479,6 +2461,36 @@ fn shortcut_controls_support_keyboard_recording_conflicts_and_reset(cx: &mut Tes
             );
         })
         .unwrap();
+    // 冲突：把「新建文档」录到刚给「保存文档」的那个键上。冲突对象是**用例自己录进去的
+    // 绑定**，不依赖各平台的默认键位——默认键位在不同系统上不一样，钉死默认值就成了
+    // 平台相关用例（Windows 上就是这条红的）。
+    let other_command = crate::components::ShortcutCommand::NewDocument;
+    let other_record_id = ("preferences-shortcut-record", other_command as u32);
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        window.click(other_record_id, cx);
+        window.render_frame(cx);
+        window.press("ctrl-alt-shift-9", cx);
+    });
+    handle
+        .read_with(cx, |preferences, _| {
+            assert!(
+                preferences.shortcut_error.is_some(),
+                "冲突应保留录制状态并显示错误"
+            );
+            assert_eq!(preferences.recording_shortcut, Some(other_command));
+            assert!(
+                !preferences.keybindings.contains_key("new_document"),
+                "冲突的键不能落到另一条命令上"
+            );
+            assert_eq!(
+                preferences.keybindings.get("save_document"),
+                Some(&vec!["ctrl-alt-shift-9".into()]),
+                "冲突不该改动已录下的绑定"
+            );
+        })
+        .unwrap();
+    visual.update(|window, cx| window.press("escape", cx));
     visual.update(|window, cx| {
         window.render_frame(cx);
         assert_eq!(window.find(reset_id).role(), Some(gpui::Role::Button));

@@ -263,11 +263,11 @@ fn ai_runtime_timeout_during_a_tool_keeps_the_conversation_resumable() {
         entered.load(Ordering::SeqCst),
         "必须实际进入被中断的文档工具"
     );
-    assert!(
-        first
-            .error
-            .as_ref()
-            .is_some_and(|error| error.contains("超时"))
+    // 错误是语言中立的固定码（界面层再按码取词），断言比的是码本身。
+    assert_eq!(
+        first.error.as_deref(),
+        Some(super::super::error_codes::TIMEOUT),
+        "工具执行期间超时该报 TIMEOUT：{first:?}"
     );
     let mut resumed = request();
     resumed.history = first.history;
