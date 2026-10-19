@@ -21,6 +21,10 @@ use crate::i18n::I18nManager;
 use crate::theme::Theme;
 
 /// 一个方形按钮的边长。
+/// 方格子按钮的边长。Kit 的 `Button` 对有子元素的按钮会补 `px_1p5`（左右各 6px），
+/// 内容盒又被 `overflow_hidden` 裁掉：26px 的格子只剩 14px，`</>` 与「A×」的 `×`
+/// 都会被切掉一半。Kit 在套内边距之前克隆调用方的样式、最后 `refine_style` 重放，
+/// 所以下面每颗方格子按钮都显式写着 `px(0)`，把内容盒还回整格。
 const BUTTON_SIZE: f32 = 26.0;
 /// 按钮之间的间距；面板内边距另算一份。
 const BUTTON_GAP: f32 = 2.0;
@@ -379,6 +383,7 @@ impl Editor {
             .small()
             .compact()
             .size(px(BUTTON_SIZE))
+            .px(px(0.0))
             .text_size(px(11.0))
             .text_color(theme.colors.dialog_title)
             .rounded(px(4.0))
@@ -440,6 +445,7 @@ impl Editor {
             .compact()
             .w(px(HEADING_BUTTON_WIDTH))
             .h(px(BUTTON_SIZE))
+            .px(px(0.0))
             .flex_shrink_0()
             .rounded(px(d.menu_item_radius))
             .selected(open)
@@ -509,6 +515,7 @@ impl Editor {
             .compact()
             .w(px(BUTTON_SIZE))
             .h(px(BUTTON_SIZE))
+            .px(px(0.0))
             .flex_shrink_0()
             .rounded(px(d.menu_item_radius))
             .text_size(px(LETTER_SIZE))
@@ -611,6 +618,7 @@ impl Editor {
             .compact()
             .w(px(BUTTON_SIZE))
             .h(px(BUTTON_SIZE))
+            .px(px(0.0))
             .rounded(px(d.menu_item_radius))
             .flex_shrink_0()
             .debug_selector(|| "toolbar-link".to_string())
@@ -660,6 +668,7 @@ impl Editor {
             .compact()
             .w(px(BUTTON_SIZE))
             .h(px(BUTTON_SIZE))
+            .px(px(0.0))
             .rounded(px(d.menu_item_radius))
             .text_size(px(LETTER_SIZE))
             .text_color(if enabled {
