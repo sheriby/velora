@@ -460,6 +460,8 @@ mod tests {
         cx.update(|cx| {
             crate::i18n::I18nManager::init(cx);
             crate::theme::ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
             EditorSettings::install_test_settings(cx, true);
         });
         let (block, cx) = typing_block(cx, "word");
@@ -499,6 +501,8 @@ mod tests {
         cx.update(|cx| {
             crate::i18n::I18nManager::init(cx);
             crate::theme::ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
             EditorSettings::install_test_settings(cx, false);
         });
         let (block, cx) = typing_block(cx, "word");

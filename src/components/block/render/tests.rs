@@ -14,6 +14,8 @@ mod tests {
         let cx = cx.add_empty_window();
         cx.update(|window, cx| {
             crate::theme::ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
             let theme = cx.global::<super::ThemeManager>().current_arc();
             let table_for = |cells: [&str; 2]| {
                 let source = format!("| {} | x |\n| --- | --- |\n| {} | y |", cells[0], cells[1]);
@@ -236,6 +238,8 @@ mod tests {
         cx.update(|cx| {
             I18nManager::init(cx);
             ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
         });
         let (block, cx) = cx.add_window_view(|_window, cx| {
             Block::with_record(

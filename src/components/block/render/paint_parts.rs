@@ -1,4 +1,8 @@
 use super::*;
+use gpui_kit::component::{
+    Sizable as _,
+    button::{Button, ButtonVariants},
+};
 
 impl Focusable for Block {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -902,28 +906,24 @@ impl Render for Block {
                                 .h(px(1.0)).bg(c.table_border),
                         )
                         .child(
-                            div()
-                                .id("code-copy-button")
+                            Button::new("code-copy-button")
                                 .debug_selector(|| "code-copy-button".to_string())
+                                .ghost()
+                                .small()
+                                .compact()
                                 .absolute()
                                 .right(px(d.code_block_padding_x))
                                 .top(px(6.0))
                                 .occlude()
                                 .h(px(input_height))
                                 .w(px(input_height))
-                                .flex()
-                                .items_center()
-                                .justify_center()
                                 .rounded(px(4.0))
-                                .cursor(CursorStyle::PointingHand)
-                                .hover(|style| style.bg(c.dialog_secondary_button_hover))
-                                .tooltip(move |_, cx| {
-                                    cx.new(|_| HoverPreviewTooltip { label: copy_tooltip.clone() }).into()
+                                .accessibility_label(copy_tooltip.clone())
+                                .tooltip(copy_tooltip)
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation();
                                 })
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(Self::on_code_copy_button),
-                                )
+                                .on_click(cx.listener(Self::on_code_copy_button))
                                 .child(svg().path(copy_icon).size(px(14.0))
                                     .text_color(if code_copied { c.text_link } else { c.text_placeholder })),
                         )
@@ -1575,32 +1575,34 @@ impl Render for Block {
                     // 字号覆盖），标记要跟首行居中对齐就得用同一个值。
                     let first_line_height = f32::from(window.line_height()).max(f32::from(fx_height));
                     let fx_top = card_padding_y + (first_line_height - f32::from(fx_height)) / 2.0;
-                    let fx_button = div()
-                        .id(ElementId::Name(
-                            format!("math-fx-button-{}", self.record.id).into(),
-                        ))
-                        .debug_selector(|| "math-fx-button".to_string())
-                        .absolute()
-                        .h(fx_height)
-                        .px(px(6.0))
-                        .flex()
-                        .items_center()
-                        .rounded(px(4.0))
-                        .border_1()
-                        .border_color(c.dialog_border)
-                        .bg(c.dialog_surface)
-                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .cursor_pointer()
-                        .text_size(px(t.text_size * 0.68))
-                        .text_color(c.dialog_muted)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|_block, _event: &MouseDownEvent, _window, cx| {
-                                cx.stop_propagation();
-                                cx.emit(BlockEvent::RequestFormulaEditor);
-                            }),
-                        )
-                        .child("ƒx");
+                    let fx_label: SharedString = cx
+                        .global::<crate::i18n::I18nManager>()
+                        .strings()
+                        .insert_formula
+                        .clone()
+                        .into();
+                    let fx_button = Button::new(ElementId::Name(
+                        format!("math-fx-button-{}", self.record.id).into(),
+                    ))
+                    .debug_selector(|| "math-fx-button".to_string())
+                    .ghost()
+                    .small()
+                    .compact()
+                    .absolute()
+                    .h(fx_height)
+                    .px(px(6.0))
+                    .rounded(px(4.0))
+                    .border_1()
+                    .border_color(c.dialog_border)
+                    .text_size(px(t.text_size * 0.68))
+                    .text_color(c.dialog_muted)
+                    .accessibility_label(fx_label.clone())
+                    .tooltip(fx_label)
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(|_block, _event: &ClickEvent, _window, cx| {
+                        cx.emit(BlockEvent::RequestFormulaEditor);
+                    }))
+                    .child("ƒx");
                     focused_base
                         .w_full()
                         .flex()

@@ -57,7 +57,9 @@ async fn review_code_language_click_clamps_geometry_to_character_boundary(cx: &m
 
 #[gpui::test]
 async fn review_input_point_clamps_geometry_before_utf16_conversion(cx: &mut TestAppContext) {
-    cx.update(|cx| { I18nManager::init(cx); ThemeManager::init(cx); });
+    cx.update(|cx| { I18nManager::init(cx); ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx); });
     let (block, cx) = cx.add_window_view(|_, cx| Block::with_record(
         cx, BlockRecord::new(BlockKind::Paragraph, InlineTextTree::plain("a\n中文")),
     ));
@@ -110,6 +112,8 @@ async fn non_dragging_mouse_move_ends_stale_text_selection(cx: &mut TestAppConte
     cx.update(|cx| {
         I18nManager::init(cx);
         ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
     });
     let (block, cx) = cx.add_window_view(|_window, cx| {
         Block::with_record(
@@ -143,6 +147,8 @@ async fn dragging_mouse_move_keeps_text_selection_session_active(cx: &mut TestAp
     cx.update(|cx| {
         I18nManager::init(cx);
         ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
     });
     let (block, cx) = cx.add_window_view(|_window, cx| {
         Block::with_record(
@@ -170,6 +176,8 @@ async fn non_dragging_mouse_move_ends_stale_code_language_selection(cx: &mut Tes
     cx.update(|cx| {
         I18nManager::init(cx);
         ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
     });
     let (block, cx) = cx.add_window_view(|_window, cx| {
         Block::with_record(
@@ -210,6 +218,8 @@ async fn code_language_mouse_up_out_ends_selection_without_clearing_text_state(
     cx.update(|cx| {
         I18nManager::init(cx);
         ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
     });
     let (block, cx) = cx.add_window_view(|_window, cx| {
         Block::with_record(

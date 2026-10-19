@@ -322,6 +322,18 @@ async fn code_block_copy_button_copies_code_to_clipboard(cx: &mut TestAppContext
     let header = cx.debug_bounds("code-block-header").expect("代码块顶栏");
     assert!(header.contains(&bounds.center()), "复制按钮应在顶部同一行");
     assert!(bounds.center().x > header.center().x, "复制按钮应在右侧");
+    // 复制按钮是标准按钮：自绘 div 只有 hover 底色，辅助技术读不出这是「复制」。
+    {
+        use gpui_kit::test::TestWindowExt as _;
+        cx.update(|window, _| {
+            let button = window.try_find("code-copy-button").expect("复制按钮");
+            assert_eq!(button.role(), Some(gpui::Role::Button), "复制必须是标准按钮");
+            assert!(
+                button.label().is_some_and(|label| !label.is_empty()),
+                "复制按钮必须有可访问名称"
+            );
+        });
+    }
     cx.simulate_click(bounds.center(), Modifiers::none());
     redraw(cx);
 

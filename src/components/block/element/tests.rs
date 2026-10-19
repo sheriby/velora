@@ -953,6 +953,8 @@ async fn shape_memo_hits_skip_run_rebuilds_on_unchanged_frames(cx: &mut TestAppC
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
     });
     let (block, cx) = cx.add_window_view(|_, cx| {
         Block::with_record(
@@ -994,6 +996,8 @@ async fn unchanged_text_reuses_the_hard_line_table_across_frames(cx: &mut TestAp
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
     });
     let (block, cx) = cx.add_window_view(|_, cx| {
         Block::with_record(
@@ -1038,6 +1042,8 @@ async fn inline_code_in_a_heading_follows_the_heading_size(cx: &mut TestAppConte
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
     });
     let theme = cx.update(|cx| {
         cx.global::<crate::theme::ThemeManager>().current_arc()
@@ -1145,6 +1151,8 @@ fn repeated_prepaint_preserves_measured_text_lines(cx: &mut TestAppContext) {
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
     });
     let (view, cx) = cx.add_window_view(|_, cx| {
         RepeatedPrepaintView(cx.new(|cx| {

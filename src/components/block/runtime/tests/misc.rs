@@ -288,6 +288,8 @@ async fn background_window_stops_the_cursor_blink_task(cx: &mut TestAppContext) 
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
         crate::config::EditorSettings::install_test_settings(cx, true);
     });
     let (block, cx) = cx.add_window_view(|_, cx| {
@@ -333,6 +335,8 @@ async fn unchanged_text_reuses_the_same_layout_arc_across_frames(cx: &mut TestAp
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
+        // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+        crate::ui::init(cx);
     });
     let (block, cx) = cx.add_window_view(|_, cx| {
         Block::with_record(

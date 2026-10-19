@@ -370,6 +370,18 @@ async fn focused_math_block_shows_fx_button_on_screen(cx: &mut TestAppContext) {
         cx.debug_bounds("math-fx-button").is_some(),
         "聚焦数学块应渲染出 ƒx 标记（debug_selector math-fx-button）"
     );
+    // ƒx 是标准按钮：自绘 div 只有 hover 底色，辅助技术读不出这是「公式编辑器」。
+    use gpui_kit::test::TestWindowExt as _;
+    let record_id = math.read_with(cx, |block, _| block.record.id.to_string());
+    let fx_id = gpui::ElementId::Name(format!("math-fx-button-{record_id}").into());
+    cx.update(|window, _| {
+        let button = window.try_find(fx_id.clone()).expect("ƒx 按钮");
+        assert_eq!(button.role(), Some(gpui::Role::Button), "ƒx 必须是标准按钮");
+        assert!(
+            button.label().is_some_and(|label| !label.is_empty()),
+            "ƒx 必须有可访问名称"
+        );
+    });
 }
 
 /// 弹窗草稿里打 `\` 弹命令补全，Enter 确认替换查询串（光标按模板落点）。

@@ -636,7 +636,7 @@ impl Block {
     /// 「复制代码块内容」（roadmap B9）：写入剪贴板并短暂显示 ✓ 反馈。
     pub(crate) fn on_code_copy_button(
         &mut self,
-        _: &MouseDownEvent,
+        _: &ClickEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
