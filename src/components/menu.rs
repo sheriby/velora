@@ -15,6 +15,16 @@ pub(crate) const MENU_ROW_GAP: f32 = 12.0;
 /// 所有相邻子节点生效），量面板宽度时也按这两个数加，不留第三个常量去漂移。
 pub(crate) const MENU_ICON_SIZE: f32 = 16.0;
 
+/// 不可用行的文字色。
+///
+/// `dialog_muted` 与可用行的 `dialog_secondary_button_text` 只差一档（浅色主题里
+/// `#777d89` 对 `#565d68`），置灰的行在菜单里看着和可用行没差别，用户会以为
+/// 「这行有 hover 坏了」而不是「这行现在不能点」。这里把它再往面板底色上压一档，
+/// 让「不可用」自己有话说：置灰行不给 hover 底色，靠颜色表态。
+pub(crate) fn menu_disabled_text(theme: &Theme) -> Hsla {
+    theme.colors.dialog_muted.opacity(0.45)
+}
+
 /// 一行菜单项。`name` 同时用作元素 id 与测试选择器（`debug_bounds("menu-…")`），
 /// 这样菜单行的几何能在测试里点名验证。视觉状态在这里定，点击由调用方接：不可用的项
 /// 调用方不接 `on_click`，视觉上置灰但仍然占位——菜单宽度不能因为某一项不可用就变。
@@ -35,12 +45,18 @@ pub(crate) fn menu_item(
     let colors = &theme.colors;
     let dimensions = &theme.dimensions;
     let typography = &theme.typography;
+    let disabled_text = menu_disabled_text(theme);
     let text_color = if danger {
         colors.dialog_danger_button_bg
     } else if enabled {
         colors.dialog_secondary_button_text
     } else {
+        disabled_text
+    };
+    let shortcut_color = if enabled {
         colors.dialog_muted
+    } else {
+        disabled_text
     };
     let selector = name.clone();
     let row = div()
@@ -86,7 +102,7 @@ pub(crate) fn menu_item(
             let selector = shortcut.clone();
             div()
                 .flex_shrink_0()
-                .text_color(colors.dialog_muted)
+                .text_color(shortcut_color)
                 .debug_selector(move || format!("menu-shortcut-{selector}"))
                 .child(shortcut)
         }));
@@ -143,4 +159,38 @@ pub(crate) fn popup_menu_layer(
     )
     .with_priority(gpui_kit::base::POPUP_PRIORITY)
     .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Theme, menu_disabled_text};
+
+    /// 把颜色按自身 alpha 叠到面板底色上算相对亮度。
+    fn luminance_over_surface(theme: &Theme, color: gpui::Hsla) -> f32 {
+        let foreground = color.to_rgb();
+        let surface = theme.colors.dialog_surface.to_rgb();
+        let alpha = foreground.a;
+        let blend = |front: f32, back: f32| front * alpha + back * (1.0 - alpha);
+        0.2126 * blend(foreground.r, surface.r)
+            + 0.7152 * blend(foreground.g, surface.g)
+            + 0.0722 * blend(foreground.b, surface.b)
+    }
+
+    /// 置灰行的颜色要与可用行拉开肉眼可见的差距。
+    ///
+    /// 只差一档（`dialog_muted` 对 `dialog_secondary_button_text`）时，用户看到的是
+    /// 「这行没有 hover 反馈」，而不是「这行现在不能点」——菜单里没有别的线索。
+    #[test]
+    fn disabled_menu_rows_read_dimmer_than_enabled_ones() {
+        for theme in [Theme::default_theme(), Theme::light_theme()] {
+            let disabled = luminance_over_surface(&theme, menu_disabled_text(&theme));
+            let enabled =
+                luminance_over_surface(&theme, theme.colors.dialog_secondary_button_text);
+            let gap = (enabled - disabled).abs();
+            assert!(
+                gap >= 0.12,
+                "置灰色与可用色的亮度差只有 {gap:.3}，菜单里看不出哪行不能点"
+            );
+        }
+    }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::components::menu::{menu_disabled_text, menu_separator};
 use gpui_kit::component::{
     Icon, Selectable as _, Sizable as _,
     button::{Button, ButtonVariants},
@@ -259,7 +260,7 @@ impl Editor {
         let t = &theme.typography;
 
         match item {
-            OwnedMenuItem::Separator => crate::components::menu::menu_separator(theme)
+            OwnedMenuItem::Separator => menu_separator(theme)
                 .id(("app-menu-separator", item_index))
                 .flex_shrink_0()
                 .into_any_element(),
@@ -280,7 +281,7 @@ impl Editor {
                     .text_size(px(d.menu_text_size))
                     .font_weight(t.dialog_body_weight.to_font_weight())
                     .text_color(if is_disabled {
-                        c.dialog_muted
+                        menu_disabled_text(theme)
                     } else {
                         c.dialog_secondary_button_text
                     })
@@ -354,7 +355,7 @@ impl Editor {
                 .rounded(px(d.menu_item_radius))
                 .bg(c.dialog_surface)
                 .text_size(px(d.menu_text_size))
-                .text_color(c.dialog_muted)
+                .text_color(menu_disabled_text(theme))
                 .child(os_menu.name.to_string())
                 .into_any_element(),
         }
@@ -422,7 +423,7 @@ impl Editor {
                         let submenu_items = submenu.items.clone().into_iter().enumerate().map(
                             |(item_index, item)| match item {
                                 OwnedMenuItem::Separator => {
-                                    crate::components::menu::menu_separator(theme)
+                                    menu_separator(theme)
                                         .id((
                                             "app-submenu-separator",
                                             submenu_index * 1000 + item_index,
@@ -445,7 +446,7 @@ impl Editor {
                                         .text_size(px(d.menu_text_size))
                                         .font_weight(t.dialog_body_weight.to_font_weight())
                                         .text_color(if is_disabled {
-                                            c.dialog_muted
+                                            menu_disabled_text(theme)
                                         } else {
                                             c.dialog_secondary_button_text
                                         })
@@ -481,7 +482,7 @@ impl Editor {
                                     .rounded(px(d.menu_item_radius))
                                     .bg(c.dialog_surface)
                                     .text_size(px(d.menu_text_size))
-                                    .text_color(c.dialog_muted)
+                                    .text_color(menu_disabled_text(theme))
                                     .child(submenu.name.to_string())
                                     .into_any_element(),
                                 OwnedMenuItem::SystemMenu(os_menu) => div()
