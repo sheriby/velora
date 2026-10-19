@@ -1,5 +1,8 @@
 use super::*;
+use gpui::prelude::FluentBuilder as _;
 use gpui_kit::component::form::{Field, Form};
+use gpui_kit::base::ElementExt as _;
+use gpui_kit::component::{ActiveTheme as _, command::{Command, CommandGroup, CommandItem}, spinner::Spinner};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::resizable::{h_resizable, resizable_panel};
 
@@ -51,8 +54,34 @@ impl Editor {
         }
         let viewport = window.viewport_size();
         let compact = session.mode == PanelMode::Task;
-        let width = (f32::from(viewport.width) - 32.0).clamp(180.0, 620.0);
-        let height = (f32::from(viewport.height) - 120.0).clamp(180.0, 720.0);
+        let inset = window.rem_size();
+        let auxiliary_top = px(crate::window_chrome::custom_titlebar_height(
+            window,
+            &theme.dimensions,
+        )) + inset;
+        let status_height = if crate::config::EditorSettings::status_bar_preferences(cx).enabled {
+            px(theme.dimensions.status_bar_height)
+        } else {
+            px(0.0)
+        };
+        let width = if compact {
+            (f32::from(viewport.width) - 32.0).clamp(180.0, 620.0)
+        } else {
+            f32::from(
+                (viewport.width - inset * 2.0)
+                    .max(px(0.0))
+                    .min(inset * 38.75),
+            )
+        };
+        let height = if compact {
+            (f32::from(viewport.height) - 120.0).clamp(180.0, 720.0)
+        } else {
+            f32::from(
+                (viewport.height - auxiliary_top - status_height - inset)
+                    .max(px(0.0))
+                    .min(inset * 45.0),
+            )
+        };
         let task_height = height.min(if session.saved.workspace.changes.proposals.is_empty() {
             520.0
         } else {
@@ -61,33 +90,37 @@ impl Editor {
         let origin = if compact {
             session.origin
         } else {
-            point((viewport.width - px(width)) * 0.5, px(82.0))
+            point((viewport.width - px(width)) * 0.5, auxiliary_top)
         };
         let panel = if compact {
             self.render_ai_workbench(theme, task_height, false, window, cx)
         } else {
             self.render_ai_panel(theme, height, cx)
                 .w(px(width))
-                .rounded(px(10.0))
+                .rounded(cx.theme().radius_lg)
                 .shadow_lg()
                 .into_any_element()
         };
-        let origin = point(
+        let origin = if compact {
+            point(
+                origin
+                    .x
+                    .max(px(12.0))
+                    .min((viewport.width - px(width) - px(12.0)).max(px(12.0))),
+                origin.y.max(px(65.0)).min(
+                    (viewport.height
+                        - px(if session.saved.messages.is_empty() {
+                            180.0
+                        } else {
+                            task_height
+                        })
+                        - px(36.0))
+                    .max(px(65.0)),
+                ),
+            )
+        } else {
             origin
-                .x
-                .max(px(12.0))
-                .min((viewport.width - px(width) - px(12.0)).max(px(12.0))),
-            origin.y.max(px(65.0)).min(
-                (viewport.height
-                    - px(if compact && session.saved.messages.is_empty() {
-                        180.0
-                    } else {
-                        if compact { task_height } else { height }
-                    })
-                    - px(36.0))
-                .max(px(65.0)),
-            ),
-        );
+        };
         let measured = session.panel_bounds.clone();
         Some(
             div()
@@ -347,11 +380,12 @@ impl Editor {
             PanelMode::Sources => &strings.ai_panel_sources,
             PanelMode::Task => &strings.ai_panel_more,
         };
-        let header = div()
+        let mut header = div()
             .w_full()
+            .flex_shrink_0()
             .flex()
             .items_center()
-            .gap(px(8.0))
+            .gap_2()
             .child(self.ai_button(
                 "ai-back",
                 false,
@@ -378,24 +412,66 @@ impl Editor {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_size(px(13.0))
+                    .truncate()
+                    .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .child(caption.clone()),
-            )
-            .child(self.ai_button(
-                "ai-hide",
-                false,
-                cx,
-                |button, cx| {
-                    button.icon(IconName::Close).accessibility_label(
-                        cx.global::<crate::i18n::I18nManager>()
-                            .strings()
-                            .file_history_close
-                            .clone(),
-                    )
-                },
-                |editor, _, cx| editor.hide_ai_panel(cx),
-            ));
+            );
+        if session.mode == PanelMode::History && !session.history_loading {
+            if let Some(index) = session.history_list.read(cx).selected_index() {
+                let kind = if index.section == 0 {
+                    SessionKind::Conversation
+                } else {
+                    SessionKind::QuickCommand
+                };
+                if let Some((path, title, _)) = session
+                    .history_files
+                    .iter()
+                    .filter(|(_, _, entry)| *entry == kind)
+                    .nth(index.row)
+                {
+                    let path = path.clone();
+                    let list_id = session.history_list.entity_id();
+                    header = header.child(self.ai_button(
+                        "ai-history-delete",
+                        false,
+                        cx,
+                        |button, _| {
+                            button
+                                .icon(IconName::Trash)
+                                .accessibility_label(format!(
+                                    "{} · {title}",
+                                    strings.ai_panel_delete_conversation
+                                ))
+                                .tooltip(strings.ai_panel_delete_conversation.clone())
+                        },
+                        move |editor, window, cx| {
+                            if editor.ai_session.as_ref().is_some_and(|session| {
+                                session.mode == PanelMode::History
+                                    && session.history_list.entity_id() == list_id
+                            }) {
+                                editor.delete_ai_history(path.clone(), window, cx);
+                            }
+                        },
+                    ));
+                }
+            }
+        }
+
+        header = header.child(self.ai_button(
+            "ai-hide",
+            false,
+            cx,
+            |button, cx| {
+                button.icon(IconName::Close).accessibility_label(
+                    cx.global::<crate::i18n::I18nManager>()
+                        .strings()
+                        .file_history_close
+                        .clone(),
+                )
+            },
+            |editor, _, cx| editor.hide_ai_panel(cx),
+        ));
         let mut content = div().w_full().flex().flex_col().gap(px(10.0));
         if let Some(error) = session.error.as_ref() {
             content = content.child(
@@ -426,75 +502,7 @@ impl Editor {
                 }
             }
             PanelMode::History => {
-                for kind in [SessionKind::Conversation, SessionKind::QuickCommand] {
-                    if !session
-                        .history_files
-                        .iter()
-                        .any(|(_, _, entry)| *entry == kind)
-                    {
-                        continue;
-                    }
-                    content = content.child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(theme.colors.dialog_muted)
-                            .child(if kind == SessionKind::Conversation {
-                                strings.ai_history_conversations.clone()
-                            } else {
-                                strings.ai_history_quick_commands.clone()
-                            }),
-                    );
-                    for (path, title, _) in session
-                        .history_files
-                        .iter()
-                        .filter(|(_, _, entry)| *entry == kind)
-                    {
-                        let path = path.clone();
-                        let title = title.clone();
-                        let delete_path = path.clone();
-                        let identity = path
-                            .file_stem()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .into_owned();
-                        content = content.child(
-                            div()
-                                .w_full()
-                                .flex()
-                                .gap(px(4.0))
-                                .child(
-                                    self.ai_button(
-                                        SharedString::from(format!("ai-history-{identity}")),
-                                        false,
-                                        cx,
-                                        |button, _cx| button.label(title),
-                                        move |editor, window, cx| {
-                                            editor.restore_ai_history(path.clone(), window, cx)
-                                        },
-                                    )
-                                    .flex_1()
-                                    .min_w_0()
-                                    .overflow_hidden(),
-                                )
-                                .child(self.ai_button(
-                                    SharedString::from(format!("ai-history-delete-{identity}")),
-                                    false,
-                                    cx,
-                                    |button, _cx| {
-                                        button
-                                            .icon(IconName::Trash)
-                                            .accessibility_label(
-                                                strings.ai_panel_delete_conversation.clone(),
-                                            )
-                                            .tooltip(strings.ai_panel_delete_conversation.clone())
-                                    },
-                                    move |editor, window, cx| {
-                                        editor.delete_ai_history(delete_path.clone(), window, cx)
-                                    },
-                                )),
-                        );
-                    }
-                }
+                content = content.child(self.render_ai_history(height, cx));
             }
             PanelMode::Skills => {
                 content = content.child(self.ai_button(
@@ -747,31 +755,143 @@ impl Editor {
             .id("ai-content")
             .w_full()
             .min_h_0()
-            .max_h(px((height - 150.0).max(90.0)))
-            .overflow_y_scroll()
-            .track_scroll(&session.scroll)
+            .when(session.mode != PanelMode::History, |body| {
+                body.max_h(px((height - 150.0).max(90.0)))
+                    .overflow_y_scroll()
+                    .track_scroll(&session.scroll)
+            })
             .child(content);
         let panel = div()
             .id("ai-assistant-panel")
             .track_focus(&session.panel_focus)
             .debug_selector(|| "ai-assistant-panel".into())
-            .p(px(10.0))
+            .p_3()
             .flex()
             .flex_col()
-            .gap(px(8.0))
+            .gap_2()
             .max_h(px(height))
             .min_w_0()
             .bg(theme.colors.dialog_surface)
             .border_1()
             .border_color(theme.colors.dialog_border)
             .text_color(theme.colors.dialog_title)
-            .text_size(px(13.0))
+            .text_sm()
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(header)
             .child(body);
 
         panel
+    }
+
+    fn render_ai_history(&self, height: f32, cx: &mut Context<Self>) -> AnyElement {
+        let Some(session) = &self.ai_session else {
+            return div().into_any_element();
+        };
+        let strings = cx.global::<crate::i18n::I18nManager>().strings();
+        let groups = [SessionKind::Conversation, SessionKind::QuickCommand].map(|kind| {
+            session
+                .history_files
+                .iter()
+                .filter(|(_, _, entry)| *entry == kind)
+                .map(|(path, title, _)| (path.clone(), title.clone()))
+                .collect::<Vec<_>>()
+        });
+        let list_id = session.history_list.entity_id();
+        let owner = cx.entity().downgrade();
+        let confirm_owner = owner.clone();
+        let select_owner = owner.clone();
+        let empty = strings.ai_history_empty.clone();
+        let loading = session.history_loading;
+        let mut list = Command::new(&session.history_list)
+            .searchable(false)
+            .filterable(false)
+            .bordered(false)
+            .max_h((px(height) - cx.theme().font_size * 4.0).max(px(0.0)));
+        for (entries, label) in groups.iter().zip([
+            &strings.ai_history_conversations,
+            &strings.ai_history_quick_commands,
+        ]) {
+            list = list.group(
+                CommandGroup::new().label(label.clone()).items(
+                    entries
+                        .iter()
+                        .map(|(_, title)| {
+                            let title = title.clone();
+                            CommandItem::new().label(title.clone()).child(move |_, _| {
+                                div().w_full().min_w_0().truncate().child(title.clone())
+                            })
+                        }),
+                ),
+            );
+        }
+        let list = list
+            .empty(move |_, _, cx| {
+                div()
+                    .id("ai-history-empty")
+                    .debug_selector(|| "ai-history-empty".into())
+                    .p_4()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .when(loading, |body| body.child(Spinner::new().small()))
+                    .when(!loading, |body| body.child(empty.clone()))
+            })
+            .on_select(move |_, _, cx| {
+                if let Err(error) = select_owner.update(cx, |editor, cx| {
+                    if editor.ai_session.as_ref().is_some_and(|session| {
+                        session.mode == PanelMode::History
+                            && session.history_list.entity_id() == list_id
+                    }) {
+                        cx.notify();
+                    }
+                }) {
+                    eprintln!("更新 AI 历史选择失败：{error}");
+                }
+            })
+            .on_confirm(move |index, window, cx| {
+                let Some((path, _)) = groups
+                    .get(index.section)
+                    .and_then(|group| group.get(index.row))
+                else {
+                    return;
+                };
+                if let Err(error) = confirm_owner.update(cx, |editor, cx| {
+                    if editor.ai_session.as_ref().is_some_and(|session| {
+                        session.visible
+                            && session.mode == PanelMode::History
+                            && session.history_list.entity_id() == list_id
+                    }) {
+                        editor.restore_ai_history(path.clone(), window, cx);
+                    }
+                }) {
+                    eprintln!("打开 AI 历史失败：{error}");
+                }
+            });
+        div()
+            .id("ai-history-list")
+            .debug_selector(|| "ai-history-list".into())
+            .w_full()
+            .min_h_0()
+            .child(list)
+            .on_prepaint(move |_, window, cx| {
+                if let Err(error) = owner.update(cx, |editor, cx| {
+                    if let Some(session) = editor.ai_session.as_mut().filter(|session| {
+                        session.history_focus_pending
+                            && session.visible
+                            && session.mode == PanelMode::History
+                            && session.history_list.entity_id() == list_id
+                    }) {
+                        session.history_focus_pending = false;
+                        session
+                            .history_list
+                            .update(cx, |list, cx| list.focus(window, cx));
+                        cx.notify();
+                    }
+                }) {
+                    eprintln!("聚焦 AI 历史失败：{error}");
+                }
+            })
+            .into_any_element()
     }
 
     pub(super) fn ai_button(

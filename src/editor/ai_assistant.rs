@@ -78,6 +78,9 @@ pub(super) struct AiSession {
     // 标签重载会重建缓冲区，使用稳定的恢复标识区分暂离与主动关闭。
     review_navigation: Option<uuid::Uuid>,
     history_files: Vec<(PathBuf, String, SessionKind)>,
+    history_list: Entity<gpui_kit::component::command::CommandState>,
+    history_loading: bool,
+    history_focus_pending: bool,
     skills: crate::ai::skills::SkillCatalog,
     context_candidates: Vec<String>,
     settings_saving: bool,
@@ -619,6 +622,9 @@ impl Editor {
             return;
         };
         session.mode = PanelMode::History;
+        session.history_files.clear();
+        session.history_loading = true;
+        session.history_focus_pending = true;
         let id = session.saved.id.clone();
         let root = session.saved.workspace.root.clone();
         let retained = self
@@ -702,6 +708,8 @@ impl Editor {
             let result = load.await;
             if let Err(error) = owner.update(cx, |editor, cx| {
                 if let Some(session) = editor.ai_session_mut(&id) {
+                    session.history_loading = false;
+                    session.history_focus_pending = true;
                     match result {
                         Ok(files) => session.history_files = files,
                         Err(error) => session.error = Some(error.to_string()),
@@ -1148,6 +1156,9 @@ impl Editor {
             review_open: false,
             review_navigation: None,
             history_files: Vec::new(),
+            history_list: cx.new(|cx| gpui_kit::component::command::CommandState::new(window, cx)),
+            history_loading: false,
+            history_focus_pending: false,
             skills: crate::ai::skills::SkillCatalog::load(&directories),
             context_candidates: Vec::new(),
             settings_saving: false,

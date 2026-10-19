@@ -725,6 +725,7 @@ pub struct I18nStrings {
     pub ai_panel_exclusions: String,
     pub ai_panel_save: String,
     pub ai_panel_history: String,
+    pub ai_history_empty: String,
     pub ai_history_conversations: String,
     pub ai_history_quick_commands: String,
     pub ai_panel_new_chat: String,

@@ -3763,6 +3763,201 @@ fn ai_message_repaint_reuses_code_highlights_and_code_copy_keeps_the_source(
 }
 
 #[gpui::test]
+fn ai_history_groups_native_rows_and_keeps_deletion_separate_from_restore(cx: &mut TestAppContext) {
+    use crate::ai::session::{ChatMessage, SavedSession, SessionKind};
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root = std::env::temp_dir().join(format!("velora-ai-history-kit-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    let mut quick_path = None;
+    for (kind, title) in [
+        (SessionKind::Conversation, "讨论文档结构"),
+        (SessionKind::Conversation, "整理术语"),
+        (SessionKind::QuickCommand, "摘要"),
+    ] {
+        let mut saved =
+            SavedSession::new(crate::ai::workspace::AiWorkspace::new(None, Vec::new()).unwrap());
+        saved.kind = kind;
+        saved.messages.push(ChatMessage {
+            role: "user".into(),
+            text: title.into(),
+        });
+        let path = saved.path().unwrap();
+        saved.save_at(&path).unwrap();
+        if kind == SessionKind::QuickCommand {
+            quick_path = Some(path);
+        }
+    }
+    for index in 0..12 {
+        let mut saved =
+            SavedSession::new(crate::ai::workspace::AiWorkspace::new(None, Vec::new()).unwrap());
+        saved.messages.push(ChatMessage {
+            role: "user".into(),
+            text: format!("第 {index} 次文档讨论：补充背景、组织结构和完整的引用说明").into(),
+        });
+        saved.save_at(&saved.path().unwrap()).unwrap();
+    }
+    crate::config::preferences::update_app_preferences(|preferences| preferences.fonts.ui_size = 36).unwrap();
+    initialize(cx);
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "原文".into(), None))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    visual.simulate_resize(gpui::size(gpui::px(600.0), gpui::px(620.0)));
+    let original = handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let identity = editor.ai_session.as_ref().unwrap().saved.id.clone();
+            editor.show_ai_history(cx);
+            identity
+        })
+        .unwrap();
+    visual.run_until_parked();
+    draw(&mut visual);
+    draw(&mut visual);
+    handle
+        .read_with(&visual, |editor, _| {
+            let session = editor.ai_session.as_ref().unwrap();
+            assert_eq!(session.history_files.len(), 15, "先确认历史目录加载完成");
+        })
+        .unwrap();
+    visual.update(|window, _| {
+        assert_eq!(
+            window
+                .try_find(gpui_kit::component::IndexPath::new(0))
+                .and_then(|row| row.role()),
+            Some(gpui::Role::ListBoxOption),
+            "会话应呈现为标准候选行"
+        );
+    });
+    let quick_path = quick_path.unwrap();
+    visual.update(|window, cx| window.press("up", cx));
+    draw(&mut visual);
+    let panel = visual.debug_bounds("ai-assistant-panel").unwrap();
+    let status = visual.debug_bounds("status-bar-reading-mode").unwrap();
+    assert!(panel.bottom() <= status.top(), "辅助浮窗不能覆盖状态栏：{panel:?}，{status:?}");
+    visual.update(|window, _| {
+        let row = window.find(gpui_kit::component::IndexPath::new(0).section(1));
+        assert_eq!(row.role(), Some(gpui::Role::ListBoxOption));
+        assert_eq!(row.selected(), Some(true));
+        assert!(
+            row.bounds().top() >= panel.top() && row.bounds().bottom() <= panel.bottom(),
+            "导航到快捷指令时应滚动入视：{:?}，{panel:?}",
+            row.bounds()
+        );
+    });
+    visual.update(|window, cx| window.click("ai-history-delete", cx));
+    visual.run_until_parked();
+    draw(&mut visual);
+    assert!(!quick_path.exists());
+    handle
+        .read_with(&visual, |editor, _| {
+            let session = editor.ai_session.as_ref().unwrap();
+            assert_eq!(session.saved.id, original, "删除按钮不能同时触发候选恢复");
+            assert!(session.mode == PanelMode::History);
+            assert_eq!(editor.buffer.text(), "原文");
+        })
+        .unwrap();
+    let first = handle
+        .read_with(&visual, |editor, _| {
+            editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .history_files
+                .iter()
+                .find(|(_, _, kind)| *kind == SessionKind::Conversation)
+                .unwrap()
+                .0
+                .clone()
+        })
+        .unwrap();
+    visual.update(|window, cx| window.press("enter", cx));
+    visual.run_until_parked();
+    draw(&mut visual);
+    handle
+        .read_with(&visual, |editor, _| {
+            let session = editor.ai_session.as_ref().unwrap();
+            assert_eq!(session.saved.path().unwrap(), first);
+            assert!(session.mode == PanelMode::Task);
+            assert_eq!(editor.buffer.text(), "原文");
+        })
+        .unwrap();
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
+fn ai_history_empty_keeps_a_visible_state_and_returns_to_the_draft(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root =
+        std::env::temp_dir().join(format!("velora-ai-history-empty-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "原文".into(), None))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    let identity = handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_ref().unwrap();
+            session.input.update(cx, |input, cx| {
+                input.set_value("还未发送的草稿", window, cx)
+            });
+            let identity = session.saved.id.clone();
+            editor.show_ai_history(cx);
+            identity
+        })
+        .unwrap();
+    visual.run_until_parked();
+    draw(&mut visual);
+    draw(&mut visual);
+    let empty = visual.debug_bounds("ai-history-empty").unwrap();
+    assert!(empty.size.height > gpui::px(0.0));
+    visual.update(|window, cx| {
+        assert!(
+            window.try_find("ai-history-delete").is_none(),
+            "没有候选时不提供无对象的删除操作"
+        );
+        window.press("escape", cx);
+    });
+    draw(&mut visual);
+    handle
+        .read_with(&visual, |editor, cx| {
+            let session = editor.ai_session.as_ref().unwrap();
+            assert_eq!(session.saved.id, identity);
+            assert_eq!(session.input.read(cx).value(), "还未发送的草稿");
+            assert!(session.mode == PanelMode::Task);
+            assert_eq!(editor.buffer.text(), "原文");
+        })
+        .unwrap();
+    let weak = handle
+        .read_with(&visual, |editor, _| {
+            editor.ai_session.as_ref().unwrap().history_list.downgrade()
+        })
+        .unwrap();
+    visual.update(|window, _| window.remove_window());
+    drop(visual);
+    cx.run_until_parked();
+    assert!(
+        weak.upgrade().is_none(),
+        "关闭会话窗口应释放历史列表，回调不能持有列表本身"
+    );
+}
+
+#[gpui::test]
 fn ai_more_menu_keyboard_opens_history_and_returns_to_the_same_draft(cx: &mut TestAppContext) {
     initialize(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));

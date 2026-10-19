@@ -1092,6 +1092,7 @@ impl I18nStringsDe {
             ai_panel_exclusions: self.ai_panel_exclusions.unwrap_or(defaults.ai_panel_exclusions),
             ai_panel_save: self.ai_panel_save.unwrap_or(defaults.ai_panel_save),
             ai_panel_history: self.ai_panel_history.unwrap_or(defaults.ai_panel_history),
+            ai_history_empty: self.ai_history_empty.unwrap_or(defaults.ai_history_empty),
             ai_history_conversations: self.ai_history_conversations.unwrap_or(defaults.ai_history_conversations),
             ai_history_quick_commands: self.ai_history_quick_commands.unwrap_or(defaults.ai_history_quick_commands),
             ai_panel_new_chat: self.ai_panel_new_chat.unwrap_or(defaults.ai_panel_new_chat),

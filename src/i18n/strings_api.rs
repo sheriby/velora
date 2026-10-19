@@ -510,6 +510,7 @@ impl I18nStrings {
         strings.ai_panel_exclusions = "排除的文件或目录（逗号分隔）".into();
         strings.ai_panel_save = "保存".into();
         strings.ai_panel_history = "历史任务".into();
+        strings.ai_history_empty = "暂无历史记录".into();
         strings.ai_history_conversations = "对话".into();
         strings.ai_history_quick_commands = "快捷指令".into();
         strings.ai_panel_new_chat = "新任务".into();
@@ -1068,6 +1069,7 @@ impl I18nStrings {
             ai_panel_exclusions: "Excluded files or folders (comma separated)".into(),
             ai_panel_save: "Save".into(),
             ai_panel_history: "History".into(),
+            ai_history_empty: "No history yet".into(),
             ai_history_conversations: "Conversations".into(),
             ai_history_quick_commands: "Quick commands".into(),
             ai_panel_new_chat: "New task".into(),

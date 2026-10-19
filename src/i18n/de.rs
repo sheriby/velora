@@ -480,6 +480,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) ai_panel_exclusions: Option<String>,
     pub(crate) ai_panel_save: Option<String>,
     pub(crate) ai_panel_history: Option<String>,
+    pub(crate) ai_history_empty: Option<String>,
     pub(crate) ai_history_conversations: Option<String>,
     pub(crate) ai_history_quick_commands: Option<String>,
     pub(crate) ai_panel_new_chat: Option<String>,
