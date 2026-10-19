@@ -1924,3 +1924,41 @@ fn split_history_restore_refreshes_every_view_and_keeps_shared_undo(cx: &mut Tes
         assert!(versions.iter().any(|version| version.source == crate::config::file_history::HistorySource::BeforeRestore));
     });
 }
+
+#[gpui::test]
+fn native_group_tab_keyboard_activation_selects_its_editor(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    fixture(cx, |editor, cx, _| {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.split_active_document(SplitDirection::Right, window, cx)
+        });
+        redraw(cx);
+        let groups = editor.read_with(cx, |editor, _| editor.split_groups());
+        let first = groups.first().unwrap().clone();
+        let focus = first.read_with(cx, |editor, _| editor.workspace.tabs_focus.clone().unwrap());
+        assert_ne!(
+            editor.read_with(cx, |editor, _| editor
+                .active_split_editor()
+                .unwrap()
+                .entity_id()),
+            first.entity_id()
+        );
+        cx.update(|window, cx| {
+            window.activate_window();
+            window.focus(&focus, cx);
+            window.press("left", cx);
+        });
+        redraw(cx);
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor
+                .active_split_editor()
+                .unwrap()
+                .entity_id()),
+            first.entity_id()
+        );
+        assert!(cx.update(|window, _| focus.is_focused(window)));
+        for group in groups {
+            group.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), "正文\n"));
+        }
+    });
+}

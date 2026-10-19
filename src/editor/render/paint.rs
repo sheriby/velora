@@ -863,7 +863,7 @@ impl Render for Editor {
                 .capture_key_down(Self::document_listener(cx, Self::on_editor_key_down_capture))
                 .child(content_area).into_any_element();
         }
-        let document_tabs = if self.split_parent.is_none() { self.render_document_tabs(&theme, cx) } else { None };
+        let document_tabs = if self.split_parent.is_none() { self.render_document_tabs(&theme, window, cx) } else { None };
         // Document tabs live inside the custom titlebar when it is visible;
         // without one (macOS fullscreen, server-side decorations) they fall
         // back to a standalone row above the editor column.

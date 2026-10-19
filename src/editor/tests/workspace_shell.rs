@@ -424,8 +424,7 @@ async fn status_bar_breadcrumb_renders_without_panicking(cx: &mut TestAppContext
 
 #[gpui::test]
 async fn many_tabs_never_slide_under_the_window_controls(cx: &mut TestAppContext) {
-    // 标签开多了也不许让第一个标签左移、压到红绿灯下面：标题行的红绿灯预留位
-    // （和应用绘制的窗口按钮）必须 flex_shrink_0，否则整行溢出时会被 taffy 挤扁。
+    // 标签可在视口内滚动；窗口按钮预留区必须保持宽度，并裁掉滚出视口的标签。
     init_editor_test_app(cx);
     let root = temp_markdown_path("tab-strip-overflow");
     fs::create_dir_all(&root).unwrap();
@@ -435,9 +434,9 @@ async fn many_tabs_never_slide_under_the_window_controls(cx: &mut TestAppContext
         fs::write(&path, format!("# doc {index}\n")).unwrap();
         paths.push(path);
     }
-    let (editor, cx) =
-        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
-    cx.update(|window, _cx| window.resize(gpui::size(px(1615.0), px(900.0))));
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.simulate_resize(gpui::size(px(1615.0), px(900.0)));
+    cx.run_until_parked();
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
             editor.set_workspace_root(root.clone(), cx);
@@ -461,17 +460,28 @@ async fn many_tabs_never_slide_under_the_window_controls(cx: &mut TestAppContext
         });
     });
     redraw(cx);
-    let first_with_many = cx.debug_bounds("document-tab-0").expect("首标签仍应存在");
+    let viewport = editor.read_with(cx, |editor, _| editor.workspace.tabs_scroll_handle.bounds());
+    let active = cx.debug_bounds("document-tab-11").expect("末尾活动标签");
+    assert!(
+        active.left() >= viewport.left() && active.right() <= viewport.right(),
+        "最后打开的活动标签应完整可见：{active:?} / {viewport:?}"
+    );
     assert_eq!(
-        first_with_many.origin.x, first_with_one_tab,
-        "加满标签后第一个标签不该左移（{first_with_one_tab} → {:?}）",
-        first_with_many.origin.x
+        viewport.left(),
+        first_with_one_tab,
+        "滚动不能挤压窗口按钮的预留区"
     );
     #[cfg(target_os = "macos")]
-    assert!(
-        first_with_many.origin.x >= px(84.0),
-        "第一个标签不该进入 macOS 红绿灯预留区（84px），实测 {:?}",
-        first_with_many.origin.x
+    assert!(viewport.left() >= px(84.0));
+    let active_path = editor.read_with(cx, |editor, _| editor.file_path.clone());
+    cx.simulate_click(
+        gpui::point(px(32.0), viewport.center().y),
+        Modifiers::none(),
+    );
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.file_path.clone()),
+        active_path,
+        "视口外的标签不能覆盖窗口按钮区的命中"
     );
     let max_offset = editor.read_with(cx, |editor, _| {
         editor.workspace.tabs_scroll_handle.max_offset()
@@ -479,6 +489,24 @@ async fn many_tabs_never_slide_under_the_window_controls(cx: &mut TestAppContext
     assert!(
         max_offset.x > px(0.0),
         "溢出的标签条应该可以横向滚动，实测 max_offset {max_offset:?}"
+    );
+    let scroll = editor.read_with(cx, |editor, _| editor.workspace.tabs_scroll_handle.clone());
+    scroll.set_offset(gpui::point(px(0.0), px(0.0)));
+    for _ in 0..3 {
+        redraw(cx);
+        cx.executor().advance_clock(Duration::from_millis(20));
+    }
+    assert_eq!(scroll.offset().x, px(0.0), "普通重绘不能抢回手动浏览的位置");
+    cx.simulate_resize(gpui::size(px(900.0), px(900.0)));
+    for _ in 0..3 {
+        redraw(cx);
+        cx.executor().advance_clock(Duration::from_millis(20));
+    }
+    let viewport = scroll.bounds();
+    let active = cx.debug_bounds("document-tab-11").unwrap();
+    assert!(
+        active.left() >= viewport.left() && active.right() <= viewport.right(),
+        "窗口缩窄后活动标签仍应可见"
     );
 }
 

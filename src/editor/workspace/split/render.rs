@@ -247,7 +247,7 @@ impl Editor {
                 );
             }
             let id = group.entity_id();
-            for (index, tab) in items.into_iter().enumerate() {
+            for (index, (path_hash, tab)) in items.into_iter().enumerate() {
                 if Some(id) == active_group {
                     if let Some((selected_index, path)) = &selected {
                         if *selected_index == index {
@@ -255,7 +255,6 @@ impl Editor {
                                 id,
                                 path.clone(),
                                 tabs.len(),
-                                self.workspace.tabs_scroll_handle.bounds().size.width,
                             ));
                         }
                     }
@@ -263,11 +262,18 @@ impl Editor {
                 let focus_group = group.clone();
                 tabs.push(
                     div()
-                        .id(SharedString::from(format!("titlebar-tab-{id:?}-{index}")))
+                        .id(SharedString::from(format!("titlebar-tab-{id:?}-{path_hash}")))
                         .debug_selector(move || format!("group-tab-{id:?}-{index}"))
                         .h_full()
                         .flex()
                         .flex_shrink_0()
+                        .capture_key_down(cx.listener(move |editor, _, _, cx| {
+                            if editor.split_workspace.as_ref()
+                                .is_some_and(|workspace| workspace.active != id)
+                            {
+                                editor.activate_split_group(id, cx);
+                            }
+                        }))
                         .capture_any_mouse_down(cx.listener(move |editor, _, _, cx| {
                             editor.activate_split_group(id, cx);
                             focus_group.update(cx, |editor, cx| {
@@ -285,24 +291,11 @@ impl Editor {
         if tabs.is_empty() {
             return None;
         }
-        if let Some(active_tab) = active_tab {
-            let reveal = self
-                .split_workspace
-                .as_ref()
-                .is_some_and(|workspace| workspace.revealed_tab.as_ref() != Some(&active_tab));
-            if reveal {
-                self.workspace
-                    .tabs_scroll_handle
-                    .scroll_to_item(active_tab.2);
-                if let Some(workspace) = self.split_workspace.as_mut() {
-                    workspace.revealed_tab = Some(active_tab);
-                }
-                self.schedule_followup_frame(cx);
-            }
+        if let Some((group, path, index)) = active_tab {
+            self.reveal_document_tab(group, path, index, window, cx);
         }
         Some(
-            div()
-                .id("window-editor-tabs")
+            gpui_kit::base::Tabs::new("window-editor-tabs")
                 .debug_selector(|| "window-editor-tabs".into())
                 .h_full()
                 .min_w(px(0.0))

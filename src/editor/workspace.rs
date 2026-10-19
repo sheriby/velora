@@ -217,6 +217,17 @@ pub(crate) struct SearchHighlightKey {
     root_count: usize,
 }
 
+#[derive(PartialEq)]
+struct WorkspaceTabRevealKey {
+    group: EntityId,
+    path: PathBuf,
+    index: usize,
+    window_width: Pixels,
+    viewport_width: Pixels,
+    rem_size: Pixels,
+    font_family: SharedString,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum WorkspaceSearchScope {
     Workspace,
@@ -402,6 +413,8 @@ pub(super) struct WorkspaceState {
     pub(super) selected: Option<WorkspaceSelection>,
     open_documents: Vec<WorkspaceDocumentTab>,
     active_document: Option<PathBuf>,
+    tabs_focus: Option<FocusHandle>,
+    tabs_revealed: Option<WorkspaceTabRevealKey>,
     pub(super) search_query: String,
     search_scope: WorkspaceSearchScope,
     search_active_index: Option<usize>,
@@ -493,6 +506,8 @@ impl Default for WorkspaceState {
             selected: None,
             open_documents: Vec::new(),
             active_document: None,
+            tabs_focus: None,
+            tabs_revealed: None,
             search_query: String::new(),
             search_scope: WorkspaceSearchScope::default(),
             search_active_index: None,

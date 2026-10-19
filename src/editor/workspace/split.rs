@@ -252,7 +252,6 @@ pub(crate) struct SplitWorkspace {
     subscriptions: Vec<Subscription>,
     documents: HashMap<PathBuf, SharedDocument>,
     resizing: bool,
-    revealed_tab: Option<(EntityId, PathBuf, usize, Pixels)>,
 }
 
 impl Editor {
@@ -952,7 +951,6 @@ impl Editor {
             subscriptions: Vec::new(),
             documents,
             resizing: false,
-            revealed_tab: None,
         });
         self.autosave_task = None;
         self.file_path = None;

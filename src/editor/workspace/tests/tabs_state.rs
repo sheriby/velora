@@ -588,3 +588,124 @@ async fn switching_tabs_remeasures_columns_when_layout_inputs_change(cx: &mut Te
         }
     }
 }
+
+#[gpui::test]
+fn native_document_tabs_preserve_keyboard_selection_and_close(cx: &mut TestAppContext) {
+    use gpui::{AppContext as _, VisualTestContext};
+    use gpui_kit::test::TestWindowExt as _;
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "native-document-tabs")
+        .canonicalize()
+        .unwrap();
+    let _config = crate::config::override_test_config_root(root.join("config"));
+    let config = crate::config::VeloraConfigDirs::from_system()
+        .unwrap()
+        .app_config_file();
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(config, "[editor]\nui_font_size = 21\n").unwrap();
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    let paths = [root.join("alpha.md"), root.join("beta.md")];
+    fs::write(&paths[0], "alpha\n").unwrap();
+    fs::write(&paths[1], "beta\n").unwrap();
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, String::new(), None))
+        })
+        .unwrap()
+    });
+    handle
+        .update(cx, |editor, window, cx| {
+            window.activate_window();
+            for path in &paths {
+                editor.open_workspace_file(path.clone(), window, cx);
+            }
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    for _ in 0..2 {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    let first = (
+        "document-tab",
+        super::super::stable_node_hash(&paths[0].to_string_lossy()),
+    );
+    let second = (
+        "document-tab",
+        super::super::stable_node_hash(&paths[1].to_string_lossy()),
+    );
+    visual.update(|window, _| {
+        assert_eq!(
+            window.try_find(first).and_then(|row| row.role()),
+            Some(gpui::Role::Tab)
+        );
+        assert_eq!(
+            window.find(first).bounds().size.height,
+            px(47.0),
+            "标签必须填满 48px 标题栏扣除边框后的内容区"
+        );
+    });
+    let tab_focus = handle
+        .read_with(&visual, |editor, _| {
+            editor.workspace.tabs_focus.clone().expect("标签焦点")
+        })
+        .unwrap();
+    visual.update(|window, cx| {
+        assert_eq!(window.find(second).selected(), Some(true));
+        window.blur(cx);
+        window.focus_next(cx);
+        for _ in 0..32 {
+            window.press("tab", cx);
+            window.render_frame(cx);
+            if tab_focus.is_focused(window) {
+                break;
+            }
+        }
+        assert!(
+            tab_focus.is_focused(window),
+            "标签组应可由 Tab 进入当前标签"
+        );
+        window.press("left", cx);
+    });
+    visual.run_until_parked();
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(first).selected(), Some(true));
+        assert!(tab_focus.is_focused(window), "方向键切换后焦点仍留在标签组");
+        window.press("tab", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(("document-tab-close", first.1)).role(),
+            Some(gpui::Role::Button)
+        );
+        assert_eq!(
+            window.find(("document-tab-close", first.1)).focused(),
+            Some(true)
+        );
+        window.press("space", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(editor.workspace.open_documents.len(), 1);
+            assert_eq!(editor.workspace.active_document.as_ref(), Some(&paths[1]));
+            assert_eq!(editor.buffer.text(), "beta\n");
+        })
+        .unwrap();
+    handle.update(&mut visual, |editor, window, cx| {
+        editor.open_workspace_file(paths[0].clone(), window, cx);
+    }).unwrap();
+    visual.run_until_parked();
+    let inactive = visual.update(|window, cx| {
+        window.render_frame(cx);
+        window.find(second).bounds().center()
+    });
+    visual.simulate_mouse_down(inactive, gpui::MouseButton::Middle, gpui::Modifiers::none());
+    visual.simulate_mouse_up(inactive, gpui::MouseButton::Middle, gpui::Modifiers::none());
+    visual.run_until_parked();
+    handle.read_with(&visual, |editor, _| {
+        assert_eq!(editor.workspace.open_documents.len(), 1);
+        assert_eq!(editor.workspace.active_document.as_ref(), Some(&paths[0]));
+        assert_eq!(editor.buffer.text(), "alpha\n");
+    }).unwrap();
+}

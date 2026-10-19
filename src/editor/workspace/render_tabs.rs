@@ -1,27 +1,43 @@
 use super::*;
 use gpui::prelude::FluentBuilder;
+use gpui_kit::base::{Tab as DocumentTab, Tabs as DocumentTabs};
+use gpui_kit::component::{
+    ActiveTheme as _, Icon, Sizable as _,
+    button::{Button, ButtonVariants},
+    tooltip::Tooltip,
+};
 
 impl Editor {
     pub(crate) fn render_document_tabs(
         &mut self,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let tabs = self.render_document_tab_items(theme, None, cx);
         if tabs.is_empty() {
+            self.workspace.tabs_revealed = None;
             return None;
         }
         let group_id = cx.entity_id();
+        if let Some((index, tab)) = self
+            .workspace
+            .open_documents
+            .iter()
+            .enumerate()
+            .find(|(_, tab)| Some(&tab.path) == self.workspace.active_document.as_ref())
+        {
+            self.reveal_document_tab(group_id, tab.path.clone(), index, window, cx);
+        }
         Some(
-            div()
-                .id("document-tabs")
+            DocumentTabs::new("document-tabs")
                 .debug_selector(move || format!("document-tabs-{group_id:?}"))
                 .h_full()
                 .min_w(px(0.0))
                 .flex()
                 .track_scroll(&self.workspace.tabs_scroll_handle)
                 .overflow_x_scroll()
-                .children(tabs)
+                .children(tabs.into_iter().map(|(_, tab)| tab))
                 .into_any_element(),
         )
     }
@@ -31,10 +47,16 @@ impl Editor {
         theme: &Theme,
         group_accent: Option<Hsla>,
         cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
+    ) -> Vec<(u64, AnyElement)> {
         self.ensure_current_document_tab(cx);
         let editor = cx.entity().downgrade();
         let c = &theme.colors;
+        let tabs_focus = self
+            .workspace
+            .tabs_focus
+            .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+            .clone();
+        let strings = cx.global::<I18nManager>().strings_arc();
         let tabs = self
             .workspace
             .open_documents
@@ -42,10 +64,13 @@ impl Editor {
             .enumerate()
             .map(|(index, tab)| {
                 let path = tab.path.clone();
+                let path_hash = stable_node_hash(&path.to_string_lossy());
                 let click_path = path.clone();
                 let middle_click_path = path.clone();
                 let drag_from_path = path.clone();
                 let close_path = path.clone();
+                let context_path = path.clone();
+                let tooltip = path.to_string_lossy().into_owned();
                 let active = self.workspace.active_document.as_ref() == Some(&tab.path);
                 let dirty = if active {
                     self.document_dirty
@@ -62,67 +87,49 @@ impl Editor {
                 // Markdown glyph only for real markdown files; code files and
                 // extension-less dotfiles render as source, binaries show as
                 // placeholders — neither is markdown.
-                let tab_shows_code_icon = untitled_document_id(&path).is_none() && (is_code_file(&path)
-                    || path.extension().is_none()
-                    || self.unsupported_preview_path.as_ref() == Some(&path));
+                let tab_shows_code_icon = untitled_document_id(&path).is_none()
+                    && (is_code_file(&path)
+                        || path.extension().is_none()
+                        || self.unsupported_preview_path.as_ref() == Some(&path));
                 let tab_is_image = crate::components::Block::has_supported_image_extension(&path);
-                // The close button carries its own hover state: highlighting
-                // the whole tab was indistinguishable from the tab's own
-                // hover background, so the X lights up only under the pointer.
-                let close_button = div()
-                    .id(("document-tab-close", index))
-                    .group("doc-tab-close")
-                    .w(px(16.0))
-                    .h(px(16.0))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(4.0))
-                    .hover(|this| {
-                        // One step darker than the tab's own hover fill —
-                        // neutral, no loud accent colors.
-                        this.bg({
-                            let mut bg = c.dialog_secondary_button_hover;
-                            bg.l = (bg.l - 0.05).max(0.0);
-                            bg
-                        })
-                    })
-                    .cursor_pointer()
-                    .child({
-                        // Faded body color rather than dialog_muted: inactive
-                        // tabs show no other text, so the X needs to stand on
-                        // its own while staying quieter than the tab title.
-                        let mut idle_icon = c.text_default;
-                        idle_icon.a *= 0.6;
-                        svg()
+                let close_label = format!("{} — {title}", strings.menu_close_tab);
+                let close_button = Button::new(("document-tab-close", path_hash))
+                    .debug_selector(move || format!("document-tab-close-{index}"))
+                    .ghost()
+                    .xsmall()
+                    .tab_stop(active)
+                    .accessibility_label(close_label.clone())
+                    .tooltip(close_label)
+                    .icon(
+                        Icon::empty()
                             .path(TAB_CLOSE_ICON)
-                            .size(px(10.0))
-                            .text_color(idle_icon)
-                            .group_hover("doc-tab-close", |this| this.text_color(c.text_default))
-                    })
+                            .text_color(c.dialog_muted),
+                    )
                     .on_click({
                         let close_editor = editor.clone();
-                        move |_event, window, cx| {
-                            let _ = close_editor.update(cx, |editor, cx| {
-                                editor.close_workspace_document(&close_path, window, cx);
-                            });
+                        move |_, window, cx| {
                             cx.stop_propagation();
+                            if let Err(error) = close_editor.update(cx, |editor, cx| {
+                                editor.close_workspace_document(&close_path, window, cx);
+                            }) {
+                                eprintln!("关闭标签失败：{error}");
+                            }
                         }
-                    })
-                    .into_any_element();
-                div()
-                    .id(("document-tab", stable_node_hash(&path.to_string_lossy())))
+                    });
+                let tab = DocumentTab::new(("document-tab", path_hash))
+                    .selected(active && self.split_active)
+                    .accessibility_label(title.clone())
+                    .set_position(index + 1, self.workspace.open_documents.len())
                     .debug_selector(move || format!("document-tab-{index}"))
                     .group("doc-tab")
                     .h_full()
-                    .min_w(px(120.0))
-                    .max_w(px(220.0))
-                    .px(px(10.0))
+                    .min_w(rems(7.5))
+                    .max_w(rems(13.75))
+                    .px_2p5()
                     .flex_shrink_0()
                     .flex()
                     .items_center()
-                    .gap(px(6.0))
+                    .gap_1p5()
                     .relative()
                     .when(group_accent.is_none(), |this| {
                         this.border_r(px(1.0)).border_color(c.dialog_border)
@@ -130,7 +137,7 @@ impl Editor {
                     .bg(if active {
                         c.editor_background
                     } else {
-                        hsla(0.0, 0.0, 0.0, 0.0)
+                        cx.theme().transparent
                     })
                     .hover(|this| {
                         this.bg(if active {
@@ -139,8 +146,15 @@ impl Editor {
                             c.dialog_secondary_button_hover
                         })
                     })
-                    .cursor_pointer()
-                    .text_size(px(theme.typography.ui_text_size(12.0)))
+                    .text_xs()
+                    .focus_visible(|style| {
+                        style.bg(cx.theme().selection).border_color(cx.theme().ring)
+                    })
+                    .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+                    .when(active, |tab| {
+                        tab.track_focus(&tabs_focus)
+                            .on_key_down(cx.listener(Self::on_document_tab_key_down))
+                    })
                     .text_color(if active {
                         c.text_default
                     } else {
@@ -158,7 +172,9 @@ impl Editor {
                             .items_center()
                             .child(
                                 div()
-                                    .debug_selector(move || format!("tab-group-left-border-{group_id:?}-{index}"))
+                                    .debug_selector(move || {
+                                        format!("tab-group-left-border-{group_id:?}-{index}")
+                                    })
                                     .w_full()
                                     .h(px(18.0))
                                     .rounded(px(1.0))
@@ -172,7 +188,11 @@ impl Editor {
                             .left_0()
                             .right_0()
                             .h(px(2.0))
-                            .bg(if self.split_active { c.dialog_primary_button_bg } else { c.dialog_border })
+                            .bg(if self.split_active {
+                                c.dialog_primary_button_bg
+                            } else {
+                                c.dialog_border
+                            })
                     }))
                     .children([false, true].into_iter().map(|after| {
                         let drop_target_path = path.clone();
@@ -201,7 +221,13 @@ impl Editor {
                             })
                             .on_drop(move |drag: &EditorFileDrag, window, cx| {
                                 if let Err(error) = drop_editor.update(cx, |editor, cx| {
-                                    editor.receive_editor_file_drop(drag, Some((drop_target_path.clone(), after)), None, window, cx);
+                                    editor.receive_editor_file_drop(
+                                        drag,
+                                        Some((drop_target_path.clone(), after)),
+                                        None,
+                                        window,
+                                        cx,
+                                    );
                                 }) {
                                     eprintln!("移动标签失败：{error}");
                                 }
@@ -234,7 +260,9 @@ impl Editor {
                             title_el = title_el.italic();
                         }
                         title_el
-                            .when(untitled_document_id(&path).is_some(), |title| title.debug_selector(|| "untitled-tab".into()))
+                            .when(untitled_document_id(&path).is_some(), |title| {
+                                title.debug_selector(|| "untitled-tab".into())
+                            })
                             .child(title)
                     })
                     .children(dirty.then(|| {
@@ -251,7 +279,7 @@ impl Editor {
                     }))
                     .child(close_button)
                     .on_click(move |_event, window, cx| {
-                        let _ = tab_editor.update(cx, |editor, cx| {
+                        if let Err(error) = tab_editor.update(cx, |editor, cx| {
                             // 点标签栏只是激活：不把预览标签升级为固定（用户需求
                             // 的预览语义：只有双击树节点或产生修改才固定）。
                             editor.open_workspace_file_in_mode(
@@ -260,7 +288,9 @@ impl Editor {
                                 window,
                                 cx,
                             );
-                        });
+                        }) {
+                            eprintln!("激活标签失败：{error}");
+                        }
                     })
                     .on_drag(
                         EditorFileDrag {
@@ -281,22 +311,108 @@ impl Editor {
                     .on_mouse_down(MouseButton::Middle, {
                         let middle_editor = editor.clone();
                         move |_event, window, cx| {
-                            let _ = middle_editor.update(cx, |editor, cx| {
+                            if let Err(error) = middle_editor.update(cx, |editor, cx| {
                                 editor.close_workspace_document(&middle_click_path, window, cx);
-                            });
+                            }) {
+                                eprintln!("关闭标签失败：{error}");
+                            }
                             cx.stop_propagation();
                         }
                     })
                     .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
-                        let _ = context_editor.update(cx, |editor, cx| {
-                            editor.open_tab_context_menu(event.position, index, cx);
-                        });
+                        if let Err(error) = context_editor.update(cx, |editor, cx| {
+                            if let Some(index) = editor
+                                .workspace
+                                .open_documents
+                                .iter()
+                                .position(|tab| tab.path == context_path)
+                            {
+                                editor.open_tab_context_menu(event.position, index, cx);
+                            }
+                        }) {
+                            eprintln!("打开标签菜单失败：{error}");
+                        }
                         cx.stop_propagation();
                     })
-                    .into_any_element()
+                    .into_any_element();
+                (path_hash, tab)
             })
             .collect::<Vec<_>>();
 
         tabs
+    }
+
+    pub(super) fn reveal_document_tab(
+        &mut self,
+        group: EntityId,
+        path: PathBuf,
+        index: usize,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let key = WorkspaceTabRevealKey {
+            group,
+            path,
+            index,
+            window_width: window.viewport_size().width,
+            viewport_width: self.workspace.tabs_scroll_handle.bounds().size.width,
+            rem_size: window.rem_size(),
+            font_family: cx.theme().font_family.clone(),
+        };
+        if self.workspace.tabs_revealed.as_ref() != Some(&key) {
+            self.workspace.tabs_scroll_handle.scroll_to_item(index);
+            self.workspace.tabs_revealed = Some(key);
+            // 首帧的视口尚未落地；补帧后重核几何，普通重绘不干预手动滚动。
+            self.schedule_followup_frame(cx);
+        }
+    }
+
+    fn on_document_tab_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(focus) = self.workspace.tabs_focus.as_ref().cloned() else {
+            return;
+        };
+        if !focus.is_focused(window) || event.keystroke.modifiers.modified() {
+            return;
+        }
+        let Some(index) = self
+            .workspace
+            .open_documents
+            .iter()
+            .position(|tab| Some(&tab.path) == self.workspace.active_document.as_ref())
+        else {
+            return;
+        };
+        let last = self.workspace.open_documents.len().saturating_sub(1);
+        let next = match event.keystroke.key.as_str() {
+            "left" => index.saturating_sub(1),
+            "right" => index.saturating_add(1).min(last),
+            "home" => 0,
+            "end" => last,
+            _ => return,
+        };
+        if next != index {
+            let Some(path) = self
+                .workspace
+                .open_documents
+                .get(next)
+                .map(|tab| tab.path.clone())
+            else {
+                return;
+            };
+            self.open_workspace_file_in_mode(path, WorkspaceOpenMode::Activate, window, cx);
+            if !self.modal_is_open() {
+                self.pending_focus = None;
+                window.focus(&focus, cx);
+            }
+            if self.split_parent.is_none() {
+                self.workspace.tabs_scroll_handle.scroll_to_item(next);
+            }
+        }
+        cx.stop_propagation();
     }
 }
