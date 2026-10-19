@@ -626,6 +626,7 @@ impl Editor {
         depth: usize,
         theme: &Theme,
         editor: &WeakEntity<Editor>,
+        cx: &App,
     ) -> AnyElement {
         let Some(edit) = self.workspace.name_edit.as_ref() else {
             return div().into_any_element();
@@ -639,9 +640,7 @@ impl Editor {
                 }
         );
         let icon = if is_directory {
-            gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Folder)
-                .text_color(theme.colors.dialog_muted)
-                .into_any_element()
+            Self::render_workspace_folder_icon(theme, cx)
         } else {
             let path = if is_markdown_document(Path::new(&edit.draft)) {
                 MARKDOWN_ICON

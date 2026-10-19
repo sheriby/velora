@@ -95,6 +95,7 @@
 | `image_caption_text` | 颜色 | 图注文字 |
 | `scrollbar_thumb` | 颜色 | 滚动条滑块 |
 | `cursor` | 颜色 | 光标 |
+| `workspace_folder_icon` | 颜色 | 蓝色样式的文件夹图标，默认沿用原有蓝色 |
 | `selection` | 颜色 | 选区 |
 | `dialog_backdrop` | 颜色 | 对话框遮罩 |
 | `dialog_surface` | 颜色 | 对话框面板 |

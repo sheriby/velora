@@ -469,6 +469,9 @@ pub struct I18nStrings {
     pub command_zoom_reset: String,
     /// 文件页：文件树排序行标签。
     pub preferences_file_tree_sort: String,
+    pub preferences_folder_icon_style: String,
+    pub folder_icon_blue: String,
+    pub folder_icon_outline: String,
     /// 文件页：自动保存间隔行标签。
     pub preferences_file_autosave_debounce: String,
     /// 文件页：自动保存开关行标签。

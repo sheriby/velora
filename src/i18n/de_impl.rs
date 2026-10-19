@@ -734,6 +734,9 @@ impl I18nStringsDe {
             preferences_file_tree_sort: self
                 .preferences_file_tree_sort
                 .unwrap_or(defaults.preferences_file_tree_sort),
+            preferences_folder_icon_style: self.preferences_folder_icon_style.unwrap_or(defaults.preferences_folder_icon_style),
+            folder_icon_blue: self.folder_icon_blue.unwrap_or(defaults.folder_icon_blue),
+            folder_icon_outline: self.folder_icon_outline.unwrap_or(defaults.folder_icon_outline),
             preferences_file_autosave_debounce: self
                 .preferences_file_autosave_debounce
                 .unwrap_or(defaults.preferences_file_autosave_debounce),

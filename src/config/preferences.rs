@@ -254,6 +254,29 @@ impl TreeSortPreference {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FolderIconStyle {
+    #[default]
+    Blue,
+    Outline,
+}
+
+impl FolderIconStyle {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Blue => "blue",
+            Self::Outline => "outline",
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "outline" => Self::Outline,
+            _ => Self::Blue,
+        }
+    }
+}
+
 /// 外部变更策略（roadmap H2）：默认自动重载未编辑的文档。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum ExternalChangePolicy {
@@ -443,6 +466,7 @@ pub(crate) struct AppPreferences {
     pub(crate) autosave: bool,
     /// File tree ordering: "name" | "mtime" | "type".
     pub(crate) tree_sort: TreeSortPreference,
+    pub(crate) folder_icon_style: FolderIconStyle,
     /// 启动时侧边栏开关与面板：默认都跟随上次（见会话里的记忆）。
     pub(crate) sidebar_open: SidebarOpenPreference,
     pub(crate) sidebar_panel: SidebarPanelPreference,
@@ -482,6 +506,7 @@ impl Default for AppPreferences {
             autosave_debounce_ms: 800,
             autosave: true,
             tree_sort: TreeSortPreference::default(),
+            folder_icon_style: FolderIconStyle::default(),
             sidebar_open: SidebarOpenPreference::default(),
             sidebar_panel: SidebarPanelPreference::default(),
             new_file_template: String::new(),
@@ -542,6 +567,7 @@ pub struct EditorSettings {
     autosave_debounce_ms: u64,
     autosave: bool,
     tree_sort: TreeSortPreference,
+    folder_icon_style: FolderIconStyle,
     sidebar_open: SidebarOpenPreference,
     sidebar_panel: SidebarPanelPreference,
     new_file_template: String,
@@ -615,6 +641,10 @@ impl EditorSettings {
             .map(|settings| settings.tree_sort)
             .or_else(|| stored.as_ref().map(|preferences| preferences.tree_sort))
             .unwrap_or_default();
+        let folder_icon_style = cx.try_global::<Self>()
+            .map(|settings| settings.folder_icon_style)
+            .or_else(|| stored.as_ref().map(|preferences| preferences.folder_icon_style))
+            .unwrap_or_default();
         let sidebar_open = cx
             .try_global::<Self>()
             .map(|settings| settings.sidebar_open)
@@ -681,6 +711,7 @@ impl EditorSettings {
             autosave_debounce_ms,
             autosave,
             tree_sort,
+            folder_icon_style,
             sidebar_open,
             sidebar_panel,
             new_file_template,
@@ -897,6 +928,18 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.tree_sort)
             .unwrap_or_default()
+    }
+
+    pub(crate) fn folder_icon_style(cx: &App) -> FolderIconStyle {
+        cx.try_global::<Self>()
+            .map(|settings| settings.folder_icon_style)
+            .unwrap_or_default()
+    }
+
+    fn set_folder_icon_style(cx: &mut App, style: FolderIconStyle) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _| settings.folder_icon_style = style);
+        }
     }
 
     /// 外部变更策略（roadmap H2）；默认自动重载。

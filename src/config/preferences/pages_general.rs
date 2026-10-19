@@ -129,6 +129,33 @@ impl PreferencesWindow {
             cx,
             |this, value, _, _| this.tree_sort = TreeSortPreference::from_str(value),
         );
+        let folder_icons = self.choice_field(
+            "preferences-folder-icon-style",
+            strings.preferences_folder_icon_style.clone(),
+            self.folder_icon_style.as_str(),
+            |_| {
+                [
+                    (FolderIconStyle::Blue, strings.folder_icon_blue.clone()),
+                    (
+                        FolderIconStyle::Outline,
+                        strings.folder_icon_outline.clone(),
+                    ),
+                ]
+                .into_iter()
+                .map(|(value, label)| {
+                    PreferenceChoice::new(
+                        value.as_str(),
+                        label,
+                        format!("preferences-folder-icon-{}", value.as_str()),
+                    )
+                })
+                .collect()
+            },
+            false,
+            window,
+            cx,
+            |this, value, _, _| this.folder_icon_style = FolderIconStyle::from_str(value),
+        );
         let debounce = self.choice_field(
             "preferences-autosave-dropdown",
             strings.preferences_file_autosave_debounce.clone(),
@@ -307,6 +334,10 @@ impl PreferencesWindow {
                     strings.preferences_group_workspace.clone(),
                     vec![
                         Self::preference_row(strings.preferences_file_tree_sort.clone(), tree_sort),
+                        Self::preference_row(
+                            strings.preferences_folder_icon_style.clone(),
+                            folder_icons,
+                        ),
                         Self::preference_row(
                             strings.preferences_file_external_change.clone(),
                             external,

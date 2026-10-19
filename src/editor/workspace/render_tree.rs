@@ -21,6 +21,19 @@ impl Editor {
         }
     }
 
+    pub(super) fn render_workspace_folder_icon(theme: &Theme, cx: &App) -> AnyElement {
+        let icon = match crate::config::EditorSettings::folder_icon_style(cx) {
+            crate::config::FolderIconStyle::Blue => gpui_kit::component::Icon::default()
+                .path("icon/workspace/folder.svg")
+                .text_color(theme.colors.workspace_folder_icon),
+            crate::config::FolderIconStyle::Outline => {
+                gpui_kit::component::Icon::new(IconName::Folder)
+                    .text_color(theme.colors.dialog_muted)
+            }
+        };
+        icon.size_4().flex_none().into_any_element()
+    }
+
     pub(crate) fn render_workspace_files_tree(
         &mut self,
         theme: &Theme,
@@ -191,8 +204,9 @@ impl Editor {
         depth: usize,
         theme: &Theme,
         editor: &WeakEntity<Editor>,
+        cx: &App,
     ) -> AnyElement {
-        let row = self.render_workspace_name_row(depth, theme, editor);
+        let row = self.render_workspace_name_row(depth, theme, editor, cx);
         let owner = editor.clone();
         let focus = self
             .workspace
@@ -318,7 +332,7 @@ impl Editor {
                 self.render_workspace_node(node, *depth, theme, editor, cx)
             }
             WorkspaceTreeRow::NameEdit(depth) => {
-                self.render_workspace_measured_name_row(*depth, theme, editor)
+                self.render_workspace_measured_name_row(*depth, theme, editor, cx)
             }
             WorkspaceTreeRow::Loading(id, depth) => div()
                 .id(("workspace-tree-loading", stable_node_hash(id)))
@@ -348,7 +362,7 @@ impl Editor {
             matches!(&edit.kind, WorkspaceEditKind::Rename { source, .. }
                 if tree_node_path(node) == source.as_path())
         }) {
-            return self.render_workspace_measured_name_row(depth, theme, editor);
+            return self.render_workspace_measured_name_row(depth, theme, editor, cx);
         }
         let expanded = self.workspace.expanded.contains(&node.id);
         let expandable = node.kind_dir() || !node.children.is_empty();
@@ -380,11 +394,7 @@ impl Editor {
             div().size_5().flex_none().into_any_element()
         };
         let icon = match &node.kind {
-            WorkspaceTreeKind::Directory(_) => Some(
-                gpui_kit::component::Icon::new(IconName::Folder)
-                    .text_color(cx.theme().muted_foreground)
-                    .into_any_element(),
-            ),
+            WorkspaceTreeKind::Directory(_) => Some(Self::render_workspace_folder_icon(theme, cx)),
             WorkspaceTreeKind::Heading { .. } => None,
             kind => {
                 let path = match kind {

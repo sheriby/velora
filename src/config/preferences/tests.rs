@@ -1095,6 +1095,7 @@
             autosave_debounce_ms: 800,
             autosave: true,
             tree_sort: TreeSortPreference::default(),
+            folder_icon_style: super::FolderIconStyle::default(),
             sidebar_open: SidebarOpenPreference::Always,
             sidebar_panel: SidebarPanelPreference::Outline,
             new_file_template: String::new(),
@@ -1226,6 +1227,7 @@
             autosave_debounce_ms: 800,
             autosave: true,
             tree_sort: TreeSortPreference::default(),
+            folder_icon_style: super::FolderIconStyle::default(),
             sidebar_open: SidebarOpenPreference::default(),
             sidebar_panel: SidebarPanelPreference::default(),
             new_file_template: String::new(),
@@ -1248,6 +1250,7 @@
             BTreeMap::from([("save_document".to_string(), vec!["ctrl-alt-s".to_string()])]),
             &StatusBarPreferences::default(),
             TreeSortPreference::Name,
+            super::FolderIconStyle::default(),
             SidebarOpenPreference::Never,
             SidebarPanelPreference::Files,
             800,
@@ -1711,6 +1714,7 @@ fn window_size_bounds_are_shared_by_read_and_save() {
         BTreeMap::new(),
         &loaded.status_bar,
         loaded.tree_sort,
+        loaded.folder_icon_style,
         loaded.sidebar_open,
         loaded.sidebar_panel,
         loaded.autosave_debounce_ms,
@@ -1882,6 +1886,7 @@ async fn installing_settings_reads_the_config_file_once(cx: &mut gpui::TestAppCo
                 ..on_disk.status_bar.clone()
             },
             on_disk.tree_sort,
+            on_disk.folder_icon_style,
             on_disk.sidebar_open,
             on_disk.sidebar_panel,
             on_disk.autosave_debounce_ms,
@@ -2221,5 +2226,118 @@ fn preferences_save_still_persists_main_settings_when_the_ai_page_fails(cx: &mut
         persisted.smart_punctuation,
         "AI 页失败不应阻断其余偏好落盘"
     );
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+}
+
+#[test]
+fn folder_icon_style_defaults_to_blue_and_preserves_a_saved_choice() {
+    for (source, expected) in [
+        ("", "blue"),
+        ("[editor]\nfolder_icon_style = \"outline\"\n", "outline"),
+        ("[editor]\nfolder_icon_style = \"unknown\"\n", "blue"),
+    ] {
+        let value: toml::Value = toml::from_str(source).unwrap();
+        let (preferences, _) =
+            super::persistence::load_preferences_from_toml_value(&value, "zh-CN");
+        let encoded =
+            toml::Value::try_from(super::persistence::PreferencesFile::from(&preferences)).unwrap();
+        assert_eq!(
+            encoded
+                .get("editor")
+                .and_then(|editor| editor.get("folder_icon_style"))
+                .and_then(toml::Value::as_str),
+            Some(expected),
+            "旧配置默认蓝色，已选的样式应保真"
+        );
+    }
+}
+
+#[gpui::test]
+fn folder_icon_style_select_respects_save_cancel_and_reopening(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-folder-icons-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    init_preferences_test_app(cx);
+    let dirs = VeloraConfigDirs::from_root(&root);
+    save_app_preferences_with_dirs(&AppPreferences::default(), &dirs).unwrap();
+    for save in [false, true] {
+        let preferences = read_app_preferences_with_dirs(&dirs).unwrap();
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_size(
+                cx,
+                preferences,
+                default_theme_options(),
+                "Preferences".into(),
+                gpui::size(px(1000.0), px(900.0)),
+            )
+        });
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        for _ in 0..3 {
+            visual.update(|window, cx| window.draw(cx).clear(cx));
+            visual.run_until_parked();
+        }
+        visual.update(|window, cx| window.click("preferences-folder-icon-style", cx));
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            window.press("down", cx);
+            window.press("enter", cx);
+        });
+        visual.run_until_parked();
+        handle
+            .update(cx, |preferences, _, cx| {
+                assert_eq!(
+                    preferences.folder_icon_style,
+                    super::FolderIconStyle::Outline
+                );
+                assert!(preferences.has_unsaved_changes());
+                assert_eq!(
+                    EditorSettings::folder_icon_style(cx),
+                    super::FolderIconStyle::Blue,
+                    "草稿选择不能提前修改编辑器外观"
+                );
+            })
+            .unwrap();
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            window.click(
+                if save {
+                    "preferences-save"
+                } else {
+                    "preferences-cancel"
+                },
+                cx,
+            );
+        });
+        visual.run_until_parked();
+        let expected = if save {
+            super::FolderIconStyle::Outline
+        } else {
+            super::FolderIconStyle::Blue
+        };
+        assert_eq!(
+            read_app_preferences_with_dirs(&dirs)
+                .unwrap()
+                .folder_icon_style,
+            expected
+        );
+        cx.read(|cx| assert_eq!(EditorSettings::folder_icon_style(cx), expected));
+    }
+    let persisted = read_app_preferences_with_dirs(&dirs).unwrap();
+    let handle = cx.update(|cx| {
+        open_preferences_window_with_state(
+            cx,
+            persisted,
+            default_theme_options(),
+            "Preferences".into(),
+        )
+    });
+    handle
+        .update(cx, |preferences, _, _| {
+            assert_eq!(
+                preferences.folder_icon_style,
+                super::FolderIconStyle::Outline
+            );
+            assert!(!preferences.has_unsaved_changes());
+        })
+        .unwrap();
     cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
 }

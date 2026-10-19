@@ -39,6 +39,7 @@ struct EditorPreferencesFile {
     autosave_debounce_ms: u64,
     autosave: bool,
     tree_sort: String,
+    folder_icon_style: String,
     sidebar_open: String,
     sidebar_panel: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -161,6 +162,7 @@ impl From<&AppPreferences> for PreferencesFile {
                 autosave_debounce_ms: value.autosave_debounce_ms,
                 autosave: value.autosave,
                 tree_sort: value.tree_sort.as_str().into(),
+                folder_icon_style: value.folder_icon_style.as_str().into(),
                 sidebar_open: value.sidebar_open.as_str().into(),
                 sidebar_panel: value.sidebar_panel.as_str().into(),
                 new_file_template: value.new_file_template.clone(),
@@ -413,6 +415,11 @@ pub(crate) fn app_preferences_from_toml_value(
         .and_then(toml::Value::as_str)
         .map(TreeSortPreference::from_str)
         .unwrap_or_default();
+    let folder_icon_style = editor
+        .and_then(|editor| editor.get("folder_icon_style"))
+        .and_then(toml::Value::as_str)
+        .map(FolderIconStyle::from_str)
+        .unwrap_or_default();
     let sidebar_open = editor
         .and_then(|editor| editor.get("sidebar_open"))
         .and_then(toml::Value::as_str)
@@ -571,6 +578,7 @@ pub(crate) fn app_preferences_from_toml_value(
         autosave_debounce_ms,
         autosave,
         tree_sort,
+        folder_icon_style,
         sidebar_open,
         sidebar_panel,
         new_file_template,
@@ -746,6 +754,7 @@ pub(crate) fn save_preferences_from_window(
     keybindings: BTreeMap<String, Vec<String>>,
     status_bar: &StatusBarPreferences,
     tree_sort: TreeSortPreference,
+    folder_icon_style: FolderIconStyle,
     sidebar_open: SidebarOpenPreference,
     sidebar_panel: SidebarPanelPreference,
     autosave_debounce_ms: u64,
@@ -773,6 +782,7 @@ pub(crate) fn save_preferences_from_window(
         keybindings,
         status_bar,
         tree_sort,
+        folder_icon_style,
         sidebar_open,
         sidebar_panel,
         autosave_debounce_ms,
@@ -803,6 +813,7 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     keybindings: BTreeMap<String, Vec<String>>,
     status_bar: &StatusBarPreferences,
     tree_sort: TreeSortPreference,
+    folder_icon_style: FolderIconStyle,
     sidebar_open: SidebarOpenPreference,
     sidebar_panel: SidebarPanelPreference,
     autosave_debounce_ms: u64,
@@ -831,6 +842,7 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     preferences.fonts = fonts.clone();
     preferences.writing_width = writing_width;
     preferences.tree_sort = tree_sort;
+    preferences.folder_icon_style = folder_icon_style;
     preferences.sidebar_open = sidebar_open;
     preferences.sidebar_panel = sidebar_panel;
     preferences.autosave_debounce_ms = autosave_debounce_ms;

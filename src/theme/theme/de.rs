@@ -89,6 +89,7 @@ struct ThemeColorsDe {
     scrollbar_thumb: Hsla,
     cursor: Hsla,
     selection: Hsla,
+    workspace_folder_icon: Option<Hsla>,
     dialog_backdrop: Hsla,
     dialog_surface: Hsla,
     dialog_border: Hsla,
@@ -339,6 +340,9 @@ impl<'de> Deserialize<'de> for ThemeColors {
             scrollbar_thumb: raw.scrollbar_thumb,
             cursor: raw.cursor,
             selection: raw.selection,
+            workspace_folder_icon: raw
+                .workspace_folder_icon
+                .unwrap_or_else(|| Hsla::from(rgba(0x4a93d8ff))),
             dialog_backdrop: raw.dialog_backdrop,
             dialog_surface: raw.dialog_surface,
             dialog_border: raw.dialog_border,

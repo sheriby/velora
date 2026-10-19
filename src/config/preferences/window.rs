@@ -42,6 +42,7 @@ pub(crate) struct PreferencesWindow {
     /// 右侧内容区的滚动位置（单测用它验「真的能滚」）。
     pub(super) page_scroll: ScrollHandle,
     pub(super) tree_sort: TreeSortPreference,
+    pub(super) folder_icon_style: FolderIconStyle,
     pub(super) sidebar_open: SidebarOpenPreference,
     pub(super) sidebar_panel: SidebarPanelPreference,
     pub(super) file_history: HistoryPolicy,
@@ -58,6 +59,7 @@ pub(crate) struct PreferencesWindow {
     pub(super) external_change_policy: ExternalChangePolicy,
     pub(super) delete_policy: DeletePolicy,
     pub(super) saved_tree_sort: TreeSortPreference,
+    saved_folder_icon_style: FolderIconStyle,
     pub(super) saved_sidebar_open: SidebarOpenPreference,
     pub(super) saved_sidebar_panel: SidebarPanelPreference,
     pub(super) saved_autosave_debounce_ms: u64,
@@ -105,6 +107,7 @@ impl PreferencesWindow {
         let writing_width = preferences.writing_width;
         let keybindings = preferences.keybindings;
         let tree_sort = preferences.tree_sort;
+        let folder_icon_style = preferences.folder_icon_style;
         let sidebar_open = preferences.sidebar_open;
         let sidebar_panel = preferences.sidebar_panel;
         let autosave_debounce_ms = preferences.autosave_debounce_ms;
@@ -141,6 +144,7 @@ impl PreferencesWindow {
             saved_writing_width: writing_width,
             saved_keybindings: keybindings,
             tree_sort,
+            folder_icon_style,
             sidebar_open,
             sidebar_panel,
             file_history: preferences.file_history,
@@ -157,6 +161,7 @@ impl PreferencesWindow {
             external_change_policy,
             delete_policy,
             saved_tree_sort: tree_sort,
+            saved_folder_icon_style: folder_icon_style,
             saved_autosave_debounce_ms: autosave_debounce_ms,
             saved_autosave: autosave,
             saved_remember_window_bounds: remember_window_bounds,
@@ -219,6 +224,7 @@ impl PreferencesWindow {
             || self.status_bar_show_sidebar_toggle != self.saved_status_bar_show_sidebar_toggle
             || self.status_bar_show_mode_switch != self.saved_status_bar_show_mode_switch
             || self.tree_sort != self.saved_tree_sort
+            || self.folder_icon_style != self.saved_folder_icon_style
             || self.sidebar_open != self.saved_sidebar_open
             || self.sidebar_panel != self.saved_sidebar_panel
             || self.file_history != self.saved_file_history
@@ -325,6 +331,7 @@ impl PreferencesWindow {
                 custom_buttons: Vec::new(),
             },
             self.tree_sort,
+            self.folder_icon_style,
             self.sidebar_open,
             self.sidebar_panel,
             self.autosave_debounce_ms,
@@ -362,6 +369,7 @@ impl PreferencesWindow {
 
         // 同步新设置到全局缓存并刷新（roadmap H1）。
         EditorSettings::set_tree_sort(cx, self.tree_sort);
+        EditorSettings::set_folder_icon_style(cx, self.folder_icon_style);
         EditorSettings::set_sidebar_open_on_startup(cx, self.sidebar_open);
         EditorSettings::set_sidebar_panel_on_startup(cx, self.sidebar_panel);
         EditorSettings::set_autosave_debounce_ms(cx, self.autosave_debounce_ms);
@@ -427,6 +435,7 @@ impl PreferencesWindow {
         self.saved_status_bar_show_sidebar_toggle = self.status_bar_show_sidebar_toggle;
         self.saved_status_bar_show_mode_switch = self.status_bar_show_mode_switch;
         self.saved_tree_sort = self.tree_sort;
+        self.saved_folder_icon_style = self.folder_icon_style;
         self.saved_sidebar_open = self.sidebar_open;
         self.saved_sidebar_panel = self.sidebar_panel;
         self.saved_file_history = self.file_history;

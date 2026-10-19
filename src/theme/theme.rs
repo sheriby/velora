@@ -229,6 +229,8 @@ pub struct ThemeColors {
     pub cursor: Hsla,
     /// Text-selection highlight colour.
     pub selection: Hsla,
+    /// 文件树中蓝色样式的文件夹图标颜色。
+    pub workspace_folder_icon: Hsla,
     /// Semi-transparent backdrop behind the unsaved-changes dialog.
     pub dialog_backdrop: Hsla,
     /// Background of the unsaved-changes dialog.

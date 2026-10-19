@@ -14,7 +14,7 @@ mod session;
 pub(crate) mod file_history;
 
 pub(crate) use preferences::{
-    DeletePolicy, EditorSettings, ExportThemePreference, ExternalChangePolicy, ImagePasteBehavior,
+    DeletePolicy, EditorSettings, ExportThemePreference, ExternalChangePolicy, FolderIconStyle, ImagePasteBehavior,
     SidebarOpenPreference, SidebarPanelPreference, StartupOpenPreference, TreeSortPreference,
     WindowFrame, WindowOpenPosition,
     apply_configured_language, apply_configured_theme, export_theme_preference,
