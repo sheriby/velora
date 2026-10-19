@@ -50,11 +50,6 @@ impl EntityInputHandler for Editor {
         };
         let was_marked = self.input_marked(kind).is_some();
         match kind {
-            OverlayInputKind::CommandPalette => {
-                if let Some(state) = self.command_palette.as_mut() {
-                    state.marked_range = None;
-                }
-            }
             OverlayInputKind::FormulaEditor => {
                 if let Some(state) = self.formula_editor.as_mut() {
                     state.marked_range = None;

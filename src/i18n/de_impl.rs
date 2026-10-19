@@ -702,6 +702,9 @@ impl I18nStringsDe {
             command_palette_placeholder: self
                 .command_palette_placeholder
                 .unwrap_or(defaults.command_palette_placeholder),
+            command_palette_no_results: self
+                .command_palette_no_results
+                .unwrap_or(defaults.command_palette_no_results),
             command_toggle_reading_mode: self.command_toggle_reading_mode.unwrap_or(defaults.command_toggle_reading_mode),
             reading_mode_enabled: self.reading_mode_enabled.unwrap_or(defaults.reading_mode_enabled),
             command_toggle_focus_mode: self

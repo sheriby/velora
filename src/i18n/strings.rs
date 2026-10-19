@@ -443,6 +443,7 @@ pub struct I18nStrings {
     pub tree_sort_type: String,
     /// Command palette input placeholder.
     pub command_palette_placeholder: String,
+    pub command_palette_no_results: String,
     pub command_toggle_reading_mode: String,
     pub reading_mode_enabled: String,
     /// Command label: toggle focus mode.

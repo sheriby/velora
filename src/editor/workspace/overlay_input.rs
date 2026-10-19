@@ -10,25 +10,11 @@ impl Editor {
         {
             return Some(OverlayInputKind::FormulaEditor);
         }
-        if self
-            .command_palette
-            .as_ref()
-            .and_then(|state| state.focus.as_ref())
-            .is_some_and(|focus| focus.is_focused(window))
-        {
-            return Some(OverlayInputKind::CommandPalette);
-        }
-
         None
     }
 
     pub(crate) fn input_text(&self, kind: OverlayInputKind) -> &str {
         match kind {
-            OverlayInputKind::CommandPalette => self
-                .command_palette
-                .as_ref()
-                .map(|state| state.query.as_str())
-                .unwrap_or_default(),
             OverlayInputKind::FormulaEditor => self
                 .formula_editor
                 .as_ref()
@@ -39,11 +25,6 @@ impl Editor {
 
     pub(crate) fn input_selection(&self, kind: OverlayInputKind) -> Range<usize> {
         match kind {
-            OverlayInputKind::CommandPalette => self
-                .command_palette
-                .as_ref()
-                .map(|state| state.selected_range.clone())
-                .unwrap_or_default(),
             OverlayInputKind::FormulaEditor => self
                 .formula_editor
                 .as_ref()
@@ -52,17 +33,8 @@ impl Editor {
         }
     }
 
-    /// 输入法正在拼字：确认键（回车、退格）要交还给输入法，不能当成「执行」。
-    pub(crate) fn overlay_is_composing(&self, kind: OverlayInputKind) -> bool {
-        self.input_marked(kind).is_some()
-    }
-
     pub(crate) fn input_marked(&self, kind: OverlayInputKind) -> Option<Range<usize>> {
         match kind {
-            OverlayInputKind::CommandPalette => self
-                .command_palette
-                .as_ref()
-                .and_then(|state| state.marked_range.clone()),
             OverlayInputKind::FormulaEditor => self
                 .formula_editor
                 .as_ref()
@@ -87,11 +59,7 @@ impl Editor {
         if !old.is_char_boundary(start) || !old.is_char_boundary(end) {
             return;
         }
-        // 公式草稿是多行输入，换行是合法内容；其余 overlay 输入仍是单行。
-        let inserted = match kind {
-            OverlayInputKind::FormulaEditor => new_text.replace('\r', ""),
-            _ => new_text.replace(['\r', '\n'], " "),
-        };
+        let inserted = new_text.replace('\r', "");
         let updated = {
             let mut updated = old.clone();
             updated.replace_range(start..end, &inserted);
@@ -106,14 +74,6 @@ impl Editor {
             .unwrap_or(inserted_end..inserted_end);
         let marked_range = (marked && !inserted.is_empty()).then_some(start..inserted_end);
         match kind {
-            OverlayInputKind::CommandPalette => {
-                if let Some(state) = self.command_palette.as_mut() {
-                    state.query = updated;
-                    state.selected_range = selection;
-                    state.marked_range = marked_range;
-                    state.selected = 0;
-                }
-            }
             OverlayInputKind::FormulaEditor => {
                 if let Some(state) = self.formula_editor.as_mut() {
                     if updated != old {

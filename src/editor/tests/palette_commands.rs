@@ -67,6 +67,94 @@ fn open_palette(editor: &Entity<Editor>, cx: &mut VisualTestContext) {
     redraw(cx);
 }
 
+#[gpui::test]
+async fn palette_query_edits_at_the_caret_and_undo_preserves_the_document(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(DOC, cx);
+    open_palette(&editor, cx);
+    cx.simulate_input("alpha");
+    cx.simulate_keystrokes("left backspace");
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor
+                .command_palette
+                .as_ref()
+                .unwrap()
+                .input
+                .read(cx)
+                .value()
+                .as_ref(),
+            "alpa"
+        );
+        assert_eq!(editor.buffer.text(), DOC);
+    });
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-z"
+    } else {
+        "ctrl-z"
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor
+                .command_palette
+                .as_ref()
+                .unwrap()
+                .input
+                .read(cx)
+                .value()
+                .as_ref(),
+            "alpha"
+        );
+        assert_eq!(editor.buffer.text(), DOC);
+    });
+    set_clipboard("段落\n格式", cx);
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-a cmd-v"
+    } else {
+        "ctrl-a ctrl-v"
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor
+                .command_palette
+                .as_ref()
+                .unwrap()
+                .input
+                .read(cx)
+                .value()
+                .as_ref(),
+            "段落 格式"
+        );
+        assert_eq!(editor.buffer.text(), DOC);
+    });
+    cx.simulate_keystrokes("escape");
+    assert!(editor.read_with(cx, |editor, _| editor.command_palette.is_none()));
+}
+
+#[gpui::test]
+async fn palette_stays_within_a_short_window(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(DOC, cx);
+    cx.simulate_resize(gpui::size(px(680.0), px(340.0)));
+    open_palette(&editor, cx);
+    let overlay = cx.debug_bounds("command-palette-overlay").unwrap();
+    let panel = cx.debug_bounds("command-palette-panel").unwrap();
+    assert!(
+        panel.bottom() <= overlay.bottom(),
+        "命令面板不能越过窗口：{panel:?}，可用区域 {overlay:?}"
+    );
+    cx.simulate_keystrokes("up");
+    redraw(cx);
+    let count = commands().iter().filter(|spec| !spec.requires_ai()).count();
+    cx.update(|window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        let item = window.find(gpui_kit::component::IndexPath::new(count - 1));
+        assert_eq!(item.role(), Some(gpui::Role::ListBoxOption));
+        assert!(item.visible());
+        assert!(item.bounds().top() >= panel.top() && item.bounds().bottom() <= panel.bottom());
+    });
+}
+
 /// ⇧⌘P 面板与 ⌘P 同一条口径：偏上居中、叠在正文上，不换掉正文、不留灰板。
 #[gpui::test]
 async fn command_palette_panel_floats_top_centered_over_the_document(cx: &mut TestAppContext) {
@@ -211,12 +299,7 @@ async fn the_command_palette_executes_on_the_platform_enter_key(cx: &mut TestApp
     );
 }
 
-/// 输入法组合期间那颗回车属于「提交候选词」，不属于「执行高亮的那条命令」。
-///
-/// 现象：面板里用拼音打「打字机」，按回车选候选词，面板收起并执行了列表第一条。
-/// 根因：`on_command_palette_key_down` 新接的 `"enter"` 分支没看 `marked_range`，
-/// 而本仓对确认键早有那条判据（`workspace/tree_edit.rs:on_workspace_name_key_down`
-/// 的 `edit.pending || edit.marked_range.is_some()`、quick_open 的 backspace 分支）。
+/// 输入法组合期间的回车不执行命令，提交之后才允许确认。
 #[gpui::test]
 async fn the_command_palette_ignores_enter_during_ime_composition(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -224,34 +307,22 @@ async fn the_command_palette_ignores_enter_during_ime_composition(cx: &mut TestA
     redraw(cx);
     select(&editor, 0, 0..5, cx);
     open_palette(&editor, cx);
-
-    editor.update(cx, |editor, _cx| {
-        let state = editor.command_palette.as_mut().expect("面板应开着");
-        state.marked_range = Some(0..0);
+    let input = editor.read_with(cx, |editor, _| {
+        editor.command_palette.as_ref().unwrap().input.clone()
+    });
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.replace_and_mark_text_in_range(None, "zhong", Some(5..5), window, cx);
+        })
     });
     cx.simulate_keystrokes("enter");
     redraw(cx);
-
-    assert!(
-        editor.read_with(cx, |editor, _| editor.command_palette.is_some()),
-        "组合期间这颗回车该只交还给输入法，面板不该收起去执行命令"
-    );
-    assert_eq!(buffer_text(&editor, cx), DOC, "正文不该被改动");
-
-    // 对照：组合落定之后，同一颗回车照旧执行。
-    editor.update(cx, |editor, _cx| {
-        editor
-            .command_palette
-            .as_mut()
-            .expect("面板应还开着")
-            .marked_range = None;
-    });
+    assert!(editor.read_with(cx, |editor, _| editor.command_palette.is_some()));
+    assert_eq!(buffer_text(&editor, cx), DOC);
+    cx.update(|window, cx| input.update(cx, |input, cx| input.unmark_text(window, cx)));
     cx.simulate_keystrokes("enter");
     redraw(cx);
-    assert!(
-        editor.read_with(cx, |editor, _| editor.command_palette.is_none()),
-        "组合结束后该执行选中的命令"
-    );
+    assert!(editor.read_with(cx, |editor, _| editor.command_palette.is_none()));
 }
 
 #[gpui::test]
@@ -361,8 +432,8 @@ async fn command_palette_selection_wraps_within_entries(cx: &mut TestAppContext)
         cx.simulate_keystrokes("down");
     }
     let expected_after_downs = (count + 3) % count;
-    editor.read_with(cx, |editor, _| {
-        let selected = editor.command_palette.as_ref().expect("面板开着").selected;
+    editor.read_with(cx, |editor, cx| {
+        let selected = editor.command_palette.as_ref().expect("面板开着").list.read(cx).selected_index().unwrap().row;
         assert_eq!(
             selected, expected_after_downs,
             "Down 越过末条应环绕：selected={selected} 条目数={count}"
@@ -374,12 +445,37 @@ async fn command_palette_selection_wraps_within_entries(cx: &mut TestAppContext)
         cx.simulate_keystrokes("up");
     }
     cx.simulate_keystrokes("up");
-    editor.read_with(cx, |editor, _| {
-        let selected = editor.command_palette.as_ref().expect("面板开着").selected;
+    editor.read_with(cx, |editor, cx| {
+        let selected = editor.command_palette.as_ref().expect("面板开着").list.read(cx).selected_index().unwrap().row;
         assert_eq!(
             selected,
             count - 1,
             "首条按 Up 应环绕到末条：selected={selected} 条目数={count}"
         );
     });
+}
+
+#[gpui::test]
+async fn palette_click_uses_the_revised_query_after_an_empty_result(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(DOC, cx);
+    redraw(cx);
+    select(&editor, 0, 0..5, cx);
+    open_palette(&editor, cx);
+    cx.simulate_input("no-matching-command-xyz");
+    cx.simulate_keystrokes("enter");
+    assert!(editor.read_with(cx, |editor, _| editor.command_palette.is_some()));
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-a"
+    } else {
+        "ctrl-a"
+    });
+    let label = command_label("bold_selection", cx);
+    cx.simulate_input(&label);
+    redraw(cx);
+    cx.update(|window, cx| window.click(gpui_kit::component::IndexPath::new(0), cx));
+    redraw(cx);
+    assert_eq!(buffer_text(&editor, cx), "**alpha** one\n\nbeta two\n");
+    assert!(editor.read_with(cx, |editor, _| editor.command_palette.is_none()));
 }

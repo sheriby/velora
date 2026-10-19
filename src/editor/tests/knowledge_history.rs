@@ -356,9 +356,9 @@ async fn command_palette_accepts_non_ascii_typing(cx: &mut TestAppContext) {
     });
     cx.simulate_input("中文");
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    editor.read_with(cx, |editor, _| {
+    editor.read_with(cx, |editor, cx| {
         assert_eq!(
-            editor.command_palette.as_ref().expect("面板").query,
+            editor.command_palette.as_ref().expect("面板").input.read(cx).value().as_ref(),
             "中文",
             "命令面板必须能吃输入法/非 ASCII 文本"
         );

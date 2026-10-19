@@ -778,7 +778,7 @@ impl Render for Editor {
                 .child(overlay)
                 .into_any_element()
         } else if self.command_palette.is_some() {
-            let overlay = crate::editor::command_palette::render_command_palette_overlay(self, &theme, cx);
+            let overlay = crate::editor::command_palette::render_command_palette_overlay(self, window, cx);
             div()
                 .relative()
                 .w_full()
