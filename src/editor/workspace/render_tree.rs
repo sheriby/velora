@@ -388,7 +388,19 @@ impl Editor {
                     )
                     .when(
                         !matches!(node.kind, WorkspaceTreeKind::Heading { .. }),
-                        |label| label.text_sm(),
+                        |label| {
+                            // 行文字自己定字号与颜色：`ListItem` 的默认前景接近纯黑，
+                            // 一屏目录压过来太重；字号也不跟 Kit 的 `text_sm` 走。
+                            label
+                                .text_size(px(theme.typography.ui_text_size(
+                                    WORKSPACE_NODE_TEXT_SIZE,
+                                )))
+                                .text_color(if selected {
+                                    theme.colors.dialog_title
+                                } else {
+                                    theme.colors.dialog_body
+                                })
+                        },
                     )
                     .child(node.label.clone()),
             );

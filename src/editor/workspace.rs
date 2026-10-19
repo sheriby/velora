@@ -38,6 +38,9 @@ const TAB_CLOSE_ICON: &str = "icon/workspace/tab-close.svg";
 const GENERIC_FILE_ICON: &str = "icon/workspace/generic-file.svg";
 const IMAGE_ICON: &str = "icon/workspace/image.svg";
 pub(crate) const WORKSPACE_NODE_HEIGHT: f32 = 24.0;
+/// 文件树里一行文字的字号（按界面字号缩放）。原来用的是 Kit 的 `text_sm`（0.875rem），
+/// 跟着 Kit 主题的基准字号走，比侧栏其它地方大一号，满屏目录看着像正文。
+pub(crate) const WORKSPACE_NODE_TEXT_SIZE: f32 = 13.0;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum WorkspaceTab {
     #[default]
