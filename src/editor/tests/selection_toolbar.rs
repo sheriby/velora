@@ -114,6 +114,30 @@ fn toolbar_is_hidden(cx: &mut VisualTestContext) -> bool {
     toolbar_bounds(cx).is_none()
 }
 
+/// 工具栏上的每一颗都必须是标准按钮：自绘 div 只有一块 hover 底色，
+/// 辅助技术读不出「加粗」「插入链接」「清除格式」这些动作，键盘也点不到。
+#[gpui::test]
+fn selection_toolbar_buttons_expose_native_semantics(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+    select_head_of_first_block(&editor, cx);
+    cx.update(|window, _| {
+        for id in TOOLBAR_BUTTONS {
+            let item = window
+                .try_find(id)
+                .unwrap_or_else(|| panic!("工具栏里应挂载 {id}"));
+            assert_eq!(item.role(), Some(gpui::Role::Button), "{id} 必须是标准按钮");
+            assert!(
+                item.label().is_some_and(|label| !label.is_empty()),
+                "{id} 必须有可访问名称"
+            );
+        }
+    });
+}
+
 #[gpui::test]
 fn selecting_text_only_shows_text_tools_without_split_buttons(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

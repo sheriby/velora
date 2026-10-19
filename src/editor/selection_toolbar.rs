@@ -5,6 +5,10 @@
 //! 上方，放不下改到下方，左右再按视口收回。
 
 use gpui::*;
+use gpui_kit::component::{
+    Disableable as _, Selectable as _, Sizable as _,
+    button::{Button, ButtonVariants},
+};
 
 use super::context_menu::{
     DocumentMenuCommand, DocumentMenuGeometry, DocumentMenuRow, DocumentSubmenu,
@@ -12,7 +16,6 @@ use super::context_menu::{
 };
 use super::paragraph_ops::BlockKindTarget;
 use super::{Editor, ViewMode};
-use crate::components::HoverPreviewTooltip;
 use crate::components::{InlineFormat, menu::menu_item};
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
@@ -365,30 +368,24 @@ impl Editor {
         Some(toolbar.into_any_element())
     }
 
-    fn ai_toolbar_button(&self, theme: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn ai_toolbar_button(&self, theme: &Theme, cx: &mut Context<Self>) -> Button {
         let label = cx
             .global::<crate::i18n::I18nManager>()
             .strings()
             .ai_assistant
             .clone();
-        div()
-            .id("toolbar-ai")
-            .debug_selector(|| "toolbar-ai".into())
+        Button::new("toolbar-ai")
+            .ghost()
+            .small()
+            .compact()
             .size(px(BUTTON_SIZE))
-            .flex()
-            .items_center()
-            .justify_center()
             .text_size(px(11.0))
             .text_color(theme.colors.dialog_title)
             .rounded(px(4.0))
-            .cursor_pointer()
+            .debug_selector(|| "toolbar-ai".into())
+            .accessibility_label(label.clone())
+            .tooltip(label)
             .child("AI")
-            .tooltip(move |_, cx| {
-                cx.new(|_| HoverPreviewTooltip {
-                    label: label.clone().into(),
-                })
-                .into()
-            })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|editor, _, _, cx| {
                 if let Some(state) = editor.selection_toolbar.as_mut() {
@@ -436,33 +433,19 @@ impl Editor {
     ) -> AnyElement {
         let c = &theme.colors;
         let d = &theme.dimensions;
-        let tooltip = strings.context_menu_paragraph.clone();
-        div()
-            .id("toolbar-heading")
+        let tooltip: SharedString = strings.context_menu_paragraph.clone().into();
+        Button::new("toolbar-heading")
+            .ghost()
+            .small()
+            .compact()
             .w(px(HEADING_BUTTON_WIDTH))
             .h(px(BUTTON_SIZE))
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(HEADING_ARROW_GAP))
             .flex_shrink_0()
             .rounded(px(d.menu_item_radius))
-            .bg(if open {
-                c.dialog_secondary_button_hover
-            } else {
-                c.dialog_surface
-            })
-            .text_color(c.dialog_secondary_button_text)
-            .cursor_pointer()
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .active(|this| this.opacity(0.92))
+            .selected(open)
             .debug_selector(|| "toolbar-heading".to_string())
-            .tooltip(move |_, cx| {
-                cx.new(|_| HoverPreviewTooltip {
-                    label: tooltip.clone().into(),
-                })
-                .into()
-            })
+            .accessibility_label(tooltip.clone())
+            .tooltip(tooltip)
             .child(
                 svg()
                     .path("icon/editor/paragraph.svg")
@@ -519,28 +502,20 @@ impl Editor {
             None => label,
         };
         let text_color = c.dialog_secondary_button_text;
-        let button = div()
-            .id(id)
+        let accessible: SharedString = tooltip.clone().into();
+        let button = Button::new(id)
+            .ghost()
+            .small()
+            .compact()
             .w(px(BUTTON_SIZE))
             .h(px(BUTTON_SIZE))
-            .flex()
-            .items_center()
-            .justify_center()
             .flex_shrink_0()
             .rounded(px(d.menu_item_radius))
-            .bg(c.dialog_surface)
             .text_size(px(LETTER_SIZE))
             .text_color(text_color)
-            .cursor_pointer()
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .active(|this| this.opacity(0.92))
             .debug_selector(move || id.to_string())
-            .tooltip(move |_, cx| {
-                cx.new(|_| HoverPreviewTooltip {
-                    label: tooltip.clone().into(),
-                })
-                .into()
-            });
+            .accessibility_label(accessible.clone())
+            .tooltip(accessible);
         let command = SelectionToolbarCommand::Format(format);
         match format {
             InlineFormat::Bold => button
@@ -629,27 +604,18 @@ impl Editor {
             Some(shortcut) => format!("{label}  {shortcut}"),
             None => label,
         };
-        div()
-            .id("toolbar-link")
+        let accessible: SharedString = tooltip.clone().into();
+        Button::new("toolbar-link")
+            .ghost()
+            .small()
+            .compact()
             .w(px(BUTTON_SIZE))
             .h(px(BUTTON_SIZE))
-            .flex()
-            .items_center()
-            .justify_center()
             .rounded(px(d.menu_item_radius))
-            .bg(c.dialog_surface)
-            .text_color(c.dialog_secondary_button_text)
-            .cursor_pointer()
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .active(|this| this.opacity(0.92))
             .flex_shrink_0()
             .debug_selector(|| "toolbar-link".to_string())
-            .tooltip(move |_, cx| {
-                cx.new(|_| HoverPreviewTooltip {
-                    label: tooltip.clone().into(),
-                })
-                .into()
-            })
+            .accessibility_label(accessible.clone())
+            .tooltip(accessible)
             .child(
                 svg()
                     .path("icon/editor/link.svg")
@@ -687,15 +653,14 @@ impl Editor {
         } else {
             format!("{label} · {}", strings.format_clear_unavailable)
         };
-        let button = div()
-            .id("toolbar-clear-format")
+        let accessible: SharedString = tooltip.clone().into();
+        let button = Button::new("toolbar-clear-format")
+            .ghost()
+            .small()
+            .compact()
             .w(px(BUTTON_SIZE))
             .h(px(BUTTON_SIZE))
-            .flex()
-            .items_center()
-            .justify_center()
             .rounded(px(d.menu_item_radius))
-            .bg(c.dialog_surface)
             .text_size(px(LETTER_SIZE))
             .text_color(if enabled {
                 c.dialog_secondary_button_text
@@ -703,13 +668,10 @@ impl Editor {
                 c.dialog_muted
             })
             .flex_shrink_0()
+            .disabled(!enabled)
             .debug_selector(|| "toolbar-clear-format".to_string())
-            .tooltip(move |_, cx| {
-                cx.new(|_| HoverPreviewTooltip {
-                    label: tooltip.clone().into(),
-                })
-                .into()
-            })
+            .accessibility_label(accessible.clone())
+            .tooltip(accessible)
             .child(
                 // 与 B、I、U、S 走同一份字体渲染，只在右上角缀一枚收小、调淡的 `×`：
                 // 描出来的图标与打出来的字母摆在一排，字重与高度怎么都对不齐。
@@ -723,14 +685,6 @@ impl Editor {
                         .child("\u{d7}"),
                 ),
             );
-        let button = if enabled {
-            button
-                .cursor_pointer()
-                .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                .active(|this| this.opacity(0.92))
-        } else {
-            button
-        };
         if enabled {
             button
                 .on_click(cx.listener(|editor, _event, _window, cx| {
