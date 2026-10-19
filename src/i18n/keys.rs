@@ -402,6 +402,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "table_axis_move_row_down",
     "table_axis_delete_row",
     "table_header_row",
+    "table_append_column",
+    "table_append_row",
     "table_insert_title",
     "table_insert_description",
     "table_insert_body_rows",

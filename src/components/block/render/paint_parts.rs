@@ -1082,6 +1082,18 @@ impl Render for Block {
                 };
 
                 let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
+                let append_column_label: SharedString = cx
+                    .global::<crate::i18n::I18nManager>()
+                    .strings()
+                    .table_append_column
+                    .clone()
+                    .into();
+                let append_row_label: SharedString = cx
+                    .global::<crate::i18n::I18nManager>()
+                    .strings()
+                    .table_append_row
+                    .clone()
+                    .into();
                 let append_extent = px(d.table_append_button_extent);
                 let append_inset = px(d.table_append_button_inset);
                 let activation_band = px(d.table_append_activation_band);
@@ -1406,32 +1418,48 @@ impl Render for Block {
                             .on_hover(cx.listener(Self::on_table_append_column_zone_hover));
 
                         if column_control_visible {
+                            // 悬停状态挂在外面这层：Kit 按钮自己的 tooltip 已经占掉
+                            // 了元素的 hover 监听，同一个元素不能挂两份。
                             base.child(
                                 div()
                                     .id(ElementId::Name(
-                                        format!("table-append-column-button-{}", self.record.id)
-                                            .into(),
+                                        format!(
+                                            "table-append-column-button-host-{}",
+                                            self.record.id
+                                        )
+                                        .into(),
                                     ))
                                     .absolute()
                                     .top(append_inset)
                                     .bottom_0()
                                     .right_0()
                                     .w(append_extent)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(999.0))
-                                    .bg(c.table_append_button_bg)
-                                    .hover(|this| this.bg(c.table_append_button_hover))
-                                    .cursor_pointer()
-                                    .text_size(px(t.text_size))
-                                    .text_color(c.table_append_button_text)
                                     .block_mouse_except_scroll()
                                     .on_hover(
                                         cx.listener(Self::on_table_append_column_button_hover),
                                     )
-                                    .on_click(cx.listener(Self::on_append_table_column))
-                                    .child("+"),
+                                    .child(
+                                        Button::new(ElementId::Name(
+                                            format!(
+                                                "table-append-column-button-{}",
+                                                self.record.id
+                                            )
+                                            .into(),
+                                        ))
+                                        .ghost()
+                                        .compact()
+                                        .size_full()
+                                        .min_w(px(0.0))
+                                        .px(px(0.0))
+                                        .rounded(px(999.0))
+                                        .bg(c.table_append_button_bg)
+                                        .text_size(px(t.text_size))
+                                        .text_color(c.table_append_button_text)
+                                        .accessibility_label(append_column_label.clone())
+                                        .tooltip(append_column_label.clone())
+                                        .on_click(cx.listener(Self::on_append_table_column))
+                                        .child("+"),
+                                    ),
                             )
                         } else {
                             base
@@ -1454,27 +1482,43 @@ impl Render for Block {
                             base.child(
                                 div()
                                     .id(ElementId::Name(
-                                        format!("table-append-row-button-{}", self.record.id)
-                                            .into(),
+                                        format!(
+                                            "table-append-row-button-host-{}",
+                                            self.record.id
+                                        )
+                                        .into(),
                                     ))
                                     .absolute()
                                     .left(append_inset)
                                     .right(append_inset)
                                     .bottom_0()
                                     .h(append_extent)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(999.0))
-                                    .bg(c.table_append_button_bg)
-                                    .hover(|this| this.bg(c.table_append_button_hover))
-                                    .cursor_pointer()
-                                    .text_size(px(t.text_size))
-                                    .text_color(c.table_append_button_text)
                                     .block_mouse_except_scroll()
-                                    .on_hover(cx.listener(Self::on_table_append_row_button_hover))
-                                    .on_click(cx.listener(Self::on_append_table_row))
-                                    .child("+"),
+                                    .on_hover(
+                                        cx.listener(Self::on_table_append_row_button_hover),
+                                    )
+                                    .child(
+                                        Button::new(ElementId::Name(
+                                            format!(
+                                                "table-append-row-button-{}",
+                                                self.record.id
+                                            )
+                                            .into(),
+                                        ))
+                                        .ghost()
+                                        .compact()
+                                        .size_full()
+                                        .min_h(px(0.0))
+                                        .py(px(0.0))
+                                        .rounded(px(999.0))
+                                        .bg(c.table_append_button_bg)
+                                        .text_size(px(t.text_size))
+                                        .text_color(c.table_append_button_text)
+                                        .accessibility_label(append_row_label.clone())
+                                        .tooltip(append_row_label.clone())
+                                        .on_click(cx.listener(Self::on_append_table_row))
+                                        .child("+"),
+                                    ),
                             )
                         } else {
                             base

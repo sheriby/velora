@@ -405,6 +405,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) table_axis_move_row_down: Option<String>,
     pub(crate) table_axis_delete_row: Option<String>,
     pub(crate) table_header_row: Option<String>,
+    pub(crate) table_append_column: Option<String>,
+    pub(crate) table_append_row: Option<String>,
     pub(crate) table_insert_title: Option<String>,
     pub(crate) table_insert_description: Option<String>,
     pub(crate) table_insert_body_rows: Option<String>,

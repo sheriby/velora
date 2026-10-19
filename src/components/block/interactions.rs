@@ -187,7 +187,7 @@ impl Block {
         ));
     }
 
-    fn set_table_append_column_hover_part(
+    pub(crate) fn set_table_append_column_hover_part(
         &mut self,
         edge_hovered: Option<bool>,
         zone_hovered: Option<bool>,

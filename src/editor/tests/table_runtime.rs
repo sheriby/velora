@@ -14,6 +14,42 @@ async fn review_indented_table_insertion_preserves_outer_padding(cx: &mut TestAp
     });
 }
 
+/// 表格的追加按钮是标准按钮：自绘 div 只有 hover 底色，辅助技术读不出
+/// 「在右侧添加一列」这种动作。
+#[gpui::test]
+async fn table_append_buttons_expose_native_semantics(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let source = "| A | B |\n|---|---|\n| 1 | 2 |";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    cx.update(|window, _| window.activate_window());
+    redraw(cx);
+    let table = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
+    let record_id = table.read_with(cx, |block, _| block.record.id.to_string());
+    table.update(cx, |block, cx| {
+        block.set_table_append_column_hover_part(Some(true), None, None, cx);
+        cx.notify();
+    });
+    redraw(cx);
+    let column_button =
+        gpui::ElementId::Name(format!("table-append-column-button-{record_id}").into());
+    cx.update(|window, _| {
+        let item = window
+            .try_find(column_button)
+            .expect("悬停后应出现追加列按钮");
+        assert_eq!(
+            item.role(),
+            Some(gpui::Role::Button),
+            "追加列必须是标准按钮"
+        );
+        assert!(
+            item.label().is_some_and(|label| !label.is_empty()),
+            "追加列必须有可访问名称"
+        );
+    });
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
+}
+
 #[gpui::test]
 async fn review_table_structure_edits_preserve_escaped_pipes_and_padding(cx: &mut TestAppContext) {
     // 转义竖线曾触发整表重拼，连未编辑行的列宽与对齐写法也被改掉。

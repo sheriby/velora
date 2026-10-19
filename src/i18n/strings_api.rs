@@ -430,6 +430,8 @@ impl I18nStrings {
             table_axis_move_row_down: "向下移动此行".into(),
             table_axis_delete_row: "删除此行".into(),
             table_header_row: "标题行".into(),
+            table_append_column: "在右侧添加一列".into(),
+            table_append_row: "在下方添加一行".into(),
             table_insert_title: "插入表格".into(),
             table_insert_description: "创建 1 个表头行，并配置正文行数与列数。".into(),
             table_insert_body_rows: "正文行数".into(),
@@ -1007,6 +1009,8 @@ impl I18nStrings {
             table_axis_move_row_down: "Move Row Down".into(),
             table_axis_delete_row: "Delete Row".into(),
             table_header_row: "Header Row".into(),
+            table_append_column: "Add a column to the right".into(),
+            table_append_row: "Add a row below".into(),
             table_insert_title: "Insert Table".into(),
             table_insert_description:
                 "Create one header row and configure body rows and columns.".into(),
