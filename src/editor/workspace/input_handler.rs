@@ -248,7 +248,11 @@ pub(crate) fn file_label(path: &Path) -> String {
 }
 
 pub(crate) fn file_node_id(path: &Path) -> String {
-    format!("file:{}", path.to_string_lossy())
+    // id 必须与来源无关：同一条路径从 `canonicalize`（Windows 带 `\\?\` 前缀）
+    // 和从 `read_dir` 拿到的写法可能不同，直接拼字符串会让「按路径找节点」在
+    // Windows 上找不到。
+    let normalized = crate::file_url::strip_verbatim_prefix(path);
+    format!("file:{}", normalized.to_string_lossy())
 }
 
 pub(crate) fn stable_node_hash(id: &str) -> u64 {

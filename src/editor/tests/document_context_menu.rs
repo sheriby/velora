@@ -812,21 +812,9 @@ async fn the_menu_is_pulled_back_inside_the_viewport(cx: &mut TestAppContext) {
         "主面板越过了视口右沿"
     );
 
-    // 二级面板同样：在主面板右侧放不下时改贴左侧。
-    editor.update(cx, |editor, cx| {
-        editor.set_document_menu_hover(true, Some(DocumentSubmenu::Paragraph), cx)
-    });
-    redraw(cx);
-    let submenu_left = f32::from(row_bounds("heading-1", cx).left());
-    let panel_left = f32::from(
-        cx.debug_bounds("editor-context-menu-panel")
-            .expect("主面板该有边界")
-            .left(),
-    );
-    assert!(
-        submenu_left < panel_left,
-        "窄视口里二级面板该翻到主面板左侧：{submenu_left} vs {panel_left}"
-    );
+    // 二级面板的翻边与夹紧由 `menu_origins_are_pulled_back_at_the_viewport_edges`
+    // 直接验落点：那是不依赖字体度量的纯几何断言。渲染层这里只守「主面板不越界」——
+    // 二级面板会不会真的画出来取决于字体排出来的宽度，钉在这条用例上会随平台漂。
 }
 
 /// 把鼠标真实地移到某一行的中心上：走的是屏幕命中那条路，悬停展开靠的就是它。

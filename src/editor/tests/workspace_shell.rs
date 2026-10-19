@@ -855,6 +855,8 @@ fn native_status_controls_support_keyboard_activation(cx: &mut TestAppContext) {
         })
         .unwrap();
     let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    // 面包屑在窄窗口里会被响应式收掉：先给一个确定的宽窗口，断言才只考语义。
+    visual.simulate_resize(gpui::size(gpui::px(1280.0), gpui::px(820.0)));
     redraw(&mut visual);
     visual.update(|window, cx| {
         for id in [

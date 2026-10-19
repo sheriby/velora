@@ -552,6 +552,7 @@ impl Editor {
         });
         // 说明区的地板：两行正文。窗口矮、字号大时这块原本会被挤成 0——版本号与
         // 重启说明整块看不见，也没有滚动条可拖（高度为零的滚动区滚不动）。
+        // 说明区至少留两行：再挤也不该出现「有说明却没有可读区域」。
         let description_min_height = cx.theme().font_size * 2.4;
         let bottom_offset =
             px(theme.dimensions.status_bar_height) + cx.theme().font_size * 0.75;
@@ -658,6 +659,10 @@ impl Editor {
                     div()
                         .id("update-description")
                         .debug_selector(|| "update-description".into())
+                        // 吃剩余空间、并且**能缩**：卡片的可用高度不够时先缩这一块，
+                        // 底下的操作行永远留在卡片里（此前说明区只设了下限，撑不住时
+                        // 就把按钮顶到卡片外面）。
+                        .flex_1()
                         .min_h(description_min_height)
                         .relative()
                         .overflow_y_scroll()

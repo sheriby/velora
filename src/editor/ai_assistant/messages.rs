@@ -242,14 +242,14 @@ impl MessageTranscript {
                     return;
                 };
                 let path = resolve_local_link_path(Some(base), &path);
-                let path = match path.canonicalize() {
-                    Ok(path) if path.starts_with(base) => path,
-                    Ok(_) => return,
-                    Err(error) => {
-                        eprintln!("读取 AI 资料链接失败：{error}");
-                        return;
-                    }
-                };
+                // 用 `canonical_path`：它在 Windows 上会剥掉 `\\?\` 前缀，
+                // 而 `Url::from_file_path` 不认那个前缀——不剥就整条打不开。
+                let path = crate::file_url::canonical_path(&path);
+                let inside = path.starts_with(base)
+                    || path.starts_with(crate::file_url::strip_verbatim_prefix(base));
+                if !inside {
+                    return;
+                }
                 let Ok(mut url) = url::Url::from_file_path(path) else {
                     return;
                 };
