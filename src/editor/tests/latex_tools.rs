@@ -1211,6 +1211,56 @@ async fn formula_editor_symbol_grid_shows_whole_category(cx: &mut TestAppContext
     );
 }
 
+/// 公式编辑器的控件都得是标准按钮：页签、符号格、应用与关闭以前都是自绘
+/// div，辅助技术读不出它们是什么，键盘也按不到。
+#[gpui::test]
+async fn formula_editor_controls_expose_native_semantics(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    editor.update(cx, |editor, cx| {
+        if let Some(state) = editor.formula_editor.as_mut() {
+            state.category = crate::components::LatexCategory::Greek;
+        }
+        cx.notify();
+    });
+    redraw(cx);
+    let tab_id = gpui::ElementId::Name(
+        format!("formula-tab-{:?}", crate::components::LatexCategory::Greek).into(),
+    );
+    let first_symbol = LATEX_SYMBOLS
+        .iter()
+        .find(|symbol| symbol.category == crate::components::LatexCategory::Greek)
+        .expect("希腊类首项")
+        .name;
+    let cell_id = gpui::ElementId::Name(format!("formula-cell-{first_symbol}").into());
+    cx.update(|window, _| {
+        for (id, what) in [
+            (gpui::ElementId::Name("formula-editor-apply".into()), "应用"),
+            (gpui::ElementId::Name("formula-editor-cancel".into()), "取消"),
+            (gpui::ElementId::Name("formula-editor-close".into()), "关闭"),
+            (tab_id, "页签"),
+            (cell_id, "符号格"),
+        ] {
+            let item = window
+                .try_find(id.clone())
+                .unwrap_or_else(|| panic!("{what} 应挂载：{id:?}"));
+            assert_eq!(item.role(), Some(gpui::Role::Button), "{what} 必须是标准按钮");
+            assert!(
+                item.label().is_some_and(|label| !label.is_empty()),
+                "{what} 必须有可访问名称"
+            );
+        }
+    });
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), "$$\n\n$$\n"));
+}
+
 /// 草稿要能全选 / 复制 / 剪切 / 粘贴（以前只有光标，剪贴板四个键全没接）。
 #[gpui::test]
 async fn formula_editor_draft_select_all_copy_cut_paste(cx: &mut TestAppContext) {

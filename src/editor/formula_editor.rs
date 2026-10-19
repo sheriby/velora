@@ -13,12 +13,15 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui::*;
+use gpui_kit::component::{
+    Selectable as _, Sizable as _,
+    button::{Button, ButtonVariants},
+};
 
 use crate::components::latex::{
     LatexCategory, LatexSymbol, LATEX_SYMBOLS, latex_command_before_cursor,
     latex_completions_for,
 };
-use crate::components::HoverPreviewTooltip;
 use crate::components::markdown::code_highlight::{CodeHighlightSpan, code_highlight_color};
 use crate::components::markdown::source_highlight::highlight_latex_source;
 use crate::i18n::I18nStrings;
@@ -1566,47 +1569,32 @@ impl Editor {
 
         // ===== 符号面板 =====
         let category = state.category;
+        let close_label: SharedString = strings.file_history_close.clone().into();
         let tabs: Vec<AnyElement> = CATEGORIES
             .iter()
             .map(|&tab| {
                 let is_active = tab == category;
-                let tab = div()
-                    .id(ElementId::Name(format!("formula-tab-{:?}", tab).into()))
+                let label = category_label(tab, strings);
+                // 选中的页签不挂 hover 变浅——浮层上 hover 色与选中底色相近
+                // 时，选中态会一晃就没；Kit 的 selected 变体自带这条区别。
+                Button::new(ElementId::Name(format!("formula-tab-{:?}", tab).into()))
+                    .ghost()
+                    .small()
+                    .compact()
                     .px(px(9.0))
                     .h(px(TAB_HEIGHT))
-                    .flex()
-                    .items_center()
                     .rounded(px(999.0))
-                    .cursor_pointer()
                     .text_size(px(t.ui_text_size(16.0 * 0.78)))
-                    .text_color(if is_active {
-                        c.dialog_primary_button_text
-                    } else {
-                        c.dialog_body
-                    })
-                    .bg(if is_active {
-                        c.dialog_primary_button_bg
-                    } else {
-                        hsla(0.0, 0.0, 0.0, 0.0)
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |editor, _event: &MouseDownEvent, _window, cx| {
-                            if let Some(state) = editor.formula_editor.as_mut() {
-                                state.category = tab;
-                                cx.notify();
-                            }
-                        }),
-                    )
-                    .child(category_label(tab, strings));
-                // 选中的页签不挂 hover 变浅——浮层上 hover 色与选中底色相近
-                // 时，选中态会一晃就没。
-                if is_active {
-                    tab.into_any_element()
-                } else {
-                    tab.hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .into_any_element()
-                }
+                    .selected(is_active)
+                    .accessibility_label(label.clone())
+                    .on_click(cx.listener(move |editor, _event: &ClickEvent, _window, cx| {
+                        if let Some(state) = editor.formula_editor.as_mut() {
+                            state.category = tab;
+                            cx.notify();
+                        }
+                    }))
+                    .child(label)
+                    .into_any_element()
             })
             .collect();
 
@@ -1627,8 +1615,10 @@ impl Editor {
         for (index, entry) in entries.into_iter().enumerate() {
             let is_last_cell = index + 1 == entries_count;
             let insert_label: SharedString = format!("\\{}", entry.name).into();
-            let cell = div()
-                .id(ElementId::Name(format!("formula-cell-{}", entry.name).into()))
+            let cell_id = ElementId::Name(format!("formula-cell-{}", entry.name).into());
+            let cell = Button::new(cell_id)
+                .ghost()
+                .compact()
                 .debug_selector(move || {
                     if is_last_cell {
                         "formula-cell-last".to_string()
@@ -1640,29 +1630,13 @@ impl Editor {
                 // 格子也不会七扭八歪。
                 .h(px(CELL))
                 .w_full()
-                .flex()
-                .items_center()
-                .justify_center()
                 .overflow_hidden()
                 .rounded(px(5.0))
-                .cursor_pointer()
-                .bg(c.dialog_secondary_button_bg)
-                .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                .tooltip(move |_, cx| {
-                    // 用全站共用的主题色 tooltip：以前这里写死黑底 + 正文色，
-                    // 浅色主题下就是黑底黑字，什么都看不见。
-                    cx.new(|_| HoverPreviewTooltip {
-                        label: insert_label.clone(),
-                    })
-                    .into()
-                })
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |editor, _event: &MouseDownEvent, _window, cx| {
-                        cx.stop_propagation();
-                        editor.insert_formula_symbol(entry, cx);
-                    }),
-                );
+                .accessibility_label(insert_label.clone())
+                .tooltip(insert_label.clone())
+                .on_click(cx.listener(move |editor, _event: &ClickEvent, _window, cx| {
+                    editor.insert_formula_symbol(entry, cx);
+                }));
             let content: AnyElement = match crate::components::latex::render_inline_math_svg(
                 entry.preview,
                 preview_color,
@@ -1699,8 +1673,7 @@ impl Editor {
                     .enumerate()
                     .map(|(index, entry)| {
                         let is_selected = index == selected;
-                        let confirm = cx.listener(move |editor, _e: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
+                        let confirm = cx.listener(move |editor, _e: &ClickEvent, _w, cx| {
                             editor.confirm_formula_draft_completion(index, cx);
                         });
                         let preview: AnyElement = match crate::components::latex::render_inline_math_svg(
@@ -1719,23 +1692,19 @@ impl Editor {
                                 .child(format!("\\{}", entry.name))
                                 .into_any_element(),
                         };
-                        div()
-                            .id(ElementId::Name(format!("formula-completion-{index}").into()))
+                        Button::new(ElementId::Name(
+                            format!("formula-completion-{index}").into(),
+                        ))
+                            .ghost()
+                            .compact()
                             .h(px(COMPLETION_ROW_HEIGHT))
                             .w_full()
-                            .flex()
-                            .items_center()
                             .gap(px(8.0))
                             .px(px(8.0))
                             .rounded(px(4.0))
-                            .cursor_pointer()
-                            .bg(if is_selected {
-                                c.selection
-                            } else {
-                                hsla(0.0, 0.0, 0.0, 0.0)
-                            })
-                            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                            .on_mouse_down(MouseButton::Left, confirm)
+                            .selected(is_selected)
+                            .accessibility_label(format!("\\{}", entry.name))
+                            .on_click(confirm)
                             .child(
                                 div()
                                     .min_w(px(96.0))
@@ -1843,25 +1812,21 @@ impl Editor {
                                 )
                                 .child(div().flex_1())
                                 .child(
-                                    div()
-                                        .id("formula-editor-close")
+                                    Button::new("formula-editor-close")
+                                        .ghost()
+                                        .small()
+                                        .compact()
                                         .size(px(24.0))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
                                         .rounded(px(5.0))
-                                        .cursor_pointer()
                                         .text_size(px(t.ui_text_size(16.0 * 0.9)))
                                         .text_color(c.dialog_muted)
-                                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(
-                                                |editor, _e: &MouseDownEvent, _w, cx| {
-                                                    editor.close_formula_editor(cx);
-                                                },
-                                            ),
-                                        )
+                                        .accessibility_label(close_label.clone())
+                                        .tooltip(close_label)
+                                        .on_click(cx.listener(
+                                            |editor, _e: &ClickEvent, _w, cx| {
+                                                editor.close_formula_editor(cx);
+                                            },
+                                        ))
                                         .child("×"),
                                 ),
                         )
@@ -1915,55 +1880,33 @@ impl Editor {
                                         .child(strings.formula_editor_hint.clone()),
                                 )
                                 .child(
-                                    div()
-                                        .id("formula-editor-cancel")
+                                    Button::new("formula-editor-cancel")
+                                        .outline()
                                         .h(px(d.dialog_button_height))
-                                        .px(px(d.dialog_button_padding_x))
-                                        .flex()
-                                        .items_center()
-                                        .rounded(px(6.0))
-                                        .border_1()
-                                        .border_color(c.dialog_border)
-                                        .bg(c.dialog_secondary_button_bg)
-                                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                                        .cursor_pointer()
                                         .text_size(px(t.dialog_button_size))
-                                        .text_color(c.dialog_secondary_button_text)
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(
-                                                |editor, _e: &MouseDownEvent, _w, cx| {
-                                                    editor.close_formula_editor(cx);
-                                                },
-                                            ),
-                                        )
-                                        .child(strings.formula_editor_cancel.clone()),
+                                        .accessibility_label(strings.formula_editor_cancel.clone())
+                                        .on_click(cx.listener(
+                                            |editor, _e: &ClickEvent, _w, cx| {
+                                                editor.close_formula_editor(cx);
+                                            },
+                                        ))
+                                        .label(strings.formula_editor_cancel.clone()),
                                 )
                                 .child(
-                                    div()
-                                        .id("formula-editor-apply")
+                                    Button::new("formula-editor-apply")
                                         .debug_selector(|| {
                                             "formula-editor-apply".to_string()
                                         })
+                                        .primary()
                                         .h(px(d.dialog_button_height))
-                                        .px(px(d.dialog_button_padding_x))
-                                        .flex()
-                                        .items_center()
-                                        .rounded(px(6.0))
-                                        .bg(c.dialog_primary_button_bg)
-                                        .hover(|this| this.bg(c.dialog_primary_button_hover))
-                                        .cursor_pointer()
                                         .text_size(px(t.dialog_button_size))
-                                        .text_color(c.dialog_primary_button_text)
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(
-                                                |editor, _e: &MouseDownEvent, window, cx| {
-                                                    editor.apply_formula_editor(window, cx);
-                                                },
-                                            ),
-                                        )
-                                        .child(strings.formula_editor_apply.clone()),
+                                        .accessibility_label(strings.formula_editor_apply.clone())
+                                        .on_click(cx.listener(
+                                            |editor, _e: &ClickEvent, window, cx| {
+                                                editor.apply_formula_editor(window, cx);
+                                            },
+                                        ))
+                                        .label(strings.formula_editor_apply.clone()),
                                 ),
                         ),
                 )
