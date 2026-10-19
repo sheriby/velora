@@ -482,6 +482,9 @@ pub(crate) struct AppPreferences {
     pub(crate) sidebar_open: SidebarOpenPreference,
     pub(crate) sidebar_panel: SidebarPanelPreference,
     pub(crate) new_file_template: String,
+    /// 网络代理地址（`http://`/`socks5://` 等）；空串表示不改环境、按系统与
+    /// `HTTPS_PROXY` 等环境变量的原样走。
+    pub(crate) proxy_url: String,
     pub(crate) remember_window_bounds: bool,
     pub(crate) window_frame: Option<WindowFrame>,
     /// 新窗口打开位置（roadmap A2 报修补齐的设置项）。
@@ -521,6 +524,7 @@ impl Default for AppPreferences {
             sidebar_open: SidebarOpenPreference::default(),
             sidebar_panel: SidebarPanelPreference::default(),
             new_file_template: String::new(),
+            proxy_url: String::new(),
             remember_window_bounds: true,
             window_frame: None,
             window_open_position: WindowOpenPosition::default(),
@@ -582,6 +586,7 @@ pub struct EditorSettings {
     sidebar_open: SidebarOpenPreference,
     sidebar_panel: SidebarPanelPreference,
     new_file_template: String,
+    proxy_url: String,
     default_window_width: i64,
     default_window_height: i64,
     window_open_position: WindowOpenPosition,
@@ -601,6 +606,9 @@ impl EditorSettings {
             .map(|p| p.smart_punctuation)
             .unwrap_or(false);
         Self::set_global(cx, show_table_headers, smart_punctuation, &status_bar);
+        // AI provider 用的是第三方库自己的 HTTP 客户端，只认环境变量；这一处把
+        // 偏好里的代理落到进程环境，与自建客户端的显式代理是同一份设置。
+        crate::net::proxy::apply_environment(cx);
     }
 
     fn set_global(
@@ -671,6 +679,11 @@ impl EditorSettings {
             .map(|settings| settings.new_file_template.clone())
             .or_else(|| stored.as_ref().map(|preferences| preferences.new_file_template.clone()))
             .unwrap_or_default();
+        let proxy_url = cx
+            .try_global::<Self>()
+            .map(|settings| settings.proxy_url.clone())
+            .or_else(|| stored.as_ref().map(|preferences| preferences.proxy_url.clone()))
+            .unwrap_or_default();
         let (default_window_width, default_window_height) = cx
             .try_global::<Self>()
             .map(|settings| {
@@ -726,6 +739,7 @@ impl EditorSettings {
             sidebar_open,
             sidebar_panel,
             new_file_template,
+            proxy_url,
             default_window_width,
             default_window_height,
             window_open_position,
@@ -900,6 +914,23 @@ impl EditorSettings {
 
     /// Template body for new Markdown files, with `{date}` expanded to the
     /// local date (YYYY-MM-DD).
+    /// 保存代理设置：落盘、更新运行时镜像，并把新值应用到环境变量与图片客户端。
+    pub(crate) fn set_proxy_url(cx: &mut App, url: String) -> anyhow::Result<()> {
+        let url = url.trim().to_string();
+        crate::config::update_app_preferences(|preferences| preferences.proxy_url = url.clone())?;
+        cx.update_global::<Self, _>(|settings, _| settings.proxy_url = url);
+        crate::net::proxy::apply_environment(cx);
+        crate::net::install_http_client(cx);
+        Ok(())
+    }
+
+    /// 生效的网络代理；空串表示没有单独设置。
+    pub(crate) fn proxy_url(cx: &App) -> String {
+        cx.try_global::<Self>()
+            .map(|settings| settings.proxy_url.clone())
+            .unwrap_or_default()
+    }
+
     pub(crate) fn new_file_template() -> String {
         let template = read_app_preferences()
             .map(|preferences| preferences.new_file_template)

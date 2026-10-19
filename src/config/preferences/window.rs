@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::input::InputState;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PreferencesNav {
     File,
@@ -47,6 +48,11 @@ pub(crate) struct PreferencesWindow {
     pub(super) sidebar_panel: SidebarPanelPreference,
     pub(super) file_history: HistoryPolicy,
     saved_file_history: HistoryPolicy,
+    /// AI 端点与更新检查共用的网络代理；空串表示按系统 / 环境变量走。
+    pub(super) proxy_url: String,
+    saved_proxy_url: String,
+    pub(super) proxy_input: Option<Entity<InputState>>,
+    pub(super) proxy_input_subscription: Option<Subscription>,
     pub(super) autosave_debounce_ms: u64,
     pub(super) autosave: bool,
     pub(super) remember_window_bounds: bool,
@@ -149,6 +155,10 @@ impl PreferencesWindow {
             sidebar_panel,
             file_history: preferences.file_history,
             saved_file_history: preferences.file_history,
+            proxy_url: preferences.proxy_url.clone(),
+            saved_proxy_url: preferences.proxy_url.clone(),
+            proxy_input: None,
+            proxy_input_subscription: None,
             autosave_debounce_ms,
             autosave,
             remember_window_bounds,
@@ -228,6 +238,7 @@ impl PreferencesWindow {
             || self.sidebar_open != self.saved_sidebar_open
             || self.sidebar_panel != self.saved_sidebar_panel
             || self.file_history != self.saved_file_history
+            || self.proxy_url.trim() != self.saved_proxy_url
             || self.autosave_debounce_ms != self.saved_autosave_debounce_ms
             || self.autosave != self.saved_autosave
             || self.remember_window_bounds != self.saved_remember_window_bounds
@@ -385,6 +396,16 @@ impl PreferencesWindow {
             settings.default_window_height = self.default_window_height;
         });
         EditorSettings::set_updates_in_memory(cx, preferences.updates.clone());
+        // 代理影响 AI 端点、更新检查与远程图片：写盘之后立刻落到环境变量与图片客户端，
+        // 不必等下次启动。值没变就不重复读写配置。
+        self.saved_proxy_url = self.proxy_url.trim().to_string();
+        if EditorSettings::proxy_url(cx) != self.proxy_url.trim() {
+            if let Err(error) = EditorSettings::set_proxy_url(cx, self.proxy_url.clone()) {
+                let strings = cx.global::<I18nManager>().strings().clone();
+                self.save_error = Some(format!("{}: {}", strings.preferences_save_failed_title, error));
+                cx.notify();
+            }
+        }
         self.apply_saved_preferences(preferences, window, cx);
     }
 

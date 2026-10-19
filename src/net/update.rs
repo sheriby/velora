@@ -234,7 +234,12 @@ pub(crate) fn select_release(
 }
 
 fn update_client(timeout: Duration) -> anyhow::Result<reqwest::blocking::Client> {
-    reqwest::blocking::Client::builder()
+    let mut builder = reqwest::blocking::Client::builder();
+    // 后台线程拿不到 `cx`，代理直接读盘上的那份设置。
+    if let Some(proxy) = crate::net::proxy::reqwest_proxy_from_disk() {
+        builder = builder.proxy(proxy);
+    }
+    builder
         .connect_timeout(Duration::from_secs(5))
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::custom(|attempt| {

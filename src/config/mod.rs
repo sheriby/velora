@@ -21,6 +21,7 @@ pub(crate) use preferences::{
     first_existing_recent_markdown_file,
     import_language_config_and_select, import_theme_config_and_select,
     load_or_create_app_preferences, open_preferences_window, read_app_preferences,
+    update_app_preferences,
     saved_window_frame, store_window_frame,
 };
 pub(crate) use recovery::{

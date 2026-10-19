@@ -140,13 +140,16 @@ The main `config.toml` sections:
 | Section | Keys | Controls |
 | --- | --- | --- |
 | `[window]` | `default_window_width`, `default_window_height`, `open_position`, `remember_bounds`, `zoom_percent` | Default size, centered vs. remembered opening position, window memory, UI zoom |
-| `[editor]` | `tree_sort`, `autosave`, `autosave_debounce_ms`, `new_file_template`, `smart_punctuation`, `external_change_policy`, `delete_policy`, `workspace_sidebar_width` | File-tree sort, autosave on/off, autosave interval, new-file template (`{date}` expands), smart punctuation, external-change handling, Trash vs. permanent delete, sidebar width |
+| `[editor]` | `tree_sort`, `autosave`, `autosave_debounce_ms`, `new_file_template`, `smart_punctuation`, `external_change_policy`, `delete_policy`, `workspace_sidebar_width`, `proxy_url` | File-tree sort, autosave on/off, autosave interval, new-file template (`{date}` expands), smart punctuation, external-change handling, Trash vs. permanent delete, sidebar width, network proxy for AI endpoints and update checks |
 | `[export]` | `theme` | `current` / `light` / `dark` for exported HTML, PDF and PNG |
 | `[updates]` | `check_on_startup`, `include_prereleases` | Check for updates at startup; include prerelease versions |
+
+`proxy_url` accepts `http://`, `https://` and `socks5://` addresses (for example `http://127.0.0.1:7890`). When set, AI requests, update checks and remote image downloads go through it; when empty, Velora keeps the system settings and `HTTPS_PROXY` / `HTTP_PROXY` environment variables untouched. It is also editable in the preferences window (AI page).
 
 ## 🙏 Acknowledgements
 
 - [**Zed**](https://github.com/zed-industries/zed): The GPUI framework behind Velora's native, GPU-rendered interface.
+- [**GPUI Kit**](https://crates.io/crates/gpui-kit): The application framework and component library (button, input, select, menu, form, dialog, list, tree) Velora's interface is assembled from.
 - [**Velotype**](https://github.com/manyougz/velotype): Reference for the editor's early implementation.
 - [**Merman**](https://github.com/Latias94/merman): Native Mermaid parsing, layout and SVG rendering.
 - [**RaTeX**](https://github.com/erweixin/RaTeX): LaTeX math parsing, layout and SVG rendering.

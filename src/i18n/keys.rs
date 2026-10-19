@@ -112,6 +112,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "config_import_failed_title",
     "preferences_window_title",
     "preferences_group_startup",
+    "preferences_network_proxy",
+    "preferences_network_proxy_hint",
     "preferences_group_workspace",
     "preferences_group_saving",
     "preferences_group_history",

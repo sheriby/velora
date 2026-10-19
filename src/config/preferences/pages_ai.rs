@@ -457,11 +457,45 @@ impl PreferencesWindow {
                 }
             },
         );
+        // 代理同时服务 AI 端点、更新检查与远程图片，所以不放在「AI 已启用」之后。
+        if self.proxy_input.is_none() {
+            let initial = self.proxy_url.clone();
+            let field = cx.new(|cx| InputState::new(window, cx).default_value(initial));
+            let subscription = cx.subscribe(&field, |preferences, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    if let Some(input) = preferences.proxy_input.as_ref() {
+                        preferences.proxy_url = input.read(cx).value().to_string();
+                    }
+                    cx.notify();
+                }
+            });
+            self.proxy_input = Some(field);
+            self.proxy_input_subscription = Some(subscription);
+        }
+        let proxy_field = self.proxy_input.clone().map(|input| {
+            Self::ai_input_field(
+                "preferences-network-proxy",
+                strings.preferences_network_proxy.clone(),
+                &input,
+                false,
+            )
+            .description(strings.preferences_network_proxy_hint.clone())
+        });
         let mut page = div()
             .w_full()
             .flex()
             .flex_col()
             .gap_4()
+            .when_some(proxy_field, |page, field| {
+                page.child(Self::preference_group(
+                    "preferences-network-group",
+                    String::new(),
+                    vec![field],
+                    theme,
+                    window,
+                    PREFERENCE_CHOICE_WIDTH,
+                ))
+            })
             .child(Self::preference_group(
                 "preferences-ai-feature",
                 String::new(),

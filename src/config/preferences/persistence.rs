@@ -44,6 +44,8 @@ struct EditorPreferencesFile {
     sidebar_panel: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     new_file_template: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    proxy_url: String,
 }
 
 #[derive(Serialize)]
@@ -166,6 +168,7 @@ impl From<&AppPreferences> for PreferencesFile {
                 sidebar_open: value.sidebar_open.as_str().into(),
                 sidebar_panel: value.sidebar_panel.as_str().into(),
                 new_file_template: value.new_file_template.clone(),
+                proxy_url: value.proxy_url.clone(),
             },
             status_bar: StatusBarPreferencesFile::from(&value.status_bar),
             window: WindowPreferencesFile {
@@ -435,6 +438,12 @@ pub(crate) fn app_preferences_from_toml_value(
         .and_then(toml::Value::as_str)
         .unwrap_or("")
         .to_string();
+    let proxy_url = editor
+        .and_then(|editor| editor.get("proxy_url"))
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
     let autosave_debounce_ms = editor
         .and_then(|editor| editor.get("autosave_debounce_ms"))
         .and_then(toml::Value::as_integer)
@@ -582,6 +591,7 @@ pub(crate) fn app_preferences_from_toml_value(
         sidebar_open,
         sidebar_panel,
         new_file_template,
+        proxy_url,
         keybindings,
         status_bar,
         remember_window_bounds,

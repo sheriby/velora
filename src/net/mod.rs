@@ -30,7 +30,9 @@ pub(crate) fn http_client_install_error() -> Option<&'static str> {
 }
 
 pub(crate) fn install_http_client(cx: &mut App) {
+    let proxy = proxy::reqwest_proxy(cx);
     match ReqwestTransportHttpClient::new(
+        proxy,
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
     ) {
         Ok(client) => cx.set_http_client(Arc::new(client)),
@@ -40,6 +42,8 @@ pub(crate) fn install_http_client(cx: &mut App) {
         }
     }
 }
+
+pub(crate) mod proxy;
 
 pub(crate) fn is_remote_image_source(source: &str) -> bool {
     http_client::Uri::from_str(source)
@@ -66,12 +70,17 @@ impl Drop for ImageRequestCancellation {
 }
 
 impl ReqwestTransportHttpClient {
-    fn new(user_agent: &str) -> anyhow::Result<Self> {
+    fn new(proxy: Option<reqwest::Proxy>, user_agent: &str) -> anyhow::Result<Self> {
         let default_headers = default_image_request_headers(user_agent)?;
         let (max_response_bytes, timeout) = (MAX_IMAGE_BYTES, std::time::Duration::from_secs(30));
         #[cfg(test)]
         let (max_response_bytes, timeout) = tests::REQUEST_LIMITS.with(|limits| limits.get()).unwrap_or((max_response_bytes, timeout));
-        let client = reqwest::blocking::Client::builder()
+        let mut builder = reqwest::blocking::Client::builder();
+        // 代理只在安装这个客户端时取一次：设置改了就重建客户端。
+        if let Some(proxy) = proxy {
+            builder = builder.proxy(proxy);
+        }
+        let client = builder
             .redirect(reqwest::redirect::Policy::limited(10))
             .connect_timeout(std::time::Duration::from_secs(5))
             .timeout(timeout)
@@ -220,7 +229,7 @@ mod tests {
 
     fn test_transport(limit: usize, timeout: std::time::Duration) -> super::ReqwestTransportHttpClient {
         REQUEST_LIMITS.with(|limits| limits.set(Some((limit, timeout))));
-        let client = super::ReqwestTransportHttpClient::new(TEST_USER_AGENT).unwrap();
+        let client = super::ReqwestTransportHttpClient::new(None, TEST_USER_AGENT).unwrap();
         REQUEST_LIMITS.with(|limits| limits.set(None));
         client
     }

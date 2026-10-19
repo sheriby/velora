@@ -115,6 +115,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) config_import_failed_title: Option<String>,
     pub(crate) preferences_window_title: Option<String>,
     pub(crate) preferences_group_startup: Option<String>,
+    pub(crate) preferences_network_proxy: Option<String>,
+    pub(crate) preferences_network_proxy_hint: Option<String>,
     pub(crate) preferences_group_workspace: Option<String>,
     pub(crate) preferences_group_saving: Option<String>,
     pub(crate) preferences_group_history: Option<String>,

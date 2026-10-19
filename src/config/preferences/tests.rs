@@ -1099,6 +1099,7 @@
             sidebar_open: SidebarOpenPreference::Always,
             sidebar_panel: SidebarPanelPreference::Outline,
             new_file_template: String::new(),
+            proxy_url: "http://127.0.0.1:7890".to_string(),
             remember_window_bounds: true,
             window_frame: None,
             window_open_position: WindowOpenPosition::Center,
@@ -1119,6 +1120,11 @@
             std::fs::read_to_string(dirs.app_config_file()).expect("config.toml should exist");
         assert!(text.contains("external_change_policy = \"manual\""));
         assert!(text.contains("delete_policy = \"permanent\""));
+        assert_eq!(loaded.proxy_url, "http://127.0.0.1:7890");
+        assert!(
+            text.contains("proxy_url = \"http://127.0.0.1:7890\""),
+            "代理地址要落盘给 AI 与更新检查共用"
+        );
 
         let text =
             std::fs::read_to_string(dirs.app_config_file()).expect("config.toml should exist");
@@ -1231,6 +1237,7 @@
             sidebar_open: SidebarOpenPreference::default(),
             sidebar_panel: SidebarPanelPreference::default(),
             new_file_template: String::new(),
+            proxy_url: String::new(),
             remember_window_bounds: true,
             window_frame: None,
             window_open_position: WindowOpenPosition::default(),
@@ -2072,6 +2079,57 @@ fn ai_preferences_page_edits_and_saves_the_same_connection_file(cx: &mut TestApp
     assert_eq!(saved.endpoints[0].model, "new-model");
     assert_eq!(saved.endpoints[0].api_key, "test-api-key");
     cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+}
+
+/// 网络代理：AI 页那个输入框要出现在页面上，保存后落盘，并进入运行时设置。
+#[gpui::test]
+fn network_proxy_field_saves_to_the_preferences_file(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-proxy-prefs-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    init_preferences_test_app(cx);
+    crate::config::load_or_create_app_preferences().unwrap();
+    let handle = cx.update(|cx| {
+        open_preferences_window_with_size(
+            cx,
+            AppPreferences::default(),
+            default_theme_options(),
+            "偏好设置".into(),
+            gpui::size(px(1000.0), px(1200.0)),
+        )
+    });
+    let mut window_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+    window_cx.update(|window, cx| window.draw(cx).clear(cx));
+    window_cx.run_until_parked();
+    let nav = window_cx
+        .debug_bounds("preferences-nav-ai")
+        .expect("偏好设置必须有 AI 页面");
+    window_cx.simulate_click(nav.center(), gpui::Modifiers::none());
+    window_cx.update(|window, cx| window.draw(cx).clear(cx));
+    window_cx.run_until_parked();
+    let field = window_cx
+        .debug_bounds("preferences-network-proxy")
+        .expect("AI 页要有网络代理输入框");
+    window_cx.simulate_click(field.center(), gpui::Modifiers::none());
+    window_cx.simulate_input("http://127.0.0.1:7890");
+    window_cx.update(|window, cx| window.draw(cx).clear(cx));
+    window_cx.run_until_parked();
+    let save = window_cx.debug_bounds("preferences-save").unwrap();
+    window_cx.simulate_click(save.center(), gpui::Modifiers::none());
+    window_cx.run_until_parked();
+
+    let saved = crate::config::read_app_preferences().expect("偏好设置应能读回");
+    assert_eq!(saved.proxy_url, "http://127.0.0.1:7890");
+    window_cx.update(|window: &mut gpui::Window, cx: &mut gpui::App| {
+        assert_eq!(
+            crate::config::EditorSettings::proxy_url(cx),
+            "http://127.0.0.1:7890",
+            "保存后运行时设置要立刻拿到新代理"
+        );
+        window.remove_window();
+    });
+    cx.on_quit(move || {
+        let _ = std::fs::remove_dir_all(root);
+    });
 }
 
 #[gpui::test]

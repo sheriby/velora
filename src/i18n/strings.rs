@@ -192,6 +192,8 @@ pub struct I18nStrings {
     pub preferences_window_title: String,
     /// File preferences navigation label.
     pub preferences_group_startup: String,
+    pub preferences_network_proxy: String,
+    pub preferences_network_proxy_hint: String,
     pub preferences_group_workspace: String,
     pub preferences_group_saving: String,
     pub preferences_group_history: String,

@@ -255,6 +255,8 @@ impl I18nStringsDe {
                 .preferences_window_title
                 .unwrap_or(defaults.preferences_window_title),
             preferences_group_startup: self.preferences_group_startup.unwrap_or(defaults.preferences_group_startup),
+            preferences_network_proxy: self.preferences_network_proxy.unwrap_or(defaults.preferences_network_proxy),
+            preferences_network_proxy_hint: self.preferences_network_proxy_hint.unwrap_or(defaults.preferences_network_proxy_hint),
             preferences_group_workspace: self.preferences_group_workspace.unwrap_or(defaults.preferences_group_workspace),
             preferences_group_saving: self.preferences_group_saving.unwrap_or(defaults.preferences_group_saving),
             preferences_group_history: self.preferences_group_history.unwrap_or(defaults.preferences_group_history),
