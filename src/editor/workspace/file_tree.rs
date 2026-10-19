@@ -86,6 +86,9 @@ fn is_build_dir(name: &std::ffi::OsStr) -> bool {
 }
 
 pub(super) fn workspace_entry_node(path: PathBuf, directory: bool) -> WorkspaceTreeNode {
+    // 树里存的路径统一去掉 Windows 的 `\\?\` 前缀：节点 id、选中值、面包屑与
+    // 「这个文件在不在工作区里」都拿它比对，写法不一致就会互相找不到。
+    let path = crate::file_url::strip_verbatim_prefix(&path);
     let kind = if directory {
         WorkspaceTreeKind::Directory(path.clone())
     } else if is_markdown_file(&path) {
@@ -293,10 +296,11 @@ fn scan_workspace_dir_until(
 
     sort_workspace_children(&mut children, sort);
 
+    let path = crate::file_url::strip_verbatim_prefix(path);
     Ok(WorkspaceTreeNode {
-        id: file_node_id(path),
-        label: file_label(path),
-        kind: WorkspaceTreeKind::Directory(path.to_path_buf()),
+        id: file_node_id(&path),
+        label: file_label(&path),
+        kind: WorkspaceTreeKind::Directory(path.clone()),
         children,
         children_loaded: true,
         children_load_failed: false,

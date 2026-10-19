@@ -1610,7 +1610,9 @@ fn workspace_tree_empty_directories_keep_native_row_and_disclosure_semantics(
     let empty = root.join("a-empty");
     fs::create_dir_all(&empty).unwrap();
     fs::write(root.join("z.md"), "file").unwrap();
-    let root = root.canonicalize().unwrap();
+    // 树里的路径统一去掉 Windows 的 `\\?\` 前缀（`strip_verbatim_prefix`），
+    // 用例按同一口径比较，别把某个平台的写法钉进断言。
+    let root = crate::file_url::strip_verbatim_prefix(&root.canonicalize().unwrap());
     let empty = root.join("a-empty");
     cx.update(|cx| {
         crate::i18n::I18nManager::init_with_language_id(cx, "en-US");
@@ -1778,7 +1780,7 @@ fn workspace_tree_virtual_rows_measure_name_validation_and_reuse_size_cache(
     let root = std::env::temp_dir().join(format!("velora-tree-measure-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("note.md"), "note").unwrap();
-    let root = root.canonicalize().unwrap();
+    let root = crate::file_url::strip_verbatim_prefix(&root.canonicalize().unwrap());
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);

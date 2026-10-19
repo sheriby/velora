@@ -776,7 +776,7 @@ impl Editor {
         if let Some(file_version) = self.file_version {
             self.mark_workspace_document_saved(&path, file_version, &saved_markdown);
         }
-        self.file_path = Some(path.clone());
+        self.file_path = Some(crate::file_url::strip_verbatim_prefix(&path));
         self.recovery_source_path = None;
         self.is_recovered_document = false;
         self.document_dirty = false;

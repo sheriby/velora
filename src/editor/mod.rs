@@ -746,6 +746,10 @@ impl Editor {
         file_path: Option<PathBuf>,
         first_chunk_roots: usize,
     ) -> Self {
+        // 文档路径与应用里其它路径同一个口径：去掉 Windows 的 verbatim 前缀。
+        // 面包屑、工作区标签、「这个文件在不在工作区里」都要拿它与工作区根比对，
+        // 一边带 `\\?\`、一边不带就会互相找不到。
+        let file_path = file_path.map(|path| crate::file_url::strip_verbatim_prefix(&path));
         let normalized = encoding::normalize_document_text(&markdown);
         // 缓冲区先于块树建好：导入器要把每根块的源码区间换算成字节区间，
         // 靠的就是它的行索引。

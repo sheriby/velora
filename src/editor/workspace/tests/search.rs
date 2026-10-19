@@ -2853,7 +2853,7 @@ fn native_search_results_do_not_retarget_clicks_after_results_reorder(cx: &mut T
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("a.md"), "A needle\n").unwrap();
     fs::write(root.join("b.md"), "B needle\n").unwrap();
-    let root = root.canonicalize().unwrap();
+    let root = crate::file_url::strip_verbatim_prefix(&root.canonicalize().unwrap());
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
@@ -3003,7 +3003,7 @@ fn native_search_results_return_filename_activation_to_the_query(cx: &mut TestAp
     ));
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("a.md"), "目标正文\n").unwrap();
-    let root = root.canonicalize().unwrap();
+    let root = crate::file_url::strip_verbatim_prefix(&root.canonicalize().unwrap());
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);

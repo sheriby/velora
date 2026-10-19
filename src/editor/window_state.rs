@@ -1438,10 +1438,20 @@ fn local_path_from_file_url(rest: &str) -> String {
     } else {
         percent_decode_or_raw(rest).into_owned()
     };
-    // 盘符路径（`C:\Notes\x.md`）本身在 Windows 上就是绝对路径。以前这里给它补了
-    // 一道前导斜杠，拼成 `/C:\Notes\x.md`——那是「没有盘符的根路径」，`is_absolute`
-    // 为假，链接随后落到「目标不存在」那条静默返回上：Windows 上 file: 链接点不开。
-    decoded
+    // `file:///C:/Notes/x.md` 解出来是 `/C:/Notes/x.md`——前导斜杠 + 盘符。在 Windows
+    // 上这**不是**绝对路径（缺盘符根），`is_absolute` 为假，链接随后落到「目标不存在」
+    // 那条静默返回上：Windows 上 file: 链接点不开。把盘符前那道斜杠去掉。
+    match decoded.strip_prefix('/') {
+        Some(rest) if has_drive_prefix(rest) => rest.to_string(),
+        _ => decoded,
+    }
+}
+
+/// `C:` 开头的盘符写法。
+fn has_drive_prefix(path: &str) -> bool {
+    let mut chars = path.chars();
+    matches!(chars.next(), Some(first) if first.is_ascii_alphabetic())
+        && chars.next() == Some(':')
 }
 
 /// 大小写不敏感地剥掉 `file:` scheme（判据看的是 `lowered`），返回原文里剩下的目标。

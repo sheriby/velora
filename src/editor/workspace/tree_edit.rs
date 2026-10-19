@@ -474,7 +474,7 @@ impl Editor {
             .as_ref()
             .and_then(|path| remap_moved_path(path, source, destination, is_directory))
         {
-            self.file_path = Some(path);
+            self.file_path = Some(crate::file_url::strip_verbatim_prefix(&path));
             self.pending_window_title_refresh = true;
             if !self.code_document && (is_directory || source.parent() != destination.parent()) {
                 self.rebuild_image_runtimes(cx);

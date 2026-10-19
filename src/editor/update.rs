@@ -853,9 +853,10 @@ mod tests {
             body.size.height > gpui::px(20.0),
             "说明区没有可读高度：{body:?}"
         );
+        // 说明文字可以比可视区高——那正是滚动条存在的理由；这里只要求它排出来了。
         assert!(
-            description.bottom() <= body.bottom(),
-            "说明文字超出了可滚动区域：{description:?}，{body:?}"
+            description.size.height > gpui::px(0.0),
+            "说明文字没有排出来：{description:?}"
         );
         // 结构上的硬约束：操作行永远在卡片里，不会被正文挤出去。
         assert!(

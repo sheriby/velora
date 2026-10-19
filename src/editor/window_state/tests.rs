@@ -74,9 +74,10 @@ mod tests {
         else {
             panic!("file: URL 应还原成本地路径");
         };
+        // 盘符路径不能带前导斜杠：`/C:/…` 在 Windows 上缺盘符根，链接会静默失败。
         assert!(
-            std::path::Path::new(&path).is_absolute(),
-            "盘符路径必须是绝对路径，实际拿到 {path}"
+            !path.starts_with('/') && path.starts_with("C:"),
+            "盘符路径的形状不对：{path}"
         );
     }
 

@@ -469,7 +469,7 @@ fn ai_answer_links_open_workspace_sources_without_making_the_answer_editable(
     let root = std::env::temp_dir().join(format!("velora-ai-links-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("nested")).unwrap();
     std::fs::write(root.join("note.md"), "# Source\n\nContent").unwrap();
-    let root = root.canonicalize().unwrap();
+    let root = crate::file_url::strip_verbatim_prefix(&root.canonicalize().unwrap());
     let (editor, cx) = cx.add_window_view(|_, cx| {
         Editor::from_markdown(cx, "当前文档".into(), Some(root.join("nested/current.md")))
     });
