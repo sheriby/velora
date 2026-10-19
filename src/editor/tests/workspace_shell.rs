@@ -687,3 +687,139 @@ fn titlebar_blank_space_between_groups_can_start_a_window_drag(cx: &mut TestAppC
         cx.simulate_mouse_up(gap.center(), gpui::MouseButton::Left, Modifiers::none());
     }
 }
+
+#[gpui::test]
+fn native_status_controls_support_keyboard_activation(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let root =
+        std::env::temp_dir().join(format!("velora-status-controls-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let _config = crate::config::override_test_config_root(root.join("profile"));
+    let config_path = crate::config::VeloraConfigDirs::from_system()
+        .unwrap()
+        .app_config_file();
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, "[status_bar]\ncustom_buttons = [{ id = 'select', label = '全选', action_id = 'select_document' }]\n").unwrap();
+    let document = root.join(format!("{}note.md", "long-name-".repeat(8)));
+    fs::write(&document, "alpha one\n\nbeta two\n").unwrap();
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| {
+                Editor::from_markdown(cx, "alpha one\n\nbeta two\n".into(), Some(document.clone()))
+            })
+        })
+        .unwrap()
+    });
+    handle
+        .update(cx, |editor, window, cx| {
+            window.activate_window();
+            editor.set_workspace_root(root.clone(), cx);
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    redraw(&mut visual);
+    visual.update(|window, cx| {
+        for id in [
+            "status-bar-breadcrumb",
+            "status-bar-custom-button-select",
+            "status-bar-reading-mode",
+            "status-bar-view-mode-toggle",
+        ] {
+            assert_eq!(
+                window.try_find(id).and_then(|item| item.role()),
+                Some(gpui::Role::Button),
+                "{id} 应具备原生按钮语义"
+            );
+            assert!(
+                window
+                    .find(id)
+                    .label()
+                    .is_some_and(|label| !label.is_empty())
+            );
+        }
+        window.blur(cx);
+        window.focus_next(cx);
+        for _ in 0..32 {
+            window.press("tab", cx);
+            window.render_frame(cx);
+            if window.find("status-bar-reading-mode").focused() == Some(true) {
+                break;
+            }
+        }
+        assert_eq!(window.find("status-bar-reading-mode").focused(), Some(true));
+        window.press("space", cx);
+    });
+    redraw(&mut visual);
+    assert!(
+        handle
+            .read_with(&visual, |editor, _| editor.is_read_only())
+            .unwrap()
+    );
+    visual.update(|window, cx| {
+        window.press("tab", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("status-bar-view-mode-toggle").focused(),
+            Some(true)
+        );
+        window.press("space", cx);
+    });
+    redraw(&mut visual);
+    assert_eq!(
+        handle
+            .read_with(&visual, |editor, _| editor.view_mode)
+            .unwrap(),
+        crate::editor::ViewMode::Source
+    );
+    visual.update(|window, cx| {
+        window.blur(cx);
+        window.focus_next(cx);
+        for _ in 0..32 {
+            window.press("tab", cx);
+            window.render_frame(cx);
+            if window.find("status-bar-custom-button-select").focused() == Some(true) {
+                break;
+            }
+        }
+        assert_eq!(
+            window.find("status-bar-custom-button-select").focused(),
+            Some(true)
+        );
+        window.press("space", cx);
+    });
+    redraw(&mut visual);
+    handle
+        .read_with(&visual, |editor, cx| {
+            assert!(editor.capture_source_selection_snapshot(cx).range.len() > 10);
+            assert_eq!(editor.buffer.text(), "alpha one\n\nbeta two\n");
+        })
+        .unwrap();
+    visual.simulate_resize(gpui::size(px(700.0), px(500.0)));
+    visual.run_until_parked();
+    redraw(&mut visual);
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.viewport_size().width, px(700.0));
+        let reading = window.find("status-bar-reading-mode").bounds();
+        for id in [
+            "status-bar-breadcrumb",
+            "status-bar-custom-button-select",
+            "status-bar-view-mode-toggle",
+        ] {
+            let control = window.find(id);
+            assert!(control.visible(), "{id} 在窄窗口仍需可见");
+            assert!(
+                control.bounds().left() >= px(0.0) && control.bounds().right() <= px(700.0),
+                "{id} 不能被长路径挤出窗口：{:?}，阅读按钮 {:?}", control.bounds(), reading
+            );
+            assert!(
+                (control.bounds().center().y - reading.center().y).abs() <= px(1.0),
+                "{id} 与模式按钮共用中心线"
+            );
+        }
+    });
+    cx.on_quit(move || fs::remove_dir_all(root).unwrap());
+}

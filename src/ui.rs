@@ -115,6 +115,8 @@ fn sync_theme(cx: &mut App) {
         theme.colors.tab_active_foreground = colors.dialog_body;
         theme.colors.title_bar = colors.editor_background;
         theme.colors.title_bar_border = colors.dialog_border;
+        theme.colors.status_bar = colors.status_bar_background;
+        theme.colors.status_bar_border = colors.dialog_border;
     });
 }
 
@@ -262,6 +264,45 @@ mod tests {
                     kit.tokens.list_hover,
                     expected.into(),
                     "原生行读取的背景 token 必须同步"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn kit_status_bar_tracks_each_velora_theme(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            ThemeManager::init_with_theme_id(cx, "forest");
+            super::init(cx);
+        });
+        for theme_id in [
+            "forest",
+            "velora-light",
+            "paper",
+            "midnight",
+            "ink",
+            "velora-dark",
+        ] {
+            cx.update(|cx| {
+                cx.update_global::<ThemeManager, _>(|manager, _| {
+                    assert!(manager.set_theme_by_id(theme_id));
+                })
+            });
+            cx.read(|cx| {
+                let source = cx.global::<ThemeManager>().current_arc();
+                let kit = ComponentTheme::global(cx);
+                assert_eq!(
+                    kit.status_bar, source.colors.status_bar_background,
+                    "{theme_id}"
+                );
+                assert_eq!(
+                    kit.tokens.status_bar,
+                    source.colors.status_bar_background.into(),
+                    "{theme_id}"
+                );
+                assert_eq!(
+                    kit.status_bar_border, source.colors.dialog_border,
+                    "{theme_id}"
                 );
             });
         }

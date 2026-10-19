@@ -1,7 +1,12 @@
 //! Bottom status bar: cursor position, word count, and custom buttons.
 
 use gpui::*;
-use gpui::prelude::FluentBuilder;
+use gpui_kit::component::{
+    Icon, Selectable as _, Sizable as _,
+    breadcrumb::{Breadcrumb, BreadcrumbItem},
+    button::{Button, ButtonVariants},
+    status_bar::StatusBar,
+};
 use unicode_segmentation::UnicodeSegmentation;
 
 const VIEW_SOURCE_ICON: &str = "icon/workspace/view-source.svg";
@@ -10,11 +15,6 @@ use super::Editor;
 use crate::config::preferences::{StatusBarButton, StatusBarPreferences};
 use crate::i18n::I18nStrings;
 use crate::theme::Theme;
-
-#[derive(Default)]
-pub(super) struct StatusBarState {
-    custom_button_hovered: Option<String>,
-}
 
 impl Editor {
     /// 状态栏整篇统计的静默窗口：打字期间不重扫。
@@ -154,12 +154,7 @@ impl Editor {
         }
 
         for button in &prefs.custom_buttons {
-            right_items.push(render_custom_button(
-                &mut self.status_bar,
-                button,
-                theme,
-                cx,
-            ));
+            right_items.push(render_custom_button(button, cx));
         }
 
         let mut mode_controls = div()
@@ -167,13 +162,13 @@ impl Editor {
             .flex()
             .flex_shrink_0()
             .items_center()
-            .gap(px(2.0))
+            .gap_0p5()
             .child(self.render_reading_mode_toggle(theme, strings, cx));
         if !(self.code_document
             || self.source_mode_fallback_required
             || self.image_preview.is_some())
         {
-            mode_controls = mode_controls.child(self.render_view_mode_toggle(theme, cx));
+            mode_controls = mode_controls.child(self.render_view_mode_toggle(theme, strings, cx));
         }
         right_items.push(mode_controls.into_any_element());
 
@@ -182,23 +177,29 @@ impl Editor {
 
         let bar = div()
             .id("status-bar")
-            .h(px(d.status_bar_height))
             .w_full()
             .flex_shrink_0()
-            .flex()
-            .items_center()
-            .justify_end()
-            .px(px(d.status_bar_padding_x))
-            .bg(c.status_bar_background)
-            .border_t(px(1.0))
-            .border_color(c.dialog_border)
-            .child(breadcrumb)
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(d.status_bar_item_gap))
-                    .children(right_items),
+                StatusBar::new()
+                    .h(px(d.status_bar_height))
+                    .py_0()
+                    .px(rems(d.status_bar_padding_x / 16.0))
+                    .right(
+                        div()
+                            .flex()
+                            .items_center()
+                            .min_w_0()
+                            .gap(rems(d.status_bar_item_gap / 16.0))
+                            .child(breadcrumb)
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_none()
+                                    .items_center()
+                                    .gap(rems(d.status_bar_item_gap / 16.0))
+                                    .children(right_items),
+                            ),
+                    ),
             )
             .into_any_element();
 
@@ -223,7 +224,6 @@ impl Editor {
 
     /// 工作区根/子路径/文件名 面包屑；无工作区根时隐藏。
     fn render_breadcrumb(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let c = &theme.colors;
         let d = &theme.dimensions;
         let Some(document_path) = self.file_path.as_ref() else {
             return div().into_any_element();
@@ -239,28 +239,33 @@ impl Editor {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| root.to_string_lossy().into_owned());
         let relative_text = relative.to_string_lossy().into_owned();
-        let editor = cx.entity().downgrade();
         let reveal_path = document_path.clone();
 
-        div()
-            .id("status-bar-breadcrumb")
-            .mr(px(d.status_bar_item_gap))
-            .flex()
-            .items_center()
-            .gap(px(4.0))
-            .text_size(px(d.status_bar_text_size))
-            .text_color(c.status_bar_text_dim)
-            .cursor_pointer()
-            .hover(|this| this.text_color(c.status_bar_text))
-            .child(root_name)
-            .child("›")
-            .child(relative_text)
-            .on_click(move |_event, _window, cx| {
-                let _ = editor.update(cx, |editor, cx| {
-                    editor.reveal_path_in_tree(&reveal_path);
-                    cx.notify();
-                });
-            })
+        Button::new("status-bar-breadcrumb")
+            .ghost()
+            .small()
+            .min_w_0()
+            .flex_shrink_1()
+            .max_w(rems(30.0))
+            .accessibility_label(format!("{root_name} › {relative_text}"))
+            .tooltip(document_path.to_string_lossy().into_owned())
+            .child(
+                Breadcrumb::new()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_size(px(d.status_bar_text_size))
+                    .child(
+                        BreadcrumbItem::new(root_name)
+                            .flex_shrink_0()
+                            .max_w(rems(10.0))
+                            .truncate(),
+                    )
+                    .child(BreadcrumbItem::new(relative_text).min_w_0().truncate()),
+            )
+            .on_click(cx.listener(move |editor, _, _, cx| {
+                editor.reveal_path_in_tree(&reveal_path);
+                cx.notify();
+            }))
             .into_any_element()
     }
 
@@ -277,7 +282,11 @@ impl Editor {
         let offset = snapshot.range.end.min(self.buffer.byte_len());
         let line = self.buffer.line_of(offset);
         let line_start = self.buffer.line_range(line).start;
-        let column = self.buffer.slice(line_start..offset).graphemes(true).count();
+        let column = self
+            .buffer
+            .slice(line_start..offset)
+            .graphemes(true)
+            .count();
         (line + 1, column + 1)
     }
 }
@@ -342,128 +351,67 @@ impl Editor {
             &strings.command_toggle_reading_mode
         }
         .clone();
-        div()
-            .id("status-bar-reading-mode")
-            .debug_selector(|| "status-bar-reading-mode".to_string())
-            .size(px(24.0))
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .rounded_sm()
-            .hover(|this| this.bg(theme.colors.dialog_secondary_button_hover))
-            .when(active, |this| {
-                this.bg(theme.colors.dialog_secondary_button_hover)
-            })
-            .tooltip(move |_, cx| {
-                cx.new(|_| crate::components::HoverPreviewTooltip {
-                    label: label.clone().into(),
-                })
-                .into()
-            })
-            .on_click(cx.listener(|editor, _, _, cx| editor.toggle_reading_mode(cx)))
-            .child(
-                svg()
+        Button::new("status-bar-reading-mode")
+            .debug_selector(|| "status-bar-reading-mode".into())
+            .ghost()
+            .small()
+            .selected(active)
+            .accessibility_label(label.clone())
+            .tooltip(label)
+            .icon(
+                Icon::empty()
                     .path("icon/workspace/reading-mode.svg")
-                    .size(px(14.0))
                     .text_color(if active {
                         theme.colors.text_link
                     } else {
                         theme.colors.status_bar_text_dim
                     }),
             )
+            .on_click(cx.listener(|editor, _, _, cx| editor.toggle_reading_mode(cx)))
             .into_any_element()
     }
 
-    fn render_view_mode_toggle(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let c = &theme.colors;
-        let editor = cx.entity().downgrade();
-        // 图标颜色必须设在 svg 自身上：gpui 的 svg 元素只读自己的 style.text.color，
-        // 父容器的 text_color 不继承，漏设就一个像素都不画
-        // （docs/architecture/overview.md §GPUI 限制）。悬停提亮走 group_hover。
-        div()
-            .id("status-bar-view-mode-toggle")
-            .debug_selector(|| "status-bar-view-mode-toggle".to_string())
-            .group("status-bar-view-mode-toggle")
-            .size(px(24.0))
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .rounded_sm()
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .child(
-                svg()
+    fn render_view_mode_toggle(
+        &mut self,
+        theme: &Theme,
+        strings: &I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let source = self.view_mode == super::ViewMode::Source;
+        let label = if source {
+            &strings.view_mode_switch_to_rendered
+        } else {
+            &strings.view_mode_switch_to_source
+        };
+        Button::new("status-bar-view-mode-toggle")
+            .debug_selector(|| "status-bar-view-mode-toggle".into())
+            .ghost()
+            .small()
+            .selected(source)
+            .accessibility_label(label.clone())
+            .tooltip(label.clone())
+            .icon(
+                Icon::empty()
                     .path(VIEW_SOURCE_ICON)
-                    .size(px(14.0))
-                    .flex_shrink_0()
-                    .text_color(c.status_bar_text_dim)
-                    .group_hover("status-bar-view-mode-toggle", |this| {
-                        this.text_color(c.status_bar_text)
-                    }),
+                    .text_color(theme.colors.status_bar_text_dim),
             )
-            .on_click(move |_event, _window, cx| {
-                let _ = editor.update(cx, |editor, cx| editor.toggle_view_mode_from_ui(cx));
-            })
+            .on_click(cx.listener(|editor, _, _, cx| editor.toggle_view_mode_from_ui(cx)))
             .into_any_element()
     }
 }
 
-fn render_custom_button(
-    state: &mut StatusBarState,
-    button: &StatusBarButton,
-    theme: &Theme,
-    cx: &mut Context<Editor>,
-) -> AnyElement {
-    let c = &theme.colors;
-    let d = &theme.dimensions;
-
-    let id = button.id.clone();
+fn render_custom_button(button: &StatusBarButton, cx: &mut Context<Editor>) -> AnyElement {
     let action_id = button.action_id.clone();
-    let hovered = state.custom_button_hovered.as_deref() == Some(&button.id);
-
-    div()
-        .id(ElementId::Name(
-            format!("status-bar-custom-button-{}", button.id).into(),
-        ))
-        .h(px(d.status_bar_height - 4.0))
-        .px(px(6.0))
-        .flex()
-        .items_center()
-        .rounded(px(4.0))
-        .bg(if hovered {
-            c.status_bar_button_hover
-        } else {
-            hsla(0., 0., 0., 0.)
-        })
-        .cursor_pointer()
-        .text_size(px(d.status_bar_text_size))
-        .text_color(c.status_bar_text)
-        .child(button.label.clone())
-        .on_click(cx.listener(
-            move |editor: &mut Editor,
-                  _event: &gpui::ClickEvent,
-                  window: &mut Window,
-                  cx: &mut Context<Editor>| {
-                editor.dispatch_status_bar_command(&action_id, window, cx);
-            },
-        ))
-        .on_hover(cx.listener(
-            move |editor: &mut Editor,
-                  hovered: &bool,
-                  _window: &mut Window,
-                  cx: &mut Context<Editor>| {
-                if *hovered {
-                    editor.status_bar.custom_button_hovered = Some(id.clone());
-                } else if editor.status_bar.custom_button_hovered.as_deref() == Some(&id) {
-                    editor.status_bar.custom_button_hovered = None;
-                }
-                cx.notify();
-            },
-        ))
-        .into_any_element()
+    Button::new(ElementId::Name(
+        format!("status-bar-custom-button-{}", button.id).into(),
+    ))
+    .ghost()
+    .small()
+    .label(button.label.clone())
+    .on_click(cx.listener(move |editor, _, window, cx| {
+        editor.dispatch_status_bar_command(&action_id, window, cx);
+    }))
+    .into_any_element()
 }
 
 impl Editor {
@@ -564,7 +512,10 @@ mod tests {
     fn long_source_block_hint_tracks_single_long_line() {
         let short = "alpha\nbeta";
         let long_line = "x".repeat(crate::components::LONG_BLOCK_SOURCE_LIMIT);
-        let just_over = format!("x{}", "y".repeat(crate::components::LONG_BLOCK_SOURCE_LIMIT));
+        let just_over = format!(
+            "x{}",
+            "y".repeat(crate::components::LONG_BLOCK_SOURCE_LIMIT)
+        );
         let multi_line_long = format!("a\n{just_over}");
 
         assert!(!document_has_long_source_block(short));

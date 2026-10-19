@@ -65,7 +65,6 @@ pub(crate) mod workspace;
 mod file_history;
 pub(crate) mod workspace_index;
 
-use self::status_bar::StatusBarState;
 use self::workspace::WorkspaceState;
 
 /// Top-level controller that owns editor-wide state and delegates tree
@@ -368,7 +367,6 @@ pub struct Editor {
     /// 菜单树代数缓存，未变帧只做 Rc 引用计数。
     window_menu_cache: Option<(u64, Option<std::rc::Rc<Vec<gpui::OwnedMenu>>>)>,
     workspace: WorkspaceState,
-    status_bar: StatusBarState,
     context_menu: Option<ContextMenuState>,
     table_insert_dialog: Option<TableInsertDialogState>,
     context_menu_submenu_close_task: Option<Task<()>>,
@@ -967,7 +965,6 @@ impl Editor {
             copy_html_task: None,
             window_menu_cache: None,
             workspace: WorkspaceState::default(),
-            status_bar: StatusBarState::default(),
             context_menu: None,
             table_insert_dialog: None,
             context_menu_submenu_close_task: None,
