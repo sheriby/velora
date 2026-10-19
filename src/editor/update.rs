@@ -553,6 +553,10 @@ impl Editor {
         // 说明区的地板：两行正文。窗口矮、字号大时这块原本会被挤成 0——版本号与
         // 重启说明整块看不见，也没有滚动条可拖（高度为零的滚动区滚不动）。
         let description_min_height = cx.theme().font_size * 2.4;
+        let bottom_offset =
+            px(theme.dimensions.status_bar_height) + cx.theme().font_size * 0.75;
+        let max_height = (window.viewport_size().height - bottom_offset - inset * 2.0)
+            .max(description_min_height * 4.0);
         let description = match percent {
             Some(percent) if percent >= 100.0 => strings.update_preparing.clone(),
             Some(percent) => strings
@@ -612,9 +616,12 @@ impl Editor {
                 .debug_selector(|| "update-notification".into())
                 .absolute()
                 .right_4()
-                .bottom(px(theme.dimensions.status_bar_height) + cx.theme().font_size * 0.75)
+                .bottom(bottom_offset)
                 .w((inset * 22.0).min(available_width))
-                .max_h(relative(0.75))
+                // 高度上限取「这块面板实际还能用多少」：底部固定，往上有多少给多少。
+                // 旧写法按视口高度的 75% 封顶，字号一大这个上限就小于内容本身，说明区
+                // 被压到零高、按钮被挤出卡片（窄窗口那两条断言就是这么红的）。
+                .max_h(max_height)
                 .p_3()
                 .flex()
                 .flex_col()
