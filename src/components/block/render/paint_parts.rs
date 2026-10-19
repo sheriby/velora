@@ -1610,8 +1610,9 @@ impl Render for Block {
                                 .id("math-block-live-preview")
                                 .debug_selector(|| "math-block-live-preview".to_string())
                                 .w_full()
-                                // 预览内容可以变化，源码输入区的位置不能随之变化。
-                                .h(px((t.text_size * t.text_line_height * 3.0).max(64.0)))
+                                // 预览区贴着公式本身收缩：固定预留三行时，短公式与源码之间
+                                // 会空出一条比公式还高的缝。超高公式仍在上限内滚动。
+                                .max_h(px((t.text_size * t.text_line_height * 4.0).max(160.0)))
                                 .flex_shrink_0()
                                 .overflow_y_scroll()
                                 .mb(px(card_padding_y))

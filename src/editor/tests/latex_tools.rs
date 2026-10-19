@@ -1568,7 +1568,37 @@ fn math_block_live_preview_keeps_the_last_valid_result_until_input_recovers(
 }
 
 #[gpui::test]
-fn math_block_live_preview_keeps_the_source_position_stable_while_typing(cx: &mut TestAppContext) {
+fn math_block_live_preview_hugs_the_formula_it_shows(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "$$\n\\int_0^1 x^2 \\, dx = \\frac{1}{3}\n$$\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    cx.update(|window, _| window.activate_window());
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("块公式");
+    editor.update(cx, |editor, _| editor.focus_block(math.entity_id()));
+    redraw(cx);
+    redraw(cx);
+    let preview = cx.debug_bounds("math-block-live-preview").expect("预览区");
+    let formula = cx
+        .debug_bounds("math-block-rendered-formula")
+        .expect("公式图像");
+    let card = cx.debug_bounds("math-block-card").expect("源码卡片");
+    // 预览区高过公式，多出来的高度就是公式与源码之间那道空白。
+    let slack = f32::from(preview.bottom() - formula.bottom());
+    assert!(
+        slack <= 16.0,
+        "公式与源码之间应只剩内边距，实测空白 {slack}px（预览区 {:?}，公式 {:?}）",
+        f32::from(preview.size.height),
+        f32::from(formula.size.height)
+    );
+    assert!(preview.bottom() <= card.top(), "预览必须位于源码上方");
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
+}
+
+#[gpui::test]
+fn math_block_live_preview_stays_adjacent_to_the_source_while_typing(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let formula = r"\int_{-\infty}^{+\infty} e^{-x^2}\,dx = \sqrt{\pi}";
     let (editor, cx) =
@@ -1581,8 +1611,6 @@ fn math_block_live_preview_keeps_the_source_position_stable_while_typing(cx: &mu
     editor.update(cx, |editor, _| editor.focus_block(math.entity_id()));
     redraw(cx);
     redraw(cx);
-    let original_card = cx.debug_bounds("math-block-card").expect("源码卡片");
-    let original_preview = cx.debug_bounds("math-block-live-preview").expect("预览区");
     for body in [
         format!("{formula} \\"),
         format!("{formula} \\fr"),
@@ -1593,6 +1621,7 @@ fn math_block_live_preview_keeps_the_source_position_stable_while_typing(cx: &mu
             let end = block.display_text().len();
             block.replace_text_in_visible_range(0..end, &body, None, false, cx);
         });
+        let mut first_pass: Option<(f32, f32)> = None;
         for _ in 0..3 {
             redraw(cx);
             let card = cx
@@ -1601,15 +1630,29 @@ fn math_block_live_preview_keeps_the_source_position_stable_while_typing(cx: &mu
             let preview = cx
                 .debug_bounds("math-block-live-preview")
                 .expect("预览区应保持可见");
-            assert_eq!(
-                card.top(),
-                original_card.top(),
-                "预览变化不能挤动源码输入区：{body:?}"
+            assert!(
+                preview.bottom() <= card.top(),
+                "预览不能压住源码卡片：{body:?}"
             );
-            assert_eq!(
-                preview.size.height, original_preview.size.height,
-                "预览占位高度应稳定"
+            // 预览跟着公式收缩，所以位置会变；同一份内容重绘两次仍得在原地。
+            let geometry = (
+                f32::from(preview.bottom()),
+                f32::from(card.top()),
             );
+            match first_pass {
+                Some(previous) => assert_eq!(
+                    geometry, previous,
+                    "同一份内容重绘不能抖动：{body:?}"
+                ),
+                None => first_pass = Some(geometry),
+            }
+            if let Some(formula) = cx.debug_bounds("math-block-rendered-formula") {
+                let slack = f32::from(preview.bottom() - formula.bottom());
+                assert!(
+                    slack <= 16.0,
+                    "公式与源码之间只留内边距：{body:?} 实测 {slack}px"
+                );
+            }
             assert!(
                 cx.debug_bounds("math-block-render-error").is_none(),
                 "输入中不插入报错条"
@@ -1622,7 +1665,7 @@ fn math_block_live_preview_keeps_the_source_position_stable_while_typing(cx: &mu
 }
 
 #[gpui::test]
-fn math_block_live_preview_reserves_space_when_no_valid_result_exists(cx: &mut TestAppContext) {
+fn math_block_live_preview_shows_no_band_for_an_incomplete_formula(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, "$$\n\\frac{a}\n$$\n".into(), None));
@@ -1633,7 +1676,6 @@ fn math_block_live_preview_reserves_space_when_no_valid_result_exists(cx: &mut T
     editor.update(cx, |editor, _| editor.focus_block(math.entity_id()));
     redraw(cx);
     redraw(cx);
-    let card = cx.debug_bounds("math-block-card").expect("源码卡片");
     assert!(
         cx.debug_bounds("math-block-render-error").is_none(),
         "没有成功预览也不显示报错条"
@@ -1642,20 +1684,30 @@ fn math_block_live_preview_reserves_space_when_no_valid_result_exists(cx: &mut T
         cx.debug_bounds("math-block-rendered-formula").is_none(),
         "没有旧结果时保留空白"
     );
+    let preview = cx
+        .debug_bounds("math-block-live-preview")
+        .expect("预览区仍在");
+    // 只剩编号那一行，不再按一整条公式的高度预留。
+    assert!(
+        preview.size.height <= px(32.0),
+        "没有可渲染内容时只留编号一行，实测 {:?}",
+        f32::from(preview.size.height)
+    );
     math.update(cx, |block, cx| {
         let end = block.display_text().len();
         block.replace_text_in_visible_range(0..end, "\\frac{a}{b}", None, false, cx);
     });
     redraw(cx);
     redraw(cx);
-    assert_eq!(
-        cx.debug_bounds("math-block-card").expect("源码卡片").top(),
-        card.top()
-    );
     assert!(
         cx.debug_bounds("math-block-rendered-formula").is_some(),
         "完成后恢复实时预览"
     );
+    let card = cx.debug_bounds("math-block-card").expect("源码卡片");
+    let preview = cx
+        .debug_bounds("math-block-live-preview")
+        .expect("预览区");
+    assert!(preview.bottom() <= card.top(), "公式出现在源码上方");
 }
 
 #[gpui::test]
