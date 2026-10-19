@@ -585,6 +585,15 @@ impl Editor {
                     _ => {}
                 }
             }
+            "enter" if self.workspace.active_tab == WorkspaceTab::Search => {
+                let index = self.workspace.search_active_index.unwrap_or(0);
+                self.open_search_hit(index, window, cx);
+            }
+            "escape" if self.workspace.active_tab == WorkspaceTab::Search => {
+                if let Some(focus) = self.workspace.search_focus.as_ref() {
+                    window.focus(focus, cx);
+                }
+            }
             "enter" if self.workspace.active_tab == WorkspaceTab::Outline => {
                 let target =
                     self.workspace

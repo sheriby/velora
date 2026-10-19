@@ -140,21 +140,45 @@ impl Editor {
             };
             let _ = editor.update(cx, |editor, cx| {
                 if editor.workspace.search_generation == generation {
-                    editor.workspace.search_results = results;
-                    if scope == WorkspaceSearchScope::Document {
-                        editor.workspace.search_active_index =
-                            editor.workspace.search_results.iter().position(|hit| {
-                                hit.source_range == editor.workspace.document_active_range
-                            });
-                    }
-                    editor.workspace.search_pending = false;
-                    editor.sync_document_search_highlights(cx);
-                    cx.notify();
+                    editor.complete_workspace_search(results, cx);
                 }
             });
         })
         .detach();
     }
+
+    pub(super) fn complete_workspace_search(
+        &mut self,
+        results: Vec<WorkspaceSearchHit>,
+        cx: &mut Context<Self>,
+    ) {
+        let selected = self
+            .workspace
+            .search_active_index
+            .and_then(|index| self.workspace.search_results.get(index))
+            .map(WorkspaceSearchHitKey::new);
+        self.workspace.search_results = results;
+        let selected = selected.and_then(|selected| {
+            self.workspace
+                .search_results
+                .iter()
+                .position(|hit| selected.matches(hit))
+        });
+        self.workspace.search_active_index = selected.or_else(|| {
+            if self.workspace.search_scope == WorkspaceSearchScope::Document {
+                self.workspace
+                    .search_results
+                    .iter()
+                    .position(|hit| hit.source_range == self.workspace.document_active_range)
+            } else {
+                None
+            }
+        });
+        self.workspace.search_pending = false;
+        self.sync_document_search_highlights(cx);
+        cx.notify();
+    }
+
     pub(crate) fn goto_cursor_location(
         &mut self,
         location: CursorLocation,
@@ -437,6 +461,9 @@ impl Editor {
             .search_results
             .iter()
             .position(|hit| hit.source_range.as_ref() == Some(&range));
+        if let Some(index) = self.workspace.search_active_index {
+            self.reveal_workspace_search_hit(index);
+        }
         self.workspace.document_active_range = Some(range.clone());
         self.jump_to_document_search_range(range, cx);
     }

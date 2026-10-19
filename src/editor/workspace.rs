@@ -38,17 +38,6 @@ const TAB_CLOSE_ICON: &str = "icon/workspace/tab-close.svg";
 const GENERIC_FILE_ICON: &str = "icon/workspace/generic-file.svg";
 const IMAGE_ICON: &str = "icon/workspace/image.svg";
 pub(crate) const WORKSPACE_NODE_HEIGHT: f32 = 24.0;
-/// 搜索结果超过阈值时开窗；文件树和大纲的窗口由 Kit 管理。
-pub(crate) const PANEL_WINDOW_THRESHOLD_ROWS: usize = 200;
-/// 窗口上下各多铺几行：滚动时先看到内容、再补精确边界，不是先看到空档。
-const PANEL_WINDOW_OVERDRAW_ROWS: usize = 8;
-/// 首帧还没有滚动视口尺寸时先铺的行数（随后排一帧补上）。
-const PANEL_WINDOW_FALLBACK_ROWS: usize = 120;
-/// 补帧上限：量到尺寸就停，避免每帧重排（与正文冷启动同数）。
-pub(crate) const PANEL_FILL_MAX_FRAMES: u8 = 8;
-/// 搜索外壳与树虚拟列表共用的上下内容边距。
-const WORKSPACE_PANEL_PADDING_Y: f32 = 6.0;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum WorkspaceTab {
     #[default]
@@ -190,6 +179,27 @@ pub(crate) struct WorkspaceSearchHit {
     /// 跳转靠它而不是靠行号换算。
     match_ordinal: Option<usize>,
     preview: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct WorkspaceSearchHitKey {
+    path: PathBuf,
+    line: Option<usize>,
+    source_range: Option<Range<usize>>,
+}
+
+impl WorkspaceSearchHitKey {
+    fn new(hit: &WorkspaceSearchHit) -> Self {
+        Self {
+            path: hit.path.clone(),
+            line: hit.line,
+            source_range: hit.source_range.clone(),
+        }
+    }
+
+    fn matches(&self, hit: &WorkspaceSearchHit) -> bool {
+        self.path == hit.path && self.line == hit.line && self.source_range == hit.source_range
+    }
 }
 
 /// 全量高亮同步的输入指纹。这几项一个都没变，就说明这一次只是**活动命中**挪了位

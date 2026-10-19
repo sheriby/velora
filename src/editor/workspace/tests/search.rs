@@ -2687,3 +2687,399 @@ fn native_search_inputs_support_undo_and_commit_ime_before_searching(cx: &mut Te
         );
     });
 }
+
+#[gpui::test]
+fn native_search_results_keep_keyboard_navigation_in_the_list(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let source = (0..200)
+        .map(|index| format!("needle {index}\n\n"))
+        .collect::<String>();
+    let last = source.rfind("needle").unwrap();
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, source.clone(), None))
+        })
+        .unwrap()
+    });
+    handle
+        .update(cx, |editor, window, cx| {
+            window.activate_window();
+            editor.workspace.search_query = "needle".into();
+            editor.open_document_find(cx);
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    visual.run_until_parked();
+    visual.executor().advance_clock(Duration::from_millis(400));
+    for _ in 0..4 {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window
+                .try_find("workspace-search-viewport")
+                .and_then(|item| item.role()),
+            Some(gpui::Role::Group),
+            "搜索结果应由标准虚拟列表承接滚动"
+        );
+        let scope = window.find("workspace-panel-scroll").path().to_vec();
+        let rows = gpui_kit::base::test_support::snapshots(window)
+            .into_iter()
+            .filter(|row| {
+                row.path().starts_with(&scope) && row.role() == Some(gpui::Role::ListItem)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !rows.is_empty() && rows.len() < 200,
+            "应只创建视口内的标准结果行"
+        );
+        assert!(
+            rows.iter()
+                .all(|row| row.label().is_some_and(|label| label.contains("needle")))
+        );
+        for _ in 0..24 {
+            window.press("tab", cx);
+            window.render_frame(cx);
+            if window.find("workspace-panel-scroll").focused() == Some(true) {
+                break;
+            }
+        }
+        assert_eq!(
+            window.find("workspace-panel-scroll").focused(),
+            Some(true),
+            "结果列表应可从输入区用 Tab 到达"
+        );
+        window.press("end", cx);
+    });
+    for _ in 0..3 {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    handle
+        .read_with(&visual, |editor, cx| {
+            assert_eq!(editor.workspace.search_active_index, Some(199));
+            assert!(editor.panel_first_row_rendered.get() > 0);
+            assert_eq!(
+                editor.capture_source_selection_snapshot(cx).range,
+                0..0,
+                "浏览结果不能提前移动正文选区"
+            );
+        })
+        .unwrap();
+    let viewport = handle
+        .read_with(&visual, |editor, _| {
+            editor.workspace.tree_scroll_handle.bounds()
+        })
+        .unwrap();
+    let row = visual
+        .debug_bounds("workspace-search-hit-199")
+        .expect("末尾命中已入视");
+    assert!(viewport.contains(&row.center()));
+    visual.update(|window, cx| window.press("enter", cx));
+    for _ in 0..3 {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            assert_eq!(
+                editor.capture_source_selection_snapshot(cx).range,
+                last..last + "needle".len()
+            );
+            assert!(
+                editor
+                    .workspace
+                    .search_focus
+                    .as_ref()
+                    .unwrap()
+                    .is_focused(window)
+            );
+            assert_eq!(editor.buffer.text(), source);
+        })
+        .unwrap();
+    visual.update(|window, cx| {
+        window.press("secondary-a", cx);
+        window.press("backspace", cx);
+    });
+    for _ in 0..3 {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    handle
+        .read_with(&visual, |editor, _| {
+            assert!(editor.workspace.search_results.is_empty());
+            assert_eq!(
+                editor.workspace.tree_scroll_handle.offset().y,
+                px(0.0),
+                "清空结果时应由滚动视口归零"
+            );
+            assert_eq!(
+                editor.panel_rows_rendered.get(),
+                0,
+                "空结果不能沿用上一帧的条目计数"
+            );
+        })
+        .unwrap();
+    visual.update(|window, cx| window.input("needle", cx));
+    visual.run_until_parked();
+    visual.executor().advance_clock(Duration::from_millis(400));
+    for _ in 0..3 {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    let first = visual
+        .debug_bounds("workspace-search-hit-0")
+        .expect("重新查询的首个命中应可见");
+    let viewport = handle
+        .read_with(&visual, |editor, _| {
+            editor.workspace.tree_scroll_handle.bounds()
+        })
+        .unwrap();
+    assert!(viewport.contains(&first.center()));
+}
+
+#[gpui::test]
+fn native_search_results_do_not_retarget_clicks_after_results_reorder(cx: &mut TestAppContext) {
+    let root =
+        std::env::temp_dir().join(format!("velora-search-identity-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("a.md"), "A needle\n").unwrap();
+    fs::write(root.join("b.md"), "B needle\n").unwrap();
+    let root = root.canonicalize().unwrap();
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, visual) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "初始正文".into(), None));
+    editor.update(visual, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx)
+    });
+    visual.run_until_parked();
+    editor.update(visual, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = WorkspaceTab::Search;
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
+        editor.workspace.search_query = "needle".into();
+        editor.workspace.search_results = ["a.md", "b.md"]
+            .into_iter()
+            .map(|name| super::super::WorkspaceSearchHit {
+                path: root.join(name),
+                label: name.into(),
+                line: Some(1),
+                match_range: Some(2..8),
+                source_range: None,
+                match_ordinal: Some(0),
+                preview: format!("{name} needle"),
+            })
+            .collect();
+        cx.notify();
+    });
+    for _ in 0..3 {
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    let row = visual
+        .debug_bounds("workspace-search-hit-0")
+        .expect("显示中的 A 命中");
+    // 模拟异步结果已到达，而下一帧尚未呈现。
+    editor.update(visual, |editor, _| {
+        editor.workspace.search_results.swap(0, 1)
+    });
+    visual.simulate_click(row.center(), Modifiers::none());
+    visual.run_until_parked();
+    editor.read_with(visual, |editor, _| {
+        assert_ne!(
+            editor.file_path,
+            Some(root.join("b.md")),
+            "点击 A 不能因为数组位置改变而打开 B"
+        )
+    });
+    // 原生控件可取消跨帧点击；更新后的 A 仍应能正常打开。
+    for _ in 0..3 {
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    let index = editor
+        .read_with(visual, |editor, _| {
+            editor
+                .workspace
+                .search_results
+                .iter()
+                .position(|hit| hit.path == root.join("a.md"))
+        })
+        .unwrap();
+    let selector = format!("workspace-search-hit-{index}");
+    let row = visual
+        .debug_bounds(Box::leak(selector.into_boxed_str()))
+        .expect("更新后的 A 命中");
+    visual.simulate_click(row.center(), Modifiers::none());
+    visual.run_until_parked();
+    editor.read_with(visual, |editor, _| {
+        assert_eq!(editor.file_path, Some(root.join("a.md")))
+    });
+    cx.on_quit(move || fs::remove_dir_all(root).unwrap());
+}
+
+#[gpui::test]
+fn native_search_results_preserve_selected_hit_when_updates_reorder(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let editor =
+        cx.update(|cx| cx.new(|cx| Editor::from_markdown(cx, "needle needle".into(), None)));
+    editor.update(cx, |editor, cx| {
+        let hits = ["a.md", "b.md"]
+            .into_iter()
+            .map(|name| super::super::WorkspaceSearchHit {
+                path: PathBuf::from(name),
+                label: name.into(),
+                line: Some(1),
+                match_range: Some(0..6),
+                source_range: None,
+                match_ordinal: Some(0),
+                preview: "needle".into(),
+            })
+            .collect::<Vec<_>>();
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
+        editor.workspace.search_results = hits.clone();
+        editor.workspace.search_active_index = Some(0);
+        editor.workspace.search_pending = true;
+        editor.complete_workspace_search(hits.into_iter().rev().collect(), cx);
+        assert_eq!(
+            editor.workspace.search_active_index,
+            Some(1),
+            "结果更新应保留 A 的选择，而不是选中旧位置的 B"
+        );
+        assert!(!editor.workspace.search_pending);
+        let hits = (0..2)
+            .map(|index| super::super::WorkspaceSearchHit {
+                path: PathBuf::from("note.md"),
+                label: "note.md".into(),
+                line: Some(1),
+                match_range: Some(index * 7..index * 7 + 6),
+                source_range: Some(index * 7..index * 7 + 6),
+                match_ordinal: None,
+                preview: "needle needle".into(),
+            })
+            .collect::<Vec<_>>();
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Document;
+        editor.workspace.search_results = hits.clone();
+        editor.workspace.document_active_range = Some(0..6);
+        editor.workspace.search_active_index = Some(1);
+        editor.complete_workspace_search(hits, cx);
+        assert_eq!(
+            editor.workspace.search_active_index,
+            Some(1),
+            "普通刷新应保留正在浏览的文档命中"
+        );
+        assert_eq!(
+            editor.workspace.document_active_range,
+            Some(0..6),
+            "浏览选择仍与已跳转位置独立"
+        );
+    });
+}
+
+#[gpui::test]
+fn native_search_results_return_filename_activation_to_the_query(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root = std::env::temp_dir().join(format!(
+        "velora-search-filename-focus-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("a.md"), "目标正文\n").unwrap();
+    let root = root.canonicalize().unwrap();
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "初始正文".into(), None))
+        })
+        .unwrap()
+    });
+    handle
+        .update(cx, |editor, _, cx| {
+            editor.set_workspace_root(root.clone(), cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    handle
+        .update(cx, |editor, _, cx| {
+            editor.workspace.is_open = true;
+            editor.workspace.active_tab = WorkspaceTab::Search;
+            editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
+            editor.workspace.search_query = "a.md".into();
+            editor.workspace.search_focus_pending = true;
+            editor.workspace.search_results = vec![super::super::WorkspaceSearchHit {
+                path: root.join("a.md"),
+                label: "a.md".into(),
+                line: None,
+                match_range: None,
+                source_range: None,
+                match_ordinal: None,
+                preview: String::new(),
+            }];
+            cx.notify();
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    for _ in 0..3 {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.focus_workspace_tree(window, cx)
+        })
+        .unwrap();
+    visual.update(|window, cx| window.press("enter", cx));
+    for _ in 0..3 {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    handle
+        .update(&mut visual, |editor, window, _| {
+            assert_eq!(editor.file_path, Some(root.join("a.md")));
+            assert!(
+                editor
+                    .workspace
+                    .search_focus
+                    .as_ref()
+                    .unwrap()
+                    .is_focused(window),
+                "打开仅文件名命中后也应返回查询框"
+            );
+        })
+        .unwrap();
+    visual.update(|window, cx| window.input("z", cx));
+    visual.run_until_parked();
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(editor.workspace.search_query, "za.md");
+            assert_eq!(
+                editor.buffer.text(),
+                "目标正文\n",
+                "继续查询不能误编辑刚打开的文档"
+            );
+        })
+        .unwrap();
+    cx.on_quit(move || fs::remove_dir_all(root).unwrap());
+}

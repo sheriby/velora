@@ -1,6 +1,6 @@
 use super::*;
 use gpui::prelude::FluentBuilder;
-use gpui_kit::component::ThemeStyled as _;
+use gpui_kit::component::{ThemeStyled as _, scroll::ScrollableElement as _};
 
 /// 文件树的领域行；名称编辑的实际高度由视图测量，目录占位仍保留父节点身份。
 pub(crate) enum WorkspaceTreeRow<'a> {
@@ -34,17 +34,15 @@ impl Editor {
             .clone();
         let c = &theme.colors;
 
-        if self.workspace.active_tab != WorkspaceTab::Search {
-            let handle = self.workspace.tree_scroll_handle.clone();
-            self.workspace
-                .tree_virtual_scroll
-                .get_or_insert_with(|| handle.into());
-        }
+        let handle = self.workspace.tree_scroll_handle.clone();
+        self.workspace
+            .tree_virtual_scroll
+            .get_or_insert_with(|| handle.into());
         let search_header = (self.workspace.active_tab == WorkspaceTab::Search)
             .then(|| self.render_search_header(theme, strings, window, cx));
         let body = match self.workspace.active_tab {
             WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, cx),
-            WorkspaceTab::Search => self.render_search_results(theme, strings, &editor, cx),
+            WorkspaceTab::Search => self.render_search_results(theme, strings, cx),
             WorkspaceTab::Outline => self.render_workspace_outline_tree(theme, strings, cx),
         };
 
@@ -91,18 +89,9 @@ impl Editor {
                         .flex_1()
                         .min_h(px(0.0))
                         .when(
-                            self.workspace.active_tab != WorkspaceTab::Search
-                                && tree_focus.is_focused(window)
-                                && window.last_input_was_keyboard(),
+                            tree_focus.is_focused(window) && window.last_input_was_keyboard(),
                             |tree| tree.focus_ring_style(window, cx),
                         )
-                        .when(self.workspace.active_tab == WorkspaceTab::Search, |panel| {
-                            panel
-                                .overflow_y_scroll()
-                                .track_scroll(&self.workspace.tree_scroll_handle)
-                                .px(px(4.0))
-                                .py(px(6.0))
-                        })
                         .child(body),
                 )
                 .into_any_element(),
@@ -126,127 +115,143 @@ impl Editor {
             && let Some(WorkspaceSelection::Outline(selected)) = &self.workspace.selected
             && let Some(index) = rows.iter().position(|(node, _)| &node.id == selected)
         {
-            self.reveal_workspace_row(index, total, theme);
+            self.reveal_workspace_row(index);
         }
         if reveal {
             self.workspace.outline_reveal_pending = false;
         }
-        self.render_workspace_tree_list(total, None, theme, cx)
+        self.render_workspace_virtual_list(total, None, theme, cx)
     }
 
-    pub(super) fn reveal_workspace_row(&self, index: usize, total: usize, theme: &Theme) -> bool {
-        if self.workspace.active_tab != WorkspaceTab::Search
-            && let Some(handle) = self.workspace.tree_virtual_scroll.as_ref()
-        {
-            handle.scroll_to_item(index, ScrollStrategy::Nearest);
-            return true;
-        }
-        let height = f32::from(self.workspace.tree_scroll_handle.bounds().size.height);
-        if height <= 0.0 {
-            return false;
-        }
-        // 虚拟化后行可能还未挂载，定位必须用完整可见列表的行号与同一份行高。
-        let row_height = Self::workspace_node_height(theme);
-        let offset = self.workspace.tree_scroll_handle.offset();
-        let current = f32::from(offset.y);
-        let top = WORKSPACE_PANEL_PADDING_Y + index as f32 * row_height;
-        let bottom = top + row_height;
-        let target = if top + current < WORKSPACE_PANEL_PADDING_Y {
-            WORKSPACE_PANEL_PADDING_Y - top
-        } else if bottom + current > height - WORKSPACE_PANEL_PADDING_Y {
-            height - WORKSPACE_PANEL_PADDING_Y - bottom
-        } else {
-            current
-        };
-        let maximum =
-            (total as f32 * row_height + WORKSPACE_PANEL_PADDING_Y * 2.0 - height).max(0.0);
-        self.workspace
-            .tree_scroll_handle
-            .set_offset(point(offset.x, px(target.clamp(-maximum, 0.0))));
-        true
-    }
-
-    pub(super) fn workspace_tree_indent(depth: usize) -> Rems { rems(0.25 + depth as f32) }
-
-    pub(crate) fn workspace_node_height(theme: &Theme) -> f32 {
-        theme.typography.ui_text_size(WORKSPACE_NODE_HEIGHT)
-            .max(WORKSPACE_NODE_HEIGHT)
-    }
-
-    pub(crate) fn workspace_list_window(&self, total: usize, theme: &Theme) -> Range<usize> {
-        if total <= PANEL_WINDOW_THRESHOLD_ROWS {
-            return 0..total;
-        }
-        let viewport_height = f32::from(self.workspace.tree_scroll_handle.bounds().size.height);
-        if viewport_height <= 0.0 {
-            return 0..PANEL_WINDOW_FALLBACK_ROWS.min(total);
-        }
-        // gpui 的内容偏移是**已滚过距离的相反数**（向下滚只会落在 `[-max, 0]`，
-        // 见 `workspace/tests/sidebar.rs` 用真滚轮断言的 `offset < 0`）。拿它当正
-        // 距离用，`max(0.0)` 会把窗口永远钉在第 0 行：超过 200 行的列表滚下去就
-        // 只剩上下垫的空白（闸门 `outline_panel_renders_only_the_rows_in_the_viewport`
-        // 用负偏移钉住这一点，注入正值是物理上到不了的状态）。
-        let scrolled =
-            (-f32::from(self.workspace.tree_scroll_handle.offset().y) - WORKSPACE_PANEL_PADDING_Y)
-                .max(0.0);
-        let row_height = Self::workspace_node_height(theme);
-        let visible = (viewport_height / row_height).ceil() as usize + 1;
-        // 滚轮偏移在布局前可能尚未钳制，先限制到最后一屏，避免切片越界或少铺行。
-        let first = ((scrolled / row_height) as usize).min(total.saturating_sub(visible));
-        let start = first.saturating_sub(PANEL_WINDOW_OVERDRAW_ROWS);
-        let end = (first + visible + PANEL_WINDOW_OVERDRAW_ROWS).min(total);
-        start..end
-    }
-
-    /// 面板列表的通用外壳：上下垫等高空白（滚动条长度与位置仍按整张表算）、记两个
-    /// 计数器、首帧量不到视口尺寸时排一帧补齐。调用方只管取窗口并只建窗口里的行，
-    /// 行高必须与 `workspace_node_height` 一致，否则窗口切不出准确边界。
-    pub(crate) fn workspace_windowed_body(
+    pub(super) fn render_workspace_virtual_list(
         &mut self,
         total: usize,
-        window: Range<usize>,
-        rows: Vec<AnyElement>,
+        name_index: Option<usize>,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        self.panel_rows_rendered.set(rows.len() as u64);
-        self.panel_first_row_rendered.set(window.start as u64);
-        let needs_fill = total > PANEL_WINDOW_THRESHOLD_ROWS
-            && f32::from(self.workspace.tree_scroll_handle.bounds().size.height) <= 0.0;
-        let mut elements: Vec<AnyElement> = Vec::with_capacity(rows.len() + 2);
-        // 上下各垫一段等高空白：滚动条长度与位置仍按整张表算，中间只挂窗口里的行。
-        if window.start > 0 {
-            elements.push(
-                div()
-                    .h(px(window.start as f32 * Self::workspace_node_height(theme)))
-                    .flex_shrink_0()
-                    .into_any_element(),
-            );
+        if total == 0 {
+            self.panel_rows_rendered.set(0);
+            self.panel_first_row_rendered.set(0);
         }
-        elements.extend(rows);
-        let below = total.saturating_sub(window.end);
-        if below > 0 {
-            elements.push(
-                div()
-                    .h(px(below as f32 * Self::workspace_node_height(theme)))
-                    .flex_shrink_0()
-                    .into_any_element(),
-            );
+        let height = px(Self::workspace_node_height(theme));
+        let name_row = name_index.map(|index| {
+            (
+                index,
+                self.workspace
+                    .name_edit
+                    .as_ref()
+                    .and_then(|edit| edit.row_height)
+                    .unwrap_or(height),
+            )
+        });
+        let layout =
+            self.workspace
+                .tree_list_layout
+                .get_or_insert_with(|| WorkspaceTreeListLayout {
+                    count: 0,
+                    height,
+                    name_row: None,
+                    sizes: std::rc::Rc::new(Vec::new()),
+                });
+        if layout.count != total || layout.height != height || layout.name_row != name_row {
+            let mut sizes = vec![size(px(0.0), height); total];
+            if let Some((index, row_height)) = name_row
+                && let Some(size) = sizes.get_mut(index)
+            {
+                size.height = row_height;
+            }
+            *layout = WorkspaceTreeListLayout {
+                count: total,
+                height,
+                name_row,
+                sizes: std::rc::Rc::new(sizes),
+            };
         }
-        let element = div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .children(elements)
-            .into_any_element();
-        // 首帧还没量过滚动视口：先铺一小段，立刻排下一帧补齐（帧数封顶，量到尺寸即停）。
-        if needs_fill && self.panel_fill_frames < PANEL_FILL_MAX_FRAMES {
-            self.panel_fill_frames += 1;
-            self.schedule_followup_frame(cx);
-        } else if !needs_fill {
-            self.panel_fill_frames = 0;
+        let sizes = layout.sizes.clone();
+        let base = self.workspace.tree_scroll_handle.clone();
+        let handle = self
+            .workspace
+            .tree_virtual_scroll
+            .get_or_insert_with(|| base.into())
+            .clone();
+        let theme = cx.global::<ThemeManager>().derived_theme(cx);
+        let search = self.workspace.active_tab == WorkspaceTab::Search;
+        let list = gpui_kit::component::v_virtual_list(
+            cx.entity(),
+            if search {
+                "workspace-search-items"
+            } else {
+                "workspace-tree-items"
+            },
+            sizes,
+            move |editor, range: Range<usize>, _, cx| {
+                let owner = cx.entity().downgrade();
+                let items: Vec<AnyElement> = match editor.workspace.active_tab {
+                    WorkspaceTab::Files => {
+                        let rows = editor.workspace_files_rows();
+                        range
+                            .clone()
+                            .filter_map(|index| rows.get(index))
+                            .map(|row| editor.render_workspace_tree_row(row, &theme, &owner, cx))
+                            .collect()
+                    }
+                    WorkspaceTab::Outline => {
+                        let rows = editor.workspace_outline_rows();
+                        range
+                            .clone()
+                            .filter_map(|index| rows.get(index))
+                            .map(|(node, depth)| {
+                                editor.render_workspace_node(node, *depth, &theme, &owner, cx)
+                            })
+                            .collect()
+                    }
+                    WorkspaceTab::Search => {
+                        editor.render_workspace_search_rows(range.clone(), &theme, cx)
+                    }
+                };
+                editor.panel_rows_rendered.set(items.len() as u64);
+                editor.panel_first_row_rendered.set(range.start as u64);
+                items
+            },
+        )
+        .track_scroll(&handle)
+        .overflow_x_hidden()
+        .px_1()
+        .py_1p5();
+        div()
+            .id(if search {
+                "workspace-search-viewport"
+            } else {
+                "workspace-tree-viewport"
+            })
+            .test_support()
+            .role(Role::Group)
+            .size_full()
+            .min_h_0()
+            .child(list)
+            .vertical_scrollbar(&handle)
+            .into_any_element()
+    }
+
+    pub(super) fn reveal_workspace_row(&self, index: usize) -> bool {
+        if let Some(handle) = self.workspace.tree_virtual_scroll.as_ref() {
+            handle.scroll_to_item(index, ScrollStrategy::Nearest);
+            true
+        } else {
+            false
         }
-        element
+    }
+
+    pub(super) fn workspace_tree_indent(depth: usize) -> Rems {
+        rems(0.25 + depth as f32)
+    }
+
+    pub(crate) fn workspace_node_height(theme: &Theme) -> f32 {
+        theme
+            .typography
+            .ui_text_size(WORKSPACE_NODE_HEIGHT)
+            .max(WORKSPACE_NODE_HEIGHT)
     }
 
     /// 展开状态下的标题树按行摊平：`(节点, 深度)` 的顺序就是屏幕顺序。
@@ -312,7 +317,7 @@ impl Editor {
     }
 
     /// 文件树按行摊平：顺序就是屏幕顺序。名称输入行与懒加载占位行也各占一行，
-    /// 三者同高，窗口才能按固定行高切（见 `workspace_list_window`）。
+    /// 名称编辑的实际高度由原生虚拟列表测量。
     pub(crate) fn workspace_files_rows(&self) -> Vec<WorkspaceTreeRow<'_>> {
         fn walk<'a>(
             nodes: &'a [WorkspaceTreeNode],

@@ -240,9 +240,6 @@ pub struct Editor {
     /// 计数器：上一帧列表窗口从第几行开始——随滚动走。它不跟着滚动走，
     /// 就是窗口没接上滚动位置。
     panel_first_row_rendered: std::cell::Cell<u64>,
-    /// 侧栏列表首帧还没有滚动视口尺寸时续挂的帧数（上限与正文冷启动共用同一个
-    /// 手法：排下一帧，量到尺寸就停，避免每帧重排）。
-    panel_fill_frames: u8,
     /// 计数器：块内每行的记号宽度有几行是**解析期记下来的**（数据）。
     line_prefix_from_record: std::cell::Cell<u64>,
     /// 计数器：有几行还在事后拿文件行与模型行比（`measured_block_line_prefixes` 那一族）。
@@ -916,7 +913,6 @@ impl Editor {
             outline_nanos: std::cell::Cell::default(),
             panel_rows_rendered: std::cell::Cell::default(),
             panel_first_row_rendered: std::cell::Cell::default(),
-            panel_fill_frames: 0,
             line_prefix_from_record: std::cell::Cell::default(),
             line_prefix_measured: std::cell::Cell::default(),
             caret_scroll_applications: std::cell::Cell::default(),

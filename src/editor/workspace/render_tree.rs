@@ -3,7 +3,6 @@ use super::*;
 use gpui::prelude::FluentBuilder as _;
 use gpui_kit::assets::IconName;
 use gpui_kit::base::ElementExt as _;
-use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{
     ActiveTheme as _, Sizable as _,
     button::{Button, ButtonVariants},
@@ -81,8 +80,7 @@ impl Editor {
             rows.iter()
                 .position(|row| matches!(row, WorkspaceTreeRow::NameEdit(_)))
                 .filter(|index| {
-                    edit.revealed_row != Some(*index)
-                        && self.reveal_workspace_row(*index, total, theme)
+                    edit.revealed_row != Some(*index) && self.reveal_workspace_row(*index)
                 })
         });
         if let Some(index) = revealed_row
@@ -91,7 +89,7 @@ impl Editor {
             edit.revealed_row = Some(index);
         }
         let name_row = self.workspace_name_row_index();
-        self.render_workspace_tree_list(total, name_row, theme, cx)
+        self.render_workspace_virtual_list(total, name_row, theme, cx)
     }
     pub(super) fn workspace_name_row_index(&self) -> Option<usize> {
         let edit = self.workspace.name_edit.as_ref()?;
@@ -101,102 +99,6 @@ impl Editor {
                 WorkspaceEditKind::Rename { source, .. } if tree_node_path(node) == source.as_path()),
             WorkspaceTreeRow::Loading(..) => false,
         })
-    }
-
-    pub(super) fn render_workspace_tree_list(
-        &mut self,
-        total: usize,
-        name_index: Option<usize>,
-        theme: &Theme,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let height = px(Self::workspace_node_height(theme));
-        let name_row = name_index.map(|index| {
-            (
-                index,
-                self.workspace
-                    .name_edit
-                    .as_ref()
-                    .and_then(|edit| edit.row_height)
-                    .unwrap_or(height),
-            )
-        });
-        let layout =
-            self.workspace
-                .tree_list_layout
-                .get_or_insert_with(|| WorkspaceTreeListLayout {
-                    count: 0,
-                    height,
-                    name_row: None,
-                    sizes: std::rc::Rc::new(Vec::new()),
-                });
-        if layout.count != total || layout.height != height || layout.name_row != name_row {
-            let mut sizes = vec![size(px(0.0), height); total];
-            if let Some((index, row_height)) = name_row
-                && let Some(size) = sizes.get_mut(index)
-            {
-                size.height = row_height;
-            }
-            *layout = WorkspaceTreeListLayout {
-                count: total,
-                height,
-                name_row,
-                sizes: std::rc::Rc::new(sizes),
-            };
-        }
-        let sizes = layout.sizes.clone();
-        let base = self.workspace.tree_scroll_handle.clone();
-        let handle = self
-            .workspace
-            .tree_virtual_scroll
-            .get_or_insert_with(|| base.into())
-            .clone();
-        let theme = cx.global::<ThemeManager>().derived_theme(cx);
-        let list = gpui_kit::component::v_virtual_list(
-            cx.entity(),
-            "workspace-tree-items",
-            sizes,
-            move |editor, range: Range<usize>, _, cx| {
-                let owner = cx.entity().downgrade();
-                let items: Vec<AnyElement> = match editor.workspace.active_tab {
-                    WorkspaceTab::Files => {
-                        let rows = editor.workspace_files_rows();
-                        range
-                            .clone()
-                            .filter_map(|index| rows.get(index))
-                            .map(|row| editor.render_workspace_tree_row(row, &theme, &owner, cx))
-                            .collect()
-                    }
-                    WorkspaceTab::Outline => {
-                        let rows = editor.workspace_outline_rows();
-                        range
-                            .clone()
-                            .filter_map(|index| rows.get(index))
-                            .map(|(node, depth)| {
-                                editor.render_workspace_node(node, *depth, &theme, &owner, cx)
-                            })
-                            .collect()
-                    }
-                    WorkspaceTab::Search => Vec::new(),
-                };
-                editor.panel_rows_rendered.set(items.len() as u64);
-                editor.panel_first_row_rendered.set(range.start as u64);
-                items
-            },
-        )
-        .track_scroll(&handle)
-        .overflow_x_hidden()
-        .px(px(4.0))
-        .py(px(WORKSPACE_PANEL_PADDING_Y));
-        div()
-            .id("workspace-tree-viewport")
-            .test_support()
-            .role(Role::Group)
-            .size_full()
-            .min_h_0()
-            .child(list)
-            .vertical_scrollbar(&handle)
-            .into_any_element()
     }
 
     fn render_workspace_measured_name_row(
@@ -238,6 +140,9 @@ impl Editor {
     }
 
     pub(super) fn navigate_workspace_tree(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        if self.workspace.active_tab == WorkspaceTab::Search {
+            return self.navigate_workspace_search_results(key, cx);
+        }
         if !matches!(key, "up" | "down" | "left" | "right" | "home" | "end") {
             return false;
         }

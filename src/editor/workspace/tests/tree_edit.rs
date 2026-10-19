@@ -1085,7 +1085,7 @@ fn tree_creation_input_is_visible_after_large_directories_load(cx: &mut TestAppC
 /// 现象：树大一点（1500 个文件的面板，本机实测一帧建满整棵树 ≈ 200 ms）点一下文件要等
 /// 两三帧才出结果，看起来就是「点的特别顿、有时候像完全没反应」「鼠标一悬停就卡」。
 /// 根因：`render_workspace_nodes` 每帧把整棵树都走成元素；大纲面板早有按视口开窗
-/// （`workspace_list_window`），文件树没接上。
+/// （当时使用手动开窗），文件树未接入虚拟化。
 #[gpui::test]
 async fn the_file_tree_renders_only_the_rows_in_the_viewport(cx: &mut TestAppContext) {
     let (editor, cx, root) = tree_fixture(cx);

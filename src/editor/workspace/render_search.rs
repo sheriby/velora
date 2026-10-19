@@ -4,10 +4,20 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     ActiveTheme as _, Selectable as _, Sizable as _,
     button::{Button, ButtonGroup, ButtonVariants},
-    input::{Input, InputEvent, InputState, Enter as InputEnter, Escape as InputEscape},
+    input::{Enter as InputEnter, Escape as InputEscape, Input, InputEvent, InputState},
+    list::ListItem,
     spinner::Spinner,
     tooltip::Tooltip,
 };
+
+impl WorkspaceSearchHitKey {
+    fn row_id(&self, header: bool) -> u64 {
+        use std::hash::{Hash as _, Hasher as _};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (self, header).hash(&mut hasher);
+        hasher.finish()
+    }
+}
 
 impl Editor {
 
@@ -462,193 +472,246 @@ impl Editor {
         &mut self,
         theme: &Theme,
         strings: &I18nStrings,
-        editor: &WeakEntity<Editor>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if self.workspace.search_error.is_some() {
-            return div().into_any_element();
-        }
-        // 只在还没有任何结果可显示时才用「…」占位：重新搜索期间继续显示上一次
-        // 的结果，避免侧栏闪空。
-        if self.workspace.search_pending && self.workspace.search_results.is_empty() {
-            return div()
-                .id("workspace-search-loading")
-                .role(Role::ProgressIndicator)
-                .aria_label("Searching")
-                .p_3()
-                .child(Spinner::new().small())
-                .into_any_element();
-        }
-        if self.workspace.search_results.is_empty() {
+        let state = if self.workspace.search_error.is_some() {
+            Some(div().into_any_element())
+        } else if self.workspace.search_pending && self.workspace.search_results.is_empty() {
+            Some(
+                div()
+                    .id("workspace-search-loading")
+                    .test_support()
+                    .role(Role::ProgressIndicator)
+                    .aria_label("Searching")
+                    .p_3()
+                    .child(Spinner::new().small())
+                    .into_any_element(),
+            )
+        } else if self.workspace.search_results.is_empty() {
             let message = if self.workspace.search_scope == WorkspaceSearchScope::Document {
                 &strings.workspace_no_document_find_results
             } else {
                 &strings.workspace_no_search_results
             };
-            return div()
-                .id("workspace-search-empty")
-                .test_support()
-                .role(Role::Status)
-                .aria_label(message.clone())
+            Some(
+                div()
+                    .id("workspace-search-empty")
+                    .test_support()
+                    .role(Role::Status)
+                    .aria_label(message.clone())
+                    .size_full()
+                    .child(self.render_workspace_empty_state("", message, theme))
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+        let total = if state.is_some() {
+            0
+        } else {
+            self.workspace_search_rows().len()
+        };
+        let viewport = self.render_workspace_virtual_list(total, None, theme, cx);
+        // 空态仍保留滚动所有者，数据收缩后的偏移交给 Kit 钳制。
+        if let Some(state) = state {
+            div()
+                .relative()
                 .size_full()
-                .child(self.render_workspace_empty_state("", message, theme))
-                .into_any_element();
+                .min_h_0()
+                .child(viewport)
+                .child(div().absolute().inset_0().child(state))
+                .into_any_element()
+        } else {
+            viewport
         }
-        let c = &theme.colors;
-        let is_document_scope = self.workspace.search_scope == WorkspaceSearchScope::Document;
-        // 行先摊平成描述符（文件头 / 命中行），再按视口取一窗：命中表封顶 200 条，
-        // 但「一个文件一条命中」时就是 400 行元素（dev 构建实测一帧 62 ms），
-        // 与文件树一样要按视口裁。
-        let mut rows: Vec<(usize, bool)> = Vec::new();
-        let mut current_file: Option<PathBuf> = None;
+    }
+
+    fn workspace_search_rows(&self) -> Vec<(usize, bool)> {
+        let document_scope = self.workspace.search_scope == WorkspaceSearchScope::Document;
+        let mut rows = Vec::new();
+        let mut previous_file: Option<&Path> = None;
         for (index, hit) in self.workspace.search_results.iter().enumerate() {
-            // Workspace scope groups hits under a file header row; document
-            // scope lists matches flat with the file name on each row.
-            if !is_document_scope && current_file.as_ref() != Some(&hit.path) {
-                current_file = Some(hit.path.clone());
+            if !document_scope && previous_file != Some(hit.path.as_path()) {
+                previous_file = Some(hit.path.as_path());
                 rows.push((index, true));
             }
-            // 文件名命中只由文件头代表：再渲染一行没有行号、没有预览的行
-            // 只会得到一条看得见点不着（或看不见）的空条。
-            if !is_document_scope && hit.line.is_none() {
-                continue;
+            if document_scope || hit.line.is_some() {
+                rows.push((index, false));
             }
-            rows.push((index, false));
         }
+        rows
+    }
 
-        let total = rows.len();
-        let window = self.workspace_list_window(total, theme);
-        let mut visible: Vec<AnyElement> = Vec::with_capacity(window.len());
-        for (index, is_header) in &rows[window.clone()] {
-            let index = *index;
-            let hit = &self.workspace.search_results[index];
-            if *is_header {
-                let file_hit_count = self
-                    .workspace
-                    .search_results
-                    .iter()
-                    .filter(|other| other.path == hit.path)
-                    .count();
-                // 文件头整行可点击并代表该组第一条命中：此前文件名本身点不了，
-                // 只有它下面一条没有内容的空行能点。文件名命中没有行号，
-                // 点击就只是打开这个文件；内容命中则跳到该处匹配。
-                let header_selected = self.workspace.search_active_index == Some(index);
-                let header_editor = editor.clone();
-                visible.push(
-                    div()
-                        .id(("workspace-search-file", index))
-                        .debug_selector(move || format!("workspace-search-file-{index}"))
-                        .h(px(Self::workspace_node_height(theme)))
-                        .w_full()
-                        .px(px(6.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(4.0))
-                        .rounded(px(5.0))
-                        .bg(if header_selected {
-                            c.selection
-                        } else {
-                            hsla(0.0, 0.0, 0.0, 0.0)
-                        })
-                        .cursor_pointer()
-                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .child(
-                            svg()
-                                .path(if is_code_file(&hit.path) {
-                                    CODE_ICON
-                                } else {
-                                    MARKDOWN_ICON
-                                })
-                                .size(px(13.0))
-                                .text_color(c.dialog_primary_button_bg),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .truncate()
-                                .text_size(px(theme.typography.ui_text_size(11.0)))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(c.text_default)
-                                .child(hit.label.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(theme.typography.ui_text_size(10.0)))
-                                .text_color(c.dialog_muted)
-                                .child(file_hit_count.to_string()),
-                        )
-                        .on_click(move |event, window, cx| {
-                            if !event.standard_click() {
-                                return;
-                            }
-                            let _ = header_editor.update(cx, |editor, cx| {
-                                editor.open_search_hit(index, window, cx);
-                            });
-                        })
-                        .into_any_element(),
-                );
-                continue;
-            }
-            let selected = self.workspace.search_active_index == Some(index);
-            let hit_editor = editor.clone();
-            let line_number = hit.line;
-            let preview = hit.preview.clone();
-            // 行高必须与 workspace_node_height 一致：窗口按它算行号。文档范围
-            // 原先在命中行前多挂一行文件名——同一篇文档里每行都是同一个名字
-            // （标签页已经写着），两行高的列表按视口裁不出来，所以并成一行。
-            visible.push(
-                div()
-                    .id(("workspace-search-hit", index))
-                    .debug_selector(move || format!("workspace-search-hit-{index}"))
-                    .h(px(Self::workspace_node_height(theme)))
-                    .w_full()
-                    .pl(px(if is_document_scope { 10.0 } else { 24.0 }))
-                    .pr(px(6.0))
-                    .flex()
-                    .flex_col()
-                    .justify_center()
-                    .rounded(px(5.0))
-                    .bg(if selected {
-                        c.selection
-                    } else {
-                        hsla(0.0, 0.0, 0.0, 0.0)
-                    })
-                    .cursor_pointer()
-                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .children(line_number.map(|line| {
+    pub(super) fn render_workspace_search_rows(
+        &mut self,
+        range: Range<usize>,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let rows = self.workspace_search_rows();
+        range
+            .filter_map(|index| rows.get(index).copied())
+            .filter_map(|(index, header)| {
+                let hit = self.workspace.search_results.get(index)?;
+                let key = WorkspaceSearchHitKey::new(hit);
+                let prefix = if header {
+                    "workspace-search-file"
+                } else {
+                    "workspace-search-hit"
+                };
+                let selected = self.workspace.search_active_index == Some(index)
+                    && (!header || hit.line.is_none());
+                let content =
+                    if header {
+                        let markdown_document = is_markdown_document(&hit.path);
+                        let icon =
+                            if crate::components::Block::has_supported_image_extension(&hit.path) {
+                                IMAGE_ICON
+                            } else if is_code_file(&hit.path) {
+                                CODE_ICON
+                            } else if markdown_document {
+                                MARKDOWN_ICON
+                            } else {
+                                GENERIC_FILE_ICON
+                            };
                         div()
                             .flex()
-                            .gap(px(6.0))
-                            .min_w(px(0.0))
-                            .child(
-                                div()
-                                    .text_size(px(theme.typography.ui_text_size(11.0)))
-                                    .text_color(c.dialog_muted)
-                                    .child(format!("{line}")),
-                            )
+                            .items_center()
+                            .min_w_0()
+                            .w_full()
+                            .gap_1()
+                            .child(svg().path(icon).size_4().flex_none().text_color(
+                                if markdown_document {
+                                    theme.colors.dialog_primary_button_bg
+                                } else {
+                                    theme.colors.dialog_muted
+                                },
+                            ))
                             .child(
                                 div()
                                     .flex_1()
-                                    .min_w(px(0.0))
+                                    .min_w_0()
                                     .truncate()
-                                    .text_size(px(theme.typography.ui_text_size(11.0)))
-                                    .text_color(c.text_default)
-                                    .child(preview),
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(hit.label.clone()),
                             )
-                    }))
-                    .on_click(move |event, window, cx| {
-                        if !event.standard_click() {
-                            return;
-                        }
-                        let _ = hit_editor.update(cx, |editor, cx| {
-                            editor.open_search_hit(index, window, cx);
-                        });
-                    })
-                    .into_any_element(),
-            );
+                            .child(
+                                div().text_color(theme.colors.dialog_muted).child(
+                                    self.workspace
+                                        .search_results
+                                        .iter()
+                                        .filter(|candidate| candidate.path == hit.path)
+                                        .count()
+                                        .to_string(),
+                                ),
+                            )
+                            .into_any_element()
+                    } else {
+                        div()
+                            .flex()
+                            .items_center()
+                            .w_full()
+                            .min_w_0()
+                            .gap_2()
+                            .when(
+                                self.workspace.search_scope == WorkspaceSearchScope::Workspace,
+                                |row| row.pl_4(),
+                            )
+                            .children(hit.line.map(|line| {
+                                div()
+                                    .text_color(theme.colors.dialog_muted)
+                                    .child(line.to_string())
+                            }))
+                            .child(div().flex_1().min_w_0().truncate().child(
+                                if hit.line.is_some() {
+                                    hit.preview.clone()
+                                } else {
+                                    hit.label.clone()
+                                },
+                            ))
+                            .into_any_element()
+                    };
+                let label = hit
+                    .line
+                    .map(|line| format!("{}:{line} {}", hit.label, hit.preview))
+                    .unwrap_or_else(|| hit.label.clone());
+                Some(
+                    ListItem::new((prefix, key.row_id(header)))
+                        .debug_selector(move || format!("{prefix}-{index}"))
+                        .role(Role::ListItem)
+                        .aria_selected(selected)
+                        .accessibility_label(label)
+                        .selected(selected)
+                        .h(px(Self::workspace_node_height(theme)))
+                        .w_full()
+                        .py_0()
+                        .px_2()
+                        .text_xs()
+                        .rounded(cx.theme().radius)
+                        .child(content)
+                        .on_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+                            if !event.standard_click() {
+                                return;
+                            }
+                            if let Some(index) = editor
+                                .workspace
+                                .search_results
+                                .iter()
+                                .position(|hit| key.matches(hit))
+                            {
+                                editor.open_search_hit(index, window, cx);
+                            }
+                        }))
+                        .into_any_element(),
+                )
+            })
+            .collect()
+    }
+
+    pub(super) fn reveal_workspace_search_hit(&self, index: usize) {
+        if !self.workspace.is_open || self.workspace.active_tab != WorkspaceTab::Search {
+            return;
         }
-        self.workspace_windowed_body(total, window, visible, theme, cx)
+        let rows = self.workspace_search_rows();
+        let row = rows
+            .iter()
+            .position(|(hit, header)| *hit == index && !header)
+            .or_else(|| rows.iter().position(|(hit, _)| *hit == index));
+        if let Some(row) = row
+            && let Some(handle) = self.workspace.tree_virtual_scroll.as_ref()
+        {
+            handle.scroll_to_item(row, ScrollStrategy::Nearest);
+        }
+    }
+
+    pub(super) fn navigate_workspace_search_results(
+        &mut self,
+        key: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let count = self.workspace.search_results.len();
+        if !matches!(key, "up" | "down" | "home" | "end") {
+            return false;
+        }
+        if count == 0 {
+            return true;
+        }
+        let selected = self
+            .workspace
+            .search_active_index
+            .filter(|index| *index < count);
+        let next = match key {
+            "home" => 0,
+            "end" => count.saturating_sub(1),
+            "up" => selected.unwrap_or(0).saturating_sub(1),
+            _ => selected
+                .map(|index| (index + 1).min(count.saturating_sub(1)))
+                .unwrap_or(0),
+        };
+        self.workspace.search_active_index = Some(next);
+        self.reveal_workspace_search_hit(next);
+        cx.notify();
+        true
     }
 
     /// Opens the hit's match: document-scope hits select the byte range in the
@@ -658,6 +721,7 @@ impl Editor {
         let Some(hit) = self.workspace.search_results.get(index) else {
             return;
         };
+        self.reveal_workspace_search_hit(index);
         self.workspace.document_match_jump_pending = false;
         self.workspace.search_active_index = Some(index);
         if let Some(range) = hit.source_range.clone() {
@@ -708,6 +772,15 @@ impl Editor {
                 self.workspace.document_active_range = Some(range.clone());
                 self.jump_to_document_search_range(range, cx);
             }
+        }
+        // 仅文件名命中没有正文范围跳转，也需要归还查询焦点。
+        if same_file
+            && self.workspace.is_open
+            && self.workspace.active_tab == WorkspaceTab::Search
+            && !self.modal_is_open()
+        {
+            self.workspace.search_focus_pending = true;
+            cx.notify();
         }
     }
 }
