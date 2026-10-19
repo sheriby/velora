@@ -1,31 +1,47 @@
-//! 应用内模态对话框。
+//! 应用内确认与提示。
 //!
-//! 用户要求：整个软件不使用系统原生弹窗（gpui 的 `window.prompt` 在 macOS 上就是
-//! 原生 NSAlert）。原先 38 处确认/提示都走原生框，现在统一走这里的模态：外观沿用
-//! 其它应用内对话框的 `dialog_*` token，行为是「一个模态 + 若干按钮 + 一次性回调」，
-//! Esc 与点遮罩等价于按下取消按钮。
+//! 编辑器持有按钮顺序、替换语义和一次性回调；Kit Dialog 管理焦点范围、键盘与遮罩。
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
+use gpui_kit::base::{Dialog, ElementExt as _};
+use gpui_kit::component::{
+    ActiveTheme as _,
+    button::{Button, ButtonVariants as _},
+    dialog::{DialogContent, DialogDescription, DialogFooter, DialogTitle},
+    scroll::ScrollableElement as _,
+};
 
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::Editor;
+
+// 分屏按固定组顺序绘制，弹窗必须另外按出现顺序决定遮挡层级。
+static NEXT_MODAL_LAYER: AtomicUsize = AtomicUsize::new(0);
 
 /// 模态的显示内容 + 按钮语义。
 pub(crate) struct ModalSpec {
     pub(crate) title: SharedString,
     pub(crate) detail: Option<SharedString>,
     pub(crate) buttons: Vec<SharedString>,
-    /// 主按钮（高亮，回车触发）。
+    /// 默认按钮：高亮，并在对话框壳聚焦时由回车触发。
     pub(crate) default_index: usize,
     /// Esc / 点遮罩对应的按钮。
     pub(crate) cancel_index: usize,
 }
 
-/// 当前显示中的模态。同一时刻只允许一个（与其它 overlay 互斥）。
+/// 编辑器持有的模态内容、焦点快照和完成回调。
 pub(crate) struct EditorModal {
     spec: ModalSpec,
+    identity: uuid::Uuid,
+    layer: usize,
+    focus: FocusHandle,
+    mounted: bool,
+    // 未挂载与挂载前没有焦点不同；替换模态时也要保留这个区别。
+    restore_focus: Option<Option<WeakFocusHandle>>,
+    scroll: ScrollHandle,
     on_choice: Option<Box<dyn FnOnce(usize, &mut Editor, &mut Window, &mut Context<Editor>)>>,
 }
 
@@ -42,8 +58,15 @@ impl Editor {
             cancel_index: spec.cancel_index.min(button_count - 1),
             ..spec
         };
+        let restore_focus = self.modal.take().and_then(|modal| modal.restore_focus);
         self.modal = Some(EditorModal {
             spec,
+            identity: uuid::Uuid::new_v4(),
+            layer: NEXT_MODAL_LAYER.fetch_add(1, Ordering::Relaxed),
+            focus: cx.focus_handle(),
+            mounted: false,
+            restore_focus,
+            scroll: ScrollHandle::new(),
             on_choice: Some(Box::new(on_choice)),
         });
         cx.notify();
@@ -56,7 +79,12 @@ impl Editor {
         detail: impl Into<SharedString>,
         cx: &mut Context<Self>,
     ) {
-        let ok: SharedString = cx.global::<I18nManager>().strings().info_dialog_ok.clone().into();
+        let ok: SharedString = cx
+            .global::<I18nManager>()
+            .strings()
+            .info_dialog_ok
+            .clone()
+            .into();
         self.show_modal(
             ModalSpec {
                 title: title.into(),
@@ -91,6 +119,15 @@ impl Editor {
             return;
         };
         let on_choice = modal.on_choice.take();
+        if (modal.focus.is_focused(window) || modal.focus.contains_focused(window, cx))
+            && let Some(focus) = modal
+                .restore_focus
+                .take()
+                .flatten()
+                .and_then(|focus| focus.upgrade())
+        {
+            focus.focus(window, cx);
+        }
         drop(modal);
         if let Some(on_choice) = on_choice {
             on_choice(choice, self, window, cx);
@@ -105,49 +142,19 @@ impl Editor {
         self.dismiss_modal(cancel_index, window, cx);
     }
 
-    /// 当前模态的默认按钮下标（模态未打开时为 0）。
-    pub(crate) fn modal_default_index(&self) -> usize {
-        self.modal
-            .as_ref()
-            .map(|modal| modal.spec.default_index)
-            .unwrap_or(0)
-    }
-
-    /// 模态打开时的按键处理（C13）。返回 true 表示按键已被模态消费。
-    ///
-    /// 模态自身不抢焦点（抢焦点会跟编辑器的焦点岛打架，C12 时实测按键
-    /// 收不到）。也不能走元素级 key_down 监听：gpui 的 keymap 绑定先于
-    /// 监听派发，回车会被焦点块的 Newline 绑定消费掉。所以调用点是
-    /// `App::intercept_keystrokes`（绑定解析之前，stop_propagation 可
-    /// 阻断 action 派发）——见 render.rs 的注册处。
-    pub(crate) fn modal_handle_keystroke(
+    fn dismiss_modal_if_current(
         &mut self,
-        keystroke: &Keystroke,
+        identity: uuid::Uuid,
+        choice: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> bool {
-        if !self.modal_is_open() {
-            return false;
-        }
-        let modifiers = keystroke.modifiers;
-        let plain = !modifiers.control
-            && !modifiers.alt
-            && !modifiers.platform
-            && !modifiers.function
-            && !modifiers.shift;
-        match keystroke.key.as_str() {
-            "enter" if plain => {
-                let default_index = self.modal_default_index();
-                cx.stop_propagation();
-                self.dismiss_modal(default_index, window, cx);
-                true
-            }
-            "escape" => {
-                cx.stop_propagation();
-                self.cancel_modal(window, cx);
-                true
-            }
-            _ => false,
+    ) {
+        if self
+            .modal
+            .as_ref()
+            .is_some_and(|modal| modal.identity == identity)
+        {
+            self.dismiss_modal(choice, window, cx);
         }
     }
 
@@ -157,126 +164,174 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let modal = self.modal.as_ref()?;
-        let c = &theme.colors;
-        let d = &theme.dimensions;
-        let t = &theme.typography;
-        let title = modal.spec.title.clone();
-        let detail = modal.spec.detail.clone();
+        let identity = modal.identity;
         let default_index = modal.spec.default_index;
-
-        let panel = div()
-            .id("editor-modal")
-            .w(px(d.dialog_width))
-            .max_w(relative(1.0))
-            .flex()
-            .flex_col()
-            .gap(px(d.dialog_gap))
-            .p(px(d.dialog_padding))
-            .bg(c.dialog_surface)
-            .border(px(d.dialog_border_width))
-            .border_color(c.dialog_border)
-            .rounded(px(d.dialog_radius))
-            .shadow_lg()
-            .child(
-                div()
-                    .text_size(px(t.dialog_title_size))
-                    .font_weight(t.dialog_title_weight.to_font_weight())
-                    .text_color(c.dialog_title)
-                    .child(title),
-            );
-        let panel = match detail {
-            Some(detail) => panel.child(
-                div()
-                    .text_size(px(t.dialog_body_size))
-                    .font_weight(t.dialog_body_weight.to_font_weight())
-                    .line_height(rems(t.text_line_height))
-                    .text_color(c.dialog_body)
-                    .child(detail),
-            ),
-            None => panel,
-        };
-
-        let mut row = div()
-            .flex()
-            .flex_row()
-            .justify_end()
-            .gap(px(d.dialog_button_gap));
-        for index in 0..modal.spec.buttons.len() {
-            let label = modal.spec.buttons[index].clone();
-            let prominent = index == default_index;
-            let hover_bg = if prominent {
-                c.dialog_primary_button_hover
-            } else {
-                c.dialog_secondary_button_hover
-            };
-            row = row.child(
-                div()
-                    .id(("editor-modal-button", index))
+        let cancel_index = modal.spec.cancel_index;
+        let focus = modal.focus.clone();
+        let mut footer = DialogFooter::new().flex_shrink_0().flex_wrap();
+        let mut buttons: Vec<_> = modal.spec.buttons.iter().enumerate().collect();
+        buttons.sort_by_key(|(index, _)| *index == default_index);
+        for (index, label) in buttons {
+            footer = footer.child(
+                Button::new(("editor-modal-button", index))
                     .debug_selector(move || format!("editor-modal-button-{index}"))
-                    .h(px(d.dialog_button_height))
-                    .px(px(d.dialog_button_padding_x))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px((d.dialog_radius - 4.0).max(0.0)))
-                    .border(px(d.dialog_border_width))
-                    .border_color(c.dialog_border)
-                    .bg(if prominent {
-                        c.dialog_primary_button_bg
-                    } else {
-                        c.dialog_secondary_button_bg
-                    })
-                    .text_size(px(t.dialog_button_size))
-                    .font_weight(t.dialog_button_weight.to_font_weight())
-                    .text_color(if prominent {
-                        c.dialog_primary_button_text
-                    } else {
-                        c.dialog_secondary_button_text
-                    })
-                    .hover(move |this: StyleRefinement| this.bg(hover_bg))
-                    .active(|this| this.opacity(0.92))
-                    .cursor(gpui::CursorStyle::PointingHand)
-                    .child(label)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |editor, _event: &MouseDownEvent, window, cx| {
-                            // 不吃掉的话遮罩也会收到同一次按下，会把回调里
-                            // 刚打开的下一个模态一起关掉。
-                            cx.stop_propagation();
-                            editor.dismiss_modal(index, window, cx);
-                        }),
-                    ),
+                    .label(label.clone())
+                    .when(index == default_index, |button| button.primary())
+                    .when(index != default_index, |button| button.outline())
+                    .on_click(cx.listener(move |editor, _, window, cx| {
+                        editor.dismiss_modal_if_current(identity, index, window, cx);
+                    }))
+                    .on_action(cx.listener(
+                        move |editor, _: &gpui_kit::base::actions::Confirm, window, cx| {
+                            editor.dismiss_modal_if_current(identity, index, window, cx);
+                        },
+                    )),
             );
         }
-
+        let owner = cx.entity().downgrade();
+        let panel = div()
+            .id("editor-modal")
+            .debug_selector(|| "editor-modal".into())
+            .occlude()
+            .w(rems(28.0))
+            .max_w_full()
+            .max_h(relative(1.0))
+            .flex()
+            .flex_col()
+            .gap_4()
+            .p_4()
+            .bg(cx.theme().popover)
+            .text_color(cx.theme().popover_foreground)
+            .border_1()
+            .border_color(cx.theme().border)
+            .rounded(cx.theme().radius_lg)
+            .shadow_lg()
+            .child(
+                DialogTitle::new()
+                    .flex_shrink_0()
+                    .child(modal.spec.title.clone()),
+            )
+            .when_some(modal.spec.detail.clone(), |panel, detail| {
+                panel.child(
+                    div()
+                        .id("editor-modal-body")
+                        .min_h_0()
+                        .relative()
+                        .overflow_y_scroll()
+                        .track_scroll(&modal.scroll)
+                        .child(
+                            DialogContent::new()
+                                .flex_none()
+                                .child(DialogDescription::new().child(detail)),
+                        )
+                        .vertical_scrollbar(&modal.scroll),
+                )
+            })
+            .child(footer)
+            .on_prepaint(move |_, window, cx| {
+                if let Err(error) = owner.update(cx, |editor, cx| {
+                    let Some(modal) = editor
+                        .modal
+                        .as_mut()
+                        .filter(|modal| modal.identity == identity && !modal.mounted)
+                    else {
+                        return;
+                    };
+                    // 先让正文完成挂载，避免同帧的待办焦点覆盖新模态。
+                    if modal.restore_focus.is_none() {
+                        modal.restore_focus =
+                            Some(window.focused(cx).map(|focus| focus.downgrade()));
+                    }
+                    modal.mounted = true;
+                    modal.focus.focus(window, cx);
+                }) {
+                    eprintln!("挂载模态焦点失败：{error}");
+                }
+            });
+        let confirm_owner = cx.entity().downgrade();
+        let cancel_owner = confirm_owner.clone();
+        // 保留多按钮序号及分屏归属，用受控 Dialog 组合标准部件，不借窗口的全局弹窗堆栈。
         Some(
             div()
-                .id("editor-modal-overlay")
+                .id(identity)
+                .debug_selector(|| "editor-modal-overlay".into())
                 .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                .bottom_0()
-                .occlude()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(c.dialog_backdrop)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |editor, _event: &MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        editor.cancel_modal(window, cx);
-                    }),
-                )
+                .inset_0()
                 .child(
-                    div()
-                        .w_full()
-                        .px(px(d.editor_padding))
-                        .flex()
-                        .justify_center()
-                        .child(panel.child(row)),
+                    Dialog::new(cx)
+                        .focus_handle(focus)
+                        .layer(modal.layer, true)
+                        .p_4()
+                        .backdrop(div().size_full().bg(theme.colors.dialog_backdrop))
+                        .popup(panel)
+                        .on_ok(move |_, window, cx| {
+                            if let Err(error) = confirm_owner.update(cx, |editor, cx| {
+                                editor.dismiss_modal_if_current(
+                                    identity,
+                                    default_index,
+                                    window,
+                                    cx,
+                                );
+                            }) {
+                                eprintln!("确认模态失败：{error}");
+                            }
+                            false
+                        })
+                        .on_cancel(move |_, window, cx| {
+                            if let Err(error) = cancel_owner.update(cx, |editor, cx| {
+                                editor.dismiss_modal_if_current(identity, cancel_index, window, cx);
+                            }) {
+                                eprintln!("取消模态失败：{error}");
+                            }
+                            false
+                        }),
                 ),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Editor, ModalSpec};
+    use gpui::TestAppContext;
+    use std::{cell::Cell, rc::Rc};
+
+    #[gpui::test]
+    fn modal_completion_only_applies_to_the_current_instance(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+        editor.update(cx, |editor, cx| editor.show_message_modal("旧提示", "", cx));
+        let old_identity =
+            editor.read_with(cx, |editor, _| editor.modal.as_ref().unwrap().identity);
+        let choice = Rc::new(Cell::new(None));
+        editor.update(cx, |editor, cx| {
+            let choice = choice.clone();
+            editor.show_modal(
+                ModalSpec {
+                    title: "新的确认".into(),
+                    detail: None,
+                    buttons: vec!["应用".into(), "取消".into()],
+                    default_index: 0,
+                    cancel_index: 1,
+                },
+                move |index, _, _, _| choice.set(Some(index)),
+                cx,
+            );
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            editor.dismiss_modal_if_current(old_identity, 0, window, cx)
+        });
+        assert_eq!(choice.get(), None, "旧实例的完成回调不能确认替换后的弹窗");
+        let current = editor.read_with(cx, |editor, _| editor.modal.as_ref().unwrap().identity);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.dismiss_modal_if_current(current, 1, window, cx)
+        });
+        assert_eq!(choice.get(), Some(1));
+        assert!(editor.read_with(cx, |editor, _| !editor.modal_is_open()));
     }
 }

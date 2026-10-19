@@ -38,6 +38,12 @@ impl Editor {
     }
 
     pub(crate) fn apply_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending_focus.is_none()
+            || self.modal_is_open()
+            || gpui_kit::base::active_focus_trap(window, cx).is_some()
+        {
+            return;
+        }
         if let Some(entity_id) = self.pending_focus.take()
             && let Some(block) = self.focusable_entity_by_id(entity_id)
         {

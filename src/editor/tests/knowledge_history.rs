@@ -42,6 +42,243 @@ async fn review_history_restore_keeps_crlf_shape(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn modal_blocks_document_input_and_keyboard_can_choose_cancel(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let choice = std::rc::Rc::new(std::cell::Cell::new(None));
+    init_editor_test_app(cx);
+    let handle = cx
+        .update(|cx| {
+            crate::ui::open_window(gpui::WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| Editor::from_markdown(cx, "正文保持原样".into(), None))
+            })
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    redraw(&mut visual);
+    let document_focus = handle
+        .read_with(&visual, |editor, cx| {
+            editor
+                .document
+                .first_root()
+                .unwrap()
+                .read(cx)
+                .focus_handle
+                .clone()
+        })
+        .unwrap();
+    visual.update(|window, cx| document_focus.focus(window, cx));
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            let choice = choice.clone();
+            editor.show_modal(
+                crate::editor::modal::ModalSpec {
+                    title: "确认修改".into(),
+                    detail: Some("文档正文".into()),
+                    buttons: vec!["应用".into(), "取消".into(), "查看详情".into()],
+                    default_index: 0,
+                    cancel_index: 1,
+                },
+                move |index, _, _, _| choice.set(Some(index)),
+                cx,
+            );
+        })
+        .unwrap();
+    redraw(&mut visual);
+    assert!(
+        !visual.update(|window, _| document_focus.is_focused(window)),
+        "打开模态后不能继续聚焦正文"
+    );
+    visual.simulate_input("误改");
+    assert_eq!(
+        handle
+            .read_with(&visual, |editor, _| editor.buffer.text())
+            .unwrap(),
+        "正文保持原样"
+    );
+    visual.simulate_keystrokes("tab");
+    visual.update(|window, _| {
+        let button = window.find(("editor-modal-button", 1usize));
+        assert_eq!(button.role(), Some(gpui::Role::Button));
+        assert_eq!(button.focused(), Some(true), "Tab 应能选择取消按钮");
+    });
+    visual.simulate_keystrokes("shift-tab");
+    visual.update(|window, _| {
+        assert_eq!(
+            window.find(("editor-modal-button", 0usize)).focused(),
+            Some(true)
+        );
+    });
+    visual.simulate_keystrokes("tab");
+    visual.simulate_keystrokes("enter");
+    redraw(&mut visual);
+    assert_eq!(
+        choice.get(),
+        Some(1),
+        "回车应激活聚焦按钮而非总是执行默认按钮"
+    );
+    assert!(visual.update(|window, _| document_focus.is_focused(window)));
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            editor.show_message_modal("第一次提示", "", cx)
+        })
+        .unwrap();
+    redraw(&mut visual);
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            editor.show_message_modal("替换后的提示", "", cx)
+        })
+        .unwrap();
+    redraw(&mut visual);
+    visual.simulate_keystrokes("escape");
+    redraw(&mut visual);
+    assert!(
+        visual.update(|window, _| document_focus.is_focused(window)),
+        "替换模态应保留最初的返回焦点"
+    );
+}
+
+#[gpui::test]
+async fn modal_keeps_long_details_and_actions_inside_a_small_window(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    cx.simulate_resize(gpui::size(px(640.0), px(360.0)));
+    editor.update(cx, |editor, cx| {
+        editor.show_message_modal("操作失败", "错误详情\n".repeat(200), cx)
+    });
+    redraw(cx);
+    let panel = cx.debug_bounds("editor-modal").unwrap();
+    let button = cx.debug_bounds("editor-modal-button-0").unwrap();
+    assert!(
+        panel.top() >= px(0.0) && panel.bottom() <= px(360.0),
+        "长详情不得把弹窗撑出窗口：{panel:?}"
+    );
+    assert!(button.top() >= panel.top() && button.bottom() <= panel.bottom());
+}
+
+
+
+#[gpui::test]
+async fn modal_in_a_split_keeps_window_geometry_and_the_owning_editor(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("modal-split");
+    std::fs::write(&path, "分屏正文").unwrap();
+    cx.on_quit({
+        let path = path.clone();
+        move || std::fs::remove_file(path).unwrap()
+    });
+    let handle = cx
+        .update(|cx| {
+            crate::ui::open_window(gpui::WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| Editor::from_markdown(cx, String::new(), None))
+            })
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_workspace_file(path.clone(), window, cx)
+        })
+        .unwrap();
+    redraw(&mut visual);
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.split_active_document(
+                crate::editor::workspace::split::SplitDirection::Right,
+                window,
+                cx,
+            );
+        })
+        .unwrap();
+    redraw(&mut visual);
+    redraw(&mut visual);
+    let groups = handle
+        .read_with(&visual, |editor, _| editor.split_groups())
+        .unwrap();
+    assert_eq!(groups.len(), 2);
+    let active = handle
+        .read_with(&visual, |editor, _| editor.active_split_editor().unwrap())
+        .unwrap();
+    let focus = active.read_with(&visual, |editor, cx| {
+        editor
+            .document
+            .first_root()
+            .unwrap()
+            .read(cx)
+            .focus_handle
+            .clone()
+    });
+    visual.update(|window, cx| focus.focus(window, cx));
+    let completed = std::rc::Rc::new(std::cell::Cell::new(None));
+    active.update(&mut visual, |editor, cx| {
+        let completed = completed.clone();
+        editor.show_modal(
+            crate::editor::modal::ModalSpec {
+                title: "确认分屏文档".into(),
+                detail: None,
+                buttons: vec!["应用".into(), "取消".into()],
+                default_index: 0,
+                cancel_index: 1,
+            },
+            move |_, _, _, cx| completed.set(Some(cx.entity_id())),
+            cx,
+        );
+    });
+    redraw(&mut visual);
+    let panel = visual.debug_bounds("editor-modal").unwrap();
+    let width = visual.update(|window, _| window.viewport_size().width);
+    assert!(
+        (panel.center().x - width / 2.0).abs() <= px(1.0),
+        "分屏弹窗应以整窗居中：{panel:?}"
+    );
+    visual.simulate_input("误改");
+    for group in &groups {
+        assert_eq!(
+            group.read_with(&visual, |editor, _| editor.buffer.text()),
+            "分屏正文"
+        );
+    }
+    visual.update(|window, cx| window.click(("editor-modal-button", 0usize), cx));
+    redraw(&mut visual);
+    assert_eq!(completed.get(), Some(active.entity_id()));
+    assert!(visual.update(|window, _| focus.is_focused(window)));
+
+    completed.set(None);
+    let left = groups.first().unwrap();
+    for group in [&active, left] {
+        group.update(&mut visual, |editor, cx| {
+            let completed = completed.clone();
+            editor.show_modal(
+                crate::editor::modal::ModalSpec {
+                    title: "确认文档".into(),
+                    detail: None,
+                    buttons: vec!["应用".into(), "取消".into()],
+                    default_index: 0,
+                    cancel_index: 1,
+                },
+                move |_, _, _, cx| completed.set(Some(cx.entity_id())),
+                cx,
+            );
+        });
+        redraw(&mut visual);
+    }
+    let latest_button = visual.debug_bounds("editor-modal-button-0").unwrap();
+    visual.simulate_click(latest_button.center(), Modifiers::none());
+    redraw(&mut visual);
+    assert_eq!(
+        completed.get(),
+        Some(left.entity_id()),
+        "后出现的确认必须同时接收指针和键盘焦点"
+    );
+    assert!(active.read_with(&visual, |editor, _| editor.modal_is_open()));
+    visual.simulate_keystrokes("escape");
+    redraw(&mut visual);
+    assert_eq!(completed.get(), Some(active.entity_id()));
+    assert!(!active.read_with(&visual, |editor, _| editor.modal_is_open()));
+    assert!(visual.update(|window, _| focus.is_focused(window)));
+}
+
+#[gpui::test]
 async fn in_app_modal_buttons_close_it_and_run_the_callback(cx: &mut TestAppContext) {
     // 用户要求：全软件不用系统原生弹窗。模态必须可点、可关、回调拿到正确序号。
     init_editor_test_app(cx);

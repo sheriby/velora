@@ -75,11 +75,10 @@ async fn review_save_and_close_defers_while_an_ime_composition_is_open(
 
 /// 「保存并关闭」必须写**当前缓冲区**，而不是弹框那一刻的标签快照。
 ///
-/// 模态自身不抢焦点（`modal.rs` 明写：不然会跟编辑器的焦点岛打架），拦截器也只吃
-/// Enter/Esc——框开着用户还能继续打字。用快照落盘再清脏标记、删恢复快照，磁盘就永远
-/// 落后于缓冲区：退出或崩溃即丢字。
+/// 模态会阻止正文输入，但等待确认期间仍可能有异步文档写入。
+/// 必须保存决定执行时的内容，不能用打开弹窗时的快照覆盖之后的修改。
 #[gpui::test]
-async fn review_save_and_close_writes_the_buffer_typed_while_the_dialog_was_open(
+async fn review_save_and_close_writes_the_live_buffer_after_the_dialog_opens(
     cx: &mut TestAppContext,
 ) {
     init_review_workspace_app(cx);
@@ -112,12 +111,13 @@ async fn review_save_and_close_writes_the_buffer_typed_while_the_dialog_was_open
             assert!(editor.modal_is_open(), "脏标签关闭该先问一句");
         })
     });
-    // 框开着：继续打字（模态不抢焦点，输入直接落到缓冲区）。
-    cx.simulate_input("乙");
+    // 模拟确认期间到达的异步文档修改，不将窗口焦点移出模态。
+    let block = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
+    block.update_in(cx, |block, window, cx| block.replace_text_in_range(None, "乙", window, cx));
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     let live = editor.read_with(cx, |editor, _| editor.buffer.text());
-    assert!(live.contains("甲乙"), "夹具前提：框开着时新打的字进了缓冲区：{live:?}");
+    assert!(live.contains("甲乙"), "夹具前提：确认期间的异步修改进入缓冲区：{live:?}");
 
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| editor.dismiss_modal(0, window, cx))

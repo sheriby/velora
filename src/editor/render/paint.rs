@@ -9,24 +9,21 @@ use crate::components::{
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.ai_result_preview && self.modal_key_interceptor.is_none() {
-            // C13：模态的 Enter/Esc 在 keymap 绑定解析之前拦截（绑定先于
-            // 元素监听，回车会被焦点块的 Newline 绑定消费）。拦截器全局
-            // 注册、按窗口过滤；stop_propagation 阻断 action 派发。
+            // 辅助浮层的旧键位先于 keymap 派发；Kit 模态中的输入由焦点范围接管。
             let editor = cx.entity().downgrade();
             let window_handle = window.window_handle();
             self.modal_key_interceptor = Some(cx.intercept_keystrokes(
                 move |event: &gpui::KeystrokeEvent, window, cx| {
-                    if window.window_handle() != window_handle {
+                    if window.window_handle() != window_handle
+                        || gpui_kit::base::active_focus_trap(window, cx).is_some()
+                    {
                         return;
                     }
                     let keystroke = &event.keystroke;
-                    // 三个浮层（模态/文件历史/[[ 补全）各自过滤按键；都未打开
-                    // 时这里只有三次布尔检查，打字热路径无感。
                     let _ = editor.update(cx, |editor, cx| {
                         if editor.split_parent.is_some() && !editor.split_active { return; }
                         let mut consumed = editor.ai_review_key_down(keystroke, window, cx);
                         consumed = consumed || editor.mermaid_preview_key_down(keystroke, cx);
-                        consumed = consumed || editor.modal_handle_keystroke(keystroke, window, cx);
                         consumed = consumed || editor.file_history_key_down(keystroke, cx);
                         if !consumed {
                             consumed = editor.wikilink_completion_key_down(keystroke, cx);
