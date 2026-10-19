@@ -20,7 +20,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn render_workspace_folder_icon(theme: &Theme, cx: &App) -> AnyElement {
+    pub(in crate::editor) fn render_workspace_folder_icon(theme: &Theme, cx: &App) -> AnyElement {
         let icon = match crate::config::EditorSettings::folder_icon_style(cx) {
             crate::config::FolderIconStyle::Blue => gpui_kit::component::Icon::default()
                 .path("icon/workspace/folder.svg")

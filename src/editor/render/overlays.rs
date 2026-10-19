@@ -1,276 +1,274 @@
 use super::*;
 use gpui::prelude::FluentBuilder as _;
-use gpui_kit::base::Link;
+use gpui_kit::base::{ElementExt as _, Link};
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _,
+    ActiveTheme as _, Sizable as _, Icon,
+    button::{Button, ButtonVariants as _},
+    scroll::ScrollableElement as _,
     dialog::DialogDescription,
     spinner::Spinner,
 };
 
 impl Editor {
-    /// Full-area welcome page for windows opened without a document: brand
-    /// mark, quick actions, and recent entries.
     pub(crate) fn render_welcome_page(
         &self,
         theme: &Theme,
         strings: &I18nStrings,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let c = &theme.colors;
-        let d = &theme.dimensions;
-        let t = &theme.typography;
-
+        let scroll = window
+            .use_keyed_state("welcome-scroll", cx, |_, _| ScrollHandle::new())
+            .read(cx)
+            .clone();
         let recent = welcome_recent_entries();
-        let primary_button = div()
-            .id("welcome-new-document")
-            .debug_selector(|| "welcome-new-document".into())
-            .h(px(d.dialog_button_height))
-            .px(px(d.dialog_button_padding_x + 8.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(8.0))
-            .rounded(px((d.dialog_radius - 4.0).max(0.0)))
-            .bg(c.dialog_primary_button_bg)
-            .hover(|this| this.bg(c.dialog_primary_button_hover))
-            .active(|this| this.opacity(0.92))
-            .cursor_pointer()
-            .text_size(px(t.dialog_button_size))
-            .font_weight(t.dialog_button_weight.to_font_weight())
-            .text_color(c.dialog_primary_button_text)
-            .child(
-                svg()
-                    .path("icon/workspace/new-file.svg")
-                    .size(px(18.0))
-                    .text_color(c.dialog_primary_button_text),
-            )
-            .child(strings.welcome_new_document.clone())
-            .on_click(cx.listener(Self::on_welcome_new_document));
-        let open_button = div()
-            .id("welcome-open-file")
-            .debug_selector(|| "welcome-open-file".into())
-            .h(px(d.dialog_button_height))
-            .px(px(d.dialog_button_padding_x + 8.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(8.0))
-            .rounded(px((d.dialog_radius - 4.0).max(0.0)))
-            .border(px(d.dialog_border_width))
-            .border_color(c.dialog_border)
-            .bg(c.dialog_secondary_button_bg)
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .active(|this| this.opacity(0.92))
-            .cursor_pointer()
-            .text_size(px(t.dialog_button_size))
-            .font_weight(t.dialog_button_weight.to_font_weight())
-            .text_color(c.dialog_secondary_button_text)
-            .child(
-                svg()
-                    .path("icon/workspace/activity-files.svg")
-                    .size(px(18.0))
-                    .text_color(c.dialog_secondary_button_text),
-            )
-            .child(strings.open_markdown_files_prompt.clone())
-            .on_click(|_, window, cx| {
-                window.dispatch_action(Box::new(crate::components::OpenFile), cx)
-            });
-
         let mut column = div()
-            .w(px(360.0))
-            .max_w(relative(1.0))
+            .w_full()
+            .max_w(rems(30.0))
+            .my_auto()
+            .flex_none()
             .flex()
             .flex_col()
             .items_center()
-            .gap(px(14.0))
-            .child(
-                img("icon/velora.png")
-                    .size(px(88.0))
-                    .object_fit(ObjectFit::Contain),
-            )
-            .child(
-                div()
-                    .text_size(px(theme.typography.ui_text_size(24.0)))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(c.text_default)
-                    .child("Velora"),
-            )
+            .gap_6()
             .child(
                 div()
                     .flex()
+                    .flex_col()
                     .items_center()
-                    .gap(px(10.0))
-                    .mt(px(6.0))
-                    .child(primary_button)
-                    .child(open_button),
+                    .gap_3()
+                    .child(
+                        img("icon/velora.png")
+                            .size(px(88.0))
+                            .object_fit(ObjectFit::Contain),
+                    )
+                    .child(
+                        div()
+                            .text_2xl()
+                            .font_weight(FontWeight::BOLD)
+                            .child("Velora"),
+                    ),
+            )
+            .child(
+                Self::welcome_focus_region("welcome-actions".into(), &scroll, window, cx)
+                    .flex()
+                    .flex_wrap()
+                    .justify_center()
+                    .gap_2()
+                    .child(
+                        Button::new("welcome-new-document")
+                            .debug_selector(|| "welcome-new-document".into())
+                            .primary()
+                            .label(strings.welcome_new_document.clone())
+                            .icon(Icon::default().path("icon/workspace/new-file.svg"))
+                            .on_click(cx.listener(Self::on_welcome_new_document)),
+                    )
+                    .child(
+                        Button::new("welcome-open-file")
+                            .debug_selector(|| "welcome-open-file".into())
+                            .outline()
+                            .label(strings.open_markdown_files_prompt.clone())
+                            .icon(Icon::default().path("icon/workspace/activity-files.svg"))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(crate::components::OpenFile), cx)
+                            }),
+                    ),
             );
-
         if !recent.is_empty() {
             let home_directory = directories::UserDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
-            let mut list = div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .mt(px(10.0))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.0))
-                        .text_size(px(theme.typography.ui_text_size(11.0)))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(c.dialog_muted)
-                        .child(
-                            svg()
-                                .path("icon/workspace/history.svg")
-                                .size(px(14.0))
-                                .text_color(c.dialog_muted),
-                        )
-                        .child(strings.welcome_recent.clone()),
-                );
+            let mut list = div().w_full().min_w_0().flex().flex_col().gap_1().child(
+                div()
+                    .px_3()
+                    .mb_1()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(strings.welcome_recent.clone()),
+            );
             for (index, path) in recent.iter().enumerate() {
                 let label = path
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.to_string_lossy().into_owned());
-                let entry_path = path.clone();
-                let remove_path = path.clone();
-                let tooltip_path = path.to_string_lossy().into_owned();
-                let parent_path = path.parent().unwrap_or(path);
+                let parent = path.parent().unwrap_or(path);
                 let parent_label = match home_directory
                     .as_ref()
-                    .and_then(|home| parent_path.strip_prefix(home).ok())
+                    .and_then(|home| parent.strip_prefix(home).ok())
                 {
-                    Some(relative_path) => std::path::Path::new("~")
-                        .join(relative_path)
+                    Some(relative) => std::path::Path::new("~")
+                        .join(relative)
                         .to_string_lossy()
                         .into_owned(),
-                    None => parent_path.to_string_lossy().into_owned(),
+                    None => parent.to_string_lossy().into_owned(),
                 };
-                let remove_label = strings.welcome_remove_recent.clone();
+                let entry_path = path.clone();
+                let remove_path = path.clone();
+                let identity = path.to_string_lossy();
                 list = list.child(
-                    div()
-                        .id(("welcome-recent-entry", index))
-                        .w_full()
-                        .px(px(8.0))
-                        .h(px(32.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .rounded(px(5.0))
-                        .cursor_pointer()
-                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .text_size(px(theme.typography.ui_text_size(12.0)))
-                        .text_color(c.dialog_body)
-                        .child(
-                            svg()
-                                .path("icon/workspace/open-folder.svg")
-                                .size(px(14.0))
-                                .text_color(c.dialog_muted),
-                        )
+                    Self::welcome_focus_region(
+                        SharedString::from(format!("welcome-recent-entry:{identity}")).into(),
+                        &scroll,
+                        window,
+                        cx,
+                    )
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "welcome-recent-open:{identity}"
+                        )))
+                        .ghost()
+                        .flex_1()
+                        .min_w_0()
+                        .h_auto()
+                        .py_2()
+                        .justify_start()
+                        .accessibility_label(format!("{label} · {parent_label}"))
+                        .tooltip(path.to_string_lossy().into_owned())
+                        .child(Self::render_workspace_folder_icon(theme, cx))
                         .child(
                             div()
                                 .flex_1()
-                                .min_w(px(0.0))
+                                .min_w_0()
                                 .flex()
-                                .items_center()
-                                .gap(px(8.0))
+                                .flex_col()
+                                .text_left()
+                                .child(div().truncate().child(label.clone()))
                                 .child(
                                     div()
-                                        .max_w(relative(0.55))
-                                        .flex_shrink_0()
+                                        .debug_selector(move || format!("welcome-recent-path-{index}"))
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
                                         .truncate()
-                                        .child(label),
-                                )
-                                .child(
-                                    div()
-                                        .debug_selector(move || {
-                                            format!("welcome-recent-path-{index}")
-                                        })
-                                        .flex_1()
-                                        .min_w(px(0.0))
-                                        .truncate()
-                                        .text_size(px(theme.typography.ui_text_size(10.5)))
-                                        .text_color(c.dialog_muted)
                                         .child(parent_label),
-                                )
-                                .id(("welcome-recent-details", index))
-                                .tooltip(move |_, cx| {
-                                    cx.new(|_| crate::editor::workspace::WorkspaceTooltip {
-                                        label: tooltip_path.clone(),
-                                    })
-                                    .into()
-                                }),
-                        )
-                        .child(
-                            div()
-                                .id(("welcome-recent-remove", index))
-                                .debug_selector(move || format!("welcome-recent-remove-{index}"))
-                                .size(px(24.0))
-                                .flex_shrink_0()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(4.0))
-                                .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_click(cx.listener(move |editor, _, _, cx| {
-                                    cx.stop_propagation();
-                                    match crate::config::remove_recent_folder(&remove_path) {
-                                        Ok(_) => {
-                                            crate::app_menu::install_menus(cx);
-                                            cx.refresh_windows();
-                                        }
-                                        Err(error) => {
-                                            let title = cx
-                                                .global::<I18nManager>()
-                                                .strings()
-                                                .welcome_remove_recent
-                                                .clone();
-                                            editor.show_message_modal(title, error.to_string(), cx);
-                                        }
-                                    }
-                                }))
-                                .tooltip(move |_, cx| {
-                                    cx.new(|_| crate::editor::workspace::WorkspaceTooltip {
-                                        label: remove_label.clone(),
-                                    })
-                                    .into()
-                                })
-                                .child(
-                                    svg()
-                                        .path("icon/workspace/tab-close.svg")
-                                        .size(px(12.0))
-                                        .text_color(c.dialog_muted),
                                 ),
                         )
-                        .on_click(cx.listener(move |editor, _event, window, cx| {
+                        .on_click(cx.listener(move |editor, _, window, cx| {
                             editor.open_recent_entry(&entry_path, window, cx);
                         })),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "welcome-recent-remove:{identity}"
+                        )))
+                        .debug_selector(move || format!("welcome-recent-remove-{index}"))
+                        .small()
+                        .ghost()
+                        .icon(gpui_kit::assets::IconName::Close)
+                        .accessibility_label(format!("{} · {label}", strings.welcome_remove_recent))
+                        .tooltip(strings.welcome_remove_recent.clone())
+                        .on_click(cx.listener(move |editor, _, _, cx| {
+                            match crate::config::remove_recent_folder(&remove_path) {
+                                Ok(_) => {
+                                    crate::app_menu::install_menus(cx);
+                                    cx.refresh_windows();
+                                }
+                                Err(error) => {
+                                    let title = cx
+                                        .global::<I18nManager>()
+                                        .strings()
+                                        .welcome_remove_recent
+                                        .clone();
+                                    editor.show_message_modal(title, error.to_string(), cx);
+                                }
+                            }
+                        })),
+                    ),
                 );
             }
             column = column.child(list);
         }
-
+        let mut shortcuts = div()
+            .flex()
+            .flex_wrap()
+            .justify_center()
+            .gap_4()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground);
+        for (action, label) in [
+            (
+                Box::new(crate::components::NewDocument) as Box<dyn Action>,
+                strings.welcome_new_document.clone(),
+            ),
+            (
+                Box::new(crate::components::OpenFile) as Box<dyn Action>,
+                strings.open_markdown_files_prompt.clone(),
+            ),
+        ] {
+            if let Some(binding) =
+                gpui_kit::component::kbd::Kbd::binding_for_action(action.as_ref(), None, window)
+            {
+                shortcuts = shortcuts.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(binding)
+                        .child(label),
+                );
+            }
+        }
+        column = column.child(shortcuts);
         div()
             .id("welcome-page")
-            .w_full()
-            .h_full()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .bg(c.editor_background)
-            .child(column)
+            .debug_selector(|| "welcome-page".into())
+            .size_full()
+            .relative()
+            .overflow_y_scroll()
+            .track_scroll(&scroll)
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .child(
                 div()
-                    .mt(px(18.0))
-                    .text_size(px(theme.typography.ui_text_size(11.0)))
-                    .text_color(c.dialog_muted)
-                    .child(strings.welcome_shortcut_hint.clone()),
+                    .w_full()
+                    .min_h_full()
+                    .p_6()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .child(column),
             )
+            .vertical_scrollbar(&scroll)
             .into_any_element()
+    }
+
+    fn welcome_focus_region(
+        id: ElementId,
+        scroll: &ScrollHandle,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Stateful<Div> {
+        let state = window.use_keyed_state(id.clone(), cx, |_, cx| {
+            (cx.focus_handle().tab_stop(false), false)
+        });
+        let focus = state.read(cx).0.clone();
+        let scroll = scroll.clone();
+        div()
+            .id(id)
+            .w_full()
+            .min_w_0()
+            .track_focus(&focus)
+            .on_prepaint(move |bounds, window, cx| {
+                let focused = focus.contains_focused(window, cx);
+                let previously_focused =
+                    state.update(cx, |state, _| std::mem::replace(&mut state.1, focused));
+                // 只在焦点进入时入视，避免手动滚动被仍聚焦的按钮拉回。
+                if focused && !previously_focused {
+                    let viewport = scroll.bounds();
+                    let delta = if bounds.top() < viewport.top() {
+                        viewport.top() - bounds.top()
+                    } else if bounds.bottom() > viewport.bottom() {
+                        viewport.bottom() - bounds.bottom()
+                    } else {
+                        px(0.0)
+                    };
+                    if delta != px(0.0) {
+                        let offset = scroll.offset();
+                        scroll.set_offset(point(offset.x, offset.y + delta));
+                        window.refresh();
+                    }
+                }
+            })
     }
 
     pub(crate) fn on_welcome_new_document(

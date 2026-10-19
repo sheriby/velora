@@ -792,7 +792,7 @@ impl Render for Editor {
         // A tab whose file the text editor can't preview replaces the whole
         // content area with a centered notice, VS Code style.
         let content_area = if self.show_welcome {
-            self.render_welcome_page(&theme, &strings, cx)
+            self.render_welcome_page(&theme, &strings, window, cx)
         } else if self.image_preview.is_some()
             && self.quick_open.is_none()
             && self.command_palette.is_none()

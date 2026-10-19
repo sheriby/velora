@@ -166,6 +166,113 @@ async fn windows_hamburger_menu_root_actions_open_settings_and_update_dialog(
 }
 
 #[gpui::test]
+fn welcome_actions_support_keyboard_without_opening_a_removed_recent_folder(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::test::TestWindowExt as _;
+    let root = temp_fixture_dir().join(format!("welcome-keyboard-{}", temp_fixture_token()));
+    let _config = crate::config::override_test_config_root(root.join("config"));
+    let folder = root.join("recent-folder");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("note.md"), "保留内容").unwrap();
+    crate::config::record_recent_folder(&folder).unwrap();
+    for name in ["other-one", "other-two", "other-three", "other-four"] {
+        let path = root.join(name);
+        fs::create_dir_all(&path).unwrap();
+        crate::config::record_recent_folder(&path).unwrap();
+    }
+    cx.on_quit(move || fs::remove_dir_all(root).unwrap());
+    init_editor_test_app(cx);
+    let handle = cx
+        .update(|cx| {
+            crate::ui::open_window(gpui::WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| {
+                    let mut editor = Editor::from_markdown(cx, String::new(), None);
+                    editor.show_welcome = true;
+                    editor
+                })
+            })
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    visual.simulate_resize(gpui::size(px(600.0), px(340.0)));
+    redraw(&mut visual);
+    assert!(
+        visual.debug_bounds("welcome-new-document").is_some(),
+        "先确认欢迎页实际挂载"
+    );
+    visual.update(|window, cx| {
+        for id in ["welcome-new-document", "welcome-open-file"] {
+            assert_eq!(
+                window.try_find(id).and_then(|button| button.role()),
+                Some(gpui::Role::Button),
+                "欢迎页主入口应是可键盘操作的按钮"
+            );
+        }
+        window.blur(cx);
+        window.focus_next(cx);
+    });
+    let remove_id = gpui::SharedString::from(format!("welcome-recent-remove:{}", folder.display()));
+    let mut reached = false;
+    for _ in 0..30 {
+        visual.update(|window, cx| window.press("tab", cx));
+        if visual.update(|window, _| window.find(remove_id.clone()).focused() == Some(true)) {
+            reached = true;
+            break;
+        }
+    }
+    assert!(reached, "Tab 必须到达最近目录的移除操作");
+    redraw(&mut visual);
+    let status_bar = visual.debug_bounds("status-bar-reading-mode").unwrap();
+    let remove = visual.update(|window, _| window.find(remove_id.clone()).bounds());
+    assert!(
+        remove.top() >= px(0.0) && remove.bottom() <= status_bar.top(),
+        "键盘焦点必须滚入窗口内容区：{remove:?}，状态栏 {status_bar:?}"
+    );
+    visual.update(|window, cx| window.press("space", cx));
+    redraw(&mut visual);
+    assert_eq!(crate::config::read_recent_folders().unwrap().len(), 4);
+    assert_eq!(
+        fs::read_to_string(folder.join("note.md")).unwrap(),
+        "保留内容"
+    );
+    handle
+        .read_with(&visual, |editor, _| {
+            assert!(editor.show_welcome);
+            assert!(editor.workspace.root.is_none());
+        })
+        .unwrap();
+    visual.update(|window, cx| {
+        window.blur(cx);
+        window.focus_next(cx);
+    });
+    let mut reached = false;
+    for _ in 0..30 {
+        if visual.update(|window, _| window.find("welcome-new-document").focused() == Some(true)) {
+            reached = true;
+            break;
+        }
+        visual.update(|window, cx| window.press("tab", cx));
+    }
+    assert!(reached, "Tab 必须到达新建文档");
+    redraw(&mut visual);
+    let new_document = visual.update(|window, _| window.find("welcome-new-document").bounds());
+    assert!(
+        new_document.top() >= px(0.0) && new_document.bottom() <= status_bar.top(),
+        "返回上方入口也应滚入视口：{new_document:?}"
+    );
+    visual.update(|window, cx| window.press("space", cx));
+    redraw(&mut visual);
+    handle
+        .read_with(&visual, |editor, _| {
+            assert!(!editor.show_welcome);
+            assert_eq!(editor.buffer.text(), "");
+        })
+        .unwrap();
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
 async fn welcome_page_keeps_two_primary_buttons_and_dispatches_open_action(
     cx: &mut TestAppContext,
 ) {
