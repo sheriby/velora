@@ -11,6 +11,7 @@ use crate::{
 };
 use gpui::prelude::FluentBuilder;
 use gpui::*;
+use gpui_kit::component::{Selectable as _, button::{Button, ButtonVariants}};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -333,34 +334,24 @@ impl Editor {
                     HistorySource::Legacy => &strings.file_history_legacy,
                 };
                 let detail = format!("{date}\n{source}");
-                div()
-                    .id(ElementId::Name(
-                        format!("file-history-entry-{index}").into(),
-                    ))
-                    .debug_selector(move || format!("file-history-entry-{index}"))
-                    .flex()
-                    .items_center()
-                    .h(px(38.0))
-                    .flex_shrink_0()
-                    .px_3()
-                    .rounded(px(6.0))
-                    .cursor_pointer()
-                    .bg(if index == selected {
-                        colors.selection.opacity(0.55)
-                    } else {
-                        transparent_black()
-                    })
-                    .hover(|this| this.bg(colors.dialog_secondary_button_hover))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |editor, _, _, cx| {
-                            editor.select_file_history_version(index, cx)
-                        }),
-                    )
-                    .tooltip(move |_, cx| {
-                        cx.new(|_| super::workspace::WorkspaceTooltip { label: detail.clone() }).into()
-                    })
-                    .child(div().text_size(px(theme.typography.ui_text_size(12.0))).whitespace_nowrap().child(date))
+                Button::new(ElementId::Name(
+                    format!("file-history-entry-{index}").into(),
+                ))
+                .debug_selector(move || format!("file-history-entry-{index}"))
+                .ghost()
+                .compact()
+                .items_center()
+                .h(px(38.0))
+                .flex_shrink_0()
+                .px_3()
+                .rounded(px(6.0))
+                .selected(index == selected)
+                .accessibility_label(date.clone())
+                .tooltip(detail)
+                .on_click(cx.listener(move |editor, _, _, cx| {
+                    editor.select_file_history_version(index, cx)
+                }))
+                .child(div().text_size(px(theme.typography.ui_text_size(12.0))).whitespace_nowrap().child(date))
             })
             .collect::<Vec<_>>();
         let code_family: SharedString = EditorSettings::fonts(cx).code_family.into();
@@ -518,12 +509,12 @@ impl Editor {
             .children([
                 (false, "file-history-preview", strings.file_history_preview.clone()),
                 (true, "file-history-compare", strings.file_history_compare.clone()),
-            ].into_iter().map(|(mode, id, label)| div().id(id).debug_selector(move || id.into())
-                .h(px(26.0)).px_3().flex().items_center().rounded(px(5.0)).cursor_pointer()
+            ].into_iter().map(|(mode, id, label)| Button::new(id).debug_selector(move || id.into())
+                .ghost().compact().h(px(26.0)).px_3().rounded(px(5.0))
                 .text_size(px(theme.typography.ui_text_size(12.0)))
-                .text_color(if compare == mode { colors.text_default } else { colors.dialog_muted })
-                .when(compare == mode, |this| this.bg(colors.dialog_surface).shadow_sm())
-                .child(label).on_mouse_down(MouseButton::Left, cx.listener(move |editor, _, _, cx| {
+                .selected(compare == mode)
+                .accessibility_label(label.clone())
+                .child(label).on_click(cx.listener(move |editor, _, _, cx| {
                     if let Some(overlay) = editor.file_history_overlay.as_mut() {
                         overlay.compare = mode;
                         overlay.compared_revision = None;
@@ -537,22 +528,22 @@ impl Editor {
             .children([
                 (false, "file-history-previous-change", "file-history-previous-change-icon", strings.file_history_previous_change.clone()),
                 (true, "file-history-next-change", "file-history-next-change-icon", strings.file_history_next_change.clone()),
-            ].into_iter().map(|(forward, id, icon_id, label)| div().id(id).debug_selector(move || id.into())
-                .size(px(26.0)).flex().items_center().justify_center().rounded(px(5.0)).cursor_pointer()
-                .hover(|this| this.bg(colors.dialog_secondary_button_hover))
-                .tooltip(move |_, cx| cx.new(|_| super::workspace::WorkspaceTooltip { label: label.clone() }).into())
+            ].into_iter().map(|(forward, id, icon_id, label)| Button::new(id).debug_selector(move || id.into())
+                .ghost().compact().w(px(26.0)).h(px(26.0)).min_w(px(0.0)).px(px(0.0)).rounded(px(5.0))
+                .accessibility_label(label.clone())
+                .tooltip(label)
                 .child(svg().path("icon/workspace/chevron-down.svg").debug_selector(move || icon_id.into())
                     .with_transformation(Transformation::rotate(radians(if forward { 0.0 } else { std::f32::consts::PI })))
                     .size(px(14.0)).text_color(colors.dialog_muted))
-                .on_mouse_down(MouseButton::Left, cx.listener(move |editor, _, _, cx| editor.navigate_file_history_change(forward, cx)))));
+                .on_click(cx.listener(move |editor, _, _, cx| editor.navigate_file_history_change(forward, cx)))));
         let close_label = strings.file_history_close.clone();
-        let close = div().id("file-history-close").debug_selector(|| "file-history-close".into())
-            .size(px(28.0)).flex_shrink_0().flex().items_center().justify_center().rounded(px(6.0)).cursor_pointer()
-            .hover(|this| this.bg(colors.dialog_secondary_button_hover))
-            .tooltip(move |_, cx| cx.new(|_| super::workspace::WorkspaceTooltip { label: close_label.clone() }).into())
+        let close = Button::new("file-history-close").debug_selector(|| "file-history-close".into())
+            .ghost().compact().size(px(28.0)).flex_shrink_0().rounded(px(6.0))
+            .accessibility_label(close_label.clone())
+            .tooltip(close_label)
             .child(svg().path("icon/workspace/tab-close.svg").debug_selector(|| "file-history-close-icon".into())
                 .size(px(14.0)).text_color(colors.dialog_muted))
-            .on_mouse_down(MouseButton::Left, cx.listener(|editor, _, _, cx| editor.close_file_history(cx)));
+            .on_click(cx.listener(|editor, _, _, cx| editor.close_file_history(cx)));
         let header = div().flex().items_center().gap_4().px_5().h(px(56.0)).flex_shrink_0()
             .border_b_1().border_color(colors.dialog_border.opacity(0.55))
             .child(div().flex().items_center().gap_2().flex_1().min_w(px(0.0))
@@ -594,13 +585,12 @@ impl Editor {
                         .child(content).child(scrollbar))))
                 .when(!empty && !read_only, |this| this.child(div().flex().justify_end().items_center().h(px(50.0)).px_5().flex_shrink_0()
                     .border_t_1().border_color(colors.dialog_border.opacity(0.55))
-                    .child(div().id("file-history-restore").debug_selector(|| "file-history-restore".into())
-                        .h(px(30.0)).px_4().flex().items_center().rounded(px(6.0)).cursor_pointer()
-                        .text_size(px(theme.typography.ui_text_size(12.0))).font_weight(FontWeight::MEDIUM)
-                        .bg(colors.dialog_primary_button_bg).text_color(colors.dialog_primary_button_text)
-                        .hover(|this| this.bg(colors.dialog_primary_button_hover))
-                        .child(strings.file_history_restore.clone())
-                        .on_mouse_down(MouseButton::Left, cx.listener(move |editor, _, _, cx| editor.restore_file_history_version(selected, cx)))))))
+                    .child(Button::new("file-history-restore").debug_selector(|| "file-history-restore".into())
+                        .primary().h(px(30.0))
+                        .text_size(px(theme.typography.ui_text_size(12.0)))
+                        .accessibility_label(strings.file_history_restore.clone())
+                        .label(strings.file_history_restore.clone())
+                        .on_click(cx.listener(move |editor, _, _, cx| editor.restore_file_history_version(selected, cx)))))))
             .into_any_element())
     }
 

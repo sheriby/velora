@@ -33,6 +33,33 @@ fn history_timestamps_show_only_local_date_and_time() {
     }
 }
 
+/// 历史浮层上的控件都必须是标准按钮：版本行、预览／对比切换、上一处／下一处、
+/// 关闭与恢复以前都是自绘 div，辅助技术读不出它们是做什么的。
+#[gpui::test]
+fn history_controls_expose_native_semantics(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    fixture(cx, |editor, cx, _| {
+        editor.update(cx, |editor, cx| editor.open_file_history(cx));
+        redraw(cx);
+        for id in [
+            "file-history-entry-0",
+            "file-history-preview",
+            "file-history-compare",
+            "file-history-close",
+            "file-history-restore",
+        ] {
+            let item = cx
+                .update(|window, _| window.try_find(id))
+                .unwrap_or_else(|| panic!("{id} 应挂载"));
+            assert_eq!(item.role(), Some(gpui::Role::Button), "{id} 必须是标准按钮");
+            assert!(
+                item.label().is_some_and(|label| !label.is_empty()),
+                "{id} 必须有可访问名称"
+            );
+        }
+    });
+}
+
 #[gpui::test]
 fn history_content_has_no_explanatory_header_or_legend(cx: &mut TestAppContext) {
     fixture(cx, |editor, cx, _| {
