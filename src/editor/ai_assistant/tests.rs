@@ -3265,6 +3265,406 @@ fn ai_auxiliary_fields_have_native_roles_and_keep_edits_out_of_the_document(
 }
 
 #[gpui::test]
+fn ai_collection_skills_keep_toggle_and_use_together(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root = std::env::temp_dir().join(format!("velora-ai-skills-kit-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    crate::ai::settings::AiSettings {
+        enabled: true,
+        ..Default::default()
+    }
+    .save_at(&crate::ai::settings::settings_path().unwrap())
+    .unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "原文".into(), None))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_mut().unwrap();
+            session.mode = PanelMode::Skills;
+            session.skills.entries = vec![crate::ai::skills::SkillEntry {
+                id: "workspace:structure".into(),
+                name: "组织文档结构".into(),
+                description: "保留主旨，整理章节层级并补全过渡。".into(),
+                directory: std::path::PathBuf::from("fixture"),
+            }];
+            session
+                .input
+                .update(cx, |input, cx| input.set_value("原有草稿", window, cx));
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    visual.update(|window, _| {
+        let toggle = window.find("ai-skill-toggle-workspace:structure");
+        let apply = window.find("ai-skill-workspace:structure");
+        assert_eq!(toggle.role(), Some(gpui::Role::CheckBox));
+        assert_eq!(apply.role(), Some(gpui::Role::Button));
+        assert_eq!(
+            toggle.bounds().center().y,
+            apply.bounds().center().y,
+            "同一项任务说明的启用和使用应在同一行"
+        );
+    });
+    visual.update(|window, cx| window.click("ai-skill-toggle-workspace:structure", cx));
+    visual.run_until_parked();
+    draw(&mut visual);
+    visual.update(|window, cx| {
+        window.click("ai-skill-workspace:structure", cx);
+    });
+    handle
+        .read_with(&visual, |editor, _| {
+            assert!(editor.ai_session.as_ref().unwrap().mode == PanelMode::Skills)
+        })
+        .unwrap();
+    assert!(
+        crate::ai::settings::AiSettings::load()
+            .unwrap()
+            .disabled_skills
+            .contains(&"workspace:structure".into())
+    );
+    visual.update(|window, cx| window.click("ai-skill-toggle-workspace:structure", cx));
+    visual.run_until_parked();
+    draw(&mut visual);
+    visual.update(|window, cx| window.click("ai-skill-workspace:structure", cx));
+    draw(&mut visual);
+    handle
+        .read_with(&visual, |editor, cx| {
+            let session = editor.ai_session.as_ref().unwrap();
+            assert!(session.mode == PanelMode::Task);
+            assert_eq!(
+                session.input.read(cx).value(),
+                "/workspace:structure 原有草稿"
+            );
+            assert_eq!(editor.buffer.text(), "原文");
+        })
+        .unwrap();
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
+fn ai_collection_readonly_instructions_disable_writes_and_keep_copying(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root = std::env::temp_dir().join(format!(
+        "velora-ai-instructions-kit-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "原文".into(), None))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    let body = handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_mut().unwrap();
+            session.mode = PanelMode::Instruction;
+            session.settings_read_error = Some("配置读取失败".into());
+            session.settings.instructions = vec![crate::ai::settings::CustomInstruction {
+                name: "归纳".into(),
+                prompt: "保留事实，归纳要点".into(),
+            }];
+            session
+                .instruction_name
+                .update(cx, |input, cx| input.set_value("归纳", window, cx));
+            session.instruction_body.update(cx, |input, cx| {
+                input.set_value("保留事实，归纳要点", window, cx)
+            });
+            let body = session.instruction_body.clone();
+            cx.notify();
+            body
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    let mut errors = Vec::new();
+    for action in ["ai-instruction-save", "ai-template-delete:归纳"] {
+        handle
+            .update(&mut visual, |editor, _, cx| {
+                editor.ai_session.as_mut().unwrap().error = None;
+                cx.notify();
+            })
+            .unwrap();
+        visual.update(|window, cx| window.click(action, cx));
+        errors.push(
+            handle
+                .read_with(&visual, |editor, _| {
+                    editor.ai_session.as_ref().unwrap().error.clone()
+                })
+                .unwrap(),
+        );
+    }
+    assert_eq!(
+        errors,
+        vec![None, None],
+        "只读状态的保存和删除不能再触发写入请求及错误提示"
+    );
+    visual.update(|window, cx| {
+        body.update(cx, |body, cx| body.focus(window, cx));
+        window.press("secondary-a", cx);
+        window.press("secondary-c", cx);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("保留事实，归纳要点".into())
+        );
+        window.input("误改", cx);
+    });
+    handle
+        .read_with(&visual, |editor, cx| {
+            assert_eq!(body.read(cx).value(), "保留事实，归纳要点");
+            assert_eq!(editor.buffer.text(), "原文");
+        })
+        .unwrap();
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
+fn ai_collection_keyboard_keeps_later_skills_visible(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root =
+        std::env::temp_dir().join(format!("velora-ai-skills-scroll-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "原文".into(), None))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    visual.simulate_resize(gpui::size(gpui::px(900.0), gpui::px(460.0)));
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_mut().unwrap();
+            session.mode = PanelMode::Skills;
+            session.skills.entries = (0..8)
+                .map(|index| crate::ai::skills::SkillEntry {
+                    id: format!("workspace:item{index}"),
+                    name: format!("写作任务 {index}"),
+                    description: "整理章节层级，检查术语和引用并保留原始含义。".into(),
+                    directory: std::path::PathBuf::from("fixture"),
+                })
+                .collect();
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    visual.update(|window, cx| {
+        window.blur(cx);
+        window.focus_next(cx);
+    });
+    let mut reached = false;
+    for _ in 0..80 {
+        visual.update(|window, cx| window.press("tab", cx));
+        if visual
+            .update(|window, _| window.find("ai-skill-workspace:item7").focused() == Some(true))
+        {
+            reached = true;
+            break;
+        }
+    }
+    assert!(reached);
+    draw(&mut visual);
+    let viewport = visual.debug_bounds("ai-content").unwrap();
+    let button = visual.update(|window, _| window.find("ai-skill-workspace:item7").bounds());
+    assert!(
+        button.top() >= viewport.top() && button.bottom() <= viewport.bottom(),
+        "Tab 应让末项使用按钮进入可见区域：{button:?}，{viewport:?}"
+    );
+    assert!(
+        button.bottom() < viewport.bottom(),
+        "滚动入视时还应保留焦点边框空间：{button:?}，{viewport:?}"
+    );
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
+fn ai_collection_repaired_settings_restore_editing_and_failed_reload_preserves_the_file(
+    cx: &mut TestAppContext,
+) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root = std::env::temp_dir().join(format!(
+        "velora-ai-readonly-repair-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let path = crate::ai::settings::settings_path().unwrap();
+    std::fs::write(&path, "{broken").unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "原文".into(), None))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    let body = handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_mut().unwrap();
+            assert!(session.settings_readonly());
+            session.mode = PanelMode::Instruction;
+            session
+                .instruction_name
+                .update(cx, |input, cx| input.set_value("要求", window, cx));
+            session
+                .instruction_body
+                .update(cx, |input, cx| input.set_value("原要求", window, cx));
+            session.instruction_body.clone()
+        })
+        .unwrap();
+    draw(&mut visual);
+    handle
+        .update(&mut visual, |editor, _, _| {
+            editor.ai_session.as_mut().unwrap().error = Some("模型连接中断".into())
+        })
+        .unwrap();
+    crate::ai::settings::AiSettings {
+        enabled: true,
+        ..Default::default()
+    }
+    .save_at(&path)
+    .unwrap();
+    visual.update(|_, cx| crate::ai::settings::AiFeature::bump_revision(cx));
+    draw(&mut visual);
+    visual.update(|window, cx| {
+        body.update(cx, |body, cx| body.focus(window, cx));
+        window.press("secondary-a", cx);
+        window.input("修正后的要求", cx);
+    });
+    assert_eq!(
+        body.read_with(&visual, |body, _| body.value().to_string()),
+        "修正后的要求",
+        "配置修复并刷新后应恢复编辑"
+    );
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(
+                editor.ai_session.as_ref().unwrap().error.as_deref(),
+                Some("模型连接中断"),
+                "配置修复不能清掉其他操作的错误"
+            )
+        })
+        .unwrap();
+    std::fs::write(&path, "{broken-again").unwrap();
+    visual.update(|_, cx| crate::ai::settings::AiFeature::bump_revision(cx));
+    draw(&mut visual);
+    visual.update(|window, cx| {
+        window.press("secondary-a", cx);
+        window.input("误改", cx);
+        window.click("ai-instruction-save", cx);
+    });
+    assert_eq!(
+        body.read_with(&visual, |body, _| body.value().to_string()),
+        "修正后的要求",
+        "重新载入配置失败后必须回到只读"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "{broken-again",
+        "不能覆盖无法读取的配置"
+    );
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(editor.buffer.text(), "原文")
+        })
+        .unwrap();
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
+fn ai_collection_instruction_delete_keeps_other_same_name_entries(cx: &mut TestAppContext) {
+    use crate::ai::settings::{AiSettings, CustomInstruction};
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root = std::env::temp_dir().join(format!(
+        "velora-ai-instruction-delete-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let first = CustomInstruction {
+        name: "归纳".into(),
+        prompt: "保留第一份要求".into(),
+    };
+    let second = CustomInstruction {
+        name: "归纳".into(),
+        prompt: "删除第二份要求".into(),
+    };
+    let third = CustomInstruction {
+        name: "归纳:1".into(),
+        prompt: "保留第三份要求".into(),
+    };
+    AiSettings {
+        enabled: true,
+        instructions: vec![first.clone(), second, third.clone()],
+        ..Default::default()
+    }
+    .save_at(&crate::ai::settings::settings_path().unwrap())
+    .unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "原文".into(), None))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            editor.ai_session.as_mut().unwrap().mode = PanelMode::Instruction;
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    visual.update(|window, cx| window.click(("ai-template-delete-duplicate", 1usize), cx));
+    visual.run_until_parked();
+    draw(&mut visual);
+    assert_eq!(
+        AiSettings::load().unwrap().instructions,
+        vec![first.clone(), third.clone()]
+    );
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(
+                editor.ai_session.as_ref().unwrap().settings.instructions,
+                vec![first, third]
+            );
+            assert_eq!(editor.buffer.text(), "原文");
+        })
+        .unwrap();
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
 fn ai_context_sources_are_checkable_and_share_one_selection_list(cx: &mut TestAppContext) {
     use gpui::AppContext as _;
     use gpui_kit::test::TestWindowExt as _;

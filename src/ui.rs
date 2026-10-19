@@ -12,6 +12,47 @@ use std::{collections::HashMap, marker::PhantomData};
 mod resize;
 pub(crate) use resize::PanelResizeHandle;
 
+pub(crate) fn scroll_focus_region(
+    id: gpui::ElementId,
+    scroll: &gpui::ScrollHandle,
+    window: &mut Window,
+    cx: &mut App,
+) -> gpui::Stateful<gpui::Div> {
+    use gpui::*;
+    use gpui_kit::base::ElementExt as _;
+    let state = window.use_keyed_state(id.clone(), cx, |_, cx| {
+        (cx.focus_handle().tab_stop(false), false)
+    });
+    let focus = state.read(cx).0.clone();
+    let scroll = scroll.clone();
+    div()
+        .id(id)
+        .w_full()
+        .min_w_0()
+        .track_focus(&focus)
+        .on_prepaint(move |bounds, window, cx| {
+            let focused = focus.contains_focused(window, cx);
+            let previously_focused =
+                state.update(cx, |state, _| std::mem::replace(&mut state.1, focused));
+            // 只在焦点进入时入视，避免手动滚动被仍聚焦的按钮拉回。
+            if focused && !previously_focused {
+                let viewport = scroll.bounds();
+                let delta = if bounds.top() < viewport.top() {
+                    viewport.top() - bounds.top()
+                } else if bounds.bottom() > viewport.bottom() {
+                    viewport.bottom() - bounds.bottom()
+                } else {
+                    px(0.0)
+                };
+                if delta != px(0.0) {
+                    let offset = scroll.offset();
+                    scroll.set_offset(point(offset.x, offset.y + delta));
+                    window.refresh();
+                }
+            }
+        })
+}
+
 #[derive(Default)]
 struct WindowContents {
     views: HashMap<WindowId, AnyWeakEntity>,

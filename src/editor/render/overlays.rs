@@ -1,6 +1,6 @@
 use super::*;
 use gpui::prelude::FluentBuilder as _;
-use gpui_kit::base::{ElementExt as _, Link};
+use gpui_kit::base::Link;
 use gpui_kit::component::{
     ActiveTheme as _, Sizable as _, Icon,
     button::{Button, ButtonVariants as _},
@@ -50,7 +50,7 @@ impl Editor {
                     ),
             )
             .child(
-                Self::welcome_focus_region("welcome-actions".into(), &scroll, window, cx)
+                crate::ui::scroll_focus_region("welcome-actions".into(), &scroll, window, cx)
                     .flex()
                     .flex_wrap()
                     .justify_center()
@@ -104,7 +104,7 @@ impl Editor {
                 let remove_path = path.clone();
                 let identity = path.to_string_lossy();
                 list = list.child(
-                    Self::welcome_focus_region(
+                    crate::ui::scroll_focus_region(
                         SharedString::from(format!("welcome-recent-entry:{identity}")).into(),
                         &scroll,
                         window,
@@ -230,45 +230,6 @@ impl Editor {
             )
             .vertical_scrollbar(&scroll)
             .into_any_element()
-    }
-
-    fn welcome_focus_region(
-        id: ElementId,
-        scroll: &ScrollHandle,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Stateful<Div> {
-        let state = window.use_keyed_state(id.clone(), cx, |_, cx| {
-            (cx.focus_handle().tab_stop(false), false)
-        });
-        let focus = state.read(cx).0.clone();
-        let scroll = scroll.clone();
-        div()
-            .id(id)
-            .w_full()
-            .min_w_0()
-            .track_focus(&focus)
-            .on_prepaint(move |bounds, window, cx| {
-                let focused = focus.contains_focused(window, cx);
-                let previously_focused =
-                    state.update(cx, |state, _| std::mem::replace(&mut state.1, focused));
-                // 只在焦点进入时入视，避免手动滚动被仍聚焦的按钮拉回。
-                if focused && !previously_focused {
-                    let viewport = scroll.bounds();
-                    let delta = if bounds.top() < viewport.top() {
-                        viewport.top() - bounds.top()
-                    } else if bounds.bottom() > viewport.bottom() {
-                        viewport.bottom() - bounds.bottom()
-                    } else {
-                        px(0.0)
-                    };
-                    if delta != px(0.0) {
-                        let offset = scroll.offset();
-                        scroll.set_offset(point(offset.x, offset.y + delta));
-                        window.refresh();
-                    }
-                }
-            })
     }
 
     pub(crate) fn on_welcome_new_document(

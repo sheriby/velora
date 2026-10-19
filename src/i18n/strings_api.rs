@@ -518,6 +518,11 @@ impl I18nStrings {
         strings.ai_panel_latest = "最新消息".into();
         strings.ai_diagram_preview = "预览图表".into();
         strings.ai_panel_sources = "来源".into();
+        strings.ai_panel_enable_skill = "启用任务说明".into();
+        strings.ai_panel_use_skill = "使用".into();
+        strings.ai_skills_empty = "暂无任务说明".into();
+        strings.ai_skills_scope_user = "个人".into();
+        strings.ai_skills_scope_workspace = "工作区".into();
         strings.ai_panel_skills = "任务说明".into();
         strings.ai_panel_save_instruction = "保存指令".into();
         strings.ai_panel_instruction_name = "指令名称".into();
@@ -1077,6 +1082,11 @@ impl I18nStrings {
             ai_panel_latest: "Latest messages".into(),
             ai_diagram_preview: "Preview diagram".into(),
             ai_panel_sources: "Sources".into(),
+            ai_panel_enable_skill: "Enable skill".into(),
+            ai_panel_use_skill: "Use".into(),
+            ai_skills_empty: "No skills available".into(),
+            ai_skills_scope_user: "Personal".into(),
+            ai_skills_scope_workspace: "Workspace".into(),
             ai_panel_skills: "Skills".into(),
             ai_panel_save_instruction: "Save instruction".into(),
             ai_panel_instruction_name: "Instruction name".into(),

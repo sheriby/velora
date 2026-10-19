@@ -84,8 +84,8 @@ pub(super) struct AiSession {
     skills: crate::ai::skills::SkillCatalog,
     context_candidates: Vec<String>,
     settings_saving: bool,
-    /// ai.json 读取失败后为真：面板可看不可写，防止默认配置覆盖原文件。
-    settings_readonly: bool,
+    /// 保留读取失败原因，防止默认配置覆盖仍可修复的原文件。
+    settings_read_error: Option<String>,
     // 设置单独编辑，仅在配置版本变化时读盘，避免在每帧渲染里读取配置。
     settings_revision: u64,
     review: Option<experience::ReviewDocument>,
@@ -93,6 +93,17 @@ pub(super) struct AiSession {
 }
 
 impl AiSession {
+    fn settings_readonly(&self) -> bool {
+        self.settings_read_error.is_some()
+    }
+
+    fn set_settings_read_error(&mut self, error: Option<String>) {
+        if error.is_some() || self.error == self.settings_read_error {
+            self.error = error.clone();
+        }
+        self.settings_read_error = error;
+    }
+
     #[cfg(test)]
     pub(in crate::editor) fn control_for_test(&self) -> RunControl {
         self.control.clone()
@@ -1049,7 +1060,7 @@ impl Editor {
         let error = loaded.as_ref().err().map(ToString::to_string);
         // 读取失败时面板以默认配置继续可用，但禁止一切写回：否则下一笔
         // 保存会把损坏但可救的原文件整体重置成近空配置。
-        let settings_readonly = loaded.is_err();
+        let settings_read_error = error.clone();
         let settings = loaded.unwrap_or_default();
         workspace.excluded_paths = settings.excluded_paths.clone();
         let mut saved = SavedSession::new(workspace);
@@ -1140,7 +1151,7 @@ impl Editor {
             mode: PanelMode::Task,
             command,
             origin,
-            settings_readonly,
+            settings_read_error,
             error,
             activity: String::new(),
             generation: 0,
@@ -1893,8 +1904,13 @@ impl Editor {
         {
             session.settings_revision = revision;
             match AiSettings::load() {
-                Ok(settings) => session.settings = settings,
-                Err(error) => session.error = Some(error.to_string()),
+                Ok(settings) => {
+                    session.settings = settings;
+                    session.set_settings_read_error(None);
+                }
+                Err(error) => {
+                    session.set_settings_read_error(Some(error.to_string()));
+                }
             }
         }
     }
@@ -1907,13 +1923,13 @@ impl Editor {
         else {
             return;
         };
-        if session.settings_readonly {
-            session.error = Some(
+        if session.settings_readonly() {
+            session.set_settings_read_error(Some(
                 cx.global::<crate::i18n::I18nManager>()
                     .strings()
                     .ai_error_settings_readonly
                     .clone(),
-            );
+            ));
             cx.notify();
             return;
         }

@@ -5,6 +5,7 @@ use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::{ActiveTheme as _, command::{Command, CommandGroup, CommandItem}, spinner::Spinner};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::resizable::{h_resizable, resizable_panel};
+use gpui_kit::component::scroll::ScrollableElement as _;
 
 impl Editor {
     pub(super) fn ai_sidebar_fits(&self, window: &Window, cx: &App) -> bool {
@@ -17,7 +18,7 @@ impl Editor {
     pub(in crate::editor) fn render_ai_assistant(
         &self,
         theme: &crate::theme::Theme,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let session = self.ai_session.as_ref()?;
@@ -95,7 +96,7 @@ impl Editor {
         let panel = if compact {
             self.render_ai_workbench(theme, task_height, false, window, cx)
         } else {
-            self.render_ai_panel(theme, height, cx)
+            self.render_ai_panel(theme, height, window, cx)
                 .w(px(width))
                 .rounded(cx.theme().radius_lg)
                 .shadow_lg()
@@ -151,7 +152,7 @@ impl Editor {
         &mut self,
         content: AnyElement,
         theme: &crate::theme::Theme,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(sidebar) = self.render_ai_sidebar(theme, window, cx) else {
@@ -209,7 +210,7 @@ impl Editor {
     fn render_ai_sidebar(
         &self,
         theme: &crate::theme::Theme,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let session = self
@@ -223,7 +224,7 @@ impl Editor {
         let content = if session.mode == PanelMode::Task {
             self.render_ai_workbench(theme, height, true, window, cx)
         } else {
-            self.render_ai_panel(theme, height, cx)
+            self.render_ai_panel(theme, height, window, cx)
                 .w_full()
                 .h_full()
                 .max_h(relative(1.0))
@@ -366,6 +367,7 @@ impl Editor {
         &self,
         theme: &crate::theme::Theme,
         height: f32,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
@@ -458,6 +460,21 @@ impl Editor {
             }
         }
 
+        if session.mode == PanelMode::Skills {
+            header = header.child(self.ai_button(
+                "ai-skills-reload",
+                false,
+                cx,
+                |button, _| {
+                    button
+                        .icon(IconName::RotateCw)
+                        .accessibility_label(strings.ai_panel_reload.clone())
+                        .tooltip(strings.ai_panel_reload.clone())
+                },
+                |editor, _, cx| editor.reload_ai_skills(cx),
+            ));
+        }
+
         header = header.child(self.ai_button(
             "ai-hide",
             false,
@@ -505,82 +522,201 @@ impl Editor {
                 content = content.child(self.render_ai_history(height, cx));
             }
             PanelMode::Skills => {
-                content = content.child(self.ai_button(
-                    "ai-skills-reload",
-                    false,
-                    cx,
-                    |button, _cx| button.label(strings.ai_panel_reload.clone()),
-                    |editor, _, cx| editor.reload_ai_skills(cx),
-                ));
+                if session.skills.entries.is_empty() {
+                    content = content.child(
+                        div()
+                            .p_4()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(strings.ai_skills_empty.clone()),
+                    );
+                }
                 for skill in &session.skills.entries {
                     let id = skill.id.clone();
-                    let disabled = session.settings.disabled_skills.contains(&skill.id);
+                    let disabled = session.settings.disabled_skills.contains(&id);
                     let toggle_id = id.clone();
-                    content = content.child(
-                        Checkbox::new(SharedString::from(format!("ai-skill-toggle-{id}")))
-                            .checked(!disabled)
-                            .accessibility_label(skill.id.clone())
-                            .disabled(!(!session.settings_saving))
-                            .on_change(cx.listener(move |editor, _, _, cx| {
-                                if let Some(session) = editor.ai_session.as_ref() {
-                                    let mut settings = session.settings.clone();
-                                    if settings.disabled_skills.contains(&toggle_id) {
-                                        settings.disabled_skills.retain(|id| id != &toggle_id);
-                                    } else {
-                                        settings.disabled_skills.push(toggle_id.clone());
-                                    }
-                                    editor.update_ai_settings(settings, cx);
+                    let toggle_session = session.saved.id.clone();
+                    let use_session = session.saved.id.clone();
+                    let scope = match skill.id.split_once(':').map(|(scope, _)| scope) {
+                        Some("workspace") => Some(strings.ai_skills_scope_workspace.clone()),
+                        Some("user") => Some(strings.ai_skills_scope_user.clone()),
+                        _ => None,
+                    };
+                    let skill_label = scope.as_ref().map_or_else(
+                        || skill.name.clone(),
+                        |scope| format!("{} · {scope}", skill.name),
+                    );
+                    let toggle = Checkbox::new(SharedString::from(format!("ai-skill-toggle-{id}")))
+                        .checked(!disabled)
+                        .accessibility_label(format!(
+                            "{} · {}",
+                            strings.ai_panel_enable_skill, skill_label
+                        ))
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .child(skill.name.clone()),
+                                )
+                                .when_some(scope, |row, scope| {
+                                    row.child(
+                                        div()
+                                            .flex_none()
+                                            .max_w(relative(0.35))
+                                            .truncate()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(scope),
+                                    )
+                                }),
+                        )
+                        .disabled(session.settings_saving || session.settings_readonly())
+                        .on_change(cx.listener(move |editor, checked: &bool, _, cx| {
+                            if let Some(session) = editor
+                                .ai_session
+                                .as_ref()
+                                .filter(|session| session.saved.id == toggle_session)
+                            {
+                                let mut settings = session.settings.clone();
+                                settings.disabled_skills.retain(|id| id != &toggle_id);
+                                if !*checked {
+                                    settings.disabled_skills.push(toggle_id.clone());
                                 }
-                            })),
-                    );
-                    let label = format!(
-                        "{} · {}{}",
-                        skill.id,
-                        skill.description,
-                        if disabled {
-                            format!(" · {}", strings.ai_panel_disabled)
-                        } else {
-                            String::new()
-                        }
-                    );
-                    content = content.child(self.ai_button(
+                                editor.update_ai_settings(settings, cx);
+                            }
+                        }));
+                    let apply = self.ai_button(
                         SharedString::from(format!("ai-skill-{id}")),
                         false,
                         cx,
-                        |button, _cx| button.label(label).disabled(!(!disabled)),
+                        |button, _| {
+                            button
+                                .label(strings.ai_panel_use_skill.clone())
+                                .outline()
+                                .accessibility_label(format!(
+                                    "{} · {}",
+                                    strings.ai_panel_use_skill, skill_label
+                                ))
+                                .disabled(disabled || session.settings_saving)
+                        },
                         move |editor, window, cx| {
-                            if let Some(session) = editor.ai_session.as_mut() {
+                            if let Some(session) = editor
+                                .ai_session
+                                .as_mut()
+                                .filter(|session| session.saved.id == use_session)
+                            {
                                 session.input.update(cx, |input, cx| {
-                                    input.set_value(
-                                        &format!("/{id} {}", input.value()),
-                                        window,
-                                        cx,
-                                    );
+                                    input.set_value(&format!("/{id} {}", input.value()), window, cx);
                                     input.focus(window, cx);
                                 });
                                 session.mode = PanelMode::Task;
+                                cx.notify();
                             }
-                            cx.notify();
                         },
-                    ));
+                    );
+                    content = content.child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_0()
+                            .px_1()
+                            .pt_1()
+                            .pb_2()
+                            .child(
+                                crate::ui::scroll_focus_region(
+                                    SharedString::from(format!("ai-skill-actions:{}", skill.id)).into(),
+                                    &session.scroll,
+                                    window,
+                                    cx,
+                                )
+                                // 留出焦点边框的空间，避免滚动入视后仍被裁切。
+                                .p_1()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(toggle)
+                                .child(apply),
+                            )
+                            .child(
+                                div()
+                                    .pl_7()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(skill.description.clone()),
+                            ),
+                    );
                 }
                 for warning in &session.skills.warnings {
-                    content = content.child(div().text_size(px(12.0)).child(warning.clone()));
+                    content = content.child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(warning.clone()),
+                    );
                 }
             }
             PanelMode::Instruction => {
+                let mut names = std::collections::HashSet::new();
                 for (index, instruction) in session.settings.instructions.iter().enumerate() {
                     let instruction = instruction.clone();
                     let instruction_label = instruction.name.clone();
+                    // 手写配置可能同名，重复项使用独立身份空间，删除仍按内容快照定位。
+                    let unique_name = names.insert(instruction.name.clone());
+                    let edit_id: ElementId = if unique_name {
+                        SharedString::from(format!("ai-template-edit:{}", instruction.name)).into()
+                    } else {
+                        ("ai-template-edit-duplicate", index).into()
+                    };
+                    let delete_id: ElementId = if unique_name {
+                        SharedString::from(format!("ai-template-delete:{}", instruction.name)).into()
+                    } else {
+                        ("ai-template-delete-duplicate", index).into()
+                    };
+                    let region_id: ElementId = if unique_name {
+                        SharedString::from(format!("ai-template-actions:{}", instruction.name)).into()
+                    } else {
+                        ("ai-template-actions-duplicate", index).into()
+                    };
+                    let deleted = instruction.clone();
                     content = content.child(
-                        div()
+                        crate::ui::scroll_focus_region(region_id, &session.scroll, window, cx)
+                            .p_1()
                             .flex()
-                            .gap(px(4.0))
+                            .items_center()
+                            .gap_1()
                             .child(self.ai_button(
-                                ("ai-template-edit", index),
+                                edit_id,
                                 false,
                                 cx,
-                                |button, _cx| button.label(instruction_label),
+                                |button, _| {
+                                    button
+                                        .flex_1()
+                                        .min_w_0()
+                                        .h_auto()
+                                        .py_2()
+                                        .justify_start()
+                                        .accessibility_label(instruction_label.clone())
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .text_left()
+                                                .truncate()
+                                                .child(instruction_label),
+                                        )
+                                },
                                 move |editor, window, cx| {
                                     if let Some(session) = editor.ai_session.as_mut() {
                                         session.instruction_name.update(cx, |field, cx| {
@@ -594,7 +730,7 @@ impl Editor {
                                 },
                             ))
                             .child(self.ai_button(
-                                ("ai-template-delete", index),
+                                delete_id,
                                 false,
                                 cx,
                                 |button, _cx| {
@@ -604,15 +740,19 @@ impl Editor {
                                             strings.ai_panel_delete_instruction.clone(),
                                         )
                                         .tooltip(strings.ai_panel_delete_instruction.clone())
-                                        .disabled(!(!session.settings_saving))
+                                        .disabled(session.settings_saving || session.settings_readonly())
                                 },
                                 move |editor, _, cx| {
                                     if let Some(session) = editor.ai_session.as_ref() {
                                         let mut settings = session.settings.clone();
-                                        if index < settings.instructions.len() {
+                                        if let Some(index) = settings
+                                            .instructions
+                                            .iter()
+                                            .position(|instruction| instruction == &deleted)
+                                        {
                                             settings.instructions.remove(index);
+                                            editor.update_ai_settings(settings, cx);
                                         }
-                                        editor.update_ai_settings(settings, cx);
                                     }
                                 },
                             )),
@@ -621,11 +761,13 @@ impl Editor {
                 content = content
                     .child(
                         Form::vertical()
+                            .p_1()
                             .child(
                                 Field::new()
                                     .label(strings.ai_panel_instruction_name.clone())
                                     .child(
                                         Input::new(&session.instruction_name)
+                                            .readonly(session.settings_readonly())
                                             .aria_label(strings.ai_panel_instruction_name.clone()),
                                     ),
                             )
@@ -634,36 +776,49 @@ impl Editor {
                                     .label(strings.ai_panel_instruction_body.clone())
                                     .child(
                                         Textarea::new(&session.instruction_body)
+                                            .readonly(session.settings_readonly())
                                             .aria_label(strings.ai_panel_instruction_body.clone()),
                                     ),
                             ),
                     )
-                    .child(div().flex().justify_end().child(self.ai_button(
-                        "ai-instruction-save",
-                        false,
-                        cx,
-                        |button, cx| {
-                            button
-                                .label(strings.ai_panel_save_instruction.clone())
-                                .primary()
-                                .disabled(
-                                    session.settings_saving
-                                        || session
-                                            .instruction_name
-                                            .read(cx)
-                                            .value()
-                                            .trim()
-                                            .is_empty()
-                                        || session
-                                            .instruction_body
-                                            .read(cx)
-                                            .value()
-                                            .trim()
-                                            .is_empty(),
-                                )
-                        },
-                        |editor, _, cx| editor.save_ai_instruction(cx),
-                    )));
+                    .child(
+                        crate::ui::scroll_focus_region(
+                            "ai-instruction-save-actions".into(),
+                            &session.scroll,
+                            window,
+                            cx,
+                        )
+                        .p_1()
+                        .flex()
+                        .justify_end()
+                        .child(self.ai_button(
+                            "ai-instruction-save",
+                            false,
+                            cx,
+                            |button, cx| {
+                                button
+                                    .label(strings.ai_panel_save_instruction.clone())
+                                    .primary()
+                                    .disabled(
+                                        session.settings_saving
+                                            || session.settings_readonly()
+                                            || session
+                                                .instruction_name
+                                                .read(cx)
+                                                .value()
+                                                .trim()
+                                                .is_empty()
+                                            || session
+                                                .instruction_body
+                                                .read(cx)
+                                                .value()
+                                                .trim()
+                                                .is_empty(),
+                                    )
+                            },
+                            |editor, _, cx| editor.save_ai_instruction(cx),
+                        )),
+                    );
             }
             PanelMode::Context => {
                 content = content.child(
@@ -753,14 +908,17 @@ impl Editor {
 
         let body = div()
             .id("ai-content")
+            .debug_selector(|| "ai-content".into())
             .w_full()
             .min_h_0()
+            .relative()
+            .child(content)
             .when(session.mode != PanelMode::History, |body| {
                 body.max_h(px((height - 150.0).max(90.0)))
                     .overflow_y_scroll()
                     .track_scroll(&session.scroll)
-            })
-            .child(content);
+                    .vertical_scrollbar(&session.scroll)
+            });
         let panel = div()
             .id("ai-assistant-panel")
             .track_focus(&session.panel_focus)
