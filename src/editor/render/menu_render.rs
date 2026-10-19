@@ -1,4 +1,8 @@
 use super::*;
+use gpui_kit::component::{
+    Icon, Selectable as _, Sizable as _,
+    button::{Button, ButtonVariants},
+};
 
 impl Editor {
     /// Windows：标题栏最左侧的汉堡按钮。点一下开/关一级菜单列表。
@@ -7,39 +11,25 @@ impl Editor {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let c = &theme.colors;
-        let d = &theme.dimensions;
+        let dimensions = &theme.dimensions;
         let is_open = self.hamburger_menu_open;
-        let editor = cx.entity().downgrade();
-        div()
-            .id("app-hamburger-menu-button")
-            .ml(px(d.menu_bar_padding_x))
-            .w(px(d.menu_bar_button_height))
-            .h(px(d.menu_bar_button_height))
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(d.menu_bar_button_radius))
-            .bg(if is_open {
-                c.dialog_secondary_button_hover
-            } else {
-                c.dialog_surface
-            })
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .active(|this| this.opacity(0.92))
-            .cursor_pointer()
-            .child(
-                svg()
-                    .path(TITLEBAR_MENU_ICON)
-                    .size(px(TITLEBAR_MENU_ICON_SIZE_PX))
-                    .text_color(custom_titlebar_icon_color(theme)),
-            )
-            // 复用菜单栏的 hover 记账：鼠标停在按钮上就不该触发 120ms 自动关闭。
+        Button::new("app-hamburger-menu-button")
+            .ghost()
+            .small()
+            .ml(px(dimensions.menu_bar_padding_x))
+            .w(px(dimensions.menu_bar_button_height))
+            .h(px(dimensions.menu_bar_button_height))
+            .rounded(px(dimensions.menu_bar_button_radius))
+            .selected(is_open)
+            .toggled(is_open)
+            .accessibility_label("App menu")
+            .icon(Icon::empty().path(TITLEBAR_MENU_ICON))
             .on_hover(cx.listener(Self::on_menu_bar_hover))
-            .on_click(move |_, _window, cx| {
-                let _ = editor.update(cx, |editor, cx| editor.toggle_hamburger_menu(cx));
-            })
+            .on_click(cx.listener(|editor, event: &ClickEvent, _, cx| {
+                if event.standard_click() {
+                    editor.toggle_hamburger_menu(cx);
+                }
+            }))
             .into_any_element()
     }
 

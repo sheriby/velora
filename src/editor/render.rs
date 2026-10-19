@@ -20,8 +20,7 @@ pub(super) use crate::components::{AddLanguageConfig, AddThemeConfig, Block, Blo
 pub(super) use crate::i18n::{I18nManager, I18nStrings};
 pub(super) use crate::theme::{Theme, ThemeDimensions, ThemeManager};
 pub(super) use crate::window_chrome::{
-    TITLEBAR_MENU_ICON, TITLEBAR_MENU_ICON_SIZE_PX, custom_titlebar_height,
-    custom_titlebar_icon_color, render_custom_titlebar,
+    TITLEBAR_MENU_ICON, custom_titlebar_height, render_custom_titlebar,
 };
 
 pub(crate) const ABOUT_GITHUB_URL: &str = "https://github.com/sheriby/velora";

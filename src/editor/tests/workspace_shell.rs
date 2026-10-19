@@ -851,3 +851,225 @@ fn native_status_controls_support_keyboard_activation(cx: &mut TestAppContext) {
     });
     cx.on_quit(move || fs::remove_dir_all(root).unwrap());
 }
+
+#[gpui::test]
+fn native_titlebar_buttons_keep_the_close_guard_and_platform_geometry(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gpui::{AppContext as _, Context, IntoElement, Render, Window, div, prelude::*};
+    use gpui_kit::test::TestWindowExt as _;
+    struct ChromeProbe {
+        editor: gpui::Entity<crate::editor::Editor>,
+        close_requests: usize,
+        _observation: gpui::Subscription,
+    }
+    impl ChromeProbe {
+        fn close(&mut self, event: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+            self.close_requests += 1;
+            self.editor
+                .update(cx, |editor, cx| editor.on_titlebar_close(event, window, cx));
+            cx.notify();
+        }
+    }
+    impl Render for ChromeProbe {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let mut theme = cx
+                .global::<crate::theme::ThemeManager>()
+                .derived_theme(cx)
+                .as_ref()
+                .clone();
+            crate::config::EditorSettings::apply_ui_typography(cx, &mut theme);
+            let leading = self.editor.update(cx, |editor, cx| {
+                editor.render_hamburger_menu_button(&theme, cx)
+            });
+            let header = crate::window_chrome::render_custom_titlebar_for_target_os(
+                "windows",
+                "probe-titlebar",
+                "Velora - Untitled".into(),
+                Some(leading),
+                None,
+                &theme,
+                window,
+                cx,
+                Self::close,
+            );
+            div()
+                .size_full()
+                .relative()
+                .child(self.editor.clone())
+                .children(header)
+        }
+    }
+    for (font_size, height) in [(14, 35.0), (21, 47.0)] {
+        let root =
+            std::env::temp_dir().join(format!("velora-native-caption-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let _config = crate::config::override_test_config_root(root.join("profile"));
+        let config = crate::config::VeloraConfigDirs::from_system()
+            .unwrap()
+            .app_config_file();
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(config, format!("[editor]\nui_font_size = {font_size}\n")).unwrap();
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            if cx.try_global::<crate::config::EditorSettings>().is_some() {
+                drop(cx.remove_global::<crate::config::EditorSettings>());
+            }
+            crate::config::EditorSettings::init(cx, true);
+            crate::components::init(cx);
+        });
+        let handle = cx.update(|cx| {
+            crate::ui::open_window(Default::default(), cx, |_, cx| {
+                let editor = cx
+                    .new(|cx| crate::editor::Editor::from_markdown(cx, "未保存正文".into(), None));
+                editor.update(cx, |editor, _| editor.document_dirty = true);
+                cx.new(|cx| {
+                    let observation = cx.observe(&editor, |_, _, cx| cx.notify());
+                    ChromeProbe {
+                        editor,
+                        close_requests: 0,
+                        _observation: observation,
+                    }
+                })
+            })
+            .unwrap()
+        });
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        for _ in 0..2 {
+            visual.run_until_parked();
+            visual.update(|window, cx| {
+                window.activate_window();
+                window.render_frame(cx);
+            });
+        }
+        visual.update(|window, cx| {
+            for id in [
+                "window-titlebar-minimize",
+                "window-titlebar-maximize",
+                "window-titlebar-close",
+            ] {
+                let role = gpui_kit::base::test_support::snapshots(window)
+                    .into_iter()
+                    .find(|item| {
+                        item.path()
+                            .contains(&gpui::ElementId::Name("probe-titlebar".into()))
+                            && item.path().last() == Some(&gpui::ElementId::Name(id.into()))
+                    })
+                    .and_then(|item| item.role());
+                assert_eq!(role, Some(gpui::Role::Button), "{id} 必须具有标准按钮语义");
+                let item = window.within("probe-titlebar").find(id);
+                assert!(item.label().is_some_and(|label| !label.is_empty()));
+                assert_eq!(
+                    item.bounds().size,
+                    gpui::size(px(46.0), px(height)),
+                    "窗口命中区域必须保留平台尺寸并跟随标题栏高度"
+                );
+            }
+            window
+                .within("probe-titlebar")
+                .right_click("window-titlebar-close", cx);
+        });
+        assert_eq!(
+            handle
+                .read_with(&visual, |probe, _| probe.close_requests)
+                .unwrap(),
+            0
+        );
+        visual.update(|window, cx| {
+            assert_eq!(
+                window
+                    .within("probe-titlebar")
+                    .try_find("app-hamburger-menu-button")
+                    .and_then(|item| item.role()),
+                Some(gpui::Role::Button),
+                "菜单入口也需要标准按钮语义"
+            );
+            window.blur(cx);
+            window.focus_next(cx);
+            for _ in 0..48 {
+                window.press("tab", cx);
+                window.render_frame(cx);
+                if window
+                    .within("probe-titlebar")
+                    .find("app-hamburger-menu-button")
+                    .focused()
+                    == Some(true)
+                {
+                    break;
+                }
+            }
+            assert_eq!(
+                window
+                    .within("probe-titlebar")
+                    .find("app-hamburger-menu-button")
+                    .focused(),
+                Some(true)
+            );
+            window.press("space", cx);
+            window.render_frame(cx);
+            assert_eq!(
+                window
+                    .within("probe-titlebar")
+                    .find("app-hamburger-menu-button")
+                    .checked(),
+                Some(true)
+            );
+        });
+        assert!(
+            handle
+                .read_with(&visual, |probe, cx| probe
+                    .editor
+                    .read(cx)
+                    .hamburger_menu_open)
+                .unwrap()
+        );
+        visual.update(|window, cx| window.press("space", cx));
+        visual.run_until_parked();
+        assert!(
+            !handle
+                .read_with(&visual, |probe, cx| probe
+                    .editor
+                    .read(cx)
+                    .hamburger_menu_open)
+                .unwrap()
+        );
+        visual.update(|window, cx| {
+            window.blur(cx);
+            window.focus_next(cx);
+            for _ in 0..48 {
+                window.press("tab", cx);
+                window.render_frame(cx);
+                if window
+                    .within("probe-titlebar")
+                    .find("window-titlebar-close")
+                    .focused()
+                    == Some(true)
+                {
+                    break;
+                }
+            }
+            assert_eq!(
+                window
+                    .within("probe-titlebar")
+                    .find("window-titlebar-close")
+                    .focused(),
+                Some(true)
+            );
+            window.press("space", cx);
+        });
+        visual.run_until_parked();
+        handle
+            .read_with(&visual, |probe, cx| {
+                assert_eq!(probe.close_requests, 1);
+                let editor = probe.editor.read(cx);
+                assert!(
+                    editor.show_unsaved_changes_dialog,
+                    "键盘关闭也必须先显示未保存保护"
+                );
+                assert_eq!(editor.buffer.text(), "未保存正文");
+            })
+            .unwrap();
+        cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    }
+}

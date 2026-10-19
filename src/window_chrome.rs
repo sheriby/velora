@@ -7,7 +7,12 @@ use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, Decorations, DisplayId, Hsla, MouseButton,
     MouseDownEvent, Pixels,
     SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowDecorations, WindowOptions, div, point, px, rgba, svg,
+    WindowControlArea, WindowDecorations, WindowOptions, div, point, px,
+};
+
+use gpui_kit::component::{
+    ActiveTheme as _, Icon, Sizable as _,
+    button::{Button, ButtonCustomVariant, ButtonRounded, ButtonVariants},
 };
 
 use crate::app_identity::VELORA_APP_ID;
@@ -15,8 +20,6 @@ use crate::theme::{Theme, ThemeDimensions};
 
 const TITLEBAR_MIN_HEIGHT: f32 = 36.0;
 const TITLEBAR_BUTTON_WIDTH: f32 = 46.0;
-const TITLEBAR_ICON_SIZE: f32 = 12.0;
-const TITLEBAR_MENU_ICON_SIZE: f32 = 14.0;
 const MAC_TRAFFIC_LIGHT_RESERVED_WIDTH: f32 = 84.0;
 /// 标签占满时也要保留可抓取的空白，不能随标签宽度一起压缩。
 const TITLEBAR_DRAG_FILLER_WIDTH: f32 = 40.0;
@@ -26,9 +29,6 @@ const TITLEBAR_MINIMIZE_ICON: &str = "icon/titlebar/chrome-minimize.svg";
 const TITLEBAR_RESTORE_ICON: &str = "icon/titlebar/chrome-restore.svg";
 /// Windows 标题栏最左侧的「菜单」按钮（三个横线）。
 pub(crate) const TITLEBAR_MENU_ICON: &str = "icon/titlebar/menu-hamburger.svg";
-
-/// 汉堡按钮的图标尺寸——比窗口按钮的图标略大一点，三条横线才看得出间距。
-pub(crate) const TITLEBAR_MENU_ICON_SIZE_PX: f32 = TITLEBAR_MENU_ICON_SIZE;
 
 /// Selects whether velora or the platform should render window controls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -306,20 +306,29 @@ pub(crate) fn custom_titlebar_background(theme: &Theme) -> Hsla {
     theme.colors.dialog_surface
 }
 
-pub(crate) fn custom_titlebar_icon_color(theme: &Theme) -> Hsla {
-    if custom_titlebar_background(theme).l < 0.5 {
-        Hsla::from(rgba(0xf4f4f5ff))
-    } else {
-        Hsla::from(rgba(0x18181bff))
-    }
-}
-
 pub(crate) fn titlebar_maximize_icon(is_maximized: bool, is_fullscreen: bool) -> &'static str {
     if is_maximized || is_fullscreen {
         TITLEBAR_RESTORE_ICON
     } else {
         TITLEBAR_MAXIMIZE_ICON
     }
+}
+
+fn window_control_button(
+    id: &'static str,
+    label: &'static str,
+    icon: &'static str,
+    area: WindowControlArea,
+) -> Button {
+    Button::new(id)
+        .ghost()
+        .xsmall()
+        .rounded(ButtonRounded::None)
+        .w(px(TITLEBAR_BUTTON_WIDTH))
+        .h_full()
+        .window_control_area(area)
+        .accessibility_label(label)
+        .icon(Icon::empty().path(icon))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -333,20 +342,43 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
     cx: &mut Context<T>,
     on_close: fn(&mut T, &ClickEvent, &mut Window, &mut Context<T>),
 ) -> Option<AnyElement> {
-    if cfg!(target_os = "macos") && window.is_fullscreen() {
+    render_custom_titlebar_for_target_os(
+        std::env::consts::OS,
+        id,
+        title,
+        leading,
+        tabs,
+        theme,
+        window,
+        cx,
+        on_close,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_custom_titlebar_for_target_os<T: 'static>(
+    target_os: &str,
+    id: &'static str,
+    title: SharedString,
+    leading: Option<AnyElement>,
+    tabs: Option<AnyElement>,
+    theme: &Theme,
+    window: &Window,
+    cx: &mut Context<T>,
+    on_close: fn(&mut T, &ClickEvent, &mut Window, &mut Context<T>),
+) -> Option<AnyElement> {
+    if target_os == "macos" && window.is_fullscreen() {
         return None;
     }
 
     let layout = custom_titlebar_layout_for_target_os(
-        std::env::consts::OS,
+        target_os,
         window.window_decorations(),
         &theme.dimensions,
     )?;
     let c = &theme.colors;
     let t = &theme.typography;
     let controls = window.window_controls();
-    let icon_color = custom_titlebar_icon_color(theme);
-    let entity = cx.entity().downgrade();
 
     let breadcrumb = title
         .to_string()
@@ -421,100 +453,59 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
             }
         }
         TitlebarControlMode::AppControls => {
-            let close_entity = entity.clone();
-            let layout_buttons = button_layout_for_target_os(std::env::consts::OS);
+            let layout_buttons = button_layout_for_target_os(target_os);
 
-            // Build each button once as an owned element, then place it
-            // according to the desktop layout.
-            let mut minimize_btn: Option<AnyElement> = if controls.minimize {
-                Some(
-                    div()
-                        .id("window-titlebar-minimize")
-                        .w(px(TITLEBAR_BUTTON_WIDTH))
-                        .flex_shrink_0()
-                        .h_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .window_control_area(WindowControlArea::Min)
-                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .cursor_pointer()
-                        .child(
-                            svg()
-                                .path(TITLEBAR_MINIMIZE_ICON)
-                                .size(px(TITLEBAR_ICON_SIZE))
-                                .text_color(icon_color),
-                        )
-                        .on_click(|event, window, _cx| {
-                            if event.standard_click() {
-                                window.minimize_window();
-                            }
-                        })
-                        .into_any_element(),
+            let mut minimize_btn = controls.minimize.then(|| {
+                window_control_button(
+                    "window-titlebar-minimize",
+                    "Minimize window",
+                    TITLEBAR_MINIMIZE_ICON,
+                    WindowControlArea::Min,
                 )
-            } else {
-                None
-            };
-
-            let mut maximize_btn: Option<AnyElement> = if controls.maximize {
-                Some(
-                    div()
-                        .id("window-titlebar-maximize")
-                        .w(px(TITLEBAR_BUTTON_WIDTH))
-                        .flex_shrink_0()
-                        .h_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .window_control_area(WindowControlArea::Max)
-                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .cursor_pointer()
-                        .child(
-                            svg()
-                                .path(titlebar_maximize_icon(
-                                    window.is_maximized(),
-                                    window.is_fullscreen(),
-                                ))
-                                .size(px(TITLEBAR_ICON_SIZE))
-                                .text_color(icon_color),
-                        )
-                        .on_click(|event, window, _cx| {
-                            if event.standard_click() {
-                                window.zoom_window();
-                            }
-                        })
-                        .into_any_element(),
+                .on_click(|event, window, _| {
+                    if event.standard_click() {
+                        window.minimize_window();
+                    }
+                })
+                .into_any_element()
+            });
+            let mut maximize_btn = controls.maximize.then(|| {
+                let label = if window.is_maximized() || window.is_fullscreen() {
+                    "Restore window"
+                } else {
+                    "Maximize window"
+                };
+                window_control_button(
+                    "window-titlebar-maximize",
+                    label,
+                    titlebar_maximize_icon(window.is_maximized(), window.is_fullscreen()),
+                    WindowControlArea::Max,
                 )
-            } else {
-                None
-            };
-
-            let mut close_btn: Option<AnyElement> = Some(
-                div()
-                    .id("window-titlebar-close")
-                    .w(px(TITLEBAR_BUTTON_WIDTH))
-                    .flex_shrink_0()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .window_control_area(WindowControlArea::Close)
-                    .hover(|this| this.bg(c.dialog_danger_button_bg))
-                    .cursor_pointer()
-                    .child(
-                        svg()
-                            .path(TITLEBAR_CLOSE_ICON)
-                            .size(px(TITLEBAR_ICON_SIZE))
-                            .text_color(icon_color),
-                    )
-                    .on_click(move |event, window, app| {
-                        if event.standard_click() {
-                            let _ = close_entity.update(app, |view, cx| {
-                                on_close(view, event, window, cx);
-                            });
-                        }
-                    })
-                    .into_any_element(),
+                .on_click(|event, window, _| {
+                    if event.standard_click() {
+                        window.zoom_window();
+                    }
+                })
+                .into_any_element()
+            });
+            let mut close_btn = Some(
+                window_control_button(
+                    "window-titlebar-close",
+                    "Close window",
+                    TITLEBAR_CLOSE_ICON,
+                    WindowControlArea::Close,
+                )
+                .custom(
+                    ButtonCustomVariant::new(cx)
+                        .hover(cx.theme().danger.opacity(0.14))
+                        .active(cx.theme().danger.opacity(0.24)),
+                )
+                .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
+                    if event.standard_click() {
+                        on_close(view, event, window, cx);
+                    }
+                }))
+                .into_any_element(),
             );
 
             let mut left_row = div().h_full().flex().items_center().flex_shrink_0();
@@ -709,18 +700,6 @@ mod tests {
     }
 
     #[test]
-    fn custom_titlebar_icon_color_contrasts_with_theme_surface() {
-        assert_eq!(
-            custom_titlebar_icon_color(&Theme::default_theme()),
-            Hsla::from(rgba(0xf4f4f5ff))
-        );
-        assert_eq!(
-            custom_titlebar_icon_color(&Theme::light_theme()),
-            Hsla::from(rgba(0x18181bff))
-        );
-    }
-
-    #[test]
     fn titlebar_maximize_icon_tracks_window_state() {
         assert_eq!(titlebar_maximize_icon(false, false), TITLEBAR_MAXIMIZE_ICON);
         assert_eq!(titlebar_maximize_icon(true, false), TITLEBAR_RESTORE_ICON);
@@ -806,4 +785,5 @@ mod tests {
             ]
         );
     }
+
 }
