@@ -231,7 +231,12 @@ impl Editor {
         let Some(root) = self.workspace_root_path() else {
             return div().into_any_element();
         };
-        let Ok(relative) = document_path.strip_prefix(root) else {
+        // 两边的写法可能不同：Windows 上 `canonicalize` 会带 `\\?\` 前缀，而路径从
+        // 会话/编辑器那边过来时可能已经剥过。按原始字符串比就会整条面包屑消失，
+        // 所以两边都归一（`strip_verbatim_prefix` 是剥前缀的唯一判据）。
+        let normalized_document = crate::file_url::strip_verbatim_prefix(document_path);
+        let normalized_root = crate::file_url::strip_verbatim_prefix(root);
+        let Ok(relative) = normalized_document.strip_prefix(&normalized_root) else {
             return div().into_any_element();
         };
         let root_name = root

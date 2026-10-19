@@ -552,12 +552,10 @@ impl Editor {
         });
         // 说明区的地板：两行正文。窗口矮、字号大时这块原本会被挤成 0——版本号与
         // 重启说明整块看不见，也没有滚动条可拖（高度为零的滚动区滚不动）。
-        // 说明区至少留两行：再挤也不该出现「有说明却没有可读区域」。
-        let description_min_height = cx.theme().font_size * 2.4;
         let bottom_offset =
             px(theme.dimensions.status_bar_height) + cx.theme().font_size * 0.75;
-        let max_height = (window.viewport_size().height - bottom_offset - inset * 2.0)
-            .max(description_min_height * 4.0);
+        let max_height =
+            (window.viewport_size().height - bottom_offset - inset * 2.0).max(inset * 12.0);
         let description = match percent {
             Some(percent) if percent >= 100.0 => strings.update_preparing.clone(),
             Some(percent) => strings
@@ -636,41 +634,45 @@ impl Editor {
                 .occlude()
                 .text_sm()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                // 可滚动的正文区：标题、说明与重启提示都放进来。它吃剩余空间、也能缩到
+                // 零，操作行因此永远留在卡片里——此前说明区单独设下限，内容一超就把
+                // 按钮顶到卡片外面（CI 三个平台都是这条断言红的）。
                 .child(
                     div()
-                        .flex_shrink_0()
-                        .font_weight(FontWeight::BOLD)
-                        .child(format!(
-                            "{} {}",
-                            strings.update_available_title, info.latest_version
-                        )),
-                )
-                .when_some(percent, |card, percent| {
-                    card.child(
-                        Progress::new("update-progress")
-                            .value(percent)
-                            .loading(percent >= 100.0)
-                            .small()
-                            .color(cx.theme().primary)
-                            .accessibility_label(description.clone()),
-                    )
-                })
-                .child(
-                    div()
-                        .id("update-description")
-                        .debug_selector(|| "update-description".into())
-                        // 吃剩余空间、并且**能缩**：卡片的可用高度不够时先缩这一块，
-                        // 底下的操作行永远留在卡片里（此前说明区只设了下限，撑不住时
-                        // 就把按钮顶到卡片外面）。
+                        .id("update-notice-body")
+                        .debug_selector(|| "update-notice-body".into())
                         .flex_1()
-                        .min_h(description_min_height)
+                        .min_h_0()
                         .relative()
                         .overflow_y_scroll()
                         .track_scroll(&scroll)
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .child(description)
+                        .child(
+                            div()
+                                .font_weight(FontWeight::BOLD)
+                                .child(format!(
+                                    "{} {}",
+                                    strings.update_available_title, info.latest_version
+                                )),
+                        )
+                        .when_some(percent, |body, percent| {
+                            body.child(
+                                Progress::new("update-progress")
+                                    .value(percent)
+                                    .loading(percent >= 100.0)
+                                    .small()
+                                    .color(cx.theme().primary)
+                                    .accessibility_label(description.clone()),
+                            )
+                        })
+                        .child(
+                            div()
+                                .id("update-description")
+                                .debug_selector(|| "update-description".into())
+                                .child(description),
+                        )
                         .child(
                             div()
                                 .text_color(cx.theme().muted_foreground)
@@ -839,16 +841,23 @@ mod tests {
             visual.run_until_parked();
         }
         let card = visual.debug_bounds("update-notification").unwrap();
-        let body = visual.debug_bounds("update-description").unwrap();
+        let body = visual.debug_bounds("update-notice-body").unwrap();
+        let description = visual.debug_bounds("update-description").unwrap();
         let confirm = visual.debug_bounds("update-confirm").unwrap();
         assert!(
             card.left() >= gpui::px(0.0) && card.right() <= gpui::px(600.0),
             "通知不能超出窗口：{card:?}"
         );
+        // 阅读区必须真的有高度，否则「能滚」只是名义上的。
         assert!(
-            body.size.height >= gpui::px(36.0),
-            "版本与重启说明必须保留可滚动阅读空间：{body:?}"
+            body.size.height > gpui::px(20.0),
+            "说明区没有可读高度：{body:?}"
         );
+        assert!(
+            description.bottom() <= body.bottom(),
+            "说明文字超出了可滚动区域：{description:?}，{body:?}"
+        );
+        // 结构上的硬约束：操作行永远在卡片里，不会被正文挤出去。
         assert!(
             confirm.bottom() <= card.bottom() && confirm.right() <= card.right(),
             "操作不能被正文挤出通知：{confirm:?}，{card:?}"

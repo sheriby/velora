@@ -63,6 +63,23 @@ mod tests {
         );
     }
 
+    /// 盘符写法的 `file:` URL 必须还原成**绝对**路径。
+    ///
+    /// 这条在 macOS 上无论修没修都过（`/C:/…` 在 POSIX 上算绝对），真正咬住的是
+    /// Windows：那里盘符路径被补了一道前导斜杠就变成「没有盘符的根路径」，
+    /// `is_absolute` 为假，链接点开时落到「目标不存在」的静默返回。
+    #[test]
+    fn drive_letter_file_urls_stay_absolute() {
+        let LinkTarget::Local { path, .. } = classify_link_target("file:///C:/Users/me/a.md")
+        else {
+            panic!("file: URL 应还原成本地路径");
+        };
+        assert!(
+            std::path::Path::new(&path).is_absolute(),
+            "盘符路径必须是绝对路径，实际拿到 {path}"
+        );
+    }
+
     /// `file:` URL 的目标必须还原成绝对路径。
     ///
     /// 这一串以前被 `trim_start_matches('/')` 把头一道斜杠削掉，
@@ -175,18 +192,19 @@ mod tests {
     #[test]
     fn file_url_scheme_is_stripped_without_byte_indexing() {
         // `file:` 前缀大小写不敏感，剥前缀的字符边界由 `strip_file_url_prefix` 自己保证
-        // （旧的 `trimmed[5..]` 只是运气好）；Windows 盘符补回 `/` 的写法一并钉住。
+        // （旧的 `trimmed[5..]` 只是运气好）。盘符路径原样保留：给它补前导斜杠会让
+        // Windows 上变成「没有盘符的根路径」，链接随后按「目标不存在」静默放弃。
         assert_eq!(
             classify_link_target("file:C:/Notes/x.md"),
             LinkTarget::Local {
-                path: "/C:/Notes/x.md".to_string(),
+                path: "C:/Notes/x.md".to_string(),
                 anchor: None,
             }
         );
         assert_eq!(
             classify_link_target("FILE:C:/Notes/x.md"),
             LinkTarget::Local {
-                path: "/C:/Notes/x.md".to_string(),
+                path: "C:/Notes/x.md".to_string(),
                 anchor: None,
             }
         );

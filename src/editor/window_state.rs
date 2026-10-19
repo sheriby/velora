@@ -1438,13 +1438,10 @@ fn local_path_from_file_url(rest: &str) -> String {
     } else {
         percent_decode_or_raw(rest).into_owned()
     };
-    // Windows 盘符：`file:C:/Notes/x.md` 与 `file:///C:/…` 解出来都缺开头那道斜杠，
-    // 补回来才是这一层一直交给打开动作的那个形状。
-    if decoded.len() > 2 && decoded.as_bytes().get(1) == Some(&b':') {
-        format!("/{decoded}")
-    } else {
-        decoded
-    }
+    // 盘符路径（`C:\Notes\x.md`）本身在 Windows 上就是绝对路径。以前这里给它补了
+    // 一道前导斜杠，拼成 `/C:\Notes\x.md`——那是「没有盘符的根路径」，`is_absolute`
+    // 为假，链接随后落到「目标不存在」那条静默返回上：Windows 上 file: 链接点不开。
+    decoded
 }
 
 /// 大小写不敏感地剥掉 `file:` scheme（判据看的是 `lowered`），返回原文里剩下的目标。
