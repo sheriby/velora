@@ -1,6 +1,7 @@
+use super::workspace_menu_action_bounds;
 use super::super::{Editor, WorkspaceMenuAction, WorkspaceSelection};
 use crate::components::UndoCaptureKind;
-use gpui::{Entity, EntityInputHandler, Modifiers, MouseButton, TestAppContext, VisualTestContext};
+use gpui::{Entity, EntityInputHandler, Focusable as _, Modifiers, MouseButton, TestAppContext, VisualTestContext};
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -586,15 +587,13 @@ async fn right_click_selects_the_target_and_menu_actions_keep_their_target(
     cx.simulate_mouse_up(row.center(), MouseButton::Right, Modifiers::none());
     redraw(cx);
     cx.update(|window, cx| {
-        editor.read_with(cx, |editor, _cx| {
+        editor.read_with(cx, |editor, cx| {
             assert_eq!(editor.selected_workspace_path(), Some(target.clone()));
             assert_eq!(editor.file_path.as_ref(), Some(&active));
             assert!(
-                editor
-                    .workspace
-                    .tree_focus
-                    .as_ref()
-                    .is_some_and(|focus| focus.is_focused(window))
+                editor.workspace.context_menu.as_ref()
+                    .and_then(|menu| menu.popup.as_ref())
+                    .is_some_and(|popup| popup.view.focus_handle(cx).is_focused(window))
             );
         })
     });
@@ -603,8 +602,7 @@ async fn right_click_selects_the_target_and_menu_actions_keep_their_target(
         editor.workspace.selected = Some(WorkspaceSelection::File(active.clone()))
     });
     redraw(cx);
-    let copy_name = cx
-        .debug_bounds("menu-item-workspace-context-action-CopyFileName")
+    let copy_name = workspace_menu_action_bounds(cx, WorkspaceMenuAction::CopyFileName)
         .expect("复制文件名菜单项");
     cx.simulate_click(copy_name.center(), Modifiers::none());
     redraw(cx);
@@ -691,33 +689,33 @@ fn tree_creation_context_menus_only_offer_actions_for_the_clicked_target(cx: &mu
         editor.workspace.selected = Some(WorkspaceSelection::File(file.clone()));
         editor.copy_selected_workspace_file(cx);
     });
-    let creation = ["NewFile", "NewMarkdown", "NewFolder", "Paste"];
+    let creation = [WorkspaceMenuAction::NewFile, WorkspaceMenuAction::NewMarkdown, WorkspaceMenuAction::NewFolder, WorkspaceMenuAction::Paste];
     let paths = [
-        "Reveal",
-        "CopyAbsolutePath",
-        "CopyRelativePath",
-        "CopyFileName",
+        WorkspaceMenuAction::Reveal,
+        WorkspaceMenuAction::CopyAbsolutePath,
+        WorkspaceMenuAction::CopyRelativePath,
+        WorkspaceMenuAction::CopyFileName,
     ];
     let mut file_actions = paths.to_vec();
-    file_actions.extend(["Copy", "Rename", "Duplicate", "Delete"]);
+    file_actions.extend([WorkspaceMenuAction::Copy, WorkspaceMenuAction::Rename, WorkspaceMenuAction::Duplicate, WorkspaceMenuAction::Delete]);
     let mut directory_actions = creation.to_vec();
     directory_actions.extend(paths);
-    directory_actions.extend(["Rename", "Delete"]);
+    directory_actions.extend([WorkspaceMenuAction::Rename, WorkspaceMenuAction::Delete]);
     let mut root_actions = creation.to_vec();
     root_actions.extend(paths);
     let actions = [
-        "NewFile",
-        "NewMarkdown",
-        "NewFolder",
-        "Reveal",
-        "CopyAbsolutePath",
-        "CopyRelativePath",
-        "CopyFileName",
-        "Copy",
-        "Paste",
-        "Rename",
-        "Duplicate",
-        "Delete",
+        WorkspaceMenuAction::NewFile,
+        WorkspaceMenuAction::NewMarkdown,
+        WorkspaceMenuAction::NewFolder,
+        WorkspaceMenuAction::Reveal,
+        WorkspaceMenuAction::CopyAbsolutePath,
+        WorkspaceMenuAction::CopyRelativePath,
+        WorkspaceMenuAction::CopyFileName,
+        WorkspaceMenuAction::Copy,
+        WorkspaceMenuAction::Paste,
+        WorkspaceMenuAction::Rename,
+        WorkspaceMenuAction::Duplicate,
+        WorkspaceMenuAction::Delete,
     ];
     let mut mismatches = Vec::new();
     for (label, selection, expected) in [
@@ -748,10 +746,8 @@ fn tree_creation_context_menus_only_offer_actions_for_the_clicked_target(cx: &mu
         });
         redraw(cx);
         for action in actions {
-            let selector =
-                Box::leak(format!("menu-item-workspace-context-action-{action}").into_boxed_str());
-            if cx.debug_bounds(selector).is_some() != expected.contains(&action) {
-                mismatches.push(format!("{label}: {action}"));
+            if workspace_menu_action_bounds(cx, action).is_some() != expected.contains(&action) {
+                mismatches.push(format!("{label}: {action:?}"));
             }
         }
     }
@@ -831,8 +827,7 @@ fn tree_paste_menu_only_shows_for_current_pasteable_content(cx: &mut TestAppCont
                 );
             });
             redraw(cx);
-            let visible = cx
-                .debug_bounds("menu-item-workspace-context-action-Paste")
+            let visible = workspace_menu_action_bounds(cx, WorkspaceMenuAction::Paste)
                 .is_some();
             if visible != expected {
                 mismatches.push(format!("{label}/{selection:?}"));
@@ -891,8 +886,7 @@ fn tree_paste_menu_uses_the_current_image_instead_of_a_previously_copied_file(
         );
     });
     redraw(cx);
-    let paste = cx
-        .debug_bounds("menu-item-workspace-context-action-Paste")
+    let paste = workspace_menu_action_bounds(cx, WorkspaceMenuAction::Paste)
         .expect("有图片时应显示粘贴");
     cx.simulate_click(paste.center(), Modifiers::none());
     redraw(cx);
@@ -944,7 +938,7 @@ fn tree_creation_inputs_appear_after_subfolders_and_before_the_first_file(cx: &m
             directory.clone(),
         ),
     ] {
-        for action in ["NewFile", "NewMarkdown", "NewFolder"] {
+        for action in [WorkspaceMenuAction::NewFile, WorkspaceMenuAction::NewMarkdown, WorkspaceMenuAction::NewFolder] {
             editor.update(cx, |editor, cx| {
                 editor.workspace.selected =
                     Some(WorkspaceSelection::File(directory.join("second.md")));
@@ -955,9 +949,7 @@ fn tree_creation_inputs_appear_after_subfolders_and_before_the_first_file(cx: &m
                 );
             });
             redraw(cx);
-            let selector =
-                Box::leak(format!("menu-item-workspace-context-action-{action}").into_boxed_str());
-            let item = cx.debug_bounds(selector).expect("新建菜单项");
+            let item = workspace_menu_action_bounds(cx, action).expect("新建菜单项");
             cx.simulate_click(item.center(), Modifiers::none());
             redraw(cx);
             editor.read_with(cx, |editor, _| {
@@ -984,7 +976,7 @@ fn tree_creation_inputs_appear_after_subfolders_and_before_the_first_file(cx: &m
                     })
                     .expect("目录中的第一个文件");
                 if input + 1 != first_file {
-                    misplaced.push(format!("{}: {action}", parent.display()));
+                    misplaced.push(format!("{}: {action:?}", parent.display()));
                 }
             });
             assert!(
@@ -1188,8 +1180,7 @@ fn workspace_context_menu_retargets_on_each_right_click(cx: &mut TestAppContext)
     {
         failures.push("文件 A → 文件 B");
     }
-    let copy_name = cx
-        .debug_bounds("menu-item-workspace-context-action-CopyFileName")
+    let copy_name = workspace_menu_action_bounds(cx, WorkspaceMenuAction::CopyFileName)
         .expect("复制文件名");
     cx.simulate_click(copy_name.center(), Modifiers::none());
     redraw(cx);
@@ -1215,8 +1206,7 @@ fn workspace_context_menu_retargets_on_each_right_click(cx: &mut TestAppContext)
             .as_ref()
             .and_then(|menu| menu.target.clone())
     }) != Some(WorkspaceSelection::Directory(directory))
-        || cx
-            .debug_bounds("menu-item-workspace-context-action-NewFile")
+        || workspace_menu_action_bounds(cx, WorkspaceMenuAction::NewFile)
             .is_none()
     {
         failures.push("文件 → 目录");
@@ -1236,8 +1226,7 @@ fn workspace_context_menu_retargets_on_each_right_click(cx: &mut TestAppContext)
             .as_ref()
             .and_then(|menu| menu.target.clone())
     }) != Some(WorkspaceSelection::WorkspaceRoot(root))
-        || cx
-            .debug_bounds("menu-item-workspace-context-action-CopyFileName")
+        || workspace_menu_action_bounds(cx, WorkspaceMenuAction::CopyFileName)
             .is_some()
     {
         failures.push("目录 → 空白处");
@@ -1769,4 +1758,158 @@ fn tree_name_input_exposes_native_text_semantics_and_undo(cx: &mut TestAppContex
         "撤销剪切后应恢复完整名称"
     );
     assert!(editor.read_with(visual, |editor, _| editor.buffer.text().is_empty()));
+}
+
+#[gpui::test]
+fn native_workspace_menu_supports_keyboard_commands_and_returns_focus(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let (editor, cx, root) = tree_fixture(cx);
+    let target = root.join("target.md");
+    fs::write(&target, "目标正文\n").unwrap();
+    editor.update(cx, |editor, cx| {
+        editor.open_workspace_context_menu(
+            gpui::point(gpui::px(80.0), gpui::px(120.0)),
+            Some(WorkspaceSelection::File(target.clone())),
+            cx,
+        );
+    });
+    redraw(cx);
+    cx.update(|window, cx| {
+        window.activate_window();
+        assert_eq!(
+            window.try_find("popup-menu").and_then(|menu| menu.role()),
+            Some(gpui::Role::Menu),
+            "工作区右键菜单应由标准菜单承接键盘与语义"
+        );
+        for _ in 0..4 {
+            window.press("down", cx);
+        }
+        window.press("enter", cx);
+    });
+    redraw(cx);
+    cx.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("target.md".into())
+        )
+    });
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace.context_menu.is_none());
+        assert!(
+            editor.file_path.is_none(),
+            "执行菜单命令不能顺便打开目标文件"
+        );
+    });
+    editor.update(cx, |editor, cx| {
+        editor.open_workspace_context_menu(
+            gpui::point(gpui::px(80.0), gpui::px(120.0)),
+            Some(WorkspaceSelection::File(target)),
+            cx,
+        );
+    });
+    redraw(cx);
+    cx.update(|window, cx| window.press("escape", cx));
+    redraw(cx);
+    cx.update(|window, cx| {
+        editor.read_with(cx, |editor, _| {
+            assert!(editor.workspace.context_menu.is_none());
+            assert!(
+                editor
+                    .workspace
+                    .tree_focus
+                    .as_ref()
+                    .unwrap()
+                    .is_focused(window)
+            );
+        })
+    });
+}
+
+#[gpui::test]
+fn native_tab_menu_keeps_its_target_when_tabs_reorder(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let (editor, cx, root) = tree_fixture(cx);
+    let target = root.join("first.md");
+    let other = root.join("second.md");
+    fs::write(&target, "第一篇\n").unwrap();
+    fs::write(&other, "第二篇\n").unwrap();
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(target.clone(), window, cx);
+        editor.open_workspace_file(other.clone(), window, cx);
+        editor.open_tab_context_menu(gpui::point(gpui::px(80.0), gpui::px(40.0)), 0, cx);
+        editor.workspace.open_documents.swap(0, 1);
+    });
+    redraw(cx);
+    cx.update(|window, cx| {
+        assert_eq!(
+            window.try_find("popup-menu").and_then(|menu| menu.role()),
+            Some(gpui::Role::Menu),
+            "标签右键菜单应提供标准菜单语义"
+        );
+        window.press("down", cx);
+        window.press("enter", cx);
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace.tab_context_menu.is_none());
+        let paths = editor
+            .workspace
+            .open_documents
+            .iter()
+            .map(|document| document.path.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, vec![other], "重排后仍应关闭右键打开时的目标");
+        assert!(!paths.contains(&target));
+    });
+}
+
+
+#[gpui::test]
+fn native_workspace_menus_yield_to_modal_decisions(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let (editor, cx, root) = tree_fixture(cx);
+    let path = root.join("note.md");
+    fs::write(&path, "正文\n").unwrap();
+    for tab_menu in [false, true] {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.open_workspace_file(path.clone(), window, cx);
+            if tab_menu {
+                editor.open_tab_context_menu(gpui::point(gpui::px(80.0), gpui::px(80.0)), 0, cx);
+            } else {
+                editor.open_workspace_context_menu(
+                    gpui::point(gpui::px(80.0), gpui::px(80.0)),
+                    Some(WorkspaceSelection::File(path.clone())),
+                    cx,
+                );
+            }
+        });
+        redraw(cx);
+        editor.update(cx, |editor, cx| {
+            editor.show_message_modal("文件操作失败", "请重试", cx)
+        });
+        redraw(cx);
+        cx.update(|window, _| {
+            assert!(
+                window.try_find("popup-menu").is_none(),
+                "上下文菜单不能覆盖后到的模态决策"
+            );
+        });
+        editor.update_in(cx, |editor, window, cx| editor.cancel_modal(window, cx));
+        redraw(cx);
+        cx.update(|window, cx| {
+            editor.read_with(cx, |editor, _| {
+                assert!(editor.workspace.context_menu.is_none());
+                assert!(editor.workspace.tab_context_menu.is_none());
+                let focus = if tab_menu {
+                    editor.workspace.tabs_focus.as_ref()
+                } else {
+                    editor.workspace.tree_focus.as_ref()
+                };
+                assert!(
+                    focus.unwrap().is_focused(window),
+                    "模态关闭后应回到菜单的原区域"
+                );
+            })
+        });
+    }
 }

@@ -84,6 +84,8 @@ impl Editor {
                                 workspace_tree_drop_target(element, root, &editor, None)
                             },
                         )
+                        .key_context("WorkspaceTree")
+                        .on_action(cx.listener(Self::on_workspace_rename_action))
                         .track_focus(&tree_focus.clone().tab_index(0).tab_stop(true))
                         .on_key_down(cx.listener(Self::on_workspace_tree_key_down))
                         .flex_1()

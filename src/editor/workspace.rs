@@ -147,12 +147,17 @@ pub(crate) enum WorkspaceOpenMode {
     Pinned,
 }
 
-#[derive(Clone)]
+struct WorkspacePopupMenu {
+    view: Entity<gpui_kit::component::menu::PopupMenu>,
+    _dismiss: Subscription,
+}
+
 struct WorkspaceContextMenu {
     position: Point<Pixels>,
     has_target: bool,
     target: Option<WorkspaceSelection>,
     can_paste: bool,
+    popup: Option<WorkspacePopupMenu>,
 }
 
 struct WorkspacePanelLayout {
@@ -235,7 +240,7 @@ enum WorkspaceSearchScope {
     Document,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WorkspaceMenuAction {
     NewFile,
     NewMarkdown,
@@ -326,10 +331,10 @@ pub(crate) enum TabMenuAction {
     Split(split::SplitDirection),
 }
 
-#[derive(Clone, Copy)]
 struct TabContextMenu {
     position: Point<Pixels>,
-    target_index: usize,
+    target_path: PathBuf,
+    popup: Option<WorkspacePopupMenu>,
 }
 
 struct SearchInputState {
@@ -667,6 +672,8 @@ pub(super) use render_panel::*;
 pub(super) use search_backend::*;
 pub(super) use search_engine::*;
 pub(super) use document_matches::*;
+
+actions!(workspace_menu, [RenameWorkspaceEntry]);
 
 mod context_menus;
 mod tree_edit;

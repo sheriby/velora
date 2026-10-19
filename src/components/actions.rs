@@ -1145,6 +1145,11 @@ pub(crate) fn resolved_keybindings(config: &BTreeMap<String, Vec<String>>) -> Ve
                 .map(|key| key_binding_for(definition.command, key, definition.context)),
         );
     }
+    bindings.push(KeyBinding::new(
+        "f2",
+        crate::editor::workspace::RenameWorkspaceEntry,
+        Some("WorkspaceTree"),
+    ));
     bindings.push(KeyBinding::new("cmd-p", QuickOpen, None));
     bindings.push(KeyBinding::new("ctrl-p", QuickOpen, None));
     bindings.push(KeyBinding::new("cmd-shift-c", CopyAsHtml, None));

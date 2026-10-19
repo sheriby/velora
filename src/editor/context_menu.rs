@@ -271,6 +271,7 @@ impl Editor {
 
     pub(super) fn dismiss_contextual_overlays(&mut self, cx: &mut Context<Self>) {
         self.close_workspace_context_menu(cx);
+        self.close_tab_context_menu(cx);
         self.close_wikilink_completion(cx);
         self.close_latex_completion(cx);
         self.close_formula_editor(cx);

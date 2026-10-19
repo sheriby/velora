@@ -1,4 +1,6 @@
+use super::{workspace_menu_action_bounds, menu_label_bounds};
 use super::super::{
+    WorkspaceMenuAction,
     Editor, TreeSortPreference, WorkspaceSelection,
     WorkspaceState,
     WorkspaceTreeKind, WorkspaceTreeNode, build_outline_tree, clamp_workspace_panel_width,
@@ -1268,9 +1270,7 @@ async fn reloading_an_externally_changed_file_keeps_its_shape(cx: &mut TestAppCo
     );
 }
 
-/// 菜单行的几何必须来自同一份渲染：文件树右键与标签右键的两行高度都等于主题令牌
-/// `menu_item_height`。以前这两处各抄了一份行样式（32px 行高、10px 内边距），
-/// 与正文右键（28px、8px）不一致，同一个软件里两套菜单长得不一样。
+/// 文件树与标签共用 Kit 标准菜单行，不能再分别手写一套行高与内边距。
 #[gpui::test]
 async fn every_context_menu_row_uses_the_same_geometry(cx: &mut TestAppContext) {
     cx.update(|cx| {
@@ -1306,24 +1306,17 @@ async fn every_context_menu_row_uses_the_same_geometry(cx: &mut TestAppContext) 
         )
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    let tree_row = cx
-        .debug_bounds("menu-item-workspace-context-action-Reveal")
+    let tree_row = workspace_menu_action_bounds(cx, WorkspaceMenuAction::Reveal)
         .expect("文件树菜单的第一行");
 
     editor.update(cx, |editor, cx| {
         editor.open_tab_context_menu(point(px(80.0), px(40.0)), 0, cx)
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    let tab_row = cx
-        .debug_bounds("menu-item-tab-context-action-0")
-        .expect("标签菜单的第一行");
+    let close_label = cx.cx.read(|cx| cx.global::<crate::i18n::I18nManager>().strings().tab_close.clone());
+    let tab_row = menu_label_bounds(cx, &close_label).expect("标签菜单的第一行");
 
-    let row_height = px(crate::theme::Theme::default_theme().dimensions.menu_item_height);
-    assert_eq!(
-        tree_row.size.height, row_height,
-        "文件树菜单的行高应是主题令牌的 {:?}，实测 {:?}",
-        row_height, tree_row.size.height
-    );
+    assert!(tree_row.size.height > px(0.0), "标准菜单行必须有实际布局");
     assert_eq!(
         tab_row.size.height, tree_row.size.height,
         "两个右键菜单的行高必须一致（同一份行渲染）"

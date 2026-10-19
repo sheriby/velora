@@ -563,11 +563,6 @@ impl Editor {
             return;
         }
         match event.keystroke.key.as_str() {
-            "f2" if self.workspace.active_tab == WorkspaceTab::Files
-                && self.workspace.name_edit.is_none() =>
-            {
-                self.prompt_rename_selected(window, cx)
-            }
             "enter"
                 if self.workspace.active_tab == WorkspaceTab::Files
                     && self.workspace.name_edit.is_none() =>
