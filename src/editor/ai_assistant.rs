@@ -27,6 +27,7 @@ mod experience;
 mod messages;
 pub(in crate::editor) mod inline_review;
 mod render;
+mod source_list;
 mod workbench;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -77,6 +78,8 @@ pub(super) struct AiSession {
     review_open: bool,
     // 标签重载会重建缓冲区，使用稳定的恢复标识区分暂离与主动关闭。
     review_navigation: Option<uuid::Uuid>,
+    source_list: Entity<gpui_kit::component::list::ListState<source_list::SourceList>>,
+    source_focus_pending: bool,
     history_files: Vec<(PathBuf, String, SessionKind)>,
     history_list: Entity<gpui_kit::component::command::CommandState>,
     history_loading: bool,
@@ -1133,6 +1136,8 @@ impl Editor {
                 }
             },
         ));
+        let source_owner = cx.entity().downgrade();
+        let source_list = cx.new(|cx| gpui_kit::component::list::ListState::new(source_list::SourceList::new(source_owner), window, cx));
         self.ai_session = Some(AiSession {
             document: owner_document,
             panel_navigation: false,
@@ -1166,6 +1171,8 @@ impl Editor {
             conversation: None,
             review_open: false,
             review_navigation: None,
+            source_list,
+            source_focus_pending: true,
             history_files: Vec::new(),
             history_list: cx.new(|cx| gpui_kit::component::command::CommandState::new(window, cx)),
             history_loading: false,

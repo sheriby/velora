@@ -22,7 +22,7 @@ impl std::fmt::Debug for SnapshotBridge {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SourceRecord {
     pub path: String,
     pub line: usize,

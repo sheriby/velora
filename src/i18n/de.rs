@@ -487,6 +487,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) ai_panel_copy: Option<String>,
     pub(crate) ai_panel_latest: Option<String>,
     pub(crate) ai_diagram_preview: Option<String>,
+    pub(crate) ai_sources_empty: Option<String>,
+    pub(crate) ai_source_line: Option<String>,
     pub(crate) ai_panel_sources: Option<String>,
     pub(crate) ai_panel_enable_skill: Option<String>,
     pub(crate) ai_panel_use_skill: Option<String>,

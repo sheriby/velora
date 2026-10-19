@@ -732,6 +732,8 @@ pub struct I18nStrings {
     pub ai_panel_copy: String,
     pub ai_panel_latest: String,
     pub ai_diagram_preview: String,
+    pub ai_sources_empty: String,
+    pub ai_source_line: String,
     pub ai_panel_sources: String,
     pub ai_panel_enable_skill: String,
     pub ai_panel_use_skill: String,

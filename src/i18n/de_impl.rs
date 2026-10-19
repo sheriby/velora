@@ -1099,6 +1099,8 @@ impl I18nStringsDe {
             ai_panel_copy: self.ai_panel_copy.unwrap_or(defaults.ai_panel_copy),
             ai_panel_latest: self.ai_panel_latest.unwrap_or(defaults.ai_panel_latest),
             ai_diagram_preview: self.ai_diagram_preview.unwrap_or(defaults.ai_diagram_preview),
+            ai_sources_empty: self.ai_sources_empty.unwrap_or(defaults.ai_sources_empty),
+            ai_source_line: self.ai_source_line.unwrap_or(defaults.ai_source_line),
             ai_panel_sources: self.ai_panel_sources.unwrap_or(defaults.ai_panel_sources),
             ai_panel_enable_skill: self.ai_panel_enable_skill.unwrap_or(defaults.ai_panel_enable_skill),
             ai_panel_use_skill: self.ai_panel_use_skill.unwrap_or(defaults.ai_panel_use_skill),

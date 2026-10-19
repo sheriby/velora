@@ -517,6 +517,8 @@ impl I18nStrings {
         strings.ai_panel_copy = "复制".into();
         strings.ai_panel_latest = "最新消息".into();
         strings.ai_diagram_preview = "预览图表".into();
+        strings.ai_sources_empty = "暂无引用来源".into();
+        strings.ai_source_line = "第 {line} 行".into();
         strings.ai_panel_sources = "来源".into();
         strings.ai_panel_enable_skill = "启用任务说明".into();
         strings.ai_panel_use_skill = "使用".into();
@@ -1081,6 +1083,8 @@ impl I18nStrings {
             ai_panel_copy: "Copy".into(),
             ai_panel_latest: "Latest messages".into(),
             ai_diagram_preview: "Preview diagram".into(),
+            ai_sources_empty: "No sources yet".into(),
+            ai_source_line: "Line {line}".into(),
             ai_panel_sources: "Sources".into(),
             ai_panel_enable_skill: "Enable skill".into(),
             ai_panel_use_skill: "Use".into(),

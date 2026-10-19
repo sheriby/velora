@@ -3665,6 +3665,518 @@ fn ai_collection_instruction_delete_keeps_other_same_name_entries(cx: &mut TestA
 }
 
 #[gpui::test]
+fn ai_sources_list_virtualizes_and_keyboard_opens_the_selected_reference(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root = std::env::temp_dir().join(format!("velora-ai-source-list-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    let source = (0..200)
+        .map(|index| format!("引用段落 {index}。\n\n"))
+        .collect::<String>();
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, source.clone(), None))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    visual.simulate_resize(gpui::size(gpui::px(900.0), gpui::px(460.0)));
+    let target = handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_mut().unwrap();
+            let id = session.saved.target.as_ref().unwrap().document_id.clone();
+            session.saved.workspace.source_records = (0..200)
+                .map(|index| {
+                    let excerpt = format!("引用段落 {index}。");
+                    let start = source.find(&excerpt).unwrap();
+                    crate::ai::workspace::SourceRecord {
+                        path: id.clone(),
+                        line: index * 2 + 1,
+                        range: start..start + excerpt.len(),
+                        version: crate::editor::persistence::file_content_version(&source),
+                        excerpt,
+                    }
+                })
+                .collect();
+            let target = session
+                .saved
+                .workspace
+                .source_records
+                .last()
+                .unwrap()
+                .range
+                .clone();
+            session.mode = PanelMode::Sources;
+            window.focus(&session.panel_focus, cx);
+            cx.notify();
+            target
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    let mut rows = 0;
+    for index in 0..200 {
+        if visual
+            .debug_bounds(Box::leak(format!("ai-source-row-{index}").into_boxed_str()))
+            .is_some()
+        {
+            rows += 1;
+        }
+    }
+    assert!(
+        rows > 0 && rows < 40,
+        "来源应由 Kit 虚拟列表按视口挂载，实际可见布局行数 {rows}"
+    );
+    visual.update(|window, cx| window.press("up", cx));
+    draw(&mut visual);
+    let last = visual.debug_bounds("ai-source-row-199").unwrap();
+    let panel = visual.debug_bounds("ai-assistant-panel").unwrap();
+    assert!(
+        last.top() >= panel.top() && last.bottom() <= panel.bottom(),
+        "最后一项应随键盘导航入视：{last:?}，{panel:?}"
+    );
+    visual.update(|window, cx| window.press("enter", cx));
+    visual.run_until_parked();
+    draw(&mut visual);
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            assert_eq!(editor.capture_source_selection_snapshot(cx).range, target);
+            assert_eq!(editor.buffer.text(), source);
+        })
+        .unwrap();
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
+fn ai_sources_list_preserves_selection_after_reordering_and_clears_empty_state(
+    cx: &mut TestAppContext,
+) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root =
+        std::env::temp_dir().join(format!("velora-ai-source-order-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    let source = "首段。\n\n中段。\n\n末段。";
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, source.into(), None))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_mut().unwrap();
+            let id = session.saved.target.as_ref().unwrap().document_id.clone();
+            session.saved.workspace.source_records = ["首段。", "中段。", "末段。"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, excerpt)| {
+                    let start = source.find(excerpt).unwrap();
+                    crate::ai::workspace::SourceRecord {
+                        path: id.clone(),
+                        line: index * 2 + 1,
+                        range: start..start + excerpt.len(),
+                        version: crate::editor::persistence::file_content_version(source),
+                        excerpt: excerpt.into(),
+                    }
+                })
+                .collect();
+            session.mode = PanelMode::Sources;
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    visual.update(|window, cx| window.press("down", cx));
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            editor
+                .ai_session
+                .as_mut()
+                .unwrap()
+                .saved
+                .workspace
+                .source_records
+                .rotate_right(1);
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    handle
+        .read_with(&visual, |editor, cx| {
+            let session = editor.ai_session.as_ref().unwrap();
+            let index = session.source_list.read(cx).selected_index().unwrap();
+            assert_eq!(
+                session
+                    .saved
+                    .workspace
+                    .source_records
+                    .get(index.row)
+                    .unwrap()
+                    .excerpt,
+                "中段。"
+            );
+        })
+        .unwrap();
+    visual.update(|window, cx| window.press("escape", cx));
+    draw(&mut visual);
+    let first_range = handle
+        .update(&mut visual, |editor, _, cx| {
+            let session = editor.ai_session.as_mut().unwrap();
+            session.mode = PanelMode::Sources;
+            session.source_focus_pending = true;
+            let range = session
+                .saved
+                .workspace
+                .source_records
+                .first()
+                .unwrap()
+                .range
+                .clone();
+            cx.notify();
+            range
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    visual.update(|window, cx| window.press("enter", cx));
+    visual.run_until_parked();
+    draw(&mut visual);
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            assert_eq!(
+                editor.capture_source_selection_snapshot(cx).range,
+                first_range,
+                "重新打开来源时首项应可直接确认"
+            )
+        })
+        .unwrap();
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            let session = editor.ai_session.as_mut().unwrap();
+            session.saved.workspace.source_records.clear();
+            session.source_focus_pending = true;
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    assert!(visual.debug_bounds("ai-sources-empty").is_some());
+    visual.update(|window, cx| {
+        window.press("enter", cx);
+        window.press("escape", cx);
+    });
+    draw(&mut visual);
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(editor.buffer.text(), source);
+            assert!(editor.ai_session.as_ref().unwrap().mode == PanelMode::Task);
+        })
+        .unwrap();
+    let weak = handle
+        .read_with(&visual, |editor, _| {
+            editor.ai_session.as_ref().unwrap().source_list.downgrade()
+        })
+        .unwrap();
+    visual.update(|window, _| window.remove_window());
+    drop(visual);
+    cx.run_until_parked();
+    assert!(weak.upgrade().is_none());
+}
+
+#[gpui::test]
+fn ai_sources_list_opens_another_workspace_document_without_modifying_either(
+    cx: &mut TestAppContext,
+) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root = std::env::temp_dir().join(format!("velora-ai-source-open-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(root.join("config"));
+    std::fs::create_dir_all(&root).unwrap();
+    let first = root.join("first.md");
+    let second = root.join("second.md");
+    let original = "# 首篇\n\n保留正文。";
+    let destination = "# 次篇\n\n参考内容。\n\n保留下文。";
+    std::fs::write(&first, original).unwrap();
+    std::fs::write(&second, destination).unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, original.into(), Some(first.clone())))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    let start = destination.find("参考内容。").unwrap();
+    let range = start..start + "参考内容。".len();
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_mut().unwrap();
+            assert!(session.saved.workspace.root.is_some());
+            session.saved.workspace.source_records = vec![crate::ai::workspace::SourceRecord {
+                path: "second.md".into(),
+                line: 3,
+                range: range.clone(),
+                version: crate::editor::persistence::file_content_version(destination),
+                excerpt: "参考内容。".into(),
+            }];
+            session.mode = PanelMode::Sources;
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    visual.update(|window, cx| window.press("enter", cx));
+    visual.run_until_parked();
+    draw(&mut visual);
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            assert_eq!(
+                editor.file_path.as_ref().unwrap().canonicalize().unwrap(),
+                second.canonicalize().unwrap()
+            );
+            assert_eq!(editor.buffer.text(), destination);
+            assert_eq!(editor.capture_source_selection_snapshot(cx).range, range);
+            assert!(!editor.modal_is_open());
+        })
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), original);
+    assert_eq!(std::fs::read_to_string(&second).unwrap(), destination);
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
+fn ai_sources_list_ignores_confirmation_after_context_or_modality_changes(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::component::list::ListDelegate as _;
+    let root =
+        std::env::temp_dir().join(format!("velora-ai-source-stale-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    let source = "正文。\n\n旧引用。";
+    for block_with_modal in [false, true] {
+        let handle = cx.update(|cx| {
+            crate::ui::open_window(Default::default(), cx, |_, cx| {
+                cx.new(|cx| Editor::from_markdown(cx, source.into(), None))
+            })
+            .unwrap()
+        });
+        let mut visual = VisualTestContext::from_window(handle.into(), cx);
+        let editor = handle
+            .update(&mut visual, |editor, window, cx| {
+                editor.open_ai_assistant(AiCommand::Ask, window, cx);
+                let session = editor.ai_session.as_mut().unwrap();
+                let id = session.saved.target.as_ref().unwrap().document_id.clone();
+                let start = source.find("旧引用。").unwrap();
+                session.saved.workspace.source_records = vec![crate::ai::workspace::SourceRecord {
+                    path: id,
+                    line: 3,
+                    range: start..start + "旧引用。".len(),
+                    version: crate::editor::persistence::file_content_version(source),
+                    excerpt: "旧引用。".into(),
+                }];
+                session.mode = PanelMode::Sources;
+                cx.notify();
+                cx.entity()
+            })
+            .unwrap();
+        draw(&mut visual);
+        draw(&mut visual);
+        let expected = visual.update(|window, cx| {
+            let list = editor
+                .read(cx)
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .source_list
+                .clone();
+            list.update(cx, |state, cx| {
+                state.delegate_mut().confirm(false, window, cx)
+            });
+            editor.update(cx, |editor, cx| {
+                if block_with_modal {
+                    editor.show_message_modal("保留提示", "不改变正文选区", cx);
+                } else {
+                    editor.open_ai_assistant(AiCommand::Ask, window, cx);
+                }
+                editor.capture_source_selection_snapshot(cx).range
+            })
+        });
+        visual.run_until_parked();
+        draw(&mut visual);
+        handle
+            .update(&mut visual, |editor, _, cx| {
+                assert_eq!(
+                    editor.capture_source_selection_snapshot(cx).range,
+                    expected,
+                    "界面上下文改变后，旧来源确认不能再移动正文选区"
+                );
+                assert!(if block_with_modal {
+                    editor.modal_is_open()
+                } else {
+                    editor.ai_session.as_ref().unwrap().mode == PanelMode::Task
+                });
+                assert_eq!(editor.buffer.text(), source);
+            })
+            .unwrap();
+        visual.update(|window, _| window.remove_window());
+    }
+}
+
+#[gpui::test]
+fn ai_sources_list_resets_the_viewport_when_history_reuses_the_panel_for_another_task(
+    cx: &mut TestAppContext,
+) {
+    use gpui::AppContext as _;
+    let root =
+        std::env::temp_dir().join(format!("velora-ai-source-reset-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "原文".into(), None))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    visual.simulate_resize(gpui::size(gpui::px(900.0), gpui::px(460.0)));
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_mut().unwrap();
+            session.saved.workspace.source_records = (0..100)
+                .map(|index| crate::ai::workspace::SourceRecord {
+                    path: format!("note-{index}.md"),
+                    line: 1,
+                    range: 0..3,
+                    version: 0,
+                    excerpt: "引用".into(),
+                })
+                .collect();
+            session.mode = PanelMode::Sources;
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .source_list
+                .update(cx, |state, cx| {
+                    state.scroll_to_item(
+                        gpui_kit::component::IndexPath::new(70),
+                        gpui::ScrollStrategy::Top,
+                        window,
+                        cx,
+                    )
+                });
+        })
+        .unwrap();
+    draw(&mut visual);
+    assert!(
+        visual.debug_bounds("ai-source-row-0").is_none(),
+        "前置：确实滚离首项且未改变选择"
+    );
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            let session = editor.ai_session.as_mut().unwrap();
+            assert_eq!(
+                session.source_list.read(cx).selected_index(),
+                Some(gpui_kit::component::IndexPath::new(0))
+            );
+            session.saved.id = uuid::Uuid::new_v4().to_string();
+            session.source_focus_pending = true;
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    assert!(
+        visual.debug_bounds("ai-source-row-0").is_some(),
+        "不同任务的来源视图应从首项开始，不能继承旧任务的手动滚动"
+    );
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
+fn ai_sources_list_keeps_candidates_inside_the_panel_with_long_feedback(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root = std::env::temp_dir().join(format!(
+        "velora-ai-source-feedback-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "原文".into(), None))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    visual.simulate_resize(gpui::size(gpui::px(900.0), gpui::px(460.0)));
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_mut().unwrap();
+            session.saved.workspace.source_records = (0..100)
+                .map(|index| crate::ai::workspace::SourceRecord {
+                    path: format!("note-{index}.md"),
+                    line: 1,
+                    range: 0..3,
+                    version: 0,
+                    excerpt: "引用".into(),
+                })
+                .collect();
+            session.error = Some("配置读取失败，请检查文件后重新加载。".repeat(80));
+            session.mode = PanelMode::Sources;
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    let panel = visual.debug_bounds("ai-assistant-panel").unwrap();
+    let list = visual.debug_bounds("ai-sources-list").unwrap();
+    assert!(
+        list.bottom() <= panel.bottom(),
+        "错误反馈不能把来源列表挤出面板：{list:?}，{panel:?}"
+    );
+    assert!(
+        list.size.height >= gpui::px(48.0),
+        "仍应保留可浏览的候选区域：{list:?}"
+    );
+    visual.update(|window, cx| window.press("up", cx));
+    draw(&mut visual);
+    let last = visual.debug_bounds("ai-source-row-99").unwrap();
+    assert!(
+        last.top() >= list.top() && last.bottom() <= list.bottom(),
+        "有反馈时键盘选中项仍应进入实际视口：{last:?}，{list:?}"
+    );
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
 fn ai_context_sources_are_checkable_and_share_one_selection_list(cx: &mut TestAppContext) {
     use gpui::AppContext as _;
     use gpui_kit::test::TestWindowExt as _;

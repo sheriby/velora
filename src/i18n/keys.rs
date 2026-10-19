@@ -484,6 +484,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_panel_copy",
     "ai_panel_latest",
     "ai_diagram_preview",
+    "ai_sources_empty",
+    "ai_source_line",
     "ai_panel_sources",
     "ai_panel_enable_skill",
     "ai_panel_use_skill",

@@ -1,6 +1,7 @@
 use super::*;
 use gpui::prelude::FluentBuilder as _;
 use gpui_kit::component::form::{Field, Form};
+use gpui_kit::component::alert::Alert;
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::{ActiveTheme as _, command::{Command, CommandGroup, CommandItem}, spinner::Spinner};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
@@ -286,6 +287,7 @@ impl Editor {
                 self.ai_menu_item(strings.ai_panel_sources, cx, |editor, _, cx| {
                     if let Some(session) = editor.ai_session.as_mut() {
                         session.mode = PanelMode::Sources;
+                        session.source_focus_pending = true;
                     }
                     cx.notify();
                 }),
@@ -489,34 +491,20 @@ impl Editor {
             },
             |editor, _, cx| editor.hide_ai_panel(cx),
         ));
-        let mut content = div().w_full().flex().flex_col().gap(px(10.0));
-        if let Some(error) = session.error.as_ref() {
-            content = content.child(
-                div()
-                    .w_full()
-                    .text_size(px(12.0))
-                    .text_color(theme.colors.dialog_title)
-                    .child(error.clone()),
-            );
-        }
+        let native_collection = matches!(session.mode, PanelMode::History | PanelMode::Sources);
+        let feedback = session.error.as_ref().map(|error| {
+            let scroll = window.use_keyed_state("ai-panel-feedback-scroll", cx, |_, _| ScrollHandle::new()).read(cx).clone();
+            div().id("ai-panel-feedback").debug_selector(|| "ai-panel-feedback".into())
+                .w_full().h_auto().max_h(px(height) * 0.25).flex_shrink_0().relative()
+                .overflow_y_scroll().track_scroll(&scroll)
+                .child(Alert::error("ai-panel-error", error.clone()).small())
+                .vertical_scrollbar(&scroll)
+        });
+        let mut content = div().w_full().flex().flex_col().gap(px(10.0))
+            .when(native_collection, |content| content.flex_1().min_h_0());
         match session.mode {
             PanelMode::Sources => {
-                if !session.saved.workspace.source_records.is_empty() {
-                    for (index, record) in session.saved.workspace.source_records.iter().enumerate()
-                    {
-                        let record = record.clone();
-                        let label = format!("{}:{}", record.path, record.line);
-                        content = content.child(self.ai_button(
-                            ("ai-source", index),
-                            false,
-                            cx,
-                            |button, _cx| button.label(label),
-                            move |editor, window, cx| {
-                                editor.open_ai_source(record.clone(), window, cx)
-                            },
-                        ));
-                    }
-                }
+                content = content.min_h_0().child(super::source_list::render_sources(self, height, window, cx));
             }
             PanelMode::History => {
                 content = content.child(self.render_ai_history(height, cx));
@@ -912,8 +900,9 @@ impl Editor {
             .w_full()
             .min_h_0()
             .relative()
+            .when(native_collection, |body| body.flex().flex_col().flex_1())
             .child(content)
-            .when(session.mode != PanelMode::History, |body| {
+            .when(!native_collection, |body| {
                 body.max_h(px((height - 150.0).max(90.0)))
                     .overflow_y_scroll()
                     .track_scroll(&session.scroll)
@@ -937,6 +926,7 @@ impl Editor {
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(header)
+            .children(feedback)
             .child(body);
 
         panel
