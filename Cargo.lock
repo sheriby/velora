@@ -8761,7 +8761,7 @@ dependencies = [
 
 [[package]]
 name = "velora"
-version = "0.2.11"
+version = "0.3.0-beta.1"
 dependencies = [
  "adot-tree-sitter-toml",
  "anyhow",
