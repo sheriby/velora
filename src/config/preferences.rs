@@ -28,6 +28,9 @@ const PREFERENCE_CONTENT_PADDING: f32 = 24.0;
 const PREFERENCE_LABEL_WIDTH: Rems = rems(9.0);
 const PREFERENCE_CHOICE_WIDTH: Rems = rems(14.0);
 const PREFERENCE_NUMBER_WIDTH: Rems = rems(8.0);
+/// 分组内相邻两行之间那道浅色横线到上一行内容的距离。行与行之间另有表单自己的
+/// 间距（`Form` 的 `gap_y`），两段加起来才是线两侧的留白。
+const PREFERENCE_ROW_DIVIDER_GAP: f32 = 6.0;
 
 const DEFAULT_THEME_ID: &str = "forest";
 const DEFAULT_LANGUAGE_ID: &str = "en-US";

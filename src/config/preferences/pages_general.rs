@@ -4,7 +4,7 @@ use super::*;
 impl PreferencesWindow {
     pub(crate) fn render_startup_page(
         &mut self,
-        _theme: &Theme,
+        theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -328,6 +328,7 @@ impl PreferencesWindow {
                             sidebar_panel,
                         ),
                     ],
+                    theme,
                     window,
                     PREFERENCE_CHOICE_WIDTH,
                 ),
@@ -349,6 +350,7 @@ impl PreferencesWindow {
                             deletion,
                         ),
                     ],
+                    theme,
                     window,
                     PREFERENCE_CHOICE_WIDTH,
                 ),
@@ -362,6 +364,7 @@ impl PreferencesWindow {
                             debounce,
                         ),
                     ],
+                    theme,
                     window,
                     PREFERENCE_CHOICE_WIDTH,
                 ),
@@ -376,6 +379,7 @@ impl PreferencesWindow {
                         Self::preference_row(strings.preferences_history_count.clone(), count),
                         Self::preference_row(strings.preferences_history_days.clone(), days),
                     ],
+                    theme,
                     window,
                     PREFERENCE_NUMBER_WIDTH,
                 ),
@@ -389,6 +393,7 @@ impl PreferencesWindow {
                             markers,
                         ),
                     ],
+                    theme,
                     window,
                     rems(3.0),
                 ),
@@ -399,6 +404,7 @@ impl PreferencesWindow {
                         Self::preference_row(strings.preferences_updates_startup.clone(), updates),
                         Self::preference_row(strings.preferences_updates_beta.clone(), beta),
                     ],
+                    theme,
                     window,
                     rems(3.0),
                 ),
@@ -480,6 +486,7 @@ impl PreferencesWindow {
                 Self::preference_row(strings.preferences_local_theme.clone(), theme),
                 Self::preference_row(strings.preferences_writing_width.clone(), width),
             ],
+            _theme,
             window,
             PREFERENCE_CHOICE_WIDTH,
         );
@@ -536,6 +543,7 @@ impl PreferencesWindow {
                 "preferences-fonts-group",
                 strings.preferences_group_fonts.clone(),
                 fonts,
+                _theme,
                 window,
                 font_controls_width,
             ))
@@ -650,7 +658,7 @@ impl PreferencesWindow {
 
     pub(crate) fn render_image_page(
         &mut self,
-        _theme: &Theme,
+        theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -689,6 +697,7 @@ impl PreferencesWindow {
                 strings.preferences_image_insert_behavior.clone(),
                 image,
             )],
+            theme,
             window,
             PREFERENCE_CHOICE_WIDTH,
         )

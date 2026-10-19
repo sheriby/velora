@@ -471,6 +471,7 @@ impl PreferencesWindow {
                         .debug_selector(|| "preferences-ai-enabled".into())
                         .child(toggle),
                 )],
+                theme,
                 window,
                 rems(3.0),
             ));

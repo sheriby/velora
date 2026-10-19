@@ -367,7 +367,7 @@ impl PreferencesWindow {
 
     pub(crate) fn render_shortcuts_page(
         &self,
-        _theme: &Theme,
+        theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -400,6 +400,7 @@ impl PreferencesWindow {
                     id,
                     Self::shortcut_category_label(category, strings),
                     fields,
+                    theme,
                     window,
                     rems(18.0),
                 ));
@@ -410,7 +411,7 @@ impl PreferencesWindow {
 
     pub(crate) fn render_window_page(
         &mut self,
-        _theme: &Theme,
+        theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -530,6 +531,7 @@ impl PreferencesWindow {
                 Self::preference_row(strings.preferences_window_open_position.clone(), position),
                 Self::preference_row(strings.preferences_window_remember_bounds.clone(), remember),
             ],
+            theme,
             window,
             PREFERENCE_CHOICE_WIDTH,
         )
@@ -537,7 +539,7 @@ impl PreferencesWindow {
 
     pub(crate) fn render_status_bar_page(
         &self,
-        _theme: &Theme,
+        theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -597,6 +599,7 @@ impl PreferencesWindow {
                     ),
                 ),
             ],
+            theme,
             window,
             rems(3.0),
         )

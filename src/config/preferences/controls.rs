@@ -335,6 +335,7 @@ impl PreferencesWindow {
         id: &'static str,
         label: String,
         fields: Vec<Field>,
+        theme: &Theme,
         window: &Window,
         control_width: Rems,
     ) -> AnyElement {
@@ -343,6 +344,23 @@ impl PreferencesWindow {
         } else {
             Form::vertical()
         };
+        // 一张卡片里三四行不带分隔就成了一整块，眼睛找不到行界。线画在行自己的下边框上：
+        // 它随行宽走（卡片内边距以内），也不需要往表单的网格里塞额外元素。
+        let last_index = fields.len().saturating_sub(1);
+        let fields = fields
+            .into_iter()
+            .enumerate()
+            .map(|(index, field)| {
+                if index == last_index {
+                    field
+                } else {
+                    field
+                        .border_b(px(theme.dimensions.dialog_border_width))
+                        .border_color(theme.colors.dialog_border)
+                        .pb(px(PREFERENCE_ROW_DIVIDER_GAP))
+                }
+            })
+            .collect::<Vec<_>>();
         GroupBox::new()
             .id(id)
             .fill()
