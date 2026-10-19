@@ -1,4 +1,9 @@
 use super::*;
+use gpui::prelude::FluentBuilder as _;
+use gpui_kit::component::{
+    Sizable as _,
+    input::{Enter as InputEnter, Escape as InputEscape, Input, InputEvent, InputState},
+};
 
 impl Editor {
     pub(crate) fn focus_workspace_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -101,18 +106,44 @@ impl Editor {
                 .map(str::len)
                 .unwrap_or(draft.len())
         };
-        let focus = cx.focus_handle();
-        let blur_subscription = cx.on_blur(&focus, window, |editor, window, cx| {
-            if editor.workspace.name_edit.as_ref().is_some_and(|edit| {
-                !edit.pending && edit.marked_range.is_none() && edit.draft.trim().is_empty()
-            }) {
-                // 失焦来自另一处点击，取消空草稿时应保留点击目标的焦点。
-                editor.workspace.name_edit = None;
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(draft.clone()));
+        input.update(cx, |input, cx| {
+            input.set_selected_range(0..selected_end, cx)
+        });
+        let focus = input.read(cx).focus_handle(cx);
+        let input_subscription = cx.subscribe(&input, |editor, input, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change)
+                && let Some(edit) = editor.workspace.name_edit.as_mut()
+                && edit.input == input
+                && !edit.pending
+            {
+                edit.draft = input.read(cx).value().to_string();
+                edit.error = None;
                 cx.notify();
-            } else {
-                editor.confirm_workspace_name_edit(window, cx);
             }
         });
+        let input_id = input.entity_id();
+        let blur_subscription =
+            cx.on_blur(&focus, window, move |editor, window, cx| {
+                if !editor
+                    .workspace
+                    .name_edit
+                    .as_ref()
+                    .is_some_and(|edit| edit.input.entity_id() == input_id)
+                {
+                    return;
+                }
+                if editor.workspace.name_edit.as_ref().is_some_and(|edit| {
+                    !edit.pending && edit.input.read(cx).value().trim().is_empty()
+                }) && !editor.workspace_name_is_composing(window, cx)
+                {
+                    // 失焦来自另一处点击，取消空草稿时应保留点击目标的焦点。
+                    editor.workspace.name_edit = None;
+                    cx.notify();
+                } else {
+                    editor.confirm_workspace_name_edit(window, cx);
+                }
+            });
         self.dismiss_contextual_overlays(cx);
         self.workspace.active_tab = WorkspaceTab::Files;
         self.workspace.is_open = true;
@@ -126,18 +157,13 @@ impl Editor {
             kind,
             directory,
             draft,
-            selected_range: 0..selected_end,
-            marked_range: None,
+            input,
             focus: focus.clone(),
             error: None,
             pending: false,
-            last_line: None,
-            last_bounds: None,
             revealed_row: None,
             row_height: None,
-            scroll_x: px(0.0),
-            caret: selected_end,
-            selection_anchor: 0,
+            _input_subscription: input_subscription,
             _blur_subscription: blur_subscription,
         });
         self.pending_focus = None;
@@ -171,12 +197,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.workspace_name_is_composing(window, cx) {
+            return;
+        }
         let Some(edit) = self.workspace.name_edit.as_mut() else {
             return;
         };
-        if edit.pending || edit.marked_range.is_some() {
+        if edit.pending {
             return;
         }
+        edit.draft = edit.input.read(cx).value().to_string();
         if !valid_workspace_name(&edit.draft) {
             edit.error = Some(
                 cx.global::<I18nManager>()
@@ -583,119 +613,12 @@ impl Editor {
         cx.stop_propagation();
     }
 
-    fn on_workspace_name_key_down(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(edit) = self.workspace.name_edit.as_ref() else {
-            return;
-        };
-        if edit.pending || edit.marked_range.is_some() {
-            return;
-        }
-        let text = edit.draft.clone();
-        let selected = edit.selected_range.clone();
-        let caret = edit.caret;
-        let anchor = edit.selection_anchor;
-        let key = event.keystroke.key.as_str();
-        let secondary = event.keystroke.modifiers.secondary();
-        match key {
-            "enter" => self.confirm_workspace_name_edit(window, cx),
-            "escape" => {
-                self.cancel_workspace_name_edit(window, cx);
-            }
-            "a" if secondary => {
-                if let Some(edit) = self.workspace.name_edit.as_mut() {
-                    edit.selected_range = 0..text.len();
-                    edit.caret = text.len();
-                    edit.selection_anchor = 0;
-                }
-            }
-            "c" | "x" if secondary => {
-                if let Some(value) = text.get(selected.clone()) {
-                    cx.write_to_clipboard(ClipboardItem::new_string(value.to_string()));
-                }
-                if key == "x" {
-                    self.replace_overlay_input_text(
-                        OverlayInputKind::TreeName,
-                        selected,
-                        "",
-                        None,
-                        false,
-                        cx,
-                    );
-                }
-            }
-            "v" if secondary => {
-                if let Some(value) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    self.replace_overlay_input_text(
-                        OverlayInputKind::TreeName,
-                        selected,
-                        &value,
-                        None,
-                        false,
-                        cx,
-                    );
-                }
-            }
-            "backspace" | "delete" => {
-                let range = if !selected.is_empty() {
-                    selected
-                } else if key == "backspace" {
-                    let start = text
-                        .get(..selected.start)
-                        .and_then(|before| before.grapheme_indices(true).last())
-                        .map(|(index, _)| index)
-                        .unwrap_or(selected.start);
-                    start..selected.start
-                } else {
-                    let end = text
-                        .get(selected.end..)
-                        .and_then(|after| after.graphemes(true).next())
-                        .map(|value| selected.end + value.len())
-                        .unwrap_or(selected.end);
-                    selected.end..end
-                };
-                self.replace_overlay_input_text(
-                    OverlayInputKind::TreeName,
-                    range,
-                    "",
-                    None,
-                    false,
-                    cx,
-                );
-            }
-            "left" | "right" | "home" | "end" => {
-                let shift = event.keystroke.modifiers.shift;
-                let position = match key {
-                    "home" => 0,
-                    "end" => text.len(),
-                    "left" if !shift && !selected.is_empty() => selected.start,
-                    "right" if !shift && !selected.is_empty() => selected.end,
-                    "left" => text
-                        .get(..caret)
-                        .and_then(|before| before.grapheme_indices(true).last())
-                        .map(|(index, _)| index)
-                        .unwrap_or(0),
-                    _ => text
-                        .get(caret..)
-                        .and_then(|after| after.graphemes(true).next())
-                        .map(|value| caret + value.len())
-                        .unwrap_or(text.len()),
-                };
-                if let Some(edit) = self.workspace.name_edit.as_mut() {
-                    edit.selection_anchor = if shift { anchor } else { position };
-                    edit.caret = position;
-                    edit.selected_range =
-                        edit.selection_anchor.min(position)..edit.selection_anchor.max(position);
-                }
-            }
-            _ => return,
-        }
-        cx.stop_propagation();
-        cx.notify();
+    fn workspace_name_is_composing(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.workspace.name_edit.as_ref().is_some_and(|edit| {
+            edit.input.update(cx, |input, cx| {
+                input.marked_text_range(window, cx).is_some()
+            })
+        })
     }
 
     pub(crate) fn render_workspace_name_row(
@@ -717,152 +640,65 @@ impl Editor {
         );
         let icon = if is_directory {
             gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Folder)
-                .text_color(theme.colors.dialog_muted).into_any_element()
+                .text_color(theme.colors.dialog_muted)
+                .into_any_element()
         } else {
-            let path = if is_markdown_document(Path::new(&edit.draft)) { MARKDOWN_ICON } else { GENERIC_FILE_ICON };
-            svg().path(path).size_4().text_color(theme.colors.dialog_primary_button_bg).into_any_element()
-        };
-        let draft: SharedString = edit.draft.clone().into();
-        let selection = edit.selected_range.clone();
-        let caret = edit.caret;
-        let marked = edit.marked_range.clone();
-        let focus = edit.focus.clone();
-        let previous_scroll = edit.scroll_x;
-        let input_editor = editor.clone();
-        let click_editor = editor.clone();
-        let key_editor = editor.clone();
-        let colors = theme.colors.clone();
-        let input = div()
-            .id("workspace-name-input")
-            .debug_selector(|| "workspace-name-input".to_string())
-            .track_focus(&focus)
-            .flex_1()
-            .min_w(px(0.0))
-            .h(px(Self::workspace_node_height(theme)))
-            .px(px(3.0))
-            .overflow_hidden()
-            .border_1()
-            .border_color(if edit.error.is_some() {
-                colors.dialog_danger_button_bg
+            let path = if is_markdown_document(Path::new(&edit.draft)) {
+                MARKDOWN_ICON
             } else {
-                colors.dialog_primary_button_bg
-            })
-            .bg(colors.editor_background)
-            .text_size(px(theme.typography.ui_text_size(12.0)))
-            .text_color(colors.text_default)
-            .cursor(CursorStyle::IBeam)
+                GENERIC_FILE_ICON
+            };
+            svg()
+                .path(path)
+                .size_4()
+                .text_color(theme.colors.dialog_primary_button_bg)
+                .into_any_element()
+        };
+        let confirm_editor = editor.clone();
+        let cancel_editor = editor.clone();
+        let input_id = edit.input.entity_id();
+        let input = div()
+            .debug_selector(|| "workspace-name-input".to_string())
+            .flex_1()
+            .min_w_0()
             .child(
-                canvas(
-                    move |_, window, _cx| {
-                        window.text_system().shape_line(
-                            draft.clone(),
-                            px(12.0),
-                            &[TextRun {
-                                len: draft.len(),
-                                font: window.text_style().font(),
-                                color: colors.text_default,
-                                background_color: None,
-                                underline: None,
-                                strikethrough: None,
-
-                            }],
-                            None,
-                        )
-                    },
-                    move |bounds, line, window, cx| {
-                        let width = (bounds.size.width - px(4.0)).max(px(1.0));
-                        let caret_x = line.x_for_index(caret);
-                        let scroll = if caret_x < previous_scroll {
-                            caret_x
-                        } else if caret_x > previous_scroll + width {
-                            caret_x - width
-                        } else {
-                            previous_scroll
-                        };
-                        let scroll = scroll.min((line.width - width).max(px(0.0)));
-                        let origin = point(bounds.left() - scroll, bounds.top());
-                        if focus.is_focused(window) && !selection.is_empty() {
-                            let start = line.x_for_index(selection.start);
-                            let end = line.x_for_index(selection.end);
-                            window.paint_quad(fill(
-                                Bounds::new(
-                                    point(origin.x + start, bounds.top()),
-                                    size(end - start, bounds.size.height),
-                                ),
-                                colors.selection,
-                            ));
-                        }
-                        if let Err(error) = line.paint(origin, bounds.size.height, gpui::TextAlign::Left, None, window, cx) {
-                            eprintln!("绘制文件名失败：{error}");
-                        }
-                        if focus.is_focused(window) {
-                            if selection.is_empty() {
-                                window.paint_quad(fill(
-                                    Bounds::new(
-                                        point(origin.x + caret_x, bounds.top() + px(2.0)),
-                                        size(px(1.0), (bounds.size.height - px(4.0)).max(px(1.0))),
-                                    ),
-                                    colors.cursor,
-                                ));
-                            }
-                            if let Some(range) = marked.as_ref() {
-                                let start = line.x_for_index(range.start);
-                                let end = line.x_for_index(range.end);
-                                window.paint_quad(fill(
-                                    Bounds::new(
-                                        point(origin.x + start, bounds.bottom() - px(2.0)),
-                                        size(end - start, px(1.0)),
-                                    ),
-                                    colors.text_default,
-                                ));
-                            }
-                        }
-                        if let Some(entity) = input_editor.upgrade() {
-                            entity.update(cx, |editor, _cx| {
-                                if let Some(edit) = editor.workspace.name_edit.as_mut() {
-                                    edit.last_line = Some(line.clone());
-                                    edit.last_bounds = Some(bounds);
-                                    edit.scroll_x = scroll;
-                                }
-                            });
-                            window.handle_input(
-                                &focus,
-                                ElementInputHandler::new(bounds, entity),
-                                cx,
-                            );
-                        }
-                    },
-                )
-                .w_full()
-                .h_full(),
+                Input::new(&edit.input)
+                    .id("workspace-name-input")
+                    .accessibility_id("workspace-name-input")
+                    .aria_label("File name")
+                    .small()
+                    .disabled(edit.pending)
+                    .focus_bordered(edit.error.is_none())
+                    .when(edit.error.is_some(), |input| {
+                        input.border_color(theme.colors.dialog_danger_button_bg)
+                    }),
             )
-            .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-                if let Err(error) = click_editor.update(cx, |editor, cx| {
-                    if let Some(edit) = editor.workspace.name_edit.as_mut() {
-                        window.focus(&edit.focus, cx);
-                        if let Some((line, bounds)) = edit.last_line.as_ref().zip(edit.last_bounds)
-                        {
-                            let index = line.closest_index_for_x(
-                                event.position.x - bounds.left() + edit.scroll_x,
-                            );
-                            if edit.draft.is_char_boundary(index) {
-                                edit.selected_range = index..index;
-                                edit.caret = index;
-                                edit.selection_anchor = index;
-                            }
-                        }
+            .on_action(move |_: &InputEnter, window, cx| {
+                if let Err(error) = confirm_editor.update(cx, |editor, cx| {
+                    if editor
+                        .workspace
+                        .name_edit
+                        .as_ref()
+                        .is_some_and(|edit| edit.input.entity_id() == input_id)
+                    {
+                        editor.confirm_workspace_name_edit(window, cx);
                     }
-                    cx.notify();
                 }) {
-                    eprintln!("聚焦文件名输入失败：{error}");
+                    eprintln!("确认文件名失败：{error}");
                 }
-                cx.stop_propagation();
             })
-            .capture_key_down(move |event, window, cx| {
-                if let Err(error) = key_editor.update(cx, |editor, cx| {
-                    editor.on_workspace_name_key_down(event, window, cx)
+            .on_action(move |_: &InputEscape, window, cx| {
+                if let Err(error) = cancel_editor.update(cx, |editor, cx| {
+                    if editor
+                        .workspace
+                        .name_edit
+                        .as_ref()
+                        .is_some_and(|edit| edit.input.entity_id() == input_id)
+                    {
+                        editor.cancel_workspace_name_edit(window, cx);
+                    }
                 }) {
-                    eprintln!("处理文件名按键失败：{error}");
+                    eprintln!("取消文件名失败：{error}");
                 }
             });
         div()
@@ -876,15 +712,18 @@ impl Editor {
                     .pl(Self::workspace_tree_indent(depth))
                     .flex()
                     .items_center()
-                    .gap(px(4.0))
+                    .gap_1()
                     .child(div().w_5().flex_shrink_0())
                     .child(icon)
                     .child(input),
             )
             .children(edit.error.as_ref().map(|error| {
                 div()
+                    .id("workspace-name-error")
+                    .role(Role::Alert)
+                    .aria_label(error.clone())
                     .pl(Self::workspace_tree_indent(depth) + rems(2.75))
-                    .text_size(px(theme.typography.ui_text_size(10.0)))
+                    .text_xs()
                     .text_color(theme.colors.dialog_danger_button_bg)
                     .child(error.clone())
             }))

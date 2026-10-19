@@ -31,7 +31,6 @@ impl EntityInputHandler for Editor {
         Some(UTF16Selection {
             range: search_utf8_to_utf16(&text, range.start)..search_utf8_to_utf16(&text, range.end),
             reversed: match kind {
-                OverlayInputKind::TreeName => self.workspace.name_edit.as_ref().is_some_and(|edit| edit.caret < edit.selection_anchor),
                 OverlayInputKind::Query => self.workspace.search_input_state.reversed,
                 OverlayInputKind::Replace => self.workspace.replace_input_state.reversed,
                 _ => false,
@@ -55,9 +54,6 @@ impl EntityInputHandler for Editor {
         let kind = self.active_overlay_input(window);
         let was_marked = self.input_marked(kind).is_some();
         match kind {
-            OverlayInputKind::TreeName => {
-                if let Some(edit) = self.workspace.name_edit.as_mut() { edit.marked_range = None; }
-            }
             OverlayInputKind::Query => {
                 self.workspace.search_marked_range = None;
             }
@@ -86,8 +82,7 @@ impl EntityInputHandler for Editor {
                 OverlayInputKind::Replace => {}
                 OverlayInputKind::QuickOpen => self.refresh_quick_open_results(cx),
                 OverlayInputKind::CommandPalette => {}
-                OverlayInputKind::FormulaEditor
-                | OverlayInputKind::TreeName => {}
+                OverlayInputKind::FormulaEditor => {}
             }
             cx.notify();
         }
@@ -140,22 +135,6 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        if self.active_overlay_input(window) == OverlayInputKind::TreeName {
-            if let Some(edit) = self.workspace.name_edit.as_ref() {
-                if let Some((line, bounds)) = edit.last_line.as_ref().zip(edit.last_bounds) {
-                    let start = search_utf16_to_utf8(&edit.draft, range.start);
-                    let end = search_utf16_to_utf8(&edit.draft, range.end).max(start);
-                    let left = (bounds.left() + line.x_for_index(start) - edit.scroll_x)
-                        .clamp(bounds.left(), bounds.right());
-                    let right = (bounds.left() + line.x_for_index(end) - edit.scroll_x)
-                        .clamp(left, bounds.right());
-                    return Some(Bounds::new(
-                        point(left, bounds.top()),
-                        size((right - left).max(px(1.0)), bounds.size.height),
-                    ));
-                }
-            }
-        }
         let search_kind = match self.active_overlay_input(window) {
             OverlayInputKind::Query => Some(SearchInputKind::Query),
             OverlayInputKind::Replace => Some(SearchInputKind::Replace),
@@ -187,15 +166,6 @@ impl EntityInputHandler for Editor {
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
         let kind = self.active_overlay_input(window);
-        if kind == OverlayInputKind::TreeName {
-            if let Some(edit) = self.workspace.name_edit.as_ref() {
-                if let Some((line, bounds)) = edit.last_line.as_ref().zip(edit.last_bounds) {
-                    let index =
-                        line.closest_index_for_x(position.x - bounds.left() + edit.scroll_x);
-                    return Some(search_utf8_to_utf16(&edit.draft, index));
-                }
-            }
-        }
         let search_kind = match kind {
             OverlayInputKind::Query => Some(SearchInputKind::Query),
             OverlayInputKind::Replace => Some(SearchInputKind::Replace),

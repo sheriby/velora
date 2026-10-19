@@ -251,18 +251,13 @@ struct WorkspaceNameEdit {
     kind: WorkspaceEditKind,
     directory: PathBuf,
     draft: String,
-    selected_range: Range<usize>,
-    marked_range: Option<Range<usize>>,
+    input: Entity<gpui_kit::component::input::InputState>,
     focus: FocusHandle,
     error: Option<String>,
     pending: bool,
-    last_line: Option<ShapedLine>,
-    last_bounds: Option<Bounds<Pixels>>,
     revealed_row: Option<usize>,
     row_height: Option<Pixels>,
-    scroll_x: Pixels,
-    caret: usize,
-    selection_anchor: usize,
+    _input_subscription: Subscription,
     _blur_subscription: Subscription,
 }
 
@@ -345,7 +340,6 @@ pub(crate) enum OverlayInputKind {
     CommandPalette,
     /// 公式编辑器弹窗的草稿输入（多行，允许换行）。
     FormulaEditor,
-    TreeName,
 }
 
 impl From<SearchInputKind> for OverlayInputKind {

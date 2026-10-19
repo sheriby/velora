@@ -1,4 +1,4 @@
-use super::super::{Editor, OverlayInputKind, WorkspaceMenuAction, WorkspaceSelection};
+use super::super::{Editor, WorkspaceMenuAction, WorkspaceSelection};
 use crate::components::UndoCaptureKind;
 use gpui::{Entity, EntityInputHandler, Modifiers, MouseButton, TestAppContext, VisualTestContext};
 use std::fs;
@@ -93,9 +93,10 @@ async fn markdown_creation_selects_the_stem_and_allows_changing_the_suffix(
         })
     });
     redraw(cx);
-    editor.read_with(cx, |editor, _cx| {
-        assert_eq!(editor.input_text(OverlayInputKind::TreeName), "untitled.md");
-        assert_eq!(editor.input_selection(OverlayInputKind::TreeName), 0..8);
+    editor.read_with(cx, |editor, cx| {
+        let input = editor.workspace.name_edit.as_ref().unwrap().input.read(cx);
+        assert_eq!(input.value(), "untitled.md");
+        assert_eq!(input.selected_range(), 0..8);
     });
     cx.simulate_input("笔记");
     cx.simulate_keystrokes("enter");
@@ -485,6 +486,7 @@ async fn copy_tree_paths_and_filename_uses_the_selected_target(cx: &mut TestAppC
 
 #[gpui::test]
 async fn composing_a_chinese_tree_name_does_not_confirm_until_unmarked(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
     let (editor, cx, root) = tree_fixture(cx);
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
@@ -492,20 +494,17 @@ async fn composing_a_chinese_tree_name_does_not_confirm_until_unmarked(cx: &mut 
         })
     });
     redraw(cx);
-    cx.update(|window, cx| {
-        editor.update(cx, |editor, cx| {
-            editor.replace_and_mark_text_in_range(None, "中文", None, window, cx);
-            editor.confirm_workspace_name_edit(window, cx);
-        })
+    let input = editor.read_with(cx, |editor, _| {
+        editor.workspace.name_edit.as_ref().unwrap().input.clone()
     });
+    input.update_in(cx, |input, window, cx| {
+        input.replace_and_mark_text_in_range(None, "中文", None, window, cx)
+    });
+    cx.update(|window, cx| window.press("enter", cx));
     redraw(cx);
     assert_eq!(fs::read_dir(&root).expect("查看目录").count(), 0);
-    cx.update(|window, cx| {
-        editor.update(cx, |editor, cx| {
-            editor.unmark_text(window, cx);
-            editor.confirm_workspace_name_edit(window, cx);
-        })
-    });
+    input.update_in(cx, |input, window, cx| input.unmark_text(window, cx));
+    cx.update(|window, cx| window.press("enter", cx));
     redraw(cx);
     assert!(root.join("中文.md").is_file());
 }
@@ -1061,8 +1060,11 @@ fn tree_creation_input_is_visible_after_large_directories_load(cx: &mut TestAppC
         }
         cx.simulate_input("新笔记");
         if hidden.is_empty() {
-            editor.read_with(cx, |editor, _| {
-                assert_eq!(editor.input_text(OverlayInputKind::TreeName), "新笔记.md");
+            editor.read_with(cx, |editor, cx| {
+                assert_eq!(
+                    editor.workspace.name_edit.as_ref().unwrap().input.read(cx).value(),
+                    "新笔记.md"
+                );
             });
         }
         cx.update(|window, cx| {
@@ -1730,4 +1732,41 @@ fn tree_drop_directory_moves_update_every_split_group_and_keep_shared_edits(
     redraw(cx);
     assert_eq!(fs::read_to_string(&destination).unwrap(), "未保存原文\n");
     assert!(!path.exists(), "保存不能重新创建移动前的目录和文件");
+}
+
+#[gpui::test]
+fn tree_name_input_exposes_native_text_semantics_and_undo(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let (editor, visual, root) = tree_fixture(cx);
+    editor.update_in(visual, |editor, window, cx| {
+        window.activate_window();
+        editor.create_generic_workspace_file(window, cx);
+    });
+    redraw(visual);
+    assert!(
+        visual.debug_bounds("workspace-name-input").is_some(),
+        "名称输入已挂载"
+    );
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window
+                .try_find("workspace-name-input")
+                .and_then(|field| field.role()),
+            Some(gpui::Role::TextInput),
+            "树内名称应提供标准文本输入语义"
+        );
+        window.input("笔记 📝.md", cx);
+        window.press("secondary-a", cx);
+        window.press("secondary-x", cx);
+        window.press("secondary-z", cx);
+    });
+    redraw(visual);
+    visual.update(|window, cx| window.press("enter", cx));
+    redraw(visual);
+    assert!(
+        root.join("笔记 📝.md").is_file(),
+        "撤销剪切后应恢复完整名称"
+    );
+    assert!(editor.read_with(visual, |editor, _| editor.buffer.text().is_empty()));
 }
