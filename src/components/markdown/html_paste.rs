@@ -164,7 +164,7 @@ pub(crate) fn clipboard_html(expected_change: u64) -> Option<String> {
             return None;
         }
         if let Err(error) = OpenClipboard(None) {
-            log::debug!("无法读取 HTML 剪贴板，使用纯文本：{error}");
+            eprintln!("无法读取 HTML 剪贴板，使用纯文本：{error}");
             return None;
         }
         let html = (|| {
@@ -183,12 +183,12 @@ pub(crate) fn clipboard_html(expected_change: u64) -> Option<String> {
             let html = cf_html_fragment(std::slice::from_raw_parts(bytes.cast::<u8>(), length));
             // 最后一次解锁返回零并不表示失败，必须同时检查系统错误码。
             if GlobalUnlock(handle).is_err() && GetLastError().0 != 0 {
-                log::warn!("无法解锁 HTML 剪贴板内存");
+                eprintln!("无法解锁 HTML 剪贴板内存");
             }
             html
         })();
         if let Err(error) = CloseClipboard() {
-            log::warn!("无法关闭 HTML 剪贴板读取：{error}");
+            eprintln!("无法关闭 HTML 剪贴板读取：{error}");
         }
         html
     }
