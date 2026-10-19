@@ -286,7 +286,7 @@
         // `ctrl-x` 与「剪切」撞车，这条自定义会被退回默认键——显示表要跟着实际绑上的那颗。
         config.insert("copy".to_string(), vec!["ctrl-x".to_string()]);
 
-        let shortcuts = super::EffectiveShortcuts::build(&config);
+        let shortcuts = super::EffectiveShortcuts::build(&config, &super::resolved_keybindings(&config));
         assert_eq!(
             shortcuts.key(ShortcutCommand::BoldSelection),
             Some(if cfg!(target_os = "macos") { "alt-cmd-b" } else if cfg!(target_os = "windows") { "alt-win-b" } else { "alt-super-b" }),
@@ -303,3 +303,44 @@
             "没改过的命令仍是默认键"
         );
     }
+
+#[gpui::test]
+fn remapping_shortcuts_preserves_framework_bindings_and_removes_old_application_keys(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gpui::AsKeystroke as _;
+    cx.update(|cx| {
+        cx.bind_keys([gpui::KeyBinding::new(
+            "f12",
+            gpui_kit::base::actions::SelectDown,
+            Some("KitContract"),
+        )]);
+        super::install_keybindings(cx, &BTreeMap::new());
+        let mut updated = BTreeMap::new();
+        updated.insert("save_document".into(), vec!["ctrl-alt-shift-9".into()]);
+        super::install_keybindings(cx, &updated);
+        let keymap = cx.key_bindings();
+        let keymap = keymap.borrow();
+        let keys_for = |action: &dyn gpui::Action| {
+            keymap
+                .bindings_for_action(action)
+                .flat_map(|binding| {
+                    binding
+                        .keystrokes()
+                        .iter()
+                        .map(|key| key.as_keystroke().unparse())
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            keys_for(&gpui_kit::base::actions::SelectDown),
+            vec!["f12"],
+            "更新应用键位应保留框架注册的绑定"
+        );
+        assert_eq!(
+            keys_for(&crate::components::SaveDocument),
+            vec!["ctrl-alt-shift-9"],
+            "更新后不能残留应用的旧默认键位"
+        );
+    });
+}

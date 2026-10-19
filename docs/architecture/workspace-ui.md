@@ -153,6 +153,8 @@ Kit 0.7.3 `TitleBar::on_close_window` 仅 Linux 生效，因此这里组合标�
   另外：`Window::dispatch_action` 读的是**上一帧**渲染出的派发树——面板输入框持有窗口焦点时块那一层不在派发路径上，所以面板里执行块级动作要靠编辑器层的捕获处理者接手（判定 `runtime_context.rs:block_focus_is_live`）。当场把焦点指回块不管用（块节点要等一次重绘才可寻），`window.on_next_frame` 在本仓测试里不触发。
 - **一条命令的键位仪式有八处**（漏一处就是改了不生效）：`actions!` 声明、`ShortcutCommand` 枚举、`SHORTCUT_DEFINITIONS` 条目、`key_binding_for` 分支（都在 `components/actions.rs`）· 偏好页那一列的标签（`config/preferences/pages_shortcuts_window.rs`）· 编辑器层处理者（`editor/format_ops.rs` 等）· 渲染里的注册（`editor/render/paint.rs` 那串 `capture_action`）· 菜单行的快捷键（`context_menu/document_menu.rs`）。四处入口（键位、正文右键菜单、选中工具栏、命令面板）汇到同一组函数，可用判定也只有一份。
 
+- `components/actions.rs:install_keybindings` 同时保存本次应用动作的类型集合；重新安装时只替换这些动作的旧绑定，保留 Kit 和其他组件已有的键位。偏好保存不再单独清空全局键位表，组件初始化及主题状态不重建。
+
 ## 10. 配置 / 主题 / i18n
 
 - **配置根目录**：`VeloraConfigDirs::from_system`（`directories::ProjectDirs`）；子项有语言包目录、主题目录、`.history`、最近列表、`config.toml`、恢复快照目录。**测试必须用 `override_test_config_root` 独占目录**（线程局部 RAII），否则读写 config.toml 的用例互相污染（典型症状：单独跑绿、整套跑红）。

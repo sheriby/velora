@@ -5,6 +5,7 @@
 //! block. Window and menu commands use global bindings so they remain
 //! available even when focus is on non-block UI such as dialogs or buttons.
 
+use std::any::TypeId;
 use std::collections::{BTreeMap, BTreeSet};
 
 use gpui::*;
@@ -1101,12 +1102,13 @@ fn key_binding_for(
 /// 用户在偏好页改过绑定后，菜单那一列跟着改，不会停在默认键上。
 pub(crate) struct EffectiveShortcuts {
     primary: BTreeMap<ShortcutCommand, String>,
+    action_types: BTreeSet<TypeId>,
 }
 
 impl Global for EffectiveShortcuts {}
 
 impl EffectiveShortcuts {
-    fn build(config: &BTreeMap<String, Vec<String>>) -> Self {
+    fn build(config: &BTreeMap<String, Vec<String>>, bindings: &[KeyBinding]) -> Self {
         let normalized = normalize_shortcut_config(config);
         let mut primary = BTreeMap::new();
         for definition in SHORTCUT_DEFINITIONS {
@@ -1118,7 +1120,12 @@ impl EffectiveShortcuts {
                 primary.insert(definition.command, key.clone());
             }
         }
-        Self { primary }
+        Self {
+            primary,
+            action_types: bindings.iter()
+                .map(|binding| binding.action().as_any().type_id())
+                .collect(),
+        }
     }
 
     fn key(&self, command: ShortcutCommand) -> Option<&str> {
@@ -1179,8 +1186,27 @@ pub(crate) fn resolved_keybindings(config: &BTreeMap<String, Vec<String>>) -> Ve
 }
 
 pub(crate) fn install_keybindings(cx: &mut App, config: &BTreeMap<String, Vec<String>>) {
-    cx.bind_keys(resolved_keybindings(config));
-    cx.set_global(EffectiveShortcuts::build(config));
+    let retained = cx.try_global::<EffectiveShortcuts>().map(|previous| {
+        cx.key_bindings()
+            .borrow()
+            .bindings()
+            .filter(|binding| {
+                !previous
+                    .action_types
+                    .contains(&binding.action().as_any().type_id())
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    let bindings = resolved_keybindings(config);
+    let shortcuts = EffectiveShortcuts::build(config, &bindings);
+    if let Some(retained) = retained {
+        // 只替换由应用注册的动作，Kit 及其他组件的键位必须保留。
+        cx.clear_key_bindings();
+        cx.bind_keys(retained);
+    }
+    cx.bind_keys(bindings);
+    cx.set_global(shortcuts);
 }
 
 /// Register key bindings for the block editor.

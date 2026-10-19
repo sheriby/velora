@@ -403,7 +403,6 @@ impl PreferencesWindow {
             });
         }
         EditorSettings::set_hide_markdown_markers_in_memory(cx, preferences.hide_markdown_markers);
-        cx.clear_key_bindings();
         install_keybindings(cx, &preferences.keybindings);
         crate::app_menu::install_menus(cx);
         cx.update_global::<EditorSettings, _>(|settings, _cx| {

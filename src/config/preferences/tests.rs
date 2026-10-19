@@ -2461,3 +2461,77 @@ fn shortcut_keycaps_distinguish_forward_and_backward_delete() {
     assert_eq!(forward.unparse(), "ctrl-delete", "显示转换不能修改真实绑定");
     assert_eq!(backward.unparse(), "ctrl-backspace");
 }
+
+#[gpui::test]
+fn saving_preferences_preserves_kit_keys_and_replaces_only_editor_shortcuts(
+    cx: &mut TestAppContext,
+) {
+    use gpui::AsKeystroke as _;
+    let root =
+        std::env::temp_dir().join(format!("velora-settings-keymap-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    init_preferences_test_app(cx);
+    crate::config::load_or_create_app_preferences().unwrap();
+    let handle = cx.update(|cx| {
+        open_preferences_window_with_state(
+            cx,
+            AppPreferences::default(),
+            default_theme_options(),
+            "Preferences".into(),
+        )
+    });
+    handle
+        .update(cx, |preferences, _, cx| {
+            preferences
+                .keybindings
+                .insert("save_document".into(), vec!["ctrl-alt-shift-9".into()]);
+            cx.notify();
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        window.click("preferences-save", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .read_with(cx, |preferences, _| {
+            assert!(preferences.save_error.is_none())
+        })
+        .unwrap();
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        window.click("preferences-startup-dropdown", cx);
+        window.press("down", cx);
+        window.press("enter", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .read_with(cx, |preferences, _| {
+            assert_eq!(
+                preferences.startup_open,
+                StartupOpenPreference::LastOpenedFile,
+                "保存设置后，Kit 选择器仍应响应方向键与确认键"
+            );
+        })
+        .unwrap();
+    visual.update(|_, cx| {
+        let keymap = cx.key_bindings();
+        let keymap = keymap.borrow();
+        let keys = keymap
+            .bindings_for_action(&crate::components::SaveDocument)
+            .flat_map(|binding| {
+                binding
+                    .keystrokes()
+                    .iter()
+                    .map(|key| key.as_keystroke().unparse())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            vec!["ctrl-alt-shift-9"],
+            "新键位应替换旧应用键位，不能叠加旧默认值"
+        );
+    });
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+}
