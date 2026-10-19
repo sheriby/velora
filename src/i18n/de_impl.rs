@@ -328,6 +328,9 @@ impl I18nStringsDe {
             preferences_theme_light: self
                 .preferences_theme_light
                 .unwrap_or(defaults.preferences_theme_light),
+            preferences_image_group: self
+                .preferences_image_group
+                .unwrap_or(defaults.preferences_image_group),
             preferences_image_insert_behavior: self
                 .preferences_image_insert_behavior
                 .unwrap_or(defaults.preferences_image_insert_behavior),

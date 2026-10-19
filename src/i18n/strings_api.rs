@@ -458,6 +458,7 @@ impl I18nStrings {
         strings.preferences_status_bar_show_cursor_position = "光标位置".into();
         strings.preferences_status_bar_show_sidebar_toggle = "侧边栏".into();
         strings.preferences_status_bar_show_mode_switch = "模式切换".into();
+        strings.preferences_image_group = "插入行为".into();
         strings.preferences_image_insert_behavior = "插入图片时...".into();
         strings.preferences_image_paste_none = "无特殊操作".into();
         strings.preferences_image_paste_copy_to_document_folder = "复制图片到 ./ 文件夹".into();
@@ -739,6 +740,7 @@ impl I18nStrings {
             preferences_theme_system: "Follow System".into(),
             preferences_theme_dark: "Dark".into(),
             preferences_theme_light: "Light".into(),
+            preferences_image_group: "Insertion".into(),
             preferences_image_insert_behavior: "When inserting images...".into(),
             preferences_image_paste_none: "No special action".into(),
             preferences_image_paste_copy_to_document_folder:

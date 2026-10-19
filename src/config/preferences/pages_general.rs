@@ -684,7 +684,7 @@ impl PreferencesWindow {
         );
         Self::preference_group(
             "preferences-images-group",
-            strings.preferences_nav_image.clone(),
+            strings.preferences_image_group.clone(),
             vec![Self::preference_row(
                 strings.preferences_image_insert_behavior.clone(),
                 image,

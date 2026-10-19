@@ -237,6 +237,8 @@ pub struct I18nStrings {
     pub preferences_theme_dark: String,
     /// Light theme selection label.
     pub preferences_theme_light: String,
+    /// Image page group title; must stay distinct from the page header.
+    pub preferences_image_group: String,
     /// Image paste behavior field label.
     pub preferences_image_insert_behavior: String,
     pub preferences_image_paste_none: String,

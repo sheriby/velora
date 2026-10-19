@@ -147,6 +147,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "preferences_theme_system",
     "preferences_theme_dark",
     "preferences_theme_light",
+    "preferences_image_group",
     "preferences_image_insert_behavior",
     "preferences_image_paste_none",
     "preferences_image_paste_copy_to_document_folder",

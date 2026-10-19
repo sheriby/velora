@@ -150,6 +150,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) preferences_theme_system: Option<String>,
     pub(crate) preferences_theme_dark: Option<String>,
     pub(crate) preferences_theme_light: Option<String>,
+    pub(crate) preferences_image_group: Option<String>,
     pub(crate) preferences_image_insert_behavior: Option<String>,
     pub(crate) preferences_image_paste_none: Option<String>,
     pub(crate) preferences_image_paste_copy_to_document_folder: Option<String>,
