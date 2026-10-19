@@ -533,24 +533,81 @@ impl Editor {
         let Some(session) = self.ai_session.as_ref() else {
             return;
         };
+        let session_id = session.saved.id.clone();
         let root = session.saved.workspace.root.clone();
+        let bound = session.saved.bindings.get(&record.path).cloned();
+        let groups = self.split_groups();
+        let destination = bound
+            .clone()
+            .or_else(|| {
+                self.ai_cached_source_path_for_id(&record.path, root.as_deref(), bound.as_deref())
+            })
+            .or_else(|| {
+                groups.iter().find_map(|group| {
+                    group.read(cx).ai_cached_source_path_for_id(
+                        &record.path,
+                        root.as_deref(),
+                        bound.as_deref(),
+                    )
+                })
+            });
+        let target = groups
+            .into_iter()
+            .find(|group| {
+                let editor = group.read(cx);
+                !editor.code_document
+                    && (ai_document_id(
+                        editor.file_path.as_deref(),
+                        root.as_deref(),
+                        editor.recovery_id,
+                    ) == record.path
+                        || bound
+                            .as_ref()
+                            .is_some_and(|path| editor.active_document_path() == Some(path)))
+            })
+            .or_else(|| self.active_split_editor());
         if let Some(session) = self.ai_session.as_mut() {
             session.review_open = false;
             session.review_navigation = None;
         }
-        if let Some(group) = self.active_split_editor() {
+        if let Some(group) = target {
+            if self
+                .active_split_editor()
+                .is_none_or(|active| active.entity_id() != group.entity_id())
+            {
+                self.activate_split_group(group.entity_id(), cx);
+            }
             let handle = window.window_handle();
+            let host = cx.entity().downgrade();
             cx.defer(move |cx| {
                 if let Err(error) = handle.update(cx, |_, window, cx| {
+                    let current = match host.read_with(cx, |editor, _| {
+                        !editor.modal_is_open()
+                            && editor.info_dialog.is_none()
+                            && editor.ai_session.as_ref().is_some_and(|session| {
+                                session.saved.id == session_id && session.mode == PanelMode::Sources
+                            })
+                    }) {
+                        Ok(current) => current,
+                        Err(error) => {
+                            eprintln!("引用定位的宿主已关闭：{error}");
+                            return;
+                        }
+                    };
+                    if !current || gpui_kit::base::active_focus_trap(window, cx).is_some() {
+                        return;
+                    }
                     group.update(cx, |editor, cx| {
-                        editor.navigate_ai_source(record, root, window, cx)
-                    })
+                        if !editor.modal_is_open() && editor.info_dialog.is_none() {
+                            editor.navigate_ai_source(record, root, destination, window, cx);
+                        }
+                    });
                 }) {
                     eprintln!("定位 AI 引用失败：{error}");
                 }
             });
         } else {
-            self.navigate_ai_source(record, root, window, cx);
+            self.navigate_ai_source(record, root, destination, window, cx);
         }
     }
 
@@ -558,30 +615,55 @@ impl Editor {
         &mut self,
         record: crate::ai::workspace::SourceRecord,
         root: Option<PathBuf>,
+        destination: Option<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let current_id =
             ai_document_id(self.file_path.as_deref(), root.as_deref(), self.recovery_id);
-        if current_id != record.path {
-            let Some(root) = root else {
-                self.show_message_modal("AI", cx.global::<crate::i18n::I18nManager>().strings().ai_error_reference_closed.clone(), cx);
-                return;
-            };
-            match root.join(&record.path).canonicalize() {
-                Ok(path) if path.starts_with(&root) => self.open_workspace_file_in_mode(
-                    crate::file_url::canonical_path(&path),
-                    super::workspace::WorkspaceOpenMode::Pinned,
-                    window,
-                    cx,
-                ),
-                _ => {
-                    self.show_message_modal("AI", cx.global::<crate::i18n::I18nManager>().strings().ai_error_reference_missing.clone(), cx);
+        if current_id != record.path
+            && destination
+                .as_ref()
+                .is_none_or(|path| self.active_document_path() != Some(path))
+        {
+            let path = if let Some(path) = destination {
+                path
+            } else {
+                let Some(root) = root.as_ref() else {
+                    self.show_message_modal(
+                        "AI",
+                        cx.global::<crate::i18n::I18nManager>()
+                            .strings()
+                            .ai_error_reference_closed
+                            .clone(),
+                        cx,
+                    );
                     return;
+                };
+                match root.join(&record.path).canonicalize() {
+                    Ok(path) if path.starts_with(root) => crate::file_url::canonical_path(&path),
+                    _ => {
+                        self.show_message_modal(
+                            "AI",
+                            cx.global::<crate::i18n::I18nManager>()
+                                .strings()
+                                .ai_error_reference_missing
+                                .clone(),
+                            cx,
+                        );
+                        return;
+                    }
                 }
-            }
-            if ai_document_id(self.file_path.as_deref(), Some(&root), self.recovery_id)
+            };
+            self.open_workspace_file_in_mode(
+                path.clone(),
+                super::workspace::WorkspaceOpenMode::Pinned,
+                window,
+                cx,
+            );
+            if ai_document_id(self.file_path.as_deref(), root.as_deref(), self.recovery_id)
                 != record.path
+                && self.active_document_path() != Some(&path)
             {
                 return;
             }

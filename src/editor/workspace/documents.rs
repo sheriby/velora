@@ -21,9 +21,40 @@ impl Editor {
             .map(|tab| (tab.path.clone(), tab.recovery_id)).collect()
     }
 
-    pub(in crate::editor) fn ai_cached_source_for_id(&self, id: &str, root: Option<&Path>, bound: Option<&Path>) -> Option<String> {
-        self.workspace.open_documents.iter().find(|tab| bound == Some(tab.path.as_path()) || super::super::ai_assistant::ai_document_id(Some(&tab.path), root, tab.recovery_id) == id)
+    fn ai_cached_document_for_id(
+        &self,
+        id: &str,
+        root: Option<&Path>,
+        bound: Option<&Path>,
+    ) -> Option<&WorkspaceDocumentTab> {
+        self.workspace.open_documents.iter().find(|tab| {
+            bound == Some(tab.path.as_path())
+                || super::super::ai_assistant::ai_document_id(
+                    Some(&tab.path),
+                    root,
+                    tab.recovery_id,
+                ) == id
+        })
+    }
+
+    pub(in crate::editor) fn ai_cached_source_for_id(
+        &self,
+        id: &str,
+        root: Option<&Path>,
+        bound: Option<&Path>,
+    ) -> Option<String> {
+        self.ai_cached_document_for_id(id, root, bound)
             .map(|tab| tab.markdown.clone())
+    }
+
+    pub(in crate::editor) fn ai_cached_source_path_for_id(
+        &self,
+        id: &str,
+        root: Option<&Path>,
+        bound: Option<&Path>,
+    ) -> Option<PathBuf> {
+        self.ai_cached_document_for_id(id, root, bound)
+            .map(|tab| tab.path.clone())
     }
 
     pub(in crate::editor) fn ai_prepare_cached_document(&self, path: &Path) -> Option<(String, Option<DocumentView>, Option<super::super::buffer::FileShape>, u64, uuid::Uuid)> {

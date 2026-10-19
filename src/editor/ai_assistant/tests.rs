@@ -4176,6 +4176,228 @@ fn ai_sources_list_keeps_candidates_inside_the_panel_with_long_feedback(cx: &mut
     visual.update(|window, _| window.remove_window());
 }
 
+fn exercise_cached_source_navigation(untitled: bool, cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root =
+        std::env::temp_dir().join(format!("velora-ai-source-cached-{}", uuid::Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let _config = crate::config::override_test_config_root(root.join("config"));
+    crate::config::preferences::update_app_preferences(|preferences| preferences.autosave = false)
+        .unwrap();
+    let current = workspace.join("current.md");
+    let outside = root.join("outside.md");
+    let destination = "# 引用文档\n\n未保存的参考内容。\n\n保持下文。";
+    std::fs::write(&current, "当前文档").unwrap();
+    std::fs::write(&outside, "磁盘旧内容").unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "当前文档".into(), Some(current.clone())))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    let start = destination.find("未保存的参考内容。").unwrap();
+    let range = start..start + "未保存的参考内容。".len();
+    let (id, path) = handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.set_workspace_root(workspace.clone(), cx);
+            if untitled {
+                editor.new_workspace_document(window, cx);
+            } else {
+                editor.open_workspace_file(outside.clone(), window, cx);
+            }
+            let length = editor.buffer.text().len();
+            editor.apply_ai_source_edits(
+                &[crate::ai::ProposedEdit {
+                    range: 0..length,
+                    replacement: destination.into(),
+                }],
+                cx,
+            );
+            let path = editor.active_document_path().unwrap().clone();
+            let id = super::ai_document_id(
+                editor.file_path.as_deref(),
+                Some(&workspace.canonicalize().unwrap()),
+                editor.recovery_id,
+            );
+            editor.open_workspace_file(current.clone(), window, cx);
+            assert_eq!(editor.buffer.text(), "当前文档");
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_mut().unwrap();
+            session.saved.workspace.source_records = vec![crate::ai::workspace::SourceRecord {
+                path: id.clone(),
+                line: 3,
+                range: range.clone(),
+                version: crate::editor::persistence::file_content_version(destination),
+                excerpt: "未保存的参考内容。".into(),
+            }];
+            session.mode = PanelMode::Sources;
+            cx.notify();
+            (id, path)
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    visual.update(|window, cx| window.press("enter", cx));
+    visual.run_until_parked();
+    draw(&mut visual);
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            assert_eq!(
+                editor.buffer.text(),
+                destination,
+                "来源应打开已有标签的未保存内容：{id}"
+            );
+            assert_eq!(editor.capture_source_selection_snapshot(cx).range, range);
+            assert!(!editor.modal_is_open());
+            assert!(editor.document_dirty);
+            assert!(
+                editor
+                    .ai_cached_document_sources()
+                    .iter()
+                    .any(|(entry, _)| entry == &path)
+            );
+        })
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&current).unwrap(), "当前文档");
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "磁盘旧内容");
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+fn ai_sources_cached_external_document_keeps_unsaved_content(cx: &mut TestAppContext) {
+    exercise_cached_source_navigation(false, cx);
+}
+
+#[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+fn ai_sources_cached_untitled_document_keeps_unsaved_content(cx: &mut TestAppContext) {
+    exercise_cached_source_navigation(true, cx);
+}
+
+#[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+fn ai_sources_visible_split_document_receives_navigation_without_replacing_the_active_pane(
+    cx: &mut TestAppContext,
+) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    let root =
+        std::env::temp_dir().join(format!("velora-ai-source-split-{}", uuid::Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let _config = crate::config::override_test_config_root(root.join("config"));
+    crate::config::preferences::update_app_preferences(|preferences| preferences.autosave = false)
+        .unwrap();
+    let current = workspace.join("current.md");
+    let outside = root.join("outside.md");
+    let destination = "# 外部引用\n\n保留未保存的参考内容。";
+    std::fs::write(&current, "当前文档").unwrap();
+    std::fs::write(&outside, "磁盘原文").unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    initialize(cx);
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "当前文档".into(), Some(current.clone())))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.split_active_document(
+                crate::editor::workspace::split::SplitDirection::Right,
+                window,
+                cx,
+            );
+        })
+        .unwrap();
+    visual.run_until_parked();
+    draw(&mut visual);
+    draw(&mut visual);
+    let groups = handle
+        .read_with(&visual, |editor, _| editor.split_groups())
+        .unwrap();
+    assert_eq!(groups.len(), 2);
+    let referenced = groups.first().unwrap().clone();
+    let original = groups.last().unwrap().clone();
+    visual.update(|window, cx| {
+        referenced.update(cx, |editor, cx| {
+            editor.open_workspace_file(outside.clone(), window, cx);
+            let length = editor.buffer.text().len();
+            editor.apply_ai_source_edits(
+                &[crate::ai::ProposedEdit {
+                    range: 0..length,
+                    replacement: destination.into(),
+                }],
+                cx,
+            );
+        })
+    });
+    visual.run_until_parked();
+    let start = destination.find("保留未保存的参考内容。").unwrap();
+    let range = start..start + "保留未保存的参考内容。".len();
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.activate_split_group(original.entity_id(), cx);
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            let session = editor.ai_session.as_mut().unwrap();
+            let id = referenced.read_with(cx, |leaf, _| {
+                super::ai_document_id(
+                    leaf.file_path.as_deref(),
+                    session.saved.workspace.root.as_deref(),
+                    leaf.recovery_id,
+                )
+            });
+            session.saved.workspace.source_records = vec![crate::ai::workspace::SourceRecord {
+                path: id,
+                line: 3,
+                range: range.clone(),
+                version: crate::editor::persistence::file_content_version(destination),
+                excerpt: "保留未保存的参考内容。".into(),
+            }];
+            session.mode = PanelMode::Sources;
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    visual.update(|window, cx| window.press("enter", cx));
+    visual.run_until_parked();
+    draw(&mut visual);
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(
+                editor.active_split_editor().unwrap().entity_id(),
+                referenced.entity_id(),
+                "引用已在另一分屏显示，应激活原分屏"
+            )
+        })
+        .unwrap();
+    referenced.update(&mut visual, |editor, cx| {
+        assert_eq!(editor.buffer.text(), destination);
+        assert_eq!(editor.capture_source_selection_snapshot(cx).range, range);
+        assert!(editor.document_dirty);
+    });
+    original.read_with(&visual, |editor, _| {
+        assert_eq!(editor.buffer.text(), "当前文档")
+    });
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "磁盘原文");
+    visual.update(|window, _| window.remove_window());
+}
+
 #[gpui::test]
 fn ai_context_sources_are_checkable_and_share_one_selection_list(cx: &mut TestAppContext) {
     use gpui::AppContext as _;
