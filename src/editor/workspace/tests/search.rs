@@ -143,34 +143,35 @@ async fn workspace_search_accepts_unicode_platform_input(cx: &mut TestAppContext
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
-            // 搜索输入框在抽屉里：先确保展开再聚焦。
-            editor.workspace.is_open = true;
-            editor.workspace.active_tab = super::super::WorkspaceTab::Search;
-            let focus = editor
-                .workspace
-                .search_focus
-                .get_or_insert_with(|| cx.focus_handle())
-                .clone();
-            window.focus(&focus, cx);
+            editor.open_document_find(cx);
             cx.notify();
         });
         window.draw(cx).clear(cx);
     });
     cx.simulate_input("你好");
-    editor.read_with(cx, |editor, _cx| {
+    editor.read_with(cx, |editor, cx| {
         assert_eq!(editor.workspace.search_query, "你好");
         assert_eq!(
-            editor.workspace.search_selected_range,
+            editor
+                .search_input_state(super::super::SearchInputKind::Query)
+                .unwrap()
+                .input
+                .read(cx)
+                .selected_range(),
             "你好".len().."你好".len()
         );
     });
     cx.simulate_keystrokes("backspace");
-    editor.read_with(cx, |editor, _cx| {
+    editor.read_with(cx, |editor, _| {
         assert_eq!(editor.workspace.search_query, "你");
     });
     cx.update(|_window, cx| cx.write_to_clipboard(ClipboardItem::new_string("世界".into())));
-    cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-v" } else { "ctrl-v" });
-    editor.read_with(cx, |editor, _cx| {
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-v"
+    } else {
+        "ctrl-v"
+    });
+    editor.read_with(cx, |editor, _| {
         assert_eq!(editor.workspace.search_query, "你世界");
     });
 }
@@ -182,23 +183,41 @@ async fn workspace_search_waits_for_ime_commit_before_searching(cx: &mut TestApp
         crate::theme::ThemeManager::init(cx);
         crate::components::init(cx);
     });
-    let (editor, cx) =
-        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
-    cx.update(|window, cx| {
-        editor.update(cx, |editor, cx| {
-            editor.workspace.active_tab = super::super::WorkspaceTab::Search;
-            let generation = editor.workspace.search_generation;
-            editor.replace_and_mark_text_in_range(None, "ni", Some(2..2), window, cx);
-            assert_eq!(editor.workspace.search_query, "ni");
-            assert_eq!(editor.workspace.search_generation, generation);
-            editor.replace_and_mark_text_in_range(None, "你", Some(1..1), window, cx);
-            assert_eq!(editor.workspace.search_query, "你");
-            assert_eq!(editor.workspace.search_generation, generation);
-            editor.replace_text_in_range(None, "你", window, cx);
-            assert!(editor.workspace.search_marked_range.is_none());
-            assert_eq!(editor.workspace.search_generation, generation + 1);
-        });
+    let (editor, visual) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(visual, |editor, cx| editor.open_document_find(cx));
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    let input = editor.read_with(visual, |editor, _| {
+        editor
+            .search_input_state(super::super::SearchInputKind::Query)
+            .unwrap()
+            .input
+            .clone()
     });
+    let generation = editor.read_with(visual, |editor, _| editor.workspace.search_generation);
+    for (value, selected) in [("ni", 2..2), ("你", 1..1)] {
+        input.update_in(visual, |input, window, cx| {
+            input.replace_and_mark_text_in_range(None, value, Some(selected), window, cx)
+        });
+        visual.run_until_parked();
+        assert_eq!(input.read_with(visual, |input, _| input.value()), value);
+        assert_eq!(
+            editor.read_with(visual, |editor, _| editor.workspace.search_generation),
+            generation
+        );
+    }
+    input.update_in(visual, |input, window, cx| {
+        input.replace_text_in_range(None, "你", window, cx)
+    });
+    visual.run_until_parked();
+    assert_eq!(
+        editor.read_with(visual, |editor, _| editor.workspace.search_query.clone()),
+        "你"
+    );
+    assert_eq!(
+        editor.read_with(visual, |editor, _| editor.workspace.search_generation),
+        generation + 1
+    );
 }
 
 /// 一份长于 8 KiB、且第 8192 个字节正好落在三字节汉字中间的 Markdown。
@@ -1695,23 +1714,48 @@ async fn sidebar_search_inputs_show_a_caret_and_replace_controls_accept_empty_te
     cx.simulate_click(input.center(), gpui::Modifiers::none());
     cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
-        editor.read_with(cx, |editor, _| editor.search_input_state(super::super::SearchInputKind::Query).caret_bounds.is_some()),
+        editor.read_with(cx, |editor, cx| editor
+            .search_input_state(super::super::SearchInputKind::Query)
+            .unwrap()
+            .input
+            .read(cx)
+            .cursor_layout()
+            .is_some()),
         "聚焦搜索框应显示文字光标"
     );
     let replace_input = cx.debug_bounds("workspace-search-replace").expect("替换框");
     cx.simulate_click(replace_input.center(), gpui::Modifiers::none());
     cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
-        editor.read_with(cx, |editor, _| editor.search_input_state(super::super::SearchInputKind::Replace).caret_bounds.is_some()),
+        editor.read_with(cx, |editor, cx| editor
+            .search_input_state(super::super::SearchInputKind::Replace)
+            .unwrap()
+            .input
+            .read(cx)
+            .cursor_layout()
+            .is_some()),
         "聚焦空替换框也应显示文字光标"
     );
     cx.simulate_input("你🙂");
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    assert!(editor.read_with(cx, |editor, _| editor.search_input_state(super::super::SearchInputKind::Replace).caret_bounds.is_some()));
-    editor.read_with(cx, |editor, _| {
+    assert!(editor.read_with(cx, |editor, cx| {
+        editor
+            .search_input_state(super::super::SearchInputKind::Replace)
+            .unwrap()
+            .input
+            .read(cx)
+            .cursor_layout()
+            .is_some()
+    }));
+    editor.read_with(cx, |editor, cx| {
         assert_eq!(editor.workspace.replace_query, "你🙂");
         assert_eq!(
-            editor.workspace.replace_selected_range,
+            editor
+                .search_input_state(super::super::SearchInputKind::Replace)
+                .unwrap()
+                .input
+                .read(cx)
+                .selected_range(),
             "你🙂".len().."你🙂".len()
         );
     });
@@ -1810,16 +1854,12 @@ async fn search_input_uses_a_text_cursor_and_files_have_no_filter_header(cx: &mu
         cx.debug_bounds("workspace-tree-header").is_none(),
         "文件树应移除过滤和排序栏"
     );
-    editor.update_in(cx, |editor, _, cx| {
-        let theme = cx.global::<crate::theme::ThemeManager>().current().clone();
+    editor.update_in(cx, |editor, window, cx| {
         let mut element = editor
             .render_search_input(
-                "query",
-                String::new(),
-                String::new(),
                 super::super::SearchInputKind::Query,
-                false,
-                &theme,
+                String::new(),
+                window,
                 cx,
             )
             .into_any_element();
@@ -1916,48 +1956,40 @@ async fn sidebar_search_mouse_places_the_caret_and_drags_unicode_text(cx: &mut T
             editor.workspace.replace_visible = true;
             editor.workspace.search_query = "我的文稿🙂".into();
             editor.workspace.replace_query = "我的文稿🙂".into();
-            editor.workspace.search_selected_range = "我的文稿🙂".len().."我的文稿🙂".len();
-            editor.workspace.replace_selected_range = "我的文稿🙂".len().."我的文稿🙂".len();
             cx.notify();
         });
         cx.update(|window, cx| window.draw(cx).clear(cx));
         let bounds = cx.debug_bounds(selector).expect("输入框");
+        let input = editor.read_with(cx, |editor, _| {
+            editor.search_input_state(kind).unwrap().input.clone()
+        });
         cx.simulate_click(
             gpui::point(bounds.left() + px(9.0), bounds.center().y),
             Modifiers::none(),
         );
-        editor.read_with(cx, |editor, _| {
-            let selected = match kind {
-                super::super::SearchInputKind::Query => &editor.workspace.search_selected_range,
-                super::super::SearchInputKind::Replace => &editor.workspace.replace_selected_range,
-            };
-            assert_eq!(selected, &(0..0), "点击文字左侧应将光标移到开头");
+        input.read_with(cx, |input, _| {
+            let selected = input.selected_range();
+            assert_eq!(selected, 0..0, "点击文字左侧应将光标移到开头");
         });
         cx.update(|window, cx| window.draw(cx).clear(cx));
-        let middle = editor.update_in(cx, |editor, window, cx| {
-            editor
-                .bounds_for_range(2..2, bounds, window, cx)
+        let middle = input.read_with(cx, |input, _| {
+            input
+                .range_to_bounds(&("我的".len().."我的".len()))
                 .expect("中文字间的插入位置")
                 .center()
         });
         cx.simulate_click(middle, Modifiers::none());
-        editor.read_with(cx, |editor, _| {
-            let selected = match kind {
-                super::super::SearchInputKind::Query => &editor.workspace.search_selected_range,
-                super::super::SearchInputKind::Replace => &editor.workspace.replace_selected_range,
-            };
+        input.read_with(cx, |input, _| {
+            let selected = input.selected_range();
             assert_eq!(
                 selected,
-                &("我的".len().."我的".len()),
+                ("我的".len().."我的".len()),
                 "点击文字中间应按实际字形定位"
             );
         });
         cx.update(|window, cx| window.draw(cx).clear(cx));
-        let start = editor.update_in(cx, |editor, window, cx| {
-            editor
-                .bounds_for_range(0..0, bounds, window, cx)
-                .expect("首字符位置")
-                .center()
+        let start = input.read_with(cx, |input, _| {
+            input.range_to_bounds(&(0..0)).expect("首字符位置").center()
         });
         cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
         cx.simulate_mouse_move(
@@ -1970,14 +2002,11 @@ async fn sidebar_search_mouse_places_the_caret_and_drags_unicode_text(cx: &mut T
             gpui::MouseButton::Left,
             Modifiers::none(),
         );
-        editor.read_with(cx, |editor, _| {
-            let selected = match kind {
-                super::super::SearchInputKind::Query => &editor.workspace.search_selected_range,
-                super::super::SearchInputKind::Replace => &editor.workspace.replace_selected_range,
-            };
+        input.read_with(cx, |input, _| {
+            let selected = input.selected_range();
             assert_eq!(
                 selected,
-                &(0.."我的文稿🙂".len()),
+                (0.."我的文稿🙂".len()),
                 "拖出输入框也应选中到文本末尾"
             );
         });
@@ -2327,13 +2356,24 @@ async fn clicking_replace_input_cancels_an_older_pending_search_focus(cx: &mut T
     editor.update(cx, |editor, _| {
         editor.pending_focus = editor.document.first_root().map(|block| block.entity_id());
         editor.workspace.search_focus_pending = true;
+        editor.workspace.search_select_all_pending = true;
     });
     cx.simulate_click(input.center(), Modifiers::none());
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_input("新");
     editor.read_with(cx, |editor, _| {
-        assert_eq!(editor.workspace.replace_query, "新", "较早的搜索跳转不能抢走用户刚点击的输入框焦点");
-        assert_eq!(editor.workspace.search_query, "alpha", "输入替换内容不能误改搜索词");
+        assert!(
+            !editor.workspace.search_select_all_pending,
+            "点击替换框也应取消排队的查询全选"
+        );
+        assert_eq!(
+            editor.workspace.replace_query, "新",
+            "较早的搜索跳转不能抢走用户刚点击的输入框焦点"
+        );
+        assert_eq!(
+            editor.workspace.search_query, "alpha",
+            "输入替换内容不能误改搜索词"
+        );
         assert_eq!(editor.buffer.text(), "alpha", "输入替换内容不能误改正文");
     });
 }
@@ -2484,6 +2524,166 @@ fn invalid_search_pattern_does_not_present_a_no_matches_result(cx: &mut TestAppC
         assert!(
             window.try_find("workspace-search-empty").is_none(),
             "表达式未能执行时不应展示没有匹配的搜索结果"
+        );
+    });
+}
+
+#[gpui::test]
+fn native_search_inputs_support_undo_and_commit_ime_before_searching(cx: &mut TestAppContext) {
+    use gpui::{AppContext as _, Focusable as _};
+    use gpui_kit::{component::WindowExt as _, test::TestWindowExt as _};
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "alpha alpha".into(), None))
+        })
+        .unwrap()
+    });
+    handle
+        .update(cx, |editor, window, cx| {
+            window.activate_window();
+            editor.open_document_find(cx);
+            editor.workspace.replace_visible = true;
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    for _ in 0..3 {
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        for id in ["workspace-search-query", "workspace-search-replace"] {
+            assert_eq!(
+                window.try_find(id).and_then(|field| field.role()),
+                Some(gpui::Role::TextInput),
+                "搜索与替换应使用标准输入控件"
+            );
+        }
+        window.input("alpha", cx);
+        window.press("secondary-a", cx);
+        window.press("secondary-x", cx);
+        window.press("secondary-z", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(editor.workspace.search_query, "alpha");
+            assert_eq!(editor.buffer.text(), "alpha alpha", "输入撤销不能修改正文");
+        })
+        .unwrap();
+    visual.update(|window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string("beta\nbeta".into()));
+        window.press("secondary-v", cx);
+    });
+    visual.run_until_parked();
+    assert_eq!(
+        handle
+            .read_with(&visual, |editor, _| editor.workspace.search_query.clone())
+            .unwrap(),
+        "beta beta"
+    );
+    visual.update(|window, cx| window.press("secondary-z", cx));
+    visual.run_until_parked();
+    assert_eq!(
+        handle
+            .read_with(&visual, |editor, _| editor.workspace.search_query.clone())
+            .unwrap(),
+        "alpha",
+        "粘贴应作为独立的一步撤销"
+    );
+    let input = visual
+        .update(|window, cx| {
+            window
+                .focused_input(cx)
+                .and_then(|state| state.as_input().cloned())
+        })
+        .expect("当前原生搜索输入");
+    let document_selection = handle
+        .read_with(&visual, |editor, cx| {
+            editor.capture_source_selection_snapshot(cx).range
+        })
+        .unwrap();
+    let generation = handle
+        .read_with(&visual, |editor, _| editor.workspace.search_generation)
+        .unwrap();
+    input.update_in(&mut visual, |input, window, cx| {
+        input.select_all(window, cx);
+        input.replace_and_mark_text_in_range(None, "ni", Some(2..2), window, cx);
+    });
+    for _ in 0..2 {
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    assert_eq!(
+        input.read_with(&visual, |input, _| input.value()),
+        "ni",
+        "重绘不能覆盖组词草稿"
+    );
+    visual.update(|window, cx| window.press("enter", cx));
+    visual.run_until_parked();
+    assert_eq!(
+        handle
+            .read_with(&visual, |editor, _| editor.workspace.search_generation)
+            .unwrap(),
+        generation,
+        "拼字期间不能启动查询或把 Enter 当成跳转"
+    );
+    assert_eq!(
+        handle
+            .read_with(&visual, |editor, cx| editor
+                .capture_source_selection_snapshot(cx)
+                .range)
+            .unwrap(),
+        document_selection,
+        "组词确认键不能跳转正文选区"
+    );
+    input.update_in(&mut visual, |input, window, cx| {
+        input.replace_text_in_range(None, "你", window, cx)
+    });
+    visual.run_until_parked();
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(editor.workspace.search_query, "你");
+            assert_eq!(
+                editor.workspace.search_generation,
+                generation + 1,
+                "确认候选词后只启动一次搜索"
+            );
+            assert_eq!(editor.buffer.text(), "alpha alpha");
+        })
+        .unwrap();
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        window.click("workspace-search-replace", cx);
+        window.input("replacement", cx);
+        window.press("secondary-z", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .read_with(&visual, |editor, _| {
+            assert!(
+                editor.workspace.replace_query.is_empty(),
+                "替换框保留独立撤销栈"
+            );
+            assert_eq!(
+                editor.workspace.search_query, "你",
+                "替换框撤销不能改动查询词"
+            );
+            assert_eq!(editor.buffer.text(), "alpha alpha");
+        })
+        .unwrap();
+    visual.update(|window, cx| window.press("escape", cx));
+    visual.run_until_parked();
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(
+            input.read(cx).focus_handle(cx).is_focused(window),
+            "关闭替换框后焦点回到查询框"
         );
     });
 }

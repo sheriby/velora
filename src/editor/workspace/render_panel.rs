@@ -14,7 +14,7 @@ impl Editor {
         &mut self,
         theme: &Theme,
         strings: &I18nStrings,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if !self.workspace.is_open {

@@ -4,11 +4,189 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     ActiveTheme as _, Selectable as _, Sizable as _,
     button::{Button, ButtonGroup, ButtonVariants},
+    input::{Input, InputEvent, InputState, Enter as InputEnter, Escape as InputEscape},
     spinner::Spinner,
     tooltip::Tooltip,
 };
 
 impl Editor {
+
+    pub(super) fn search_input_state(&self, kind: SearchInputKind) -> Option<&SearchInputState> {
+        match kind {
+            SearchInputKind::Query => self.workspace.search_input_state.as_ref(),
+            SearchInputKind::Replace => self.workspace.replace_input_state.as_ref(),
+        }
+    }
+
+    pub(super) fn sync_workspace_search_input(
+        &mut self,
+        kind: SearchInputKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<InputState> {
+        let value = match kind {
+            SearchInputKind::Query => self.workspace.search_query.clone(),
+            SearchInputKind::Replace => self.workspace.replace_query.clone(),
+        };
+        if let Some(field) = self.search_input_state(kind) {
+            let input = field.input.clone();
+            if field.model_value != value {
+                // 外部跨行查询折叠为单行显示，匹配串仍由领域模型保留。
+                input.update(cx, |input, cx| {
+                    input.set_value(search_input_display_value(&value), window, cx)
+                });
+                let field = match kind {
+                    SearchInputKind::Query => self.workspace.search_input_state.as_mut(),
+                    SearchInputKind::Replace => self.workspace.replace_input_state.as_mut(),
+                };
+                if let Some(field) = field {
+                    field.model_value = value;
+                }
+            }
+            return input;
+        }
+        let input = cx.new(|cx| {
+            InputState::new(window, cx).default_value(search_input_display_value(&value))
+        });
+        let focus = input.read(cx).focus_handle(cx);
+        let subscription = cx.subscribe_in(
+            &input,
+            window,
+            move |editor, source, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::Focus) {
+                    editor.workspace.search_focus_pending = false;
+                    editor.workspace.search_select_all_pending = false;
+                    editor.pending_focus = None;
+                }
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let value = source.read(cx).value().to_string();
+                let field = match kind {
+                    SearchInputKind::Query => editor.workspace.search_input_state.as_mut(),
+                    SearchInputKind::Replace => editor.workspace.replace_input_state.as_mut(),
+                };
+                let Some(field) = field.filter(|field| field.input == *source) else {
+                    return;
+                };
+                field.model_value = value.clone();
+                match kind {
+                    SearchInputKind::Query => {
+                        if editor.workspace.search_query != value {
+                            editor.workspace.search_query = value;
+                            editor.schedule_workspace_search(cx);
+                        }
+                    }
+                    SearchInputKind::Replace => editor.workspace.replace_query = value,
+                }
+                cx.notify();
+            },
+        );
+        let field = SearchInputState {
+            input: input.clone(),
+            model_value: value,
+            _subscription: subscription,
+        };
+        match kind {
+            SearchInputKind::Query => {
+                self.workspace.search_input_state = Some(field);
+                self.workspace.search_focus = Some(focus);
+            }
+            SearchInputKind::Replace => {
+                self.workspace.replace_input_state = Some(field);
+                self.workspace.replace_focus = Some(focus);
+            }
+        }
+        input
+    }
+
+    pub(super) fn render_search_input(
+        &mut self,
+        kind: SearchInputKind,
+        placeholder: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let input = self.sync_workspace_search_input(kind, window, cx);
+        let id = match kind {
+            SearchInputKind::Query => "workspace-search-query",
+            SearchInputKind::Replace => "workspace-search-replace",
+        };
+        if input.read(cx).presentation().placeholder().as_ref() != placeholder.as_str() {
+            input.update(cx, |input, cx| {
+                input.set_placeholder(placeholder.clone(), window, cx)
+            });
+        }
+        let paste_input = input.clone();
+        div()
+            .id(("workspace-search-input", input.entity_id()))
+            .cursor(CursorStyle::IBeam)
+            .debug_selector(move || id.to_string())
+            .flex_1()
+            .min_w_0()
+            .capture_any_mouse_down(cx.listener(|editor, _, _, _| {
+                editor.workspace.search_focus_pending = false;
+                editor.workspace.search_select_all_pending = false;
+                editor.pending_focus = None;
+            }))
+            .child(
+                Input::new(&input)
+                    .id(id)
+                    .accessibility_id(id)
+                    .aria_label(placeholder.clone())
+                    .small()
+                    .on_paste(move |clipboard, window, cx| {
+                        let Some(text) =
+                            clipboard.text().filter(|text| text.contains(['\r', '\n']))
+                        else {
+                            return false;
+                        };
+                        paste_input.update(cx, |input, cx| {
+                            input.replace(search_input_display_value(&text), window, cx)
+                        });
+                        true
+                    }),
+            )
+            .on_action(cx.listener(move |editor, action: &InputEnter, window, cx| {
+                let Some(input) = editor
+                    .search_input_state(kind)
+                    .map(|field| field.input.clone())
+                else {
+                    return;
+                };
+                if input.update(cx, |input, cx| {
+                    input.marked_text_range(window, cx).is_some()
+                }) {
+                    return;
+                }
+                match kind {
+                    SearchInputKind::Query => editor.advance_search_match(action.shift, window, cx),
+                    SearchInputKind::Replace => {
+                        editor.replace_current_search_match(window, cx);
+                    }
+                }
+            }))
+            .on_action(cx.listener(move |editor, _: &InputEscape, window, cx| {
+                match kind {
+                    SearchInputKind::Query => {
+                        editor.workspace.search_query.clear();
+                        editor.workspace.search_focus_pending = false;
+                        editor.workspace.search_select_all_pending = false;
+                        editor.workspace.active_tab = WorkspaceTab::Files;
+                        editor.schedule_workspace_search(cx);
+                        editor.focus_workspace_tree(window, cx);
+                    }
+                    SearchInputKind::Replace => {
+                        editor.workspace.replace_visible = false;
+                        if let Some(focus) = editor.workspace.search_focus.as_ref() {
+                            window.focus(focus, cx);
+                        }
+                    }
+                }
+                cx.notify();
+            }))
+            .into_any_element()
+    }
 
     /// VS Code-style search header: query input, collapsible replace input,
     /// option toggles, and a document/workspace scope switch. Rendered above
@@ -17,41 +195,15 @@ impl Editor {
         &mut self,
         theme: &Theme,
         strings: &I18nStrings,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let c = &theme.colors;
-        let query_focused = self
-            .workspace
-            .search_focus
-            .as_ref()
-            .is_some_and(|focus| focus.is_focused(window));
-        let search_input = self.render_search_input(
-            "workspace-search-query",
-            self.workspace.search_query.clone(),
-            strings.workspace_search_placeholder.clone(),
-            SearchInputKind::Query,
-            query_focused,
-            theme,
-            cx,
-        );
+        let search_input = self.render_search_input(SearchInputKind::Query,
+            strings.workspace_search_placeholder.clone(), window, cx);
         let replace_visible = self.workspace.replace_visible && !self.is_read_only();
-        let replace_input = replace_visible.then(|| {
-            let replace_focused = self
-                .workspace
-                .replace_focus
-                .as_ref()
-                .is_some_and(|focus| focus.is_focused(window));
-            self.render_search_input(
-                "workspace-search-replace",
-                self.workspace.replace_query.clone(),
-                strings.search_replace_placeholder.clone(),
-                SearchInputKind::Replace,
-                replace_focused,
-                theme,
-                cx,
-            )
-        });
+        let replace_input = replace_visible.then(|| self.render_search_input(SearchInputKind::Replace,
+            strings.search_replace_placeholder.clone(), window, cx));
 
         let toggle_button = Button::new("workspace-search-toggle-replace")
             .debug_selector(|| "workspace-search-toggle-replace".to_string())
@@ -560,5 +712,6 @@ impl Editor {
     }
 }
 
-
-
+fn search_input_display_value(text: &str) -> String {
+    text.replace(['\r', '\n'], " ")
+}

@@ -1,8 +1,6 @@
 use super::*;
 
-// Only the focused workspace search fields register this handler; document
-// blocks keep their own input handlers and IME state. The query and replace
-// fields share the editor's handler, routed by which focus handle is active.
+// 正文块与 Kit 输入持有各自的输入法状态，Editor 仅处理自身浮层草稿。
 impl EntityInputHandler for Editor {
     fn text_for_range(
         &mut self,
@@ -11,7 +9,7 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<String> {
-        let kind = self.active_overlay_input(window);
+        let kind = self.active_overlay_input(window)?;
         let text = self.input_text(kind);
         let start = search_utf16_to_utf8(text, range.start);
         let end = search_utf16_to_utf8(text, range.end).max(start);
@@ -25,16 +23,12 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
-        let kind = self.active_overlay_input(window);
+        let kind = self.active_overlay_input(window)?;
         let text = self.input_text(kind).to_string();
         let range = self.input_selection(kind);
         Some(UTF16Selection {
             range: search_utf8_to_utf16(&text, range.start)..search_utf8_to_utf16(&text, range.end),
-            reversed: match kind {
-                OverlayInputKind::Query => self.workspace.search_input_state.reversed,
-                OverlayInputKind::Replace => self.workspace.replace_input_state.reversed,
-                _ => false,
-            },
+            reversed: false,
         })
     }
 
@@ -43,7 +37,7 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
-        let kind = self.active_overlay_input(window);
+        let kind = self.active_overlay_input(window)?;
         let text = self.input_text(kind).to_string();
         self.input_marked(kind).map(|range| {
             search_utf8_to_utf16(&text, range.start)..search_utf8_to_utf16(&text, range.end)
@@ -51,15 +45,11 @@ impl EntityInputHandler for Editor {
     }
 
     fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let kind = self.active_overlay_input(window);
+        let Some(kind) = self.active_overlay_input(window) else {
+            return;
+        };
         let was_marked = self.input_marked(kind).is_some();
         match kind {
-            OverlayInputKind::Query => {
-                self.workspace.search_marked_range = None;
-            }
-            OverlayInputKind::Replace => {
-                self.workspace.replace_marked_range = None;
-            }
             OverlayInputKind::QuickOpen => {
                 if let Some(state) = self.quick_open.as_mut() {
                     state.marked_range = None;
@@ -78,8 +68,6 @@ impl EntityInputHandler for Editor {
         }
         if was_marked {
             match kind {
-                OverlayInputKind::Query => self.schedule_workspace_search(cx),
-                OverlayInputKind::Replace => {}
                 OverlayInputKind::QuickOpen => self.refresh_quick_open_results(cx),
                 OverlayInputKind::CommandPalette => {}
                 OverlayInputKind::FormulaEditor => {}
@@ -95,7 +83,9 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let kind = self.active_overlay_input(window);
+        let Some(kind) = self.active_overlay_input(window) else {
+            return;
+        };
         let query = self.input_text(kind).to_string();
         let range = range
             .map(|range| {
@@ -114,7 +104,9 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let kind = self.active_overlay_input(window);
+        let Some(kind) = self.active_overlay_input(window) else {
+            return;
+        };
         let query = self.input_text(kind).to_string();
         let range = range
             .map(|range| {
@@ -130,56 +122,21 @@ impl EntityInputHandler for Editor {
 
     fn bounds_for_range(
         &mut self,
-        range: Range<usize>,
+        _range: Range<usize>,
         bounds: Bounds<Pixels>,
-        window: &mut Window,
+        _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        let search_kind = match self.active_overlay_input(window) {
-            OverlayInputKind::Query => Some(SearchInputKind::Query),
-            OverlayInputKind::Replace => Some(SearchInputKind::Replace),
-            _ => None,
-        };
-        if let Some(kind) = search_kind {
-            let state = self.search_input_state(kind);
-            if let Some((line, bounds)) = state.last_line.as_ref().zip(state.last_bounds) {
-                let text = self.input_text(kind.into());
-                let start = search_utf16_to_utf8(text, range.start);
-                let end = search_utf16_to_utf8(text, range.end).max(start);
-                let left = (bounds.left() + line.x_for_index(start) - state.scroll_x)
-                    .clamp(bounds.left(), bounds.right());
-                let right = (bounds.left() + line.x_for_index(end) - state.scroll_x)
-                    .clamp(left, bounds.right());
-                return Some(Bounds::new(
-                    point(left, bounds.top()),
-                    size((right - left).max(px(1.0)), bounds.size.height),
-                ));
-            }
-        }
         Some(bounds)
     }
 
     fn character_index_for_point(
         &mut self,
-        position: Point<Pixels>,
+        _position: Point<Pixels>,
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let kind = self.active_overlay_input(window);
-        let search_kind = match kind {
-            OverlayInputKind::Query => Some(SearchInputKind::Query),
-            OverlayInputKind::Replace => Some(SearchInputKind::Replace),
-            _ => None,
-        };
-        if let Some(search_kind) = search_kind {
-            let state = self.search_input_state(search_kind);
-            if let Some((line, bounds)) = state.last_line.as_ref().zip(state.last_bounds) {
-                return Some(search_utf8_to_utf16(
-                    self.input_text(kind),
-                    line.closest_index_for_x(position.x - bounds.left() + state.scroll_x),
-                ));
-            }
-        }
+        let kind = self.active_overlay_input(window)?;
         Some(self.input_text(kind).encode_utf16().count())
     }
 }

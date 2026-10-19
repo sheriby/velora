@@ -539,7 +539,7 @@ impl Editor {
             return;
         }
         self.workspace.search_focus_pending = false;
-        self.workspace.search_marked_range = None;
+        self.workspace.search_select_all_pending = false;
         self.workspace.search_pending = false;
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         self.workspace.active_tab = tab;

@@ -246,8 +246,7 @@ impl Editor {
         self.workspace.is_open = true;
         self.workspace.active_tab = WorkspaceTab::Search;
         self.workspace.search_scope = WorkspaceSearchScope::Document;
-        self.workspace.search_selected_range = 0..self.workspace.search_query.len();
-        self.workspace.search_marked_range = None;
+        self.workspace.search_select_all_pending = true;
         self.workspace.search_focus_pending = true;
         self.schedule_workspace_search(cx);
         cx.notify();
@@ -346,11 +345,13 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.workspace.search_focus_pending {
-            let focus = self
-                .workspace
-                .search_focus
-                .get_or_insert_with(|| cx.focus_handle())
-                .clone();
+            let input = self.sync_workspace_search_input(SearchInputKind::Query, window, cx);
+            if self.workspace.search_select_all_pending {
+                input.update(cx, |input, cx| input.select_all(window, cx));
+                self.workspace.search_select_all_pending = false;
+            }
+            let focus = input.read(cx).focus_handle(cx);
+            self.pending_focus = None;
             window.focus(&focus, cx);
             self.workspace.search_focus_pending = false;
         }

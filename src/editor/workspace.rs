@@ -8,7 +8,6 @@ pub(super) use std::time::Duration;
 
 pub(super) use anyhow::{Context as _, Result};
 pub(super) use gpui::*;
-pub(super) use unicode_segmentation::UnicodeSegmentation;
 
 pub(super) use super::{
     BlockKind, CursorLocation, DocumentView, Editor, UndoSelectionSnapshot, CURSOR_HISTORY_LIMIT,
@@ -312,14 +311,11 @@ struct TabContextMenu {
     target_index: usize,
 }
 
-#[derive(Default)]
-pub(super) struct SearchInputState {
-    last_line: Option<ShapedLine>,
-    last_bounds: Option<Bounds<Pixels>>,
-    scroll_x: Pixels,
-    reversed: bool,
-    drag_anchor: Option<usize>,
-    caret_bounds: Option<Bounds<Pixels>>,
+struct SearchInputState {
+    input: Entity<gpui_kit::component::input::InputState>,
+    // 控件中的组词草稿不等于外部模型更新，不能据此重置输入或撤销栈。
+    model_value: String,
+    _subscription: Subscription,
 }
 
 /// Which search-panel input a key/IME event targets.
@@ -329,24 +325,13 @@ pub(crate) enum SearchInputKind {
     Replace,
 }
 
-/// Which single-line overlay input the editor's input handler serves.
+/// 由 Editor 输入适配器处理的浮层草稿。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OverlayInputKind {
-    Query,
-    Replace,
     QuickOpen,
     CommandPalette,
     /// 公式编辑器弹窗的草稿输入（多行，允许换行）。
     FormulaEditor,
-}
-
-impl From<SearchInputKind> for OverlayInputKind {
-    fn from(kind: SearchInputKind) -> Self {
-        match kind {
-            SearchInputKind::Query => Self::Query,
-            SearchInputKind::Replace => Self::Replace,
-        }
-    }
 }
 
 pub(crate) struct WorkspaceAutosaveDocument {
@@ -410,21 +395,18 @@ pub(super) struct WorkspaceState {
     pub(super) search_query: String,
     search_scope: WorkspaceSearchScope,
     search_active_index: Option<usize>,
-    search_selected_range: Range<usize>,
-    search_input_state: SearchInputState,
-    search_marked_range: Option<Range<usize>>,
+    search_input_state: Option<SearchInputState>,
     replace_query: String,
     replace_visible: bool,
     replace_focus: Option<FocusHandle>,
-    replace_selected_range: Range<usize>,
-    replace_input_state: SearchInputState,
-    replace_marked_range: Option<Range<usize>>,
+    replace_input_state: Option<SearchInputState>,
     search_match_case: bool,
     search_whole_word: bool,
     search_use_regex: bool,
     search_fuzzy: bool,
     search_focus: Option<FocusHandle>,
     search_focus_pending: bool,
+    search_select_all_pending: bool,
     search_results: Vec<WorkspaceSearchHit>,
     document_active_range: Option<Range<usize>>,
     pub(super) search_navigation_selection: Option<Range<usize>>,
@@ -504,21 +486,18 @@ impl Default for WorkspaceState {
             search_query: String::new(),
             search_scope: WorkspaceSearchScope::default(),
             search_active_index: None,
-            search_selected_range: 0..0,
-            search_input_state: SearchInputState::default(),
-            search_marked_range: None,
+            search_input_state: None,
             replace_query: String::new(),
             replace_visible: false,
             replace_focus: None,
-            replace_selected_range: 0..0,
-            replace_input_state: SearchInputState::default(),
-            replace_marked_range: None,
+            replace_input_state: None,
             search_match_case: false,
             search_whole_word: false,
             search_use_regex: false,
             search_fuzzy: false,
             search_focus: None,
             search_focus_pending: false,
+            search_select_all_pending: false,
             search_results: Vec::new(),
             document_active_range: None,
             search_navigation_selection: None,

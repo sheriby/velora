@@ -176,8 +176,7 @@ impl Editor {
         self.workspace.search_scope = WorkspaceSearchScope::default();
         self.workspace.search_focus_pending = false;
         self.workspace.search_query.clear();
-        self.workspace.search_selected_range = 0..0;
-        self.workspace.search_marked_range = None;
+        self.workspace.search_select_all_pending = false;
         self.workspace.search_results.clear();
         self.workspace.document_active_range = None;
         self.workspace.search_pending = false;
