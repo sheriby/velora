@@ -282,6 +282,18 @@ pub(crate) fn quick_action_tooltip(
 impl Editor {
     /// 当前是否有一段可选中的正文（跨块选区或块内选区）。剪切、复制与八种行内格式
     /// 共用这一条判定；不成立时菜单把条目置灰而不是藏起来。
+    /// 「复制」这一条能不能点：有选区直接可复制，没选区就复制光标所在那一行
+    /// （判据在 `Block::copyable_text`）。与 `has_text_selection` 分开是因为剪切、
+    /// 行内格式那些动作仍然只认选区。
+    pub(crate) fn copy_is_available(&self, cx: &App) -> bool {
+        if self.cross_block_selection.is_some() {
+            return self.normalized_cross_block_selection(cx).is_some();
+        }
+        self.current_edit_target_from_state(cx)
+            .map(|target| target.read(cx).copyable_text().is_some())
+            .unwrap_or(false)
+    }
+
     pub(crate) fn has_text_selection(&self, cx: &App) -> bool {
         if self.cross_block_selection.is_some() {
             return self.normalized_cross_block_selection(cx).is_some();
@@ -301,7 +313,7 @@ impl Editor {
             DocumentMenuCommand::Undo => !self.undo_history.is_empty() && editable,
             DocumentMenuCommand::Redo => !self.redo_history.is_empty() && editable,
             DocumentMenuCommand::Cut => selectable && editable,
-            DocumentMenuCommand::Copy => selectable,
+            DocumentMenuCommand::Copy => self.copy_is_available(cx),
             DocumentMenuCommand::Paste | DocumentMenuCommand::PasteAsPlainText => {
                 editable && cx.read_from_clipboard().is_some()
             }
@@ -329,7 +341,7 @@ impl Editor {
                 DocumentMenuRow::Item {
                     command: DocumentMenuCommand::Copy,
                     name: "copy",
-                    enabled: self.has_text_selection(cx),
+                    enabled: self.copy_is_available(cx),
                 },
                 DocumentMenuRow::Item {
                     command: DocumentMenuCommand::CopyAsMarkdown,

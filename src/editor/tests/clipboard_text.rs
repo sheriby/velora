@@ -12,6 +12,40 @@ const URL_DOC: &str = "选中文字\n\n别段\n";
 const MARKDOWN_DOC: &str = "前 **加粗** 后\n\n另一段\n";
 const URL: &str = "https://example.test";
 
+/// 没有选区时「复制」复制光标所在那一行：菜单里这一条因此一直是亮的，
+/// 不会变成置灰首项。
+#[gpui::test]
+fn copy_without_selection_copies_the_current_line(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "第一行\n第二行\n第三行\n";
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.into(), None));
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    editor.update(cx, |editor, _| editor.focus_block(block.entity_id()));
+    block.update(cx, |block, cx| {
+        let offset = block.display_text().find("第二行").expect("第二行") + "第".len();
+        block.move_to(offset, cx);
+    });
+    redraw(cx);
+    cx.update(|window, cx| {
+        window.dispatch_action(Box::new(Copy), cx);
+    });
+    let clipboard = cx.update(|_window, cx| {
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .map(|text| text.to_string())
+    });
+    assert_eq!(
+        clipboard.as_deref(),
+        Some("第二行"),
+        "没选区时应复制光标所在行，且不带换行符"
+    );
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), markdown));
+}
+
 #[gpui::test]
 async fn code_source_selection_keeps_literal_markers_and_multibyte_endpoints(
     cx: &mut TestAppContext,

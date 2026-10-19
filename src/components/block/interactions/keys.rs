@@ -121,13 +121,26 @@ impl Block {
         self.select_to(self.cursor_line_display_range().end, cx);
     }
 
+    /// 复制的唯一判据：有选区取选区，没选区取光标所在那一行。
+    ///
+    /// 菜单里的「复制」与 ⌘C 都走这一条，所以「没选区」不再等于「没得复制」——
+    /// 菜单也不必把这一行置灰（置灰首项在 Kit 菜单里会踩到键盘导航那条缺陷）。
+    pub(crate) fn copyable_text(&self) -> Option<String> {
+        let text = self.display_text();
+        let range = if self.selected_range.is_empty() {
+            self.cursor_line_display_range()
+        } else {
+            self.selected_range.clone()
+        };
+        // 选择偏移理论上已收敛到字符边界，但文本变更后可能失效；切片前再夹一次。
+        let range = clamp_range_to_char_boundaries(text, range);
+        let slice = &text[range];
+        (!slice.is_empty()).then(|| slice.to_string())
+    }
+
     pub(crate) fn on_copy(&mut self, _: &Copy, _window: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
-            // 选择偏移理论上已收敛到字符边界，但文本变更后可能失效；切片前再夹一次。
-            let text = self.display_text();
-            let range = clamp_range_to_char_boundaries(text, self.selected_range.clone());
-            let selected = text[range].to_string();
-            cx.write_to_clipboard(ClipboardItem::new_string(selected));
+        if let Some(text) = self.copyable_text() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
     }
 

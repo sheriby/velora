@@ -615,8 +615,11 @@ async fn clicking_the_quote_row_wraps_and_unwraps_the_block(cx: &mut TestAppCont
     );
 }
 
-/// 没有选区时剪切/复制/格式那些项做不了，但行要留在原位：藏起来会让菜单高度跳，
+/// 没有选区时剪切与格式那些项做不了，但行要留在原位：藏起来会让菜单高度跳，
 /// 用户也看不出「这一项存在，只是现在不能点」。
+///
+/// 「复制」不在这条里：没选区时它复制光标所在那一行（`Block::copyable_text`），
+/// 所以永远亮着。
 #[gpui::test]
 async fn rows_that_cannot_run_stay_in_place_but_greyed(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -638,11 +641,12 @@ async fn rows_that_cannot_run_stay_in_place_but_greyed(cx: &mut TestAppContext) 
         })
         .collect::<Vec<_>>();
     for (command, enabled) in DOCUMENT_MENU_QUICK_ACTIONS.iter().zip(quick_without.iter()) {
-        if matches!(
-            command,
-            DocumentMenuCommand::Cut | DocumentMenuCommand::Copy
-        ) {
-            assert!(!enabled, "{} 在无选区时还是可点的", command.row_name());
+        match command {
+            DocumentMenuCommand::Cut => assert!(!enabled, "Cut 在无选区时还是可点的"),
+            DocumentMenuCommand::Copy => {
+                assert!(enabled, "Copy 在无选区时也该可点：它复制光标所在行")
+            }
+            _ => {}
         }
     }
 
