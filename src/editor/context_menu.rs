@@ -390,6 +390,13 @@ impl Editor {
             self.cancel_modal(window, cx);
             return;
         }
+        // 预览浮层占着焦点：焦点陷阱激活后按键捕获钩子不再拦键，Esc 会走全局
+        // 绑定到这条入口，关闭与焦点归还都靠这里。
+        if self.mermaid_preview.is_some() {
+            cx.stop_propagation();
+            self.close_mermaid_preview(window, cx);
+            return;
+        }
         // 信息弹窗与标题栏菜单也是瞬态 UI，且没有其他键盘退出口——Esc 必须能关掉
         // 「关于/检查更新」弹窗与标题栏菜单。
         if self.info_dialog.is_some() {

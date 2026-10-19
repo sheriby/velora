@@ -123,6 +123,125 @@ fn mermaid_preview_controls_expose_native_button_semantics(cx: &mut TestAppConte
     });
 }
 
+/// 预览浮层是一个独立焦点范围：打开后焦点要进来，Tab 落到工具条上并能用 Enter
+/// 按下去，按键不进正文，Esc 关掉并把焦点还给原来的块。
+///
+/// 这里必须走 `crate::ui::open_window` 开窗：Tab 与 Esc 的绑定挂在 Kit `Root` 上，
+/// 直接 `add_window_view` 造出来的裸窗口没有 Root，Tab 根本不会派发。
+#[gpui::test]
+fn mermaid_preview_owns_keyboard_focus_while_open(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let fence = "```mermaid\nflowchart LR\nA[起点] --> B[终点]\n```".to_string();
+    let markdown = format!("正文段落\n\n{fence}");
+    let handle = cx
+        .update(|cx| {
+            crate::ui::open_window(gpui::WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| Editor::from_markdown(cx, markdown.clone(), None))
+            })
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    redraw(&mut visual);
+    let block = handle
+        .read_with(&visual, |editor, _| {
+            editor.document.visible_blocks()[0].entity.clone()
+        })
+        .unwrap();
+    handle
+        .update(&mut visual, |editor, _, _| {
+            editor.focus_block(block.entity_id())
+        })
+        .unwrap();
+    redraw(&mut visual);
+    redraw(&mut visual);
+    let before = visual
+        .update(|window, cx| window.focused(cx))
+        .expect("正文块应持有焦点");
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            editor.open_mermaid_preview(&fence, cx)
+        })
+        .unwrap();
+    redraw(&mut visual);
+    redraw(&mut visual);
+    let overlay_focus = handle
+        .read_with(&visual, |editor, _| {
+            editor
+                .mermaid_preview
+                .as_ref()
+                .expect("预览应已打开")
+                .focus
+                .clone()
+        })
+        .unwrap();
+    visual.update(|window, cx| {
+        assert!(
+            overlay_focus.contains_focused(window, cx),
+            "预览打开后焦点应落在浮层里，而不是留在正文"
+        );
+    });
+    visual.simulate_keystrokes("a");
+    redraw(&mut visual);
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(
+                editor.buffer.text(),
+                markdown,
+                "浮层开着时按键不能写进正文"
+            )
+        })
+        .unwrap();
+    // 浮层自己接手缩放键：焦点在陷阱里时按键捕获钩子已经让位。
+    let fitted = visual
+        .debug_bounds("mermaid-preview-image")
+        .expect("预览图像")
+        .size
+        .width;
+    visual.simulate_keystrokes("=");
+    redraw(&mut visual);
+    let zoomed = visual
+        .debug_bounds("mermaid-preview-image")
+        .expect("放大后的预览图像")
+        .size
+        .width;
+    assert!(zoomed > fitted, "浮层里的 = 应放大图像");
+    // Tab 落到第一颗控件（缩小），Enter 走 Kit Button 自己的键盘激活。
+    visual.simulate_keystrokes("tab");
+    redraw(&mut visual);
+    visual.update(|window, cx| {
+        assert!(
+            overlay_focus.contains_focused(window, cx),
+            "Tab 之后焦点仍在浮层里"
+        );
+    });
+    // `simulate_keystrokes` 只派发按下，而 GPUI 的键盘激活发生在松开那一下，
+    // 所以这里像真实平台那样同时发 keydown / keyup。
+    let enter = gpui::Keystroke::parse("enter").expect("enter");
+    visual.simulate_event(gpui::KeyDownEvent {
+        keystroke: enter.clone(),
+        is_held: false,
+        prefer_character_input: false,
+    });
+    visual.simulate_event(gpui::KeyUpEvent { keystroke: enter });
+    redraw(&mut visual);
+    let shrunk = visual
+        .debug_bounds("mermaid-preview-image")
+        .expect("缩小后的预览图像")
+        .size
+        .width;
+    assert!(shrunk < zoomed, "Enter 应按下当前焦点按钮（缩小）");
+    visual.simulate_keystrokes("escape");
+    redraw(&mut visual);
+    assert!(
+        visual.debug_bounds("mermaid-preview").is_none(),
+        "Esc 应关闭预览"
+    );
+    let after = visual
+        .update(|window, cx| window.focused(cx))
+        .expect("关闭后焦点不能丢");
+    assert_eq!(after, before, "关闭后焦点要回到打开前的块");
+}
+
 #[gpui::test]
 fn mermaid_preview_zoom_reaches_two_hundred_percent(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

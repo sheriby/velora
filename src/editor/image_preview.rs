@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::*;
+use gpui_kit::base::{ElementExt as _, FocusTrapElement as _};
 use gpui_kit::component::{
     Icon, Sizable as _,
     button::{Button, ButtonVariants},
@@ -35,6 +36,10 @@ pub(super) struct MermaidPreview {
     viewport: Size<Pixels>,
     pan: Point<Pixels>,
     drag_start: Option<(Point<Pixels>, Point<Pixels>)>,
+    /// 浮层自己的焦点：打开时把焦点从正文拿过来，Tab 与 Enter 才能在工具条上走。
+    pub(super) focus: FocusHandle,
+    /// 打开前窗口里那个焦点，关闭时还回去；`None` 表示还没挂载过。
+    restore_focus: Option<Option<WeakFocusHandle>>,
 }
 
 impl MermaidPreview {
@@ -80,11 +85,26 @@ impl Editor {
                     viewport: size(px(1.0), px(1.0)),
                     pan: point(px(0.0), px(0.0)),
                     drag_start: None,
+                    focus: cx.focus_handle(),
+                    restore_focus: None,
                 });
                 cx.notify();
             }
             Err(error) => self.show_message_modal("Mermaid", error.to_string(), cx),
         }
+    }
+
+    /// 关掉预览并把焦点还给打开前那个控件（正文块）；浮层占走焦点，退出就得交回。
+    pub(super) fn close_mermaid_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(preview) = self.mermaid_preview.take() else {
+            return;
+        };
+        if let Some(Some(previous)) = preview.restore_focus
+            && let Some(previous) = previous.upgrade()
+        {
+            previous.focus(window, cx);
+        }
+        cx.notify();
     }
 
     pub(super) fn sync_mermaid_preview_theme(&mut self, cx: &mut Context<Self>) {
@@ -173,6 +193,8 @@ impl Editor {
             (viewport.height - height) / 2.0 + preview.pan.y,
         );
         let path = preview.rendered.path.clone();
+        let overlay_focus = preview.focus.clone();
+        let owner = cx.entity().downgrade();
         let c = &theme.colors;
         let strings = cx.global::<I18nManager>().strings();
         let reset_label = strings.command_zoom_reset.clone();
@@ -281,9 +303,8 @@ impl Editor {
                     )
                     .accessibility_label(close_label.clone())
                     .tooltip(close_label)
-                    .on_click(cx.listener(|editor, _, _, cx| {
-                        editor.mermaid_preview = None;
-                        cx.notify();
+                    .on_click(cx.listener(|editor, _, window, cx| {
+                        editor.close_mermaid_preview(window, cx);
                     })),
             );
         let canvas = div()
@@ -362,6 +383,50 @@ impl Editor {
                 .flex_col()
                 .bg(c.dialog_surface)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                // 浮层开着时按键不能落到正文：焦点进来后这些键由这一层接手。
+                .on_key_down(cx.listener(|editor, event: &KeyDownEvent, window, cx| {
+                    let handled = match event.keystroke.key.as_str() {
+                        "escape" => {
+                            editor.close_mermaid_preview(window, cx);
+                            true
+                        }
+                        "+" | "=" => {
+                            editor.zoom_mermaid_preview(1.2, cx);
+                            true
+                        }
+                        "-" => {
+                            editor.zoom_mermaid_preview(1.0 / 1.2, cx);
+                            true
+                        }
+                        "0" => {
+                            editor.reset_mermaid_preview(cx);
+                            true
+                        }
+                        _ => false,
+                    };
+                    if handled {
+                        cx.stop_propagation();
+                    }
+                }))
+                .on_prepaint(move |_, window, cx| {
+                    if let Err(error) = owner.update(cx, |editor, cx| {
+                        let Some(preview) = editor.mermaid_preview.as_mut() else {
+                            return;
+                        };
+                        if preview.restore_focus.is_some() {
+                            return;
+                        }
+                        // 先记住正文里那个焦点，再把焦点交给浮层：Tab / Enter
+                        // 才能落在工具条上，Esc 关闭后再还回原处。
+                        preview.restore_focus =
+                            Some(window.focused(cx).map(|focus| focus.downgrade()));
+                        let focus = preview.focus.clone();
+                        focus.focus(window, cx);
+                    }) {
+                        eprintln!("聚焦预览浮层失败：{error}");
+                    }
+                })
+                .focus_trap("mermaid-preview-focus-trap", &overlay_focus)
                 .child(canvas)
                 .child(
                     div()
