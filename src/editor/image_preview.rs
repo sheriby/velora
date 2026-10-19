@@ -2,6 +2,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::*;
+use gpui_kit::component::{
+    Icon, Sizable as _,
+    button::{Button, ButtonVariants},
+};
 
 use super::Editor;
 use crate::i18n::{I18nManager, I18nStrings};
@@ -170,24 +174,22 @@ impl Editor {
         );
         let path = preview.rendered.path.clone();
         let c = &theme.colors;
-        let reset_label = cx
-            .global::<I18nManager>()
-            .strings()
-            .command_zoom_reset
-            .clone();
-        let button = |id: &'static str, label: SharedString| {
-            div()
-                .id(id)
+        let strings = cx.global::<I18nManager>().strings();
+        let reset_label = strings.command_zoom_reset.clone();
+        let zoom_in_label = strings.command_zoom_in.clone();
+        let zoom_out_label = strings.command_zoom_out.clone();
+        let close_label = strings.file_history_close.clone();
+        // 文字与图标只是画出来的字形，可访问名称和提示才是“放大 / 缩小”的语义来源。
+        let text_button = |id: &'static str, label: SharedString, name: SharedString| {
+            Button::new(id)
                 .debug_selector(move || id.to_string())
-                .h(px(32.0))
-                .px(px(10.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                .cursor_pointer()
-                .child(label)
+                .ghost()
+                .small()
+                .compact()
+                .rounded(px(999.0))
+                .label(label)
+                .accessibility_label(name.clone())
+                .tooltip(name)
         };
         let toolbar = div()
             .id("mermaid-preview-controls")
@@ -204,17 +206,13 @@ impl Editor {
             .shadow_md()
             .text_size(px(12.0))
             .text_color(c.dialog_title)
+            // 工具条整体吃掉按下事件：底下的预览要拿同一次按下拖动图像。
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
-                button("mermaid-preview-zoom-out", "−".into())
-                    .text_size(px(18.0))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|editor, _, _, cx| {
-                            cx.stop_propagation();
-                            editor.zoom_mermaid_preview(1.0 / 1.2, cx);
-                        }),
-                    ),
+                text_button("mermaid-preview-zoom-out", "−".into(), zoom_out_label.into())
+                    .on_click(cx.listener(|editor, _, _, cx| {
+                        editor.zoom_mermaid_preview(1.0 / 1.2, cx);
+                    })),
             )
             .child(
                 div()
@@ -225,22 +223,16 @@ impl Editor {
                     .child(format!("{:.0}%", scale * 100.0)),
             )
             .child(
-                button("mermaid-preview-zoom-in", "+".into())
-                    .text_size(px(18.0))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|editor, _, _, cx| {
-                            cx.stop_propagation();
-                            editor.zoom_mermaid_preview(1.2, cx);
-                        }),
-                    ),
+                text_button("mermaid-preview-zoom-in", "+".into(), zoom_in_label.into()).on_click(
+                    cx.listener(|editor, _, _, cx| {
+                        editor.zoom_mermaid_preview(1.2, cx);
+                    }),
+                ),
             )
             .child(div().w(px(1.0)).h(px(16.0)).mx(px(6.0)).bg(c.dialog_border))
             .child(
-                button("mermaid-preview-original", "100%".into()).on_mouse_down(
-                    MouseButton::Left,
+                text_button("mermaid-preview-original", "100%".into(), "100%".into()).on_click(
                     cx.listener(|editor, _, _, cx| {
-                        cx.stop_propagation();
                         if let Some(preview) = editor.mermaid_preview.as_mut() {
                             preview.scale = Some(1.0);
                             preview.pan = point(px(0.0), px(0.0));
@@ -251,17 +243,17 @@ impl Editor {
                 ),
             )
             .child(
-                button("mermaid-preview-fit", reset_label.into()).on_mouse_down(
-                    MouseButton::Left,
+                text_button(
+                    "mermaid-preview-fit",
+                    reset_label.clone().into(),
+                    reset_label.into(),
+                ).on_click(
                     cx.listener(|editor, _, _, cx| {
-                        cx.stop_propagation();
                         editor.reset_mermaid_preview(cx);
                     }),
                 ),
             );
         let close = div()
-            .id("mermaid-preview-close")
-            .debug_selector(|| "mermaid-preview-close".into())
             .absolute()
             .top(px(20.0))
             .right(px(20.0))
@@ -274,21 +266,25 @@ impl Editor {
             .border_color(c.dialog_border)
             .bg(c.dialog_surface)
             .shadow_sm()
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .cursor_pointer()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|editor, _, _, cx| {
-                    cx.stop_propagation();
-                    editor.mermaid_preview = None;
-                    cx.notify();
-                }),
-            )
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
-                svg()
-                    .path("icon/workspace/tab-close.svg")
-                    .size(px(14.0))
-                    .text_color(c.dialog_muted),
+                Button::new("mermaid-preview-close")
+                    .debug_selector(|| "mermaid-preview-close".into())
+                    .ghost()
+                    .small()
+                    .compact()
+                    .rounded(px(999.0))
+                    .icon(
+                        Icon::empty()
+                            .path("icon/workspace/tab-close.svg")
+                            .text_color(c.dialog_muted),
+                    )
+                    .accessibility_label(close_label.clone())
+                    .tooltip(close_label)
+                    .on_click(cx.listener(|editor, _, _, cx| {
+                        editor.mermaid_preview = None;
+                        cx.notify();
+                    })),
             );
         let canvas = div()
             .id("mermaid-preview-viewport")

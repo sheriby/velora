@@ -91,6 +91,38 @@ async fn mermaid_preview_opens_zooms_and_closes_without_editing_document(cx: &mu
     });
 }
 
+/// 预览工具条上的每个控件都必须是标准按钮：只画一个带 hover 的 div，键盘用户和
+/// 辅助技术都发现不了「放大」「关闭」这些动作，也无法知道自己在按什么。
+#[gpui::test]
+fn mermaid_preview_controls_expose_native_button_semantics(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let markdown = "```mermaid\nflowchart LR\nA[起点] --> B[终点]\n```".to_string();
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.clone(), None));
+    editor.update(cx, |editor, cx| editor.open_mermaid_preview(&markdown, cx));
+    redraw(cx);
+    redraw(cx);
+    cx.update(|window, _| {
+        for id in [
+            "mermaid-preview-zoom-out",
+            "mermaid-preview-zoom-in",
+            "mermaid-preview-original",
+            "mermaid-preview-fit",
+            "mermaid-preview-close",
+        ] {
+            let item = window
+                .try_find(id)
+                .unwrap_or_else(|| panic!("{id} 应挂载在预览工具条上"));
+            assert_eq!(item.role(), Some(gpui::Role::Button), "{id} 必须是标准按钮");
+            assert!(
+                item.label().is_some_and(|label| !label.is_empty()),
+                "{id} 必须有可访问名称"
+            );
+        }
+    });
+}
+
 #[gpui::test]
 fn mermaid_preview_zoom_reaches_two_hundred_percent(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
