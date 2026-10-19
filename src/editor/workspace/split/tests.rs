@@ -2218,3 +2218,71 @@ fn split_session_keeps_extreme_ratios_reached_by_the_native_controls(cx: &mut Te
         );
     });
 }
+
+#[gpui::test]
+fn split_shell_keeps_the_configured_interface_font_geometry(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-split-ui-font-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let _config = crate::config::override_test_config_root(root.join("profile"));
+    let config = crate::config::VeloraConfigDirs::from_system()
+        .unwrap()
+        .app_config_file();
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(config, "[editor]\nui_font_size = 21\n").unwrap();
+    let path = root.join("notes.md");
+    std::fs::write(&path, "正文\n").unwrap();
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::config::EditorSettings::init(cx, true);
+        crate::components::init(cx);
+    });
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "正文\n".into(), Some(path.clone())))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    visual.simulate_resize(gpui::size(gpui::px(1400.0), gpui::px(800.0)));
+    for _ in 0..3 {
+        redraw(&mut visual);
+    }
+    let before = visual
+        .debug_bounds("window-titlebar-drag-filler")
+        .expect("普通窗口标题栏");
+    assert!(
+        before.size.height >= gpui::px(47.0),
+        "夹具必须使用放大的界面字号"
+    );
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.split_active_document(SplitDirection::Right, window, cx)
+        })
+        .unwrap();
+    for _ in 0..4 {
+        redraw(&mut visual);
+    }
+    let after = visual
+        .debug_bounds("window-titlebar-drag-filler")
+        .expect("分屏标题栏");
+    let reading = visual
+        .debug_bounds("status-bar-reading-mode")
+        .expect("状态栏阅读按钮");
+    assert!(
+        after.size.height == before.size.height && reading.bottom() <= gpui::px(800.0),
+        "分屏不能丢掉界面尺寸派生：标题栏 {:?}→{:?}，状态栏按钮 {reading:?}",
+        before.size.height,
+        after.size.height
+    );
+    handle
+        .read_with(&visual, |editor, cx| {
+            let groups = editor.split_groups();
+            assert_eq!(groups.len(), 2);
+            for group in groups {
+                assert_eq!(group.read(cx).buffer.text(), "正文\n");
+            }
+        })
+        .unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+}

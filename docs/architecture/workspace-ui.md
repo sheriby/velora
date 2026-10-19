@@ -106,6 +106,8 @@
 
 Kit 0.7.3 `TitleBar::on_close_window` 仅 Linux 生效，因此这里组合标准控件并保留通用的关闭回调；编辑器关闭仍调用未保存内容守卫，设置窗口仍进入自己的取消路径。`render_custom_titlebar_for_target_os` 接收显式目标平台，以便在同一测试后端核对 Windows 布局和键盘关闭，不改变生产平台选择。
 
+普通窗口与分屏外壳均在文档排版主题之上调用 `EditorSettings::apply_ui_typography`。`ThemeManager::derived_theme` 只处理文档字号与缩放，不能直接作为外壳的最终尺寸，否则放大字号后标题栏、文件树行高与状态栏空间会退回默认值。
+
 ## 6. 状态栏（editor/status_bar.rs）
 
 布局使用 Kit `StatusBar`，路径由 `Breadcrumb` 呈现，整条路径、自定义命令及阅读／源码切换使用标准 `Button`，保留键盘焦点、名称和提示。长路径优先收缩，计数与模式操作留在尾部；状态栏背景及边框从 Velora 主题同步到 Kit。统计仍读缓冲区并沿用静默窗口与缓存，不在每帧重新分词。

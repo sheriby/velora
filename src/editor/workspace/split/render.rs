@@ -29,7 +29,9 @@ impl Editor {
         let Some(active) = self.active_split_editor() else {
             return div().into_any_element();
         };
-        let theme = cx.global::<ThemeManager>().derived_theme(cx);
+        let mut theme = cx.global::<ThemeManager>().derived_theme(cx).as_ref().clone();
+        // 块排版的派生主题不包含界面字号，窗口外壳需沿用普通窗口的尺寸派生。
+        crate::config::EditorSettings::apply_ui_typography(cx, &mut theme);
         let strings = cx.global::<I18nManager>().strings_arc();
         let height = crate::window_chrome::custom_titlebar_height(window, &theme.dimensions);
         let (sidebar, status, title, workspace_width) = active.update(cx, |editor, cx| {
