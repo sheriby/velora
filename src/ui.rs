@@ -108,6 +108,7 @@ fn sync_theme(cx: &mut App) {
         theme.colors.link = colors.text_link;
         theme.colors.link_hover = colors.text_link;
         theme.colors.link_active = colors.text_link;
+        theme.colors.list_hover = colors.dialog_secondary_button_hover;
         theme.colors.list_active = colors.selection;
         theme.colors.list_active_border = colors.dialog_primary_button_bg;
         theme.colors.tab_active = colors.selection;
@@ -219,4 +220,50 @@ pub(crate) fn open_window<V: Render + 'static>(
         window,
         content: PhantomData,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::theme::ThemeManager;
+    use gpui::{BorrowAppContext as _, TestAppContext};
+    use gpui_kit::component::Theme as ComponentTheme;
+
+    #[gpui::test]
+    fn kit_list_hover_tracks_each_velora_theme(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            ThemeManager::init_with_theme_id(cx, "forest");
+            super::init(cx);
+        });
+        for theme_id in [
+            "forest",
+            "velora-light",
+            "paper",
+            "midnight",
+            "ink",
+            "velora-dark",
+        ] {
+            cx.update(|cx| {
+                cx.update_global::<ThemeManager, _>(|manager, _| {
+                    assert!(manager.set_theme_by_id(theme_id));
+                })
+            });
+            cx.read(|cx| {
+                let expected = cx
+                    .global::<ThemeManager>()
+                    .current_arc()
+                    .colors
+                    .dialog_secondary_button_hover;
+                let kit = ComponentTheme::global(cx);
+                assert_eq!(
+                    kit.list_hover, expected,
+                    "{theme_id} 的列表悬停不能残留默认色"
+                );
+                assert_eq!(
+                    kit.tokens.list_hover,
+                    expected.into(),
+                    "原生行读取的背景 token 必须同步"
+                );
+            });
+        }
+    }
 }

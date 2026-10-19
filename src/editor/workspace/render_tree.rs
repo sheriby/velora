@@ -426,7 +426,20 @@ impl Editor {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_sm()
+                    .when(
+                        matches!(node.kind, WorkspaceTreeKind::Heading { .. }),
+                        |label| {
+                            label.text_xs().text_color(if selected {
+                                theme.colors.text_default
+                            } else {
+                                theme.colors.dialog_muted
+                            })
+                        },
+                    )
+                    .when(
+                        !matches!(node.kind, WorkspaceTreeKind::Heading { .. }),
+                        |label| label.text_sm(),
+                    )
                     .child(node.label.clone()),
             );
         let click_kind = node.kind.clone();
