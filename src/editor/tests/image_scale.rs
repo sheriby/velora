@@ -21,9 +21,23 @@ fn open_image_menu(cx: &mut VisualTestContext) {
     redraw(cx);
 }
 
-fn click_scale_row(name: &'static str, cx: &mut VisualTestContext) {
-    let bounds = cx.debug_bounds(name);
-    assert!(bounds.is_some(), "右键菜单应提供图片缩放项 {name}");
+fn scale_row_bounds(percent: u8, cx: &mut VisualTestContext) -> Option<gpui::Bounds<gpui::Pixels>> {
+    cx.update(|window, _| {
+        let label = format!("{percent}%");
+        gpui_kit::base::test_support::snapshots(window)
+            .into_iter()
+            .find(|row| {
+                row.visible()
+                    && row.role() == Some(gpui::Role::MenuItem)
+                    && row.label() == Some(label.as_str())
+            })
+            .map(|row| row.bounds())
+    })
+}
+
+fn click_scale_row(percent: u8, cx: &mut VisualTestContext) {
+    let bounds = scale_row_bounds(percent, cx);
+    assert!(bounds.is_some(), "右键菜单应提供图片缩放项 {percent}%");
     let bounds = bounds.expect("已验证菜单项存在");
     cx.simulate_click(bounds.center(), Modifiers::none());
     redraw(cx);
@@ -47,7 +61,7 @@ async fn image_scale_is_available_from_the_menu_without_a_resize_handle(cx: &mut
         "图片不应显示缩放圆点"
     );
     open_image_menu(cx);
-    assert!(cx.debug_bounds("menu-item-image-scale-75").is_some());
+    assert!(scale_row_bounds(75, cx).is_some());
 }
 
 #[gpui::test]
@@ -176,12 +190,12 @@ async fn image_scale_menu_stays_inside_the_viewport_when_opened_at_the_bottom_ri
     assert!(panel.left() >= px(0.0) && panel.top() >= px(0.0));
     assert!(panel.right() <= viewport.width && panel.bottom() <= viewport.height);
     for row in [
-        "menu-item-image-scale-25",
-        "menu-item-image-scale-50",
-        "menu-item-image-scale-75",
-        "menu-item-image-scale-100",
+        25,
+        50,
+        75,
+        100,
     ] {
-        let bounds = cx.debug_bounds(row).expect("图片缩放预设");
+        let bounds = scale_row_bounds(row, cx).expect("图片缩放预设");
         assert!(bounds.top() >= panel.top() && bounds.bottom() <= panel.bottom());
     }
 }
@@ -252,7 +266,7 @@ async fn right_click_image_can_set_scale_and_undo_without_changing_other_blocks(
     redraw(cx);
     redraw(cx);
     open_image_menu(cx);
-    click_scale_row("menu-item-image-scale-50", cx);
+    click_scale_row(50, cx);
     let resized = original.replace("\")", "\"){width=50%}");
     assert_eq!(source(&editor, cx), resized);
     editor.read_with(cx, |editor, cx| {
@@ -287,14 +301,14 @@ async fn image_scale_menu_only_offers_presets_and_persists_after_reopening(cx: &
         "菜单不应再有应用按钮"
     );
     for row in [
-        "menu-item-image-scale-25",
-        "menu-item-image-scale-50",
-        "menu-item-image-scale-75",
-        "menu-item-image-scale-100",
+        25,
+        50,
+        75,
+        100,
     ] {
-        assert!(cx.debug_bounds(row).is_some(), "应保留缩放预设 {row}");
+        assert!(scale_row_bounds(row, cx).is_some(), "应保留缩放预设 {row}");
     }
-    click_scale_row("menu-item-image-scale-75", cx);
+    click_scale_row(75, cx);
     let resized = "![图例](./missing.png){width=75%}\n";
     assert_eq!(source(&editor, cx), resized);
     editor.read_with(cx, |editor, _| {
@@ -316,7 +330,7 @@ async fn image_scale_menu_only_offers_presets_and_persists_after_reopening(cx: &
         );
     });
     open_image_menu(cx);
-    click_scale_row("menu-item-image-scale-100", cx);
+    click_scale_row(100, cx);
     assert_eq!(source(&editor, cx), original, "恢复 100% 应删除宽度属性");
 }
 
@@ -336,7 +350,7 @@ async fn cancelling_image_scale_and_choosing_the_current_scale_do_not_edit_the_d
     assert_eq!(source(&editor, cx), original);
     assert!(editor.read_with(cx, |editor, _| editor.context_menu.is_none()));
     open_image_menu(cx);
-    click_scale_row("menu-item-image-scale-100", cx);
+    click_scale_row(100, cx);
     assert_eq!(source(&editor, cx), original);
     assert!(editor.read_with(cx, |editor, _| editor.undo_history.is_empty()));
 }
@@ -386,7 +400,7 @@ async fn image_scale_uses_the_right_clicked_target_and_keeps_reference_and_conta
             );
         });
         redraw(cx);
-        click_scale_row("menu-item-image-scale-25", cx);
+        click_scale_row(25, cx);
         let resized = original.replace("{width=75%}", "{width=25%}");
         assert_eq!(
             source(&editor, cx),
@@ -397,4 +411,101 @@ async fn image_scale_uses_the_right_clicked_target_and_keeps_reference_and_conta
         redraw(cx);
         assert_eq!(source(&editor, cx), original);
     }
+}
+
+
+#[gpui::test]
+fn native_object_context_menu_image_supports_keyboard_scale_and_undo(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let original = "![图例](./missing.png)\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, original.into(), None));
+    redraw(cx);
+    redraw(cx);
+    open_image_menu(cx);
+    cx.update(|window, cx| {
+        assert_eq!(
+            window.try_find("popup-menu").and_then(|menu| menu.role()),
+            Some(gpui::Role::Menu),
+            "图片右键菜单应使用 Kit 菜单语义"
+        );
+        for _ in 0..3 {
+            window.press("up", cx);
+        }
+        window.press("enter", cx);
+    });
+    redraw(cx);
+    assert_eq!(source(&editor, cx), "![图例](./missing.png){width=50%}\n");
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    assert_eq!(source(&editor, cx), original);
+}
+
+#[gpui::test]
+fn native_object_context_menu_remote_image_copies_from_the_first_keyboard_item(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let address = "https://example.invalid/remote.png";
+    let original = format!("![图例]({address})\n");
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, original.clone(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let target = editor.document.first_root().unwrap().entity_id();
+        editor.open_image_context_menu(point(px(80.0), px(80.0)), target, None, address.into(), cx);
+    });
+    redraw(cx);
+    cx.update(|window, cx| {
+        window.press("down", cx);
+        window.press("enter", cx);
+    });
+    redraw(cx);
+    cx.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(address.into()),
+            "远程图片菜单应直接导航到可用的复制地址操作"
+        )
+    });
+    assert_eq!(source(&editor, cx), original);
+}
+
+#[gpui::test]
+fn native_object_context_menu_image_yields_to_modal_and_keeps_focus(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let original = "![图例](./missing.png)\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, original.into(), None));
+    redraw(cx);
+    redraw(cx);
+    open_image_menu(cx);
+    editor.update(cx, |editor, cx| {
+        editor.show_message_modal("文件操作失败", "请重试", cx)
+    });
+    redraw(cx);
+    cx.update(|window, _| {
+        assert!(
+            window.try_find("popup-menu").is_none(),
+            "异步错误出现时菜单应退场"
+        )
+    });
+    editor.update_in(cx, |editor, window, cx| editor.cancel_modal(window, cx));
+    redraw(cx);
+    cx.update(|window, cx| {
+        editor.read_with(cx, |editor, cx| {
+            assert!(editor.context_menu.is_none());
+            assert!(
+                editor
+                    .document
+                    .first_root()
+                    .unwrap()
+                    .read(cx)
+                    .focus_handle
+                    .is_focused(window)
+            );
+            assert_eq!(editor.buffer.text(), original);
+        })
+    });
 }

@@ -1122,7 +1122,7 @@ impl Render for Editor {
         } else {
             base
         };
-        self.dismiss_workspace_menus_for_modal(window, cx);
+        self.dismiss_context_menus_for_modal(window, cx);
         let base = if let Some(toolbar) = self.render_selection_toolbar(&theme, window, cx) {
             base.child(self.pane_overlay(toolbar.into_any_element(), window))
         } else {

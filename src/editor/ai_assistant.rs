@@ -974,6 +974,7 @@ impl Editor {
                 )
             });
         self.context_menu = None;
+        self.context_menu_popup = None;
         self.selection_toolbar = None;
         let owner_document = self.recovery_id;
         if let Some(parent) = self.split_parent.clone() {

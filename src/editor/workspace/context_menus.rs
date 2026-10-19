@@ -25,12 +25,15 @@ impl WorkspaceMenuAction {
 }
 
 impl Editor {
-    pub(crate) fn dismiss_workspace_menus_for_modal(
+    pub(crate) fn dismiss_context_menus_for_modal(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.workspace.context_menu.is_none() && self.workspace.tab_context_menu.is_none() {
+        if self.workspace.context_menu.is_none()
+            && self.workspace.tab_context_menu.is_none()
+            && self.context_menu.is_none()
+        {
             return;
         }
         if !self.modal_is_open()
@@ -61,6 +64,7 @@ impl Editor {
         // Kit 菜单延迟绘制在上层，模态决策出现时必须先退场。
         self.close_workspace_context_menu(cx);
         self.close_tab_context_menu(cx);
+        self.close_document_menu_for_modal(window, cx);
     }
 
     pub(crate) fn selected_workspace_path(&self) -> Option<PathBuf> {
@@ -229,7 +233,7 @@ impl Editor {
             });
         }
         let request = self.workspace.context_menu.as_ref()?;
-        Some(workspace_popup_layer(
+        Some(crate::components::menu::popup_menu_layer(
             "workspace-context-panel",
             request.position,
             &request.popup.as_ref()?.view,
@@ -382,41 +386,11 @@ impl Editor {
             });
         }
         let request = self.workspace.tab_context_menu.as_ref()?;
-        Some(workspace_popup_layer(
+        Some(crate::components::menu::popup_menu_layer(
             "tab-context-panel",
             request.position,
             &request.popup.as_ref()?.view,
             window,
         ))
     }
-}
-
-fn workspace_popup_layer(
-    id: &'static str,
-    position: Point<Pixels>,
-    menu: &Entity<PopupMenu>,
-    window: &Window,
-) -> AnyElement {
-    deferred(
-        anchored().child(
-            div()
-                .w(window.viewport_size().width)
-                .h(window.viewport_size().height)
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                .child(
-                    anchored()
-                        .position(position)
-                        .snap_to_window_with_margin(px(8.0))
-                        .child(
-                            div()
-                                .id(id)
-                                .debug_selector(move || id.to_owned())
-                                .child(menu.clone()),
-                        ),
-                ),
-        ),
-    )
-    .with_priority(gpui_kit::base::POPUP_PRIORITY)
-    .into_any_element()
 }

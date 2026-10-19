@@ -128,6 +128,7 @@ Kit 0.7.3 `TitleBar::on_close_window` 仅 Linux 生效，因此这里组合标�
 - **模态**（`editor/modal.rs`）：所有提示走应用内模态，同一时刻只一个；`modal_key_interceptor` 在 keymap 之前拦截按键；按钮/Enter（默认位）/Esc（取消位）。有源码审计测试禁系统原生弹窗。
 - **选中工具栏**（`selection_toolbar.rs`）：**没有"打开"这一步**——每帧由 `selection_toolbar_anchor` 现算锚点，条件之一是不存在任何别的浮层（右键菜单、表格对话框、模态、信息框、菜单栏、两种补全、公式编辑器、⌘P、⇧⌘P 全算），还要排除跨块拖拽进行中与"搜索跳转产生的选区"。锚点不成立这一帧就不画。**新增浮层必须同步加进这串互斥清单**。几何每帧现算（选区外接框，上方优先、放不下改下方、都不行按视口夹回；滚出视口的选区不再拖着一条指向空白的工具栏）。
 - **正文右键菜单**（`editor/context_menu/`）：状态存在 Editor 上（渲染时不新建实体），行数据、置灰判定、二级面板悬停状态机（离开父行只排一个延迟关闭任务，期间进子面板就取消）、几何测量都在 `document_menu.rs`。菜单与工具栏的**可用判定同源**（`has_text_selection`、`writes_through_the_buffer`、各命令的 `*_is_available`），工具栏下拉取的是同一份行数据。正文菜单与工具栏下拉通过 `DocumentMenuGeometry::measure_in_window` 按当前 UI 字体、字号和生效键位实测，定位与绘制共用面板尺寸，避免平台快捷键宽度差异让内容撑宽面板。置灰那一行的悬停说明要写清"为什么没反应"。
+- **表格轴与图片右键菜单**（`context_menu/render.rs:render_object_context_menu`）：Kit `PopupMenu` 实例由 `Editor::context_menu_popup` 保留；分组、置灰、勾选、键盘与关闭交给 Kit，操作目标继续由 `ContextMenuState` 持有。图片比例、表格对齐／移动／删除均调用既有写入口并纳入撤销。远程图片只提供地址复制和缩放，本地图片另有文件定位。图片关闭后聚焦目标图片；表格菜单从正文活动实体解析返回焦点，连续切换目标不会返回已销毁的旧菜单。各类 Kit 菜单共用 `components/menu.rs:popup_menu_layer`，模态出现时统一退场。
 - **收起只有一条路径**：`context_menu.rs:dismiss_contextual_overlays` 关树菜单、标签菜单、两种补全、公式编辑器、正文菜单、表格对话框。**不含**模态、信息框、⌘P、⇧⌘P、文件历史、选中工具栏。规矩是：任何"开新浮层"或"换上下文"的入口先调它（打开面板、开始树内改名、开右键菜单、展开侧栏、批量关标签、正文按下起选区、切视图模式、拖放替换、光标历史跳转）。Esc 总入口 `on_dismiss_transient_ui` 按 模态 → 信息框 → 菜单栏 → 树内改名 → dismiss_contextual_overlays → ⌘P/⇧⌘P 逐级处理并 stop_propagation。
 
 ## 8. 事件路由（三层，时序从前到后）

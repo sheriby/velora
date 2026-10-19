@@ -1,9 +1,10 @@
-//! 菜单的共用渲染：一行项、一条分隔线、一个面板。
+//! 菜单的共用表现：Kit 浮层定位与旧菜单行。
 //!
-//! 正文右键、选中工具栏、表格轴菜单、图片菜单、文件树与标签的右键以前各自抄了一份
-//! 行渲染（尺寸、字号、悬停色都略有出入）。这里收成一处，改样式只需要改一个地方。
+//! 工作区、表格与图片菜单使用 Kit PopupMenu；正文及选区工具栏尚用下方旧行渲染，
+//! 在迁移完成后退役。浮层共用同一个窗口坐标与点击遮罩，避免各菜单重复计算落点。
 
 use gpui::*;
+use gpui_kit::component::menu::PopupMenu;
 
 use crate::theme::Theme;
 
@@ -112,4 +113,34 @@ pub(crate) fn menu_separator(theme: &Theme) -> Div {
         .my(px(dimensions.menu_separator_margin_y))
         .h(px(dimensions.menu_separator_height))
         .bg(theme.colors.dialog_border)
+}
+
+pub(crate) fn popup_menu_layer(
+    id: &'static str,
+    position: Point<Pixels>,
+    menu: &Entity<PopupMenu>,
+    window: &Window,
+) -> AnyElement {
+    deferred(
+        anchored().child(
+            div()
+                .w(window.viewport_size().width)
+                .h(window.viewport_size().height)
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .child(
+                    anchored()
+                        .position(position)
+                        .snap_to_window_with_margin(px(8.0))
+                        .child(
+                            div()
+                                .id(id)
+                                .debug_selector(move || id.to_owned())
+                                .child(menu.clone()),
+                        ),
+                ),
+        ),
+    )
+    .with_priority(gpui_kit::base::POPUP_PRIORITY)
+    .into_any_element()
 }

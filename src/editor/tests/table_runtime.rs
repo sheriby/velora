@@ -742,3 +742,109 @@ async fn table_cell_mappings_account_for_content_length(cx: &mut TestAppContext)
         );
     });
 }
+
+
+#[gpui::test]
+fn native_object_context_menu_table_supports_keyboard_alignment_and_undo(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let original = "| A | B |\n| --- | --- |\n| 1 | 2 |\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, original.into(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().unwrap().entity_id();
+        editor.open_table_axis_context_menu(
+            gpui::point(px(80.0), px(80.0)),
+            crate::editor::TableAxisSelection {
+                table_block_id: table,
+                kind: crate::components::TableAxisKind::Column,
+                index: 1,
+            },
+            cx,
+        );
+    });
+    redraw(cx);
+    cx.update(|window, cx| {
+        assert_eq!(
+            window.try_find("popup-menu").and_then(|menu| menu.role()),
+            Some(gpui::Role::Menu),
+            "表格轴菜单应使用 Kit 菜单语义"
+        );
+        for _ in 0..3 {
+            window.press("down", cx);
+        }
+        window.press("enter", cx);
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let table = editor
+            .document
+            .first_root()
+            .unwrap()
+            .read(cx)
+            .record
+            .table
+            .as_ref()
+            .unwrap();
+        assert_eq!(table.alignments.get(1), Some(&TableColumnAlignment::Right));
+    });
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.buffer.text()),
+        original
+    );
+}
+
+#[gpui::test]
+fn native_object_context_menu_table_retargeting_returns_focus_to_the_document(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    for original in [
+        "正文\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n",
+        "| A | B |\n| --- | --- |\n| 1 | 2 |\n",
+    ] {
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, original.into(), None));
+        redraw(cx);
+        redraw(cx);
+        let previous_focus = cx
+            .update(|window, cx| window.focused(cx))
+            .expect("正文焦点");
+        for index in [0, 1] {
+            editor.update(cx, |editor, cx| {
+                let table = editor
+                    .document
+                    .root_blocks()
+                    .iter()
+                    .find(|block| block.read(cx).kind() == BlockKind::Table)
+                    .unwrap()
+                    .entity_id();
+                editor.open_table_axis_context_menu(
+                    gpui::point(px(80.0), px(80.0)),
+                    crate::editor::TableAxisSelection {
+                        table_block_id: table,
+                        kind: crate::components::TableAxisKind::Column,
+                        index,
+                    },
+                    cx,
+                );
+            });
+            redraw(cx);
+        }
+        cx.update(|window, cx| window.press("escape", cx));
+        redraw(cx);
+        cx.update(|window, cx| {
+            editor.read_with(cx, |editor, _| {
+                assert!(
+                    previous_focus.is_focused(window),
+                    "更换菜单目标后 Esc 应回到原来的正文焦点"
+                );
+                assert!(editor.context_menu.is_none());
+                assert_eq!(editor.buffer.text(), original);
+            })
+        });
+    }
+}

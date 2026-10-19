@@ -1,4 +1,9 @@
 use super::*;
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{
+    ActiveTheme as _, Icon,
+    menu::{PopupMenu, PopupMenuItem},
+};
 
 use super::document_menu::{
     QUICK_ACTION_BUTTON_SIZE, QUICK_ACTION_DIVIDER_WIDTH, QUICK_ACTION_GAP,
@@ -50,49 +55,24 @@ impl Editor {
         }
     }
 
-    fn render_axis_menu_item(
-        theme: &Theme,
-        id: &'static str,
-        label: String,
-        enabled: bool,
-        danger: bool,
-        on_click: fn(&mut Editor, &ClickEvent, &mut Window, &mut Context<Editor>),
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let row = crate::components::menu::menu_item(
-            theme,
-            id,
-            label,
-            None,
-            enabled,
-            danger,
-            false,
-            false,
-            None,
-        );
-        if enabled {
-            row.on_click(cx.listener(on_click)).into_any_element()
-        } else {
-            row.into_any_element()
-        }
-    }
-
     /// 一条分节线。
     fn menu_separator(theme: &Theme) -> AnyElement {
         crate::components::menu::menu_separator(theme).into_any_element()
     }
 
     pub(crate) fn render_context_menu_overlay(
-        &self,
+        &mut self,
         theme: &Theme,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if !matches!(self.context_menu, Some(ContextMenuState::Document { .. })) {
+            return self.render_object_context_menu(window, cx);
+        }
         let menu = self.context_menu.as_ref()?;
         let viewport = window.viewport_size();
         let c = &theme.colors;
         let d = &theme.dimensions;
-        let t = &theme.typography;
         let s = cx.global::<I18nManager>().strings().clone();
 
         match menu {
@@ -212,299 +192,223 @@ impl Editor {
                     (None, None) => overlay.into_any_element(),
                 })
             }
-            ContextMenuState::TableAxis {
-                position,
-                selection,
-            } => {
-                let Some(table_block) = self.table_block_by_id(selection.table_block_id, cx) else {
-                    return None;
-                };
-                let table = table_block.read(cx).record.table.clone()?;
-                let items = match selection.kind {
-                    TableAxisKind::Column => vec![
-                        Self::render_axis_menu_item(
-                            theme,
-                            "table-axis-align-column-left",
-                            s.table_axis_align_column_left.clone(),
-                            true,
-                            false,
-                            Self::on_align_table_column_left,
-                            cx,
-                        ),
-                        Self::render_axis_menu_item(
-                            theme,
-                            "table-axis-align-column-center",
-                            s.table_axis_align_column_center.clone(),
-                            true,
-                            false,
-                            Self::on_align_table_column_center,
-                            cx,
-                        ),
-                        Self::render_axis_menu_item(
-                            theme,
-                            "table-axis-align-column-right",
-                            s.table_axis_align_column_right.clone(),
-                            true,
-                            false,
-                            Self::on_align_table_column_right,
-                            cx,
-                        ),
-                        Self::menu_separator(theme).into_any_element(),
-                        Self::render_axis_menu_item(
-                            theme,
-                            "table-axis-move-column-left",
-                            s.table_axis_move_column_left.clone(),
-                            selection.index > 0,
-                            false,
-                            Self::on_move_table_column_left,
-                            cx,
-                        ),
-                        Self::render_axis_menu_item(
-                            theme,
-                            "table-axis-move-column-right",
-                            s.table_axis_move_column_right.clone(),
-                            selection.index + 1 < table.column_count(),
-                            false,
-                            Self::on_move_table_column_right,
-                            cx,
-                        ),
-                        Self::menu_separator(theme).into_any_element(),
-                        Self::render_axis_menu_item(
-                            theme,
-                            "table-axis-delete-column",
-                            s.table_axis_delete_column.clone(),
-                            // Always enabled: deleting the last column removes the
-                            // whole table.
-                            true,
-                            true,
-                            Self::on_delete_table_column,
-                            cx,
-                        ),
-                    ],
-                    TableAxisKind::Row => {
-                        let mut items: Vec<AnyElement> = Vec::new();
-                        // The header row (visual index 0) shares the normal row
-                        // menu, with its Header Row styling toggle added on top.
-                        if selection.index == 0 {
-                            let headers_shown =
-                                crate::config::EditorSettings::show_table_headers(cx);
-                            items.push(
-                                div()
-                                    .id("table-header-toggle")
-                                    .h(px(d.menu_item_height))
-                                    .px(px(d.menu_item_padding_x))
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap(px(d.menu_item_padding_x))
-                                    .rounded(px(d.menu_item_radius))
-                                    .bg(c.dialog_surface)
-                                    .text_size(px(d.menu_text_size))
-                                    .font_weight(t.dialog_body_weight.to_font_weight())
-                                    .text_color(c.dialog_secondary_button_text)
-                                    .child(s.table_header_row.clone())
-                                    .child(if headers_shown { "✓" } else { "" })
-                                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(Self::on_toggle_table_headers))
-                                    .into_any_element(),
-                            );
-                            items.push(
-                                Self::menu_separator(theme).into_any_element(),
-                            );
-                        }
-                        items.push(Self::render_axis_menu_item(
-                            theme,
-                            "table-axis-move-row-up",
-                            s.table_axis_move_row_up.clone(),
-                            selection.index > 0,
-                            false,
-                            Self::on_move_table_row_up,
-                            cx,
-                        ));
-                        items.push(Self::render_axis_menu_item(
-                            theme,
-                            "table-axis-move-row-down",
-                            s.table_axis_move_row_down.clone(),
-                            selection.index < table.rows.len(),
-                            false,
-                            Self::on_move_table_row_down,
-                            cx,
-                        ));
-                        items.push(
-                            Self::menu_separator(theme).into_any_element(),
-                        );
-                        // Always enabled: deleting the header promotes the first
-                        // body row, and deleting the last remaining row removes
-                        // the whole table.
-                        items.push(Self::render_axis_menu_item(
-                            theme,
-                            "table-axis-delete-row",
-                            s.table_axis_delete_row.clone(),
-                            true,
-                            true,
-                            Self::on_delete_table_row,
-                            cx,
-                        ));
-                        items
-                    }
-                };
-
-                Some(
-                    div()
-                        .id("table-axis-context-menu-overlay")
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .bottom_0()
-                        .occlude()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(Self::on_dismiss_context_menu_overlay),
-                        )
-                        .child(
-                            div()
-                                .id("table-axis-context-menu-panel")
-                                .absolute()
-                                .left(position.x)
-                                .top(position.y)
-                                .w(px(d.context_menu_axis_panel_width))
-                                .p(px(d.menu_panel_padding))
-                                .flex()
-                                .flex_col()
-                                .gap(px(d.menu_panel_gap))
-                                .bg(c.dialog_surface)
-                                .border(px(d.dialog_border_width))
-                                .border_color(c.dialog_border)
-                                .rounded(px(d.menu_panel_radius))
-                                .shadow_lg()
-                                .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
-                                    cx.stop_propagation()
-                                })
-                                .children(items),
-                        )
-                        .into_any_element(),
-                )
-            }
-            ContextMenuState::Image {
-                position,
-                local_path,
-                address: _,
-                entity_id,
-            } => {
-                let strings = cx.global::<I18nManager>().strings().clone();
-                let mut items = vec![
-                    Self::render_axis_menu_item(
-                        theme,
-                        "image-reveal-in-file-manager",
-                        strings.image_reveal_in_file_manager.clone(),
-                        local_path.is_some(),
-                        false,
-                        Self::on_image_reveal_in_file_manager,
-                        cx,
-                    ),
-                    Self::render_axis_menu_item(
-                        theme,
-                        "image-copy-address",
-                        strings.image_copy_address.clone(),
-                        true,
-                        false,
-                        Self::on_image_copy_address,
-                        cx,
-                    ),
-                ];
-                items.push(Self::menu_separator(theme));
-                items.push(
-                    div()
-                        .px(px(d.menu_item_padding_x))
-                        .py(px(3.0))
-                        .text_size(px(d.menu_text_size))
-                        .text_color(c.dialog_muted)
-                        .child(strings.image_scale.clone())
-                        .into_any_element(),
-                );
-                let current_percent = self
-                    .focusable_entity_by_id(*entity_id)
-                    .map(|block| (block.read(cx).image_width_factor * 100.0).round() as u8);
-                for percent in [25u8, 50, 75, 100] {
-                    items.push(
-                        crate::components::menu::menu_item(
-                            theme,
-                            format!("image-scale-{percent}"),
-                            format!("{percent}%"),
-                            None,
-                            true,
-                            false,
-                            false,
-                            current_percent == Some(percent),
-                            None,
-                        )
-                        .on_click(cx.listener(move |editor, _, _, cx| {
-                            editor.set_image_scale_from_menu(percent, cx);
-                            cx.stop_propagation();
-                        }))
-                        .into_any_element(),
-                    );
-                }
-                let panel_width = d.context_menu_axis_panel_width.max(220.0);
-                let estimated_height = d.menu_item_height * 6.0
-                    + d.menu_panel_gap * 7.0
-                    + d.menu_panel_padding * 2.0
-                    + 32.0;
-                let left = position
-                    .x
-                    .min((viewport.width - px(panel_width + 8.0)).max(px(8.0)))
-                    .max(px(8.0));
-                let top = position
-                    .y
-                    .min((viewport.height - px(estimated_height + 8.0)).max(px(8.0)))
-                    .max(px(8.0));
-                Some(
-                    div()
-                        .id("image-context-menu-overlay")
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .bottom_0()
-                        .occlude()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(Self::on_dismiss_context_menu_overlay),
-                        )
-                        .child(
-                            div()
-                                .id("image-context-menu-panel")
-                                .debug_selector(|| "image-context-menu-panel".to_string())
-                                .absolute()
-                                .left(left)
-                                .top(top)
-                                .w(px(panel_width))
-                                .max_h((viewport.height - top - px(8.0)).max(px(1.0)))
-                                .overflow_y_scroll()
-                                .p(px(d.menu_panel_padding))
-                                .flex()
-                                .flex_col()
-                                .gap(px(d.menu_panel_gap))
-                                .bg(c.dialog_surface)
-                                .border(px(d.dialog_border_width))
-                                .border_color(c.dialog_border)
-                                .rounded(px(d.menu_panel_radius))
-                                .shadow_lg()
-                                .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
-                                    cx.stop_propagation()
-                                })
-                                .children(
-                                    items
-                                        .into_iter()
-                                        .map(|item| div().w_full().flex_shrink_0().child(item)),
-                                ),
-                        )
-                        .into_any_element(),
-                )
-            }
+            ContextMenuState::TableAxis { .. } | ContextMenuState::Image { .. } => None,
         }
+    }
+
+    fn render_object_context_menu(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let Some(request) = self.context_menu.as_ref() else {
+            self.context_menu_popup = None;
+            return None;
+        };
+        let (position, panel_id) = match request {
+            ContextMenuState::TableAxis { position, .. } => {
+                (*position, "table-axis-context-menu-panel")
+            }
+            ContextMenuState::Image { position, .. } => (*position, "image-context-menu-panel"),
+            ContextMenuState::Document { .. } => return None,
+        };
+        if self.context_menu_popup.is_none() {
+            let strings = cx.global::<I18nManager>().strings_arc();
+            let owner = cx.entity().downgrade();
+            let row = |label: &str, enabled: bool, checked: bool,
+                handler: fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>)| {
+                let editor = owner.clone();
+                let item = PopupMenuItem::new(label.to_owned()).disabled(!enabled).checked(checked);
+                if !enabled { return item; }
+                item.on_click(move |event, window, cx| {
+                        if let Err(error) = editor.update(cx, |editor, cx| handler(editor, event, window, cx)) {
+                            eprintln!("执行正文对象菜单失败：{error}");
+                        }
+                    })
+            };
+            let writable = !self.is_read_only();
+            let trash = Icon::new(IconName::Trash).text_color(cx.theme().danger);
+            let mut target_focus = None;
+            let items = match request {
+                ContextMenuState::TableAxis { selection, .. } => {
+                    let block = self.table_block_by_id(selection.table_block_id, cx)?;
+                    let table = block.read(cx).record.table.as_ref()?;
+                    match selection.kind {
+                        TableAxisKind::Column => {
+                            let alignment = table
+                                .alignments
+                                .get(selection.index)
+                                .copied()
+                                .unwrap_or(TableColumnAlignment::Default);
+                            vec![
+                                row(
+                                    &strings.table_axis_align_column_left,
+                                    writable,
+                                    alignment == TableColumnAlignment::Left,
+                                    Self::on_align_table_column_left,
+                                ),
+                                row(
+                                    &strings.table_axis_align_column_center,
+                                    writable,
+                                    alignment == TableColumnAlignment::Center,
+                                    Self::on_align_table_column_center,
+                                ),
+                                row(
+                                    &strings.table_axis_align_column_right,
+                                    writable,
+                                    alignment == TableColumnAlignment::Right,
+                                    Self::on_align_table_column_right,
+                                ),
+                                PopupMenuItem::separator(),
+                                row(
+                                    &strings.table_axis_move_column_left,
+                                    writable && selection.index > 0,
+                                    false,
+                                    Self::on_move_table_column_left,
+                                ),
+                                row(
+                                    &strings.table_axis_move_column_right,
+                                    writable && selection.index + 1 < table.column_count(),
+                                    false,
+                                    Self::on_move_table_column_right,
+                                ),
+                                PopupMenuItem::separator(),
+                                row(
+                                    &strings.table_axis_delete_column,
+                                    writable,
+                                    false,
+                                    Self::on_delete_table_column,
+                                )
+                                .icon(trash),
+                            ]
+                        }
+                        TableAxisKind::Row => {
+                            let mut items = Vec::new();
+                            if selection.index == 0 {
+                                items.push(row(
+                                    &strings.table_header_row,
+                                    writable,
+                                    crate::config::EditorSettings::show_table_headers(cx),
+                                    Self::on_toggle_table_headers,
+                                ));
+                                items.push(PopupMenuItem::separator());
+                            }
+                            items.extend([
+                                row(
+                                    &strings.table_axis_move_row_up,
+                                    writable && selection.index > 0,
+                                    false,
+                                    Self::on_move_table_row_up,
+                                ),
+                                row(
+                                    &strings.table_axis_move_row_down,
+                                    writable && selection.index < table.rows.len(),
+                                    false,
+                                    Self::on_move_table_row_down,
+                                ),
+                                PopupMenuItem::separator(),
+                                row(
+                                    &strings.table_axis_delete_row,
+                                    writable,
+                                    false,
+                                    Self::on_delete_table_row,
+                                )
+                                .icon(trash),
+                            ]);
+                            items
+                        }
+                    }
+                }
+                ContextMenuState::Image {
+                    entity_id,
+                    local_path,
+                    ..
+                } => {
+                    let current_percent = self.focusable_entity_by_id(*entity_id).map(|block| {
+                        let block = block.read(cx);
+                        target_focus = Some(block.focus_handle.clone());
+                        (block.image_width_factor * 100.0).round() as u8
+                    });
+                    let mut items = Vec::new();
+                    if local_path.is_some() {
+                        items.push(row(
+                            &strings.image_reveal_in_file_manager,
+                            true,
+                            false,
+                            Self::on_image_reveal_in_file_manager,
+                        ));
+                    }
+                    items.extend([
+                        row(
+                            &strings.image_copy_address,
+                            true,
+                            false,
+                            Self::on_image_copy_address,
+                        ),
+                        PopupMenuItem::separator(),
+                        PopupMenuItem::label(strings.image_scale.clone()),
+                    ]);
+                    for percent in [25u8, 50, 75, 100] {
+                        let editor = owner.clone();
+                        items.push(
+                            PopupMenuItem::new(format!("{percent}%"))
+                                .disabled(!writable)
+                                .checked(current_percent == Some(percent))
+                                .on_click(move |_, _, cx| {
+                                    if let Err(error) = editor.update(cx, |editor, cx| {
+                                        editor.set_image_scale_from_menu(percent, cx)
+                                    }) {
+                                        eprintln!("调整图片比例失败：{error}");
+                                    }
+                                }),
+                        );
+                    }
+                    items
+                }
+                ContextMenuState::Document { .. } => return None,
+            };
+            // 连续打开菜单时，窗口焦点可能仍属于旧菜单；返回位置取自正文。
+            let return_focus = target_focus
+                .or_else(|| {
+                    self.active_entity_id
+                        .and_then(|id| self.focusable_entity_by_id(id))
+                        .map(|block| block.read(cx).focus_handle.clone())
+                })
+                .or_else(|| window.focused(cx))
+                .unwrap_or_else(|| cx.focus_handle());
+            let focus = return_focus.clone();
+            let popup = PopupMenu::build(window, cx, move |mut menu, window, _| {
+                menu = menu
+                    .action_context(focus)
+                    .min_w(window.rem_size() * 13.75)
+                    .scrollable(true);
+                for item in items {
+                    menu = menu.item(item);
+                }
+                menu
+            });
+            let dismiss = cx.subscribe(&popup, |editor, menu, _: &DismissEvent, cx| {
+                if editor
+                    .context_menu_popup
+                    .as_ref()
+                    .is_some_and(|popup| popup.view == menu)
+                {
+                    editor.close_context_menu(cx);
+                }
+            });
+            window.focus(&popup.focus_handle(cx), cx);
+            self.context_menu_popup = Some(ContextMenuPopup {
+                view: popup,
+                return_focus,
+                _dismiss: dismiss,
+            });
+        }
+        Some(crate::components::menu::popup_menu_layer(
+            panel_id,
+            position,
+            &self.context_menu_popup.as_ref()?.view,
+            window,
+        ))
     }
 
     pub(crate) fn render_table_insert_dialog_overlay(

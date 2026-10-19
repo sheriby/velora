@@ -23,6 +23,12 @@ pub(super) enum TableInsertTarget {
     Append,
 }
 
+pub(super) struct ContextMenuPopup {
+    view: Entity<gpui_kit::component::menu::PopupMenu>,
+    return_focus: FocusHandle,
+    _dismiss: Subscription,
+}
+
 /// Rendered-mode context menu currently open in the editor.
 pub(super) enum ContextMenuState {
     /// 正文右键菜单：编辑 → 格式 → 段落 → 插入 → 视图五段，后三段走二级面板。
@@ -49,7 +55,7 @@ pub(super) enum ContextMenuState {
     Image {
         position: Point<Pixels>,
         entity_id: EntityId,
-        /// 本地图片绝对路径（远程图 None，「在文件管理器中显示」禁用）。
+        /// 本地图片绝对路径；远程图为 None，不提供本地定位命令。
         local_path: Option<PathBuf>,
         /// 原始地址（相对路径或 URL），「复制图片地址」用。
         address: String,
@@ -121,6 +127,7 @@ impl Editor {
 
         self.close_menu_bar(cx);
         self.context_menu_submenu_close_task = None;
+        self.context_menu_popup = None;
         self.context_menu = Some(ContextMenuState::Document {
             position,
             target,
@@ -143,6 +150,7 @@ impl Editor {
     ) {
         self.close_menu_bar(cx);
         self.context_menu_submenu_close_task = None;
+        self.context_menu_popup = None;
         self.context_menu = Some(ContextMenuState::Image {
             position,
             entity_id,
@@ -244,6 +252,7 @@ impl Editor {
 
         self.close_menu_bar(cx);
         self.context_menu_submenu_close_task = None;
+        self.context_menu_popup = None;
         self.context_menu = Some(ContextMenuState::TableAxis {
             position,
             selection,
@@ -258,6 +267,7 @@ impl Editor {
     }
 
     fn close_context_menu(&mut self, cx: &mut Context<Self>) {
+        self.context_menu_popup = None;
         let menu = self.context_menu.take();
         let had_menu = menu.is_some();
         if let Some(ContextMenuState::Image { entity_id, .. }) = menu {
@@ -267,6 +277,19 @@ impl Editor {
         if had_menu || had_submenu_close {
             cx.notify();
         }
+    }
+
+    pub(super) fn close_document_menu_for_modal(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(popup) = &self.context_menu_popup
+            && popup.view.focus_handle(cx).is_focused(window)
+        {
+            window.focus(&popup.return_focus, cx);
+        }
+        self.close_context_menu(cx);
     }
 
     pub(super) fn dismiss_contextual_overlays(&mut self, cx: &mut Context<Self>) {

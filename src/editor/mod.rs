@@ -368,6 +368,7 @@ pub struct Editor {
     window_menu_cache: Option<(u64, Option<std::rc::Rc<Vec<gpui::OwnedMenu>>>)>,
     workspace: WorkspaceState,
     context_menu: Option<ContextMenuState>,
+    context_menu_popup: Option<context_menu::ContextMenuPopup>,
     table_insert_dialog: Option<TableInsertDialogState>,
     context_menu_submenu_close_task: Option<Task<()>>,
     /// 选中一段文字后浮出的那条工具栏；None 表示这一帧没有可挂的选区。
@@ -966,6 +967,7 @@ impl Editor {
             window_menu_cache: None,
             workspace: WorkspaceState::default(),
             context_menu: None,
+            context_menu_popup: None,
             table_insert_dialog: None,
             context_menu_submenu_close_task: None,
             selection_toolbar: None,
