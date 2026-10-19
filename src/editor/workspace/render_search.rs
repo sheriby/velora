@@ -1,5 +1,12 @@
 use super::*;
 use gpui::prelude::FluentBuilder;
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{
+    ActiveTheme as _, Selectable as _, Sizable as _,
+    button::{Button, ButtonGroup, ButtonVariants},
+    spinner::Spinner,
+    tooltip::Tooltip,
+};
 
 impl Editor {
 
@@ -14,8 +21,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let c = &theme.colors;
-        let editor = cx.entity().downgrade();
-
         let query_focused = self
             .workspace
             .search_focus
@@ -48,52 +53,26 @@ impl Editor {
             )
         });
 
-        let toggle_editor = editor.clone();
-        let toggle_button = div()
-            .id("workspace-search-toggle-replace")
-            .w(px(24.0))
-            .h(px(24.0))
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(5.0))
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .cursor_pointer()
-            .text_color(if replace_visible {
-                c.dialog_primary_button_bg
+        let toggle_button = Button::new("workspace-search-toggle-replace")
+            .debug_selector(|| "workspace-search-toggle-replace".to_string())
+            .small()
+            .ghost()
+            .icon(if replace_visible {
+                IconName::ChevronDown
             } else {
-                c.dialog_muted
+                IconName::ChevronRight
             })
-            .child(
-                svg()
-                    .path(if replace_visible {
-                        CHEVRON_DOWN_ICON
-                    } else {
-                        CHEVRON_RIGHT_ICON
-                    })
-                    .size(px(14.0))
-                    .text_color(if replace_visible {
-                        c.dialog_primary_button_bg
-                    } else {
-                        c.dialog_muted
-                    }),
-            )
-            .tooltip(|_, cx| {
-                cx.new(|_| WorkspaceTooltip {
-                    label: "显示替换".into(),
-                })
-                .into()
-            })
-            .on_click(move |_, _, cx| {
-                let _ = toggle_editor.update(cx, |editor, cx| {
-                    if editor.is_read_only() {
-                        return;
-                    }
-                    editor.workspace.replace_visible = !editor.workspace.replace_visible;
-                    cx.notify();
-                });
-            });
+            .selected(replace_visible)
+            .toggled(replace_visible)
+            .accessibility_label(strings.search_replace_placeholder.clone())
+            .tooltip(strings.search_replace_placeholder.clone())
+            .on_click(cx.listener(|editor, _, _, cx| {
+                if editor.is_read_only() {
+                    return;
+                }
+                editor.workspace.replace_visible = !editor.workspace.replace_visible;
+                cx.notify();
+            }));
 
         let options_row = self.render_search_options_row(theme, strings, cx);
 
@@ -103,17 +82,17 @@ impl Editor {
             .flex_shrink_0()
             .flex()
             .flex_col()
-            .gap(px(6.0))
-            .px(px(6.0))
-            .pt(px(8.0))
-            .pb(px(2.0))
-            .border_b(px(1.0))
+            .gap_2()
+            .px_2()
+            .pt_2()
+            .pb_1()
+            .border_b_1()
             .border_color(c.dialog_border)
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(4.0))
+                    .gap_1()
                     .child(search_input)
                     .when(!self.is_read_only(), |this| this.child(toggle_button)),
             )
@@ -131,313 +110,200 @@ impl Editor {
         theme: &Theme,
     ) -> Option<AnyElement> {
         let message = self.workspace.search_error.as_ref()?;
-        let c = &theme.colors;
         let summary = message.lines().next().unwrap_or(message.as_str()).to_string();
         let detail = message.clone();
         Some(
             div()
                 .id("workspace-search-pattern-error")
+                .test_support()
+                .role(Role::Alert)
+                .aria_label(format!("{}{summary}", strings.search_invalid_pattern))
                 .w_full()
-                .px(px(2.0))
-                .text_size(px(theme.typography.ui_text_size(11.0)))
-                .text_color(c.dialog_danger_button_text)
+                .px_0p5()
+                .text_xs()
+                .text_color(theme.colors.dialog_danger_button_bg)
                 .truncate()
                 .child(format!("{}{summary}", strings.search_invalid_pattern))
-                .tooltip(move |_, cx| {
-                    let detail = detail.clone();
-                    cx.new(|_| WorkspaceTooltip { label: detail.into() }).into()
-                })
+                .tooltip(move |window, cx| Tooltip::new(detail.clone()).build(window, cx))
                 .into_any_element(),
         )
     }
 
     pub(crate) fn render_search_options_row(
         &mut self,
-        theme: &Theme,
+        _theme: &Theme,
         strings: &I18nStrings,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let c = &theme.colors;
-        let editor = cx.entity().downgrade();
-
-        let toggle_chip = |editor: &WeakEntity<Self>,
-                           id: &'static str,
-                           label: String,
-                           selected: bool,
-                           tooltip: String| {
-            let chip_editor = editor.clone();
-            div()
-                .id(id)
+        let option = |id: &'static str, icon, selected, label: String| {
+            Button::new(id)
                 .debug_selector(move || id.to_string())
-                .px(px(4.0))
-                .flex_shrink_0()
-                .h(px(22.0))
-                .flex()
-                .items_center()
-                .rounded(px(4.0))
-                .border_1()
-                .border_color(if selected {
-                    c.dialog_primary_button_bg
-                } else {
-                    c.dialog_border
-                })
-                .bg(if selected {
-                    c.selection
-                } else {
-                    hsla(0.0, 0.0, 0.0, 0.0)
-                })
-                .text_size(px(theme.typography.ui_text_size(11.0)))
-                .text_color(if selected {
-                    c.dialog_primary_button_bg
-                } else {
-                    c.dialog_muted
-                })
-                .cursor_pointer()
-                .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                .tooltip(move |_, cx| {
-                    let tooltip = tooltip.clone();
-                    cx.new(|_| WorkspaceTooltip { label: tooltip }).into()
-                })
-                .child(label)
-                .on_click(move |_, _, cx| {
-                    let _ = chip_editor.update(cx, |editor, cx| {
-                        match id {
-                            "workspace-search-case" => {
-                                editor.workspace.search_match_case =
-                                    !editor.workspace.search_match_case;
-                            }
-                            "workspace-search-word" => {
-                                editor.workspace.search_whole_word =
-                                    !editor.workspace.search_whole_word;
-                            }
-                            "workspace-search-regex" => {
-                                editor.workspace.search_use_regex =
-                                    !editor.workspace.search_use_regex;
-                            }
-                            "workspace-search-fuzzy" => {
-                                editor.workspace.search_fuzzy = !editor.workspace.search_fuzzy;
-                            }
-                            _ => {}
-                        }
-                        editor.schedule_workspace_search(cx);
-                        cx.notify();
-                    });
-                })
+                .xsmall()
+                .ghost()
+                .icon(icon)
+                .selected(selected)
+                .toggled(selected)
+                .accessibility_label(label.clone())
+                .tooltip(label)
         };
-
         let mut controls = div()
             .id("workspace-search-options")
             .w_full()
             .flex()
             .items_center()
-            .gap(px(4.0))
-            .child(toggle_chip(
-                &editor,
-                "workspace-search-case",
-                "Aa".to_string(),
-                self.workspace.search_match_case,
-                strings.search_case_sensitive.clone(),
-            ))
-            .child(toggle_chip(
-                &editor,
-                "workspace-search-word",
-                "ab".to_string(),
-                self.workspace.search_whole_word,
-                strings.search_whole_word.clone(),
-            ))
-            .child(toggle_chip(
-                &editor,
-                "workspace-search-regex",
-                ".*".to_string(),
-                self.workspace.search_use_regex,
-                format!("{} — {}", strings.search_regex, strings.search_regex_hint),
-            ))
-            .child(toggle_chip(
-                &editor,
-                "workspace-search-fuzzy",
-                strings.search_fuzzy_short.clone(),
-                self.workspace.search_fuzzy,
-                strings.search_fuzzy.clone(),
-            ));
-
+            .gap_1()
+            .child(
+                option(
+                    "workspace-search-case",
+                    IconName::CaseSensitive,
+                    self.workspace.search_match_case,
+                    strings.search_case_sensitive.clone(),
+                )
+                .on_click(cx.listener(|editor, _, _, cx| {
+                    editor.workspace.search_match_case = !editor.workspace.search_match_case;
+                    editor.schedule_workspace_search(cx);
+                    cx.notify();
+                })),
+            )
+            .child(
+                option(
+                    "workspace-search-word",
+                    IconName::WholeWord,
+                    self.workspace.search_whole_word,
+                    strings.search_whole_word.clone(),
+                )
+                .on_click(cx.listener(|editor, _, _, cx| {
+                    editor.workspace.search_whole_word = !editor.workspace.search_whole_word;
+                    editor.schedule_workspace_search(cx);
+                    cx.notify();
+                })),
+            )
+            .child(
+                option(
+                    "workspace-search-regex",
+                    IconName::Regex,
+                    self.workspace.search_use_regex,
+                    format!("{} — {}", strings.search_regex, strings.search_regex_hint),
+                )
+                .on_click(cx.listener(|editor, _, _, cx| {
+                    editor.workspace.search_use_regex = !editor.workspace.search_use_regex;
+                    editor.schedule_workspace_search(cx);
+                    cx.notify();
+                })),
+            )
+            .child(
+                Button::new("workspace-search-fuzzy")
+                    .debug_selector(|| "workspace-search-fuzzy".to_string())
+                    .xsmall()
+                    .ghost()
+                    .label(strings.search_fuzzy_short.clone())
+                    .selected(self.workspace.search_fuzzy)
+                    .toggled(self.workspace.search_fuzzy)
+                    .accessibility_label(strings.search_fuzzy.clone())
+                    .tooltip(strings.search_fuzzy.clone())
+                    .on_click(cx.listener(|editor, _, _, cx| {
+                        editor.workspace.search_fuzzy = !editor.workspace.search_fuzzy;
+                        editor.schedule_workspace_search(cx);
+                        cx.notify();
+                    })),
+            );
         let scope = self.workspace.search_scope;
         if self.workspace.replace_visible && !self.is_read_only() {
-            let replace_editor = editor.clone();
-            let replace_all_editor = editor.clone();
             let replace_row = div()
                 .flex_shrink_0()
                 .flex()
                 .items_center()
-                .justify_end()
-                .gap(px(2.0))
+                .gap_1()
                 .children((scope == WorkspaceSearchScope::Document).then(|| {
-                    div()
-                        .id("workspace-search-replace-current")
+                    Button::new("workspace-search-replace-current")
                         .debug_selector(|| "workspace-search-replace-current".to_string())
-                        .w(px(22.0))
-                        .h(px(22.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(5.0))
-                        .border_1()
-                        .border_color(c.dialog_border)
-                        .text_size(px(theme.typography.ui_text_size(11.0)))
-                        .text_color(c.text_default)
-                        .cursor_pointer()
-                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .tooltip({
-                            let label = strings.search_replace_current.clone();
-                            move |_, cx| {
-                                cx.new(|_| WorkspaceTooltip {
-                                    label: label.clone(),
-                                })
-                                .into()
-                            }
-                        })
-                        .child(
-                            svg()
-                                .path("icon/workspace/replace.svg")
-                                .size(px(14.0))
-                                .text_color(c.text_default),
-                        )
-                        .on_click(move |_, window, cx| {
-                            let _ = replace_editor.update(cx, |editor, cx| {
-                                editor.replace_current_search_match(window, cx);
-                                cx.notify();
-                            });
-                            cx.stop_propagation();
-                        })
+                        .xsmall()
+                        .ghost()
+                        .icon(IconName::Replace)
+                        .accessibility_label(strings.search_replace_current.clone())
+                        .tooltip(strings.search_replace_current.clone())
+                        .on_click(cx.listener(|editor, _, window, cx| {
+                            editor.replace_current_search_match(window, cx);
+                        }))
                 }))
                 .child(
-                    div()
-                        .id("workspace-search-replace-all")
+                    Button::new("workspace-search-replace-all")
                         .debug_selector(|| "workspace-search-replace-all".to_string())
-                        .w(px(22.0))
-                        .h(px(22.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(5.0))
-                        .border_1()
-                        .border_color(c.dialog_border)
-                        .text_size(px(theme.typography.ui_text_size(11.0)))
-                        .text_color(c.text_default)
-                        .cursor_pointer()
-                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .tooltip({
-                            let label = strings.search_replace_all.clone();
-                            move |_, cx| {
-                                cx.new(|_| WorkspaceTooltip {
-                                    label: label.clone(),
-                                })
-                                .into()
-                            }
-                        })
-                        .child(
-                            svg()
-                                .path("icon/workspace/replace-all.svg")
-                                .size(px(14.0))
-                                .text_color(c.text_default),
-                        )
-                        .on_click(move |_, _window, cx| {
-                            let _ = replace_all_editor.update(cx, |editor, cx| {
-                                editor.request_replace_all_matches(cx);
-                                cx.notify();
-                            });
-                            cx.stop_propagation();
-                        }),
+                        .xsmall()
+                        .ghost()
+                        .icon(IconName::ReplaceAll)
+                        .accessibility_label(strings.search_replace_all.clone())
+                        .tooltip(strings.search_replace_all.clone())
+                        .on_click(cx.listener(|editor, _, _, cx| {
+                            editor.request_replace_all_matches(cx);
+                        })),
                 );
-            controls = controls.child(div().flex_1()).child(replace_row);
+            controls = controls.child(div().flex_1().min_w_0()).child(replace_row);
         }
-
-        let mut options = div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .child(controls);
-
-        // Scope switch: current document vs. whole workspace (the latter needs
-        // a scanned tree).
         let scope_button =
-            |editor: &WeakEntity<Self>, id: &'static str, label: String, selected: bool| {
-                let scope_editor = editor.clone();
-                div()
-                    .id(id)
-                    .px(px(6.0))
-                    .h(px(22.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(4.0))
-                    .bg(if selected {
-                        c.selection
-                    } else {
-                        hsla(0.0, 0.0, 0.0, 0.0)
-                    })
-                    .text_size(px(theme.typography.ui_text_size(11.0)))
-                    .text_color(if selected {
-                        c.dialog_primary_button_bg
-                    } else {
-                        c.dialog_muted
-                    })
-                    .cursor_pointer()
-                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .child(label)
-                    .on_click(move |_, _, cx| {
-                        let _ = scope_editor.update(cx, |editor, cx| {
-                            editor.workspace.search_scope = match id {
-                                "workspace-scope-document" => WorkspaceSearchScope::Document,
-                                _ => WorkspaceSearchScope::Workspace,
-                            };
-                            editor.workspace.search_active_index = None;
-                            editor.workspace.document_active_range = None;
-                            editor.schedule_workspace_search(cx);
-                            cx.notify();
-                        });
-                    })
-            };
-        let match_count = self.workspace.search_results.len();
-        let count_label = if match_count > 0 && scope == WorkspaceSearchScope::Document {
-            Some(
-                strings
-                    .search_result_count
-                    .replace("{n}", &match_count.to_string()),
-            )
-        } else {
-            None
-        };
-
-        options = options.child(
-            div()
-                .id("workspace-search-scope-row")
-                .w_full()
-                .flex()
-                .items_center()
-                .gap(px(4.0))
-                .child(scope_button(
-                    &editor,
+            |id, label: String, selected| Button::new(id).label(label).selected(selected);
+        let scope_switch = ButtonGroup::new("workspace-search-scope")
+            .xsmall()
+            .ghost()
+            .compact()
+            .child(
+                scope_button(
                     "workspace-scope-document",
                     strings.search_scope_document.clone(),
                     scope == WorkspaceSearchScope::Document,
-                ))
-                .child(scope_button(
-                    &editor,
+                )
+                .on_click(cx.listener(|editor, _, _, cx| {
+                    editor.set_workspace_search_scope(WorkspaceSearchScope::Document, cx);
+                })),
+            )
+            .child(
+                scope_button(
                     "workspace-scope-workspace",
                     strings.search_scope_workspace.clone(),
                     scope == WorkspaceSearchScope::Workspace,
-                ))
-                .child(div().flex_1().min_w(px(0.0)).flex().justify_end().children(
-                    count_label.map(|label| {
-                        div()
-                            .text_size(px(theme.typography.ui_text_size(11.0)))
-                            .text_color(c.dialog_muted)
-                            .child(label)
-                    }),
-                )),
-        );
+                )
+                .on_click(cx.listener(|editor, _, _, cx| {
+                    editor.set_workspace_search_scope(WorkspaceSearchScope::Workspace, cx);
+                })),
+            );
+        let match_count = self.workspace.search_results.len();
+        let count_label = (match_count > 0 && scope == WorkspaceSearchScope::Document).then(|| {
+            strings
+                .search_result_count
+                .replace("{n}", &match_count.to_string())
+        });
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(controls)
+            .child(
+                div()
+                    .id("workspace-search-scope-row")
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(scope_switch)
+                    .child(div().flex_1().min_w_0().flex().justify_end().children(
+                        count_label.map(|label| {
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(label)
+                        }),
+                    )),
+            )
+            .into_any_element()
+    }
 
-        options.into_any_element()
+    fn set_workspace_search_scope(&mut self, scope: WorkspaceSearchScope, cx: &mut Context<Self>) {
+        self.workspace.search_scope = scope;
+        self.workspace.search_active_index = None;
+        self.workspace.document_active_range = None;
+        self.schedule_workspace_search(cx);
+        cx.notify();
     }
 
     pub(crate) fn render_search_results(
@@ -447,26 +313,34 @@ impl Editor {
         editor: &WeakEntity<Editor>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if self.workspace.search_error.is_some() {
+            return div().into_any_element();
+        }
         // 只在还没有任何结果可显示时才用「…」占位：重新搜索期间继续显示上一次
         // 的结果，避免侧栏闪空。
         if self.workspace.search_pending && self.workspace.search_results.is_empty() {
             return div()
-                .p(px(12.0))
-                .text_size(px(theme.typography.ui_text_size(14.0)))
-                .text_color(theme.colors.dialog_muted)
-                .child("…")
+                .id("workspace-search-loading")
+                .role(Role::ProgressIndicator)
+                .aria_label("Searching")
+                .p_3()
+                .child(Spinner::new().small())
                 .into_any_element();
         }
         if self.workspace.search_results.is_empty() {
-            return self.render_workspace_empty_state(
-                "",
-                if self.workspace.search_scope == WorkspaceSearchScope::Document {
-                    &strings.workspace_no_document_find_results
-                } else {
-                    &strings.workspace_no_search_results
-                },
-                theme,
-            );
+            let message = if self.workspace.search_scope == WorkspaceSearchScope::Document {
+                &strings.workspace_no_document_find_results
+            } else {
+                &strings.workspace_no_search_results
+            };
+            return div()
+                .id("workspace-search-empty")
+                .test_support()
+                .role(Role::Status)
+                .aria_label(message.clone())
+                .size_full()
+                .child(self.render_workspace_empty_state("", message, theme))
+                .into_any_element();
         }
         let c = &theme.colors;
         let is_document_scope = self.workspace.search_scope == WorkspaceSearchScope::Document;

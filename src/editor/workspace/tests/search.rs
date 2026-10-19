@@ -2337,3 +2337,153 @@ async fn clicking_replace_input_cancels_an_older_pending_search_focus(cx: &mut T
         assert_eq!(editor.buffer.text(), "alpha", "输入替换内容不能误改正文");
     });
 }
+
+#[gpui::test]
+fn search_options_and_replace_actions_use_keyboard_accessible_controls(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(gpui::WindowOptions::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "a1b1".into(), None))
+        })
+        .unwrap()
+    });
+    handle
+        .update(cx, |editor, window, cx| {
+            window.activate_window();
+            editor.workspace.is_open = true;
+            editor.set_workspace_tab(WorkspaceTab::Search, cx);
+            editor.workspace.replace_visible = true;
+            editor.workspace.search_focus_pending = true;
+            editor.workspace.search_query = "1".into();
+            editor.workspace.replace_query = "X".into();
+            editor.schedule_workspace_search(cx);
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    visual.executor().advance_clock(Duration::from_millis(400));
+    for _ in 0..3 {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        for id in [
+            "workspace-search-toggle-replace",
+            "workspace-search-case",
+            "workspace-search-word",
+            "workspace-search-regex",
+            "workspace-search-fuzzy",
+            "workspace-scope-document",
+            "workspace-scope-workspace",
+            "workspace-search-replace-current",
+            "workspace-search-replace-all",
+        ] {
+            assert_eq!(
+                window.try_find(id).and_then(|button| button.role()),
+                Some(gpui::Role::Button),
+                "{id} 应提供标准按钮语义"
+            );
+        }
+        for _ in 0..24 {
+            window.press("tab", cx);
+            window.render_frame(cx);
+            if window.find("workspace-search-case").focused() == Some(true) {
+                break;
+            }
+        }
+        assert_eq!(
+            window.find("workspace-search-case").focused(),
+            Some(true),
+            "搜索选项应可通过 Tab 到达"
+        );
+        window.press("space", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .read_with(&visual, |editor, _| {
+            assert!(editor.workspace.search_match_case, "空格切换大小写匹配");
+            assert_eq!(editor.buffer.text(), "a1b1", "更改匹配选项不修改正文");
+        })
+        .unwrap();
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        window.click("workspace-search-replace-current", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(editor.buffer.text(), "aXb1")
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn search_control_icons_are_embedded_and_paint_pixels(cx: &mut TestAppContext) {
+    use gpui::AssetSource as _;
+    for path in [
+        "icons/case-sensitive.svg",
+        "icons/whole-word.svg",
+        "icons/regex.svg",
+        "icons/replace.svg",
+        "icons/replace-all.svg",
+    ] {
+        let asset = crate::VeloraAssets.load(path);
+        assert!(
+            asset.as_ref().is_ok_and(|bytes| bytes.is_some()),
+            "搜索控件图标必须随产品嵌入：{path}"
+        );
+        let image =
+            gpui::Image::from_bytes(gpui::ImageFormat::Svg, asset.unwrap().unwrap().into_owned());
+        let pixels = cx
+            .update(|cx| image.to_image_data(cx.svg_renderer()))
+            .unwrap();
+        assert!(
+            pixels
+                .as_bytes(0)
+                .unwrap()
+                .chunks_exact(4)
+                .any(|pixel| pixel[3] > 0),
+            "搜索控件图标必须实际绘制像素：{path}"
+        );
+    }
+}
+
+#[gpui::test]
+fn invalid_search_pattern_does_not_present_a_no_matches_result(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, visual) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update(visual, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.set_workspace_tab(WorkspaceTab::Search, cx);
+        editor.workspace.search_use_regex = true;
+        editor.workspace.search_query = "[".into();
+        editor.schedule_workspace_search(cx);
+    });
+    for _ in 0..3 {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("workspace-search-pattern-error").role(),
+            Some(gpui::Role::Alert)
+        );
+        assert!(
+            window.try_find("workspace-search-empty").is_none(),
+            "表达式未能执行时不应展示没有匹配的搜索结果"
+        );
+    });
+}

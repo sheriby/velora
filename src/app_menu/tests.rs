@@ -810,12 +810,20 @@ fn kit_ui_icons_are_available_without_loading_the_full_catalog() {
         "icons/app-window.svg",
         "icons/trash.svg",
         "icons/list-tree.svg",
+        "icons/case-sensitive.svg",
+        "icons/whole-word.svg",
+        "icons/regex.svg",
+        "icons/replace.svg",
+        "icons/replace-all.svg",
     ];
     for path in extra_icons {
         assert!(matches!(crate::VeloraAssets.load(path), Ok(Some(_))), "界面图标应可加载：{path}");
     }
-    assert_eq!(crate::VeloraAssets.list("icons").unwrap().len(),
-        gpui_kit::assets::Assets.list("icons").unwrap().len() + extra_icons.len(),
-        "只嵌入实际使用的补充图标");
+    let mut expected = gpui_kit::assets::Assets.list("icons").unwrap();
+    expected.extend(extra_icons.into_iter().map(Into::into));
+    expected.sort();
+    expected.dedup();
+    assert_eq!(crate::VeloraAssets.list("icons").unwrap(), expected,
+        "只嵌入实际使用的补充图标，并去除默认包中的重复项");
 }
 }

@@ -85,7 +85,9 @@ fn apply_dock_icon() {
     }
 }
 
-gpui_kit::assets::icon_assets!(VeloraUiIcons, [Image, Keyboard, Sparkles, AppWindow, Trash, ListTree]);
+gpui_kit::assets::icon_assets!(VeloraUiIcons, [
+    Image, Keyboard, Sparkles, AppWindow, Trash, ListTree, CaseSensitive, WholeWord, Regex, Replace, ReplaceAll,
+]);
 
 struct VeloraAssets;
 
