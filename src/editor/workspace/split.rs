@@ -1,5 +1,6 @@
 use super::*;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use gpui_kit::component::resizable::ResizableState;
 use std::rc::Rc;
 
 mod render;
@@ -16,7 +17,6 @@ pub(crate) enum SplitDirection {
 
 const MIN_PANE_WIDTH: f32 = 320.0;
 const MIN_PANE_HEIGHT: f32 = 180.0;
-const DIVIDER_SIZE: f32 = 4.0;
 
 impl SplitDirection {
     fn fits(self, size: Size<Pixels>) -> bool {
@@ -25,7 +25,7 @@ impl SplitDirection {
         } else {
             (f32::from(size.width), MIN_PANE_WIDTH)
         };
-        available <= 0.0 || available >= minimum * 2.0 + DIVIDER_SIZE
+        available <= 0.0 || available >= minimum * 2.0
     }
 
     pub(crate) fn label(self, strings: &crate::i18n::I18nStrings) -> String {
@@ -52,6 +52,7 @@ enum GroupNode {
         vertical: bool,
         ratio: f32,
         bounds: Rc<Cell<Bounds<Pixels>>>,
+        view: Rc<RefCell<Option<SplitPanelLayout>>>,
         first: Box<GroupNode>,
         second: Box<GroupNode>,
     },
@@ -78,11 +79,11 @@ impl GroupNode {
                 let mut first_size = available;
                 let mut second_size = available;
                 if *vertical {
-                    let height = (available.height - px(DIVIDER_SIZE)).max(px(0.0));
+                    let height = available.height.max(px(0.0));
                     first_size.height = height * *ratio;
                     second_size.height = height * (1.0 - *ratio);
                 } else {
-                    let width = (available.width - px(DIVIDER_SIZE)).max(px(0.0));
+                    let width = available.width.max(px(0.0));
                     first_size.width = width * *ratio;
                     second_size.width = width * (1.0 - *ratio);
                 }
@@ -107,11 +108,11 @@ impl GroupNode {
                 if *vertical {
                     (
                         first_width.max(second_width),
-                        first_height + second_height + DIVIDER_SIZE,
+                        first_height + second_height,
                     )
                 } else {
                     (
-                        first_width + second_width + DIVIDER_SIZE,
+                        first_width + second_width,
                         first_height.max(second_height),
                     )
                 }
@@ -127,6 +128,7 @@ impl GroupNode {
                 vertical,
                 ratio,
                 bounds,
+                view,
                 first,
                 second,
             } => match (first.without(target), second.without(target)) {
@@ -135,6 +137,7 @@ impl GroupNode {
                     vertical: *vertical,
                     ratio: *ratio,
                     bounds: bounds.clone(),
+                    view: view.clone(),
                     first: Box::new(first),
                     second: Box::new(second),
                 }),
@@ -142,40 +145,19 @@ impl GroupNode {
             },
         }
     }
-    fn resize(&mut self, target: uuid::Uuid, value: f32) {
-        if let Self::Split {
-            id,
-            ratio,
-            first,
-            second,
-            bounds,
-            vertical,
-        } = self
-        {
-            if *id == target {
-                let size = bounds.get().size;
-                let total = if *vertical {
-                    f32::from(size.height)
-                } else {
-                    f32::from(size.width)
-                };
-                let (first_width, first_height) = first.minimum_size();
-                let (second_width, second_height) = second.minimum_size();
-                let first_minimum = if *vertical { first_height } else { first_width };
-                let second_minimum = if *vertical {
-                    second_height
-                } else {
-                    second_width
-                };
-                let available = total - DIVIDER_SIZE;
-                if available >= first_minimum + second_minimum {
-                    *ratio =
-                        value.clamp(first_minimum / available, 1.0 - second_minimum / available);
+    fn set_ratio(&mut self, target: uuid::Uuid, value: f32) -> bool {
+        match self {
+            Self::Split { id, ratio, .. } if *id == target => {
+                if *ratio == value {
+                    return false;
                 }
-            } else {
-                first.resize(target, value);
-                second.resize(target, value);
+                *ratio = value;
+                true
             }
+            Self::Split { first, second, .. } => {
+                first.set_ratio(target, value) || second.set_ratio(target, value)
+            }
+            Self::Editor(_) => false,
         }
     }
     fn editors(&self, output: &mut Vec<Entity<Editor>>) {
@@ -208,6 +190,7 @@ impl GroupNode {
                     vertical: direction.vertical(),
                     ratio: 0.5,
                     bounds: Rc::new(Cell::new(Bounds::default())),
+                    view: Rc::new(RefCell::new(None)),
                     first: Box::new(first),
                     second: Box::new(second),
                 };
@@ -220,6 +203,44 @@ impl GroupNode {
             }
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct SplitPanelPreference {
+    ratio: f32,
+    available: Pixels,
+    first_minimum: Pixels,
+    second_minimum: Pixels,
+}
+
+impl SplitPanelPreference {
+    fn new(ratio: f32, available: Pixels, first_minimum: Pixels, second_minimum: Pixels) -> Self {
+        let scale = (available / (first_minimum + second_minimum)).min(1.0);
+        let first_minimum = (first_minimum * scale).min(available);
+        let second_minimum = (second_minimum * scale).min((available - first_minimum).max(px(0.0)));
+        Self {
+            ratio,
+            available,
+            first_minimum,
+            second_minimum,
+        }
+    }
+
+    fn first_size(self) -> Pixels {
+        (self.available * self.ratio).clamp(self.first_minimum, self.maximum())
+    }
+
+    fn maximum(self) -> Pixels {
+        (self.available - self.second_minimum).max(self.first_minimum)
+    }
+}
+
+struct SplitPanelLayout {
+    state: Entity<ResizableState>,
+    focus: FocusHandle,
+    preference: SplitPanelPreference,
+    _observation: Subscription,
+    _subscription: Subscription,
 }
 
 struct SharedDocument {
@@ -251,7 +272,6 @@ pub(crate) struct SplitWorkspace {
     active: EntityId,
     subscriptions: Vec<Subscription>,
     documents: HashMap<PathBuf, SharedDocument>,
-    resizing: bool,
 }
 
 impl Editor {
@@ -950,7 +970,6 @@ impl Editor {
             active: group.entity_id(),
             subscriptions: Vec::new(),
             documents,
-            resizing: false,
         });
         self.autosave_task = None;
         self.file_path = None;

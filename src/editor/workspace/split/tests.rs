@@ -1962,3 +1962,188 @@ fn native_group_tab_keyboard_activation_selects_its_editor(cx: &mut TestAppConte
         }
     });
 }
+
+#[gpui::test]
+fn native_split_dividers_support_keyboard_and_keep_session_ratios(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    for (direction, vertical, minimum, positive) in [
+        (SplitDirection::Right, false, gpui::px(320.0), "right"),
+        (SplitDirection::Down, true, gpui::px(180.0), "down"),
+    ] {
+        let root =
+            std::env::temp_dir().join(format!("velora-native-split-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let _config = crate::config::override_test_config_root(root.join("config"));
+        let path = root.join("notes.md");
+        std::fs::write(&path, "正文\n").unwrap();
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let handle = cx.update(|cx| {
+            crate::ui::open_window(Default::default(), cx, |_, cx| {
+                cx.new(|cx| Editor::from_markdown(cx, "正文\n".into(), Some(path.clone())))
+            })
+            .unwrap()
+        });
+        let mut visual = VisualTestContext::from_window(handle.into(), cx);
+        visual.simulate_resize(gpui::size(gpui::px(1100.0), gpui::px(800.0)));
+        visual.run_until_parked();
+        handle
+            .update(&mut visual, |editor, window, cx| {
+                window.activate_window();
+                editor.split_active_document(direction, window, cx);
+            })
+            .unwrap();
+        for _ in 0..4 {
+            redraw(&mut visual);
+        }
+        let first_before = visual.debug_bounds("editor-group-0").unwrap();
+        visual.update(|window, cx| {
+            assert_eq!(
+                window
+                    .try_find("split-divider")
+                    .and_then(|item| item.role()),
+                Some(gpui::Role::Splitter),
+                "分屏边界必须使用可访问的标准分隔控件"
+            );
+            window.blur(cx);
+            window.focus_next(cx);
+            for _ in 0..48 {
+                window.press("tab", cx);
+                window.render_frame(cx);
+                if window.find("split-divider").focused() == Some(true) {
+                    break;
+                }
+            }
+            assert_eq!(window.find("split-divider").focused(), Some(true));
+            window.press(positive, cx);
+        });
+        for _ in 0..3 {
+            redraw(&mut visual);
+        }
+        let first = visual.debug_bounds("editor-group-0").unwrap();
+        let extent = |bounds: gpui::Bounds<gpui::Pixels>| {
+            if vertical {
+                bounds.size.height
+            } else {
+                bounds.size.width
+            }
+        };
+        assert!(
+            extent(first) > extent(first_before) + gpui::px(8.0),
+            "方向键应扩展前一个编辑区"
+        );
+        visual.update(|window, cx| window.press("home", cx));
+        for _ in 0..3 {
+            redraw(&mut visual);
+        }
+        let first = visual.debug_bounds("editor-group-0").unwrap();
+        assert!(
+            (extent(first) - minimum).abs() < gpui::px(1.0),
+            "Home 应到达正文最小尺寸：{first:?}"
+        );
+        visual.update(|window, cx| window.press("end", cx));
+        for _ in 0..3 {
+            redraw(&mut visual);
+        }
+        let first = visual.debug_bounds("editor-group-0").unwrap();
+        let second = visual.debug_bounds("editor-group-1").unwrap();
+        assert!(
+            (extent(second) - minimum).abs() < gpui::px(1.0),
+            "End 仍需保住另一个编辑区的最小尺寸"
+        );
+        handle
+            .read_with(&visual, |editor, cx| {
+                let crate::config::EditorGroupLayout::Split { ratio, .. } =
+                    editor.split_session_layout(cx).unwrap()
+                else {
+                    panic!("分屏布局");
+                };
+                let expected = f32::from(extent(first)) / f32::from(extent(first) + extent(second));
+                assert!(
+                    (f32::from(ratio) / 1000.0 - expected).abs() < 0.002,
+                    "键盘调整必须同步会话比例"
+                );
+                for group in editor.split_groups() {
+                    assert_eq!(group.read(cx).buffer.text(), "正文\n");
+                }
+            })
+            .unwrap();
+        cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    }
+}
+
+#[gpui::test]
+fn native_nested_splits_fit_a_narrow_window_and_restore_their_proportions(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, _| {
+        cx.simulate_resize(gpui::size(gpui::px(1800.0), gpui::px(900.0)));
+        redraw(cx);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.split_active_document(SplitDirection::Right, window, cx);
+            editor.split_active_document(SplitDirection::Right, window, cx);
+        });
+        for _ in 0..6 {
+            redraw(cx);
+        }
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.split_groups().len()),
+            3
+        );
+        let before = (0..3)
+            .map(|index| {
+                let selector = Box::leak(format!("editor-group-{index}").into_boxed_str());
+                cx.debug_bounds(selector).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let focus = editor.read_with(cx, |editor, _| {
+            let super::GroupNode::Split { view, .. } =
+                &editor.split_workspace.as_ref().unwrap().layout
+            else {
+                panic!("分屏根");
+            };
+            view.borrow().as_ref().unwrap().focus.clone()
+        });
+        cx.update(|window, cx| window.focus(&focus, cx));
+        cx.simulate_resize(gpui::size(gpui::px(1000.0), gpui::px(700.0)));
+        for _ in 0..6 {
+            redraw(cx);
+        }
+        let current = (0..3)
+            .map(|index| {
+                let selector = Box::leak(format!("editor-group-{index}").into_boxed_str());
+                cx.debug_bounds(selector).unwrap()
+            })
+            .collect::<Vec<_>>();
+        for pane in &current {
+            assert!(pane.size.width > gpui::px(0.0));
+            assert!(
+                pane.left() >= gpui::px(0.0) && pane.right() <= gpui::px(1000.5),
+                "缩窄后不能把正文挤出窗口：{pane:?}"
+            );
+        }
+        for pair in current.windows(2) {
+            assert!(
+                (pair[0].right() - pair[1].left()).abs() < gpui::px(1.0),
+                "相邻正文不能重叠或遗留厚分隔空隙"
+            );
+        }
+        assert!(
+            cx.update(|window, _| focus.is_focused(window)),
+            "重建尺寸状态不能丢失分隔条焦点"
+        );
+        cx.simulate_resize(gpui::size(gpui::px(1800.0), gpui::px(900.0)));
+        for _ in 0..6 {
+            redraw(cx);
+        }
+        for (index, previous) in before.into_iter().enumerate() {
+            let selector = Box::leak(format!("editor-group-{index}").into_boxed_str());
+            let current = cx.debug_bounds(selector).unwrap();
+            assert!(
+                (current.size.width - previous.size.width).abs() < gpui::px(1.0),
+                "窗口恢复后应保留原比例：{current:?} / {previous:?}"
+            );
+        }
+    });
+}

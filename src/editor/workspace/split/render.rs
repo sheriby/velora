@@ -6,13 +6,7 @@ use crate::components::{
     ToggleFocusMode, ToggleFullscreen, ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, Undo,
 };
 use gpui::prelude::FluentBuilder;
-
-#[derive(Clone)]
-struct DividerDrag {
-    id: uuid::Uuid,
-    bounds: Rc<Cell<Bounds<Pixels>>>,
-    vertical: bool,
-}
+use gpui_kit::component::resizable::{h_resizable, v_resizable, resizable_panel};
 
 pub(super) fn tab_group_accent(theme: &Theme, index: usize) -> Hsla {
     // 黄金角错开色相，避免相邻分组落在近似颜色上。
@@ -70,7 +64,7 @@ impl Editor {
         }));
         let document = if let Some(layout) = self.split_workspace.as_ref().map(|workspace| workspace.layout.clone()) {
             let mut index = 0;
-            let groups = self.render_group_node(&layout, &theme, &mut index, cx);
+            let groups = Self::render_group_node(&layout, &mut index, cx);
             self.render_ai_workspace(groups, &theme, window, cx)
         } else {
             div().into_any_element()
@@ -88,15 +82,6 @@ impl Editor {
             .relative()
             .flex()
             .flex_col()
-            .capture_any_mouse_up(cx.listener(|editor, _event, _window, cx| {
-                if editor
-                    .split_workspace
-                    .as_mut()
-                    .is_some_and(|workspace| std::mem::take(&mut workspace.resizing))
-                {
-                    editor.persist_session(cx);
-                }
-            }))
             .bg(theme.colors.editor_background)
             .child(div().flex_1().min_h_0().flex().flex_col()
                 .pt(px(header_height)).child(main));
@@ -309,13 +294,11 @@ impl Editor {
     }
 
     fn render_group_node(
-        &self,
         node: &GroupNode,
-        theme: &Theme,
         index: &mut usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // 每层都建立 flex 容器，避免块布局按内容推导嵌套百分比尺寸时把正文压成零宽。
+        // 嵌套容器必须保持 flex 与可收缩尺寸，正文才能按分配的视口排版。
         match node {
             GroupNode::Editor(group) => {
                 let position = *index;
@@ -351,92 +334,163 @@ impl Editor {
                 vertical,
                 ratio,
                 bounds,
+                view,
                 first,
                 second,
             } => {
-                let measured = bounds.clone();
-                let drag = DividerDrag {
-                    id: *id,
-                    bounds: bounds.clone(),
-                    vertical: *vertical,
+                let (first_width, first_height) = first.minimum_size();
+                let (second_width, second_height) = second.minimum_size();
+                let (first_minimum, second_minimum, measured_size) = if *vertical {
+                    (
+                        px(first_height),
+                        px(second_height),
+                        bounds.get().size.height,
+                    )
+                } else {
+                    (px(first_width), px(second_width), bounds.get().size.width)
                 };
-                let split_id = *id;
-                let divider = div()
-                    .id(SharedString::from(format!("split-divider-{id}")))
-                    .debug_selector(|| "split-divider".to_string())
-                    .flex_shrink_0()
-                    .bg(theme.colors.dialog_border)
-                    .when(*vertical, |this| {
-                        this.h(px(4.0)).w_full().cursor(CursorStyle::ResizeUpDown)
-                    })
-                    .when(!vertical, |this| {
-                        this.w(px(4.0))
-                            .h_full()
-                            .cursor(CursorStyle::ResizeLeftRight)
-                    })
-                    .on_drag(drag, |_, _, _, cx| {
-                        cx.new(|_| DraggedTabPreview { label: "".into() })
-                    })
-                    .on_drag_move::<DividerDrag>(cx.listener(
-                        move |editor, event: &DragMoveEvent<DividerDrag>, _, cx| {
-                            let drag = event.drag(cx).clone();
-                            if drag.id != split_id {
-                                return;
-                            }
-                            let bounds = drag.bounds.get();
-                            let (offset, total) = if drag.vertical {
-                                (event.event.position.y - bounds.top(), bounds.size.height)
-                            } else {
-                                (event.event.position.x - bounds.left(), bounds.size.width)
-                            };
-                            if total > px(0.0) {
-                                if let Some(workspace) = editor.split_workspace.as_mut() {
-                                    workspace
-                                        .layout
-                                        .resize(split_id, f32::from(offset) / f32::from(total));
-                                    workspace.resizing = true;
-                                }
-                                cx.notify();
-                            }
-                        },
-                    ));
-                let first = self.render_group_node(first, theme, index, cx);
-                let second = self.render_group_node(second, theme, index, cx);
+                let available = view
+                    .borrow()
+                    .as_ref()
+                    .map(|layout| layout.state.read(cx).container_size())
+                    .filter(|size| *size > px(0.0))
+                    .unwrap_or_else(|| {
+                        if measured_size > px(0.0) {
+                            measured_size
+                        } else {
+                            first_minimum + second_minimum
+                        }
+                    });
+                let preference =
+                    SplitPanelPreference::new(*ratio, available, first_minimum, second_minimum);
+                let (state, focus) = split_panel_layout(view, *id, preference, cx);
+                let measured = bounds.clone();
+
+                let first = Self::render_group_node(first, index, cx);
+                let second = Self::render_group_node(second, index, cx);
+                let group = if *vertical {
+                    v_resizable(SharedString::from(format!("editor-split-{id}")))
+                } else {
+                    h_resizable(SharedString::from(format!("editor-split-{id}")))
+                };
+                let group = group
+                    .with_state(&state)
+                    .with_handle_appearance(
+                        crate::ui::PanelResizeHandle {
+                            id: "split-divider",
+                            label: "Resize editor panes",
+                            state: state.clone(),
+                            focus,
+                            panel_index: 0,
+                            edge: gpui_kit::base::HandleEdge::Trailing,
+                            minimum: preference.first_minimum,
+                            maximum: preference.maximum(),
+                            initial: preference.first_size(),
+                        }
+                        .appearance(),
+                    )
+                    .child(
+                        resizable_panel()
+                            .size(preference.first_size())
+                            .size_range(preference.first_minimum..preference.maximum())
+                            .min_w_0()
+                            .min_h_0()
+                            .child(first),
+                    )
+                    .child(
+                        resizable_panel()
+                            .size(preference.available - preference.first_size())
+                            .size_range(
+                                preference.second_minimum
+                                    ..(preference.available - preference.first_minimum)
+                                        .max(preference.second_minimum),
+                            )
+                            .min_w_0()
+                            .min_h_0()
+                            .child(second),
+                    );
                 div()
                     .size_full()
-                    .min_w(px(0.0))
-                    .min_h(px(0.0))
-                    .relative()
                     .flex()
-                    .when(*vertical, |this| this.flex_col())
+                    .min_w_0()
+                    .min_h_0()
+                    .relative()
                     .child(
                         canvas(move |bounds, _, _| measured.set(bounds), |_, _, _, _| {})
                             .absolute()
                             .size_full(),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .min_w(px(0.0))
-                            .min_h(px(0.0))
-                            .when(*vertical, |this| this.w_full().h(relative(*ratio)))
-                            .when(!vertical, |this| this.h_full().w(relative(*ratio)))
-                            .child(first),
-                    )
-                    .child(divider)
-                    .child(
-                        div()
-                            .flex()
-                            .min_w(px(0.0))
-                            .min_h(px(0.0))
-                            .when(*vertical, |this| this.w_full().h(relative(1.0 - *ratio)))
-                            .when(!vertical, |this| this.h_full().w(relative(1.0 - *ratio)))
-                            .child(second),
-                    )
+                    .child(group)
                     .into_any_element()
             }
         }
     }
+}
+
+fn split_panel_layout(
+    view: &Rc<RefCell<Option<SplitPanelLayout>>>,
+    id: uuid::Uuid,
+    preference: SplitPanelPreference,
+    cx: &mut Context<Editor>,
+) -> (Entity<ResizableState>, FocusHandle) {
+    let previous = view.borrow_mut().take();
+    let layout = match previous {
+        Some(layout) if layout.preference == preference => layout,
+        previous => {
+            let focus = previous
+                .as_ref()
+                .map(|layout| layout.focus.clone())
+                .unwrap_or_else(|| cx.focus_handle());
+            let state = cx.new(|_| ResizableState::default());
+            state.update(cx, |state, cx| {
+                state.insert_panel(Some(preference.first_size()), None, cx);
+                state.insert_panel(
+                    Some(preference.available - preference.first_size()),
+                    None,
+                    cx,
+                );
+            });
+            let observation = cx.observe(&state, |_, _, cx| cx.notify());
+            let weak_view = Rc::downgrade(view);
+            let subscription = cx.subscribe(&state, move |editor, state, _, cx| {
+                let (first, total) = {
+                    let state = state.read(cx);
+                    (
+                        state.sizes().first().copied(),
+                        state.sizes().iter().copied().sum::<Pixels>(),
+                    )
+                };
+                if let Some(first) = first
+                    && total > px(0.0)
+                {
+                    let ratio = first / total;
+                    if let Some(view) = weak_view.upgrade()
+                        && let Some(layout) = view.borrow_mut().as_mut()
+                    {
+                        layout.preference.ratio = ratio;
+                    }
+                    if editor
+                        .split_workspace
+                        .as_mut()
+                        .is_some_and(|workspace| workspace.layout.set_ratio(id, ratio))
+                    {
+                        editor.persist_session(cx);
+                        cx.notify();
+                    }
+                }
+            });
+            SplitPanelLayout {
+                state,
+                focus,
+                preference,
+                _observation: observation,
+                _subscription: subscription,
+            }
+        }
+    };
+    let result = (layout.state.clone(), layout.focus.clone());
+    *view.borrow_mut() = Some(layout);
+    result
 }
 
 impl Editor {

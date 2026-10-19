@@ -124,6 +124,7 @@ impl Editor {
                 vertical: *vertical,
                 ratio: f32::from((*ratio).clamp(150, 850)) / 1000.0,
                 bounds: Rc::new(Cell::new(Bounds::default())),
+                view: Rc::new(RefCell::new(None)),
                 first: Box::new(self.restore_group_node(first, active_group, window, cx)),
                 second: Box::new(self.restore_group_node(second, active_group, window, cx)),
             },
