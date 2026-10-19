@@ -19,7 +19,7 @@ mod tests {
         assert_eq!(strings.image_loading_without_alt, "正在加载图片...");
         assert_eq!(
             strings.help_check_updates_message,
-            "正在检查 Velora 的最新版本..."
+            "正在检查 Velora 的最新版本…"
         );
         assert_eq!(strings.update_open_release, "前往下载");
         assert_eq!(strings.help_about_github_label, "项目仓库");

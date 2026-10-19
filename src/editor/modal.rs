@@ -16,7 +16,7 @@ use crate::i18n::I18nManager;
 use crate::theme::Theme;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::Editor;
+use super::{Editor, InfoDialogKind};
 
 // 分屏按固定组顺序绘制，弹窗必须另外按出现顺序决定遮挡层级。
 static NEXT_MODAL_LAYER: AtomicUsize = AtomicUsize::new(0);
@@ -35,6 +35,7 @@ pub(crate) struct ModalSpec {
 #[derive(Clone)]
 enum ModalOrigin {
     General,
+    Information(InfoDialogKind),
     WindowClose,
     DroppedFile(std::path::PathBuf),
     Folder(std::path::PathBuf),
@@ -44,6 +45,7 @@ impl ModalOrigin {
     fn selectors(&self) -> (&'static str, &'static str) {
         match self {
             Self::General => ("editor-modal", "editor-modal-overlay"),
+            Self::Information(_) => ("info-dialog", "info-dialog-overlay"),
             Self::WindowClose => ("unsaved-changes-dialog", "unsaved-changes-overlay"),
             Self::DroppedFile(_) => ("drop-replace-dialog", "drop-replace-overlay"),
             Self::Folder(_) => ("folder-choice-dialog", "folder-choice-overlay"),
@@ -53,6 +55,7 @@ impl ModalOrigin {
     fn button_ids(&self) -> &'static [&'static str] {
         match self {
             Self::General => &[],
+            Self::Information(_) => &["dismiss-info-dialog"],
             Self::WindowClose => &[
                 "cancel-close-dialog",
                 "discard-and-close-dialog",
@@ -196,6 +199,7 @@ impl Editor {
     fn modal_origin_is_current(&self, origin: &ModalOrigin) -> bool {
         match origin {
             ModalOrigin::General => true,
+            ModalOrigin::Information(kind) => self.info_dialog == Some(*kind),
             ModalOrigin::WindowClose => {
                 self.show_unsaved_changes_dialog && !self.show_drop_replace_dialog
             }
@@ -224,10 +228,12 @@ impl Editor {
             drop(self.take_modal(window, cx));
             cx.notify();
         }
-        if self.modal.is_some() || self.info_dialog.is_some() {
+        if self.modal.is_some() {
             return;
         }
-        let origin = if self.show_drop_replace_dialog {
+        let origin = if let Some(kind) = self.info_dialog {
+            Some(ModalOrigin::Information(kind))
+        } else if self.show_drop_replace_dialog {
             self.pending_drop_replace_path
                 .clone()
                 .map(ModalOrigin::DroppedFile)
@@ -270,20 +276,27 @@ impl Editor {
                     strings.workspace_replace_current_button.clone().into(),
                 ],
             ),
+            ModalOrigin::Information(kind) => (
+                self.info_dialog_title(strings, *kind).to_string(),
+                String::new(),
+                vec![strings.info_dialog_ok.clone().into()],
+            ),
             ModalOrigin::General => return,
         };
+        let default_index = buttons.len().saturating_sub(1);
         let decision = origin.clone();
         self.show_modal(
             ModalSpec {
                 title: title.into(),
-                detail: Some(detail.into()),
+                detail: (!matches!(&origin, ModalOrigin::Information(_))).then_some(detail.into()),
                 buttons,
-                default_index: 2,
+                default_index,
                 cancel_index: 0,
             },
             move |choice, editor, window, cx| {
                 let event = ClickEvent::default();
                 match (decision, choice) {
+                    (ModalOrigin::Information(_), _) => editor.hide_info_dialog(cx),
                     (ModalOrigin::WindowClose, 0) => {
                         editor.on_cancel_close_dialog(&event, window, cx)
                     }
@@ -387,6 +400,16 @@ impl Editor {
                     )),
             );
         }
+        let body = match &modal.origin {
+            ModalOrigin::Information(kind) => {
+                Some(self.render_info_dialog_body(cx.global::<I18nManager>().strings(), *kind, cx))
+            }
+            _ => modal
+                .spec
+                .detail
+                .clone()
+                .map(|detail| DialogDescription::new().child(detail).into_any_element()),
+        };
         let owner = cx.entity().downgrade();
         let panel = div()
             .id(panel_selector)
@@ -410,7 +433,7 @@ impl Editor {
                     .flex_shrink_0()
                     .child(modal.spec.title.clone()),
             )
-            .when_some(modal.spec.detail.clone(), |panel, detail| {
+            .when_some(body, |panel, body| {
                 panel.child(
                     div()
                         .id("editor-modal-body")
@@ -418,11 +441,7 @@ impl Editor {
                         .relative()
                         .overflow_y_scroll()
                         .track_scroll(&modal.scroll)
-                        .child(
-                            DialogContent::new()
-                                .flex_none()
-                                .child(DialogDescription::new().child(detail)),
-                        )
+                        .child(DialogContent::new().flex_none().child(body))
                         .vertical_scrollbar(&modal.scroll),
                 )
             })

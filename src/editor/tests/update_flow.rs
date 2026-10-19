@@ -193,6 +193,22 @@ impl<'a> UpdateFlow<'a> {
 }
 
 #[gpui::test]
+async fn update_flow_check_result_preserves_newer_info_dialog(cx: &mut TestAppContext) {
+    let flow = UpdateFlow::new(cx);
+    flow.editor.update_in(flow.cx, |editor, window, cx| {
+        editor.request_check_updates(window, cx);
+        editor.show_info_dialog(crate::editor::InfoDialogKind::About, cx);
+    });
+    flow.cx.run_until_parked();
+    assert!(
+        flow.editor
+            .read_with(flow.cx, |editor, _| editor.info_dialog
+                == Some(crate::editor::InfoDialogKind::About)),
+        "较早的更新任务不能关闭之后打开的关于窗口"
+    );
+}
+
+#[gpui::test]
 async fn update_flow_clean_document_reaches_installer_once(cx: &mut TestAppContext) {
     let mut flow = UpdateFlow::new(cx);
     flow.check();

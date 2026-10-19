@@ -1,6 +1,13 @@
 //! 已发布版本的通知、下载和保存后安装。
 
 use gpui::*;
+use gpui::prelude::FluentBuilder as _;
+use gpui_kit::component::{
+    ActiveTheme as _, Sizable as _,
+    button::{Button, ButtonVariants as _},
+    progress::Progress,
+    scroll::ScrollableElement as _,
+};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -329,7 +336,7 @@ impl Editor {
                 };
                 if let Err(error) = weak_editor.update(cx, |editor, cx| {
                     editor.update_check_in_progress = false;
-                    if manual {
+                    if manual && editor.info_dialog == Some(InfoDialogKind::CheckForUpdates) {
                         editor.hide_info_dialog(cx);
                     }
                     editor.apply_update_result(result, manual, cx);
@@ -524,100 +531,141 @@ impl Editor {
         &mut self,
         theme: &Theme,
         strings: &I18nStrings,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let info = self.update_notification.as_ref()?;
-        let busy = self.update_download_progress.is_some();
-        let description = if let Some(progress) = self.update_download_progress.as_ref() {
+        let inset = window.rem_size();
+        let available_width = (window.viewport_size().width - inset * 2.0).max(px(0.0));
+        let scroll = window
+            .use_keyed_state("update-notice-scroll", cx, |_, _| ScrollHandle::new())
+            .read(cx)
+            .clone();
+        let percent = self.update_download_progress.as_ref().map(|progress| {
             let total = info
                 .package
                 .as_ref()
                 .map_or(1, |package| package.size)
                 .max(1);
-            let percent = (progress.load(Ordering::Relaxed).min(total) * 100 / total).to_string();
-            if percent == "100" {
-                strings.update_preparing.clone()
-            } else {
-                strings.update_downloading.replace("{percent}", &percent)
-            }
-        } else {
-            format_update_message(
+            (u128::from(progress.load(Ordering::Relaxed).min(total)) * 100 / u128::from(total))
+                as f32
+        });
+        let description = match percent {
+            Some(percent) if percent >= 100.0 => strings.update_preparing.clone(),
+            Some(percent) => strings
+                .update_downloading
+                .replace("{percent}", &format!("{percent:.0}")),
+            None => format_update_message(
                 &strings.update_available_message_template,
                 &info.current_version,
                 &info.latest_version,
-            )
+            ),
         };
-        let c = &theme.colors;
-        let mut card = div()
-            .id("update-notification")
-            .debug_selector(|| "update-notification".into())
-            .absolute()
-            .right(px(16.0))
-            .bottom(px(theme.dimensions.status_bar_height + 12.0))
-            .w(px(350.0))
-            .max_w(relative(0.95))
-            .p(px(14.0))
+        let mut actions = div()
+            .w_full()
             .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .rounded(px(10.0))
-            .bg(c.dialog_surface)
-            .border_1()
-            .border_color(c.dialog_border)
-            .shadow_lg()
-            .occlude()
-            .text_size(px(theme.typography.ui_text_size(13.0)))
-            .text_color(c.dialog_body)
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(div().font_weight(FontWeight::BOLD).child(format!(
-                "{} {}",
-                strings.update_available_title, info.latest_version
-            )))
-            .child(description)
-            .child(strings.update_restart_notice.clone());
-        let mut actions = div().flex().gap(px(8.0)).justify_end();
-        if !busy {
+            .flex_wrap()
+            .gap_2()
+            .items_center()
+            .justify_end();
+        if percent.is_none() {
             actions = actions.child(
-                div()
-                    .id("update-confirm")
-                    .debug_selector(|| "update-confirm".into())
-                    .px(px(12.0))
-                    .py(px(5.0))
-                    .rounded(px(5.0))
-                    .bg(c.dialog_primary_button_bg)
-                    .text_color(c.dialog_primary_button_text)
-                    .cursor_pointer()
-                    .child(strings.update_install.clone())
-                    .on_click(cx.listener(|editor, _, _, cx| editor.download_update(cx))),
-            );
-        }
-        actions = actions.child(
-            div()
-                .id("update-cancel")
-                .debug_selector(|| "update-cancel".into())
-                .px(px(12.0))
-                .py(px(5.0))
-                .rounded(px(5.0))
-                .border_1()
-                .border_color(c.dialog_border)
-                .cursor_pointer()
-                .child(strings.preferences_cancel.clone())
-                .on_click(cx.listener(|editor, _, _, cx| editor.dismiss_update_notice(cx))),
-        );
-        card = card.child(actions);
-        if !busy {
-            card = card.child(
-                div()
-                    .id("update-skip")
+                Button::new("update-skip")
                     .debug_selector(|| "update-skip".into())
-                    .text_size(px(theme.typography.ui_text_size(11.0)))
-                    .text_color(c.dialog_muted)
-                    .cursor_pointer()
-                    .child(strings.update_skip_version.clone())
+                    .small()
+                    .ghost()
+                    .label(strings.update_skip_version.clone())
                     .on_click(cx.listener(|editor, _, _, cx| editor.skip_update_version(cx))),
             );
         }
-        Some(card.into_any_element())
+        actions = actions.child(
+            Button::new("update-cancel")
+                .debug_selector(|| "update-cancel".into())
+                .small()
+                .outline()
+                .label(if percent.is_some() {
+                    strings.preferences_cancel.clone()
+                } else {
+                    strings.update_later.clone()
+                })
+                .on_click(cx.listener(|editor, _, _, cx| editor.dismiss_update_notice(cx))),
+        );
+        if percent.is_none() {
+            actions = actions.child(
+                Button::new("update-confirm")
+                    .debug_selector(|| "update-confirm".into())
+                    .small()
+                    .primary()
+                    .label(strings.update_install.clone())
+                    .on_click(cx.listener(|editor, _, _, cx| editor.download_update(cx))),
+            );
+        }
+        Some(
+            div()
+                .id(SharedString::from(format!(
+                    "update-notification:{}",
+                    info.latest_version
+                )))
+                .debug_selector(|| "update-notification".into())
+                .absolute()
+                .right_4()
+                .bottom(px(theme.dimensions.status_bar_height) + cx.theme().font_size * 0.75)
+                .w((inset * 22.0).min(available_width))
+                .max_h(relative(0.75))
+                .p_3()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .bg(cx.theme().popover)
+                .text_color(cx.theme().popover_foreground)
+                .border_1()
+                .border_color(cx.theme().border)
+                .rounded(cx.theme().radius_lg)
+                .shadow_lg()
+                .occlude()
+                .text_sm()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .font_weight(FontWeight::BOLD)
+                        .child(format!(
+                            "{} {}",
+                            strings.update_available_title, info.latest_version
+                        )),
+                )
+                .when_some(percent, |card, percent| {
+                    card.child(
+                        Progress::new("update-progress")
+                            .value(percent)
+                            .loading(percent >= 100.0)
+                            .small()
+                            .color(cx.theme().primary)
+                            .accessibility_label(description.clone()),
+                    )
+                })
+                .child(
+                    div()
+                        .id("update-description")
+                        .debug_selector(|| "update-description".into())
+                        .min_h_0()
+                        .relative()
+                        .overflow_y_scroll()
+                        .track_scroll(&scroll)
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(description)
+                        .child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(strings.update_restart_notice.clone()),
+                        )
+                        .vertical_scrollbar(&scroll),
+                )
+                .child(actions.flex_shrink_0())
+                .into_any_element(),
+        )
     }
 }
 
@@ -633,7 +681,166 @@ mod tests {
         Editor, UpdateCheckResult, UpdateSession, UpdateVersionInfo, format_update_message,
     };
     use crate::net::update::UpdateSource;
-    use gpui::{BorrowAppContext, TestAppContext};
+    use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
+
+    #[gpui::test]
+    fn update_notice_exposes_progress_and_keyboard_cancellation(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        let root =
+            std::env::temp_dir().join(format!("velora-update-controls-{}", uuid::Uuid::new_v4()));
+        let _config = crate::config::override_test_config_root(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+            super::init_update_session(cx);
+        });
+        let handle = cx
+            .update(|cx| {
+                crate::ui::open_window(gpui::WindowOptions::default(), cx, |_, cx| {
+                    cx.new(|cx| Editor::from_markdown(cx, "正文".into(), None))
+                })
+            })
+            .unwrap();
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        handle
+            .update(&mut visual, |editor, window, cx| {
+                editor.update_notification = Some(UpdateVersionInfo {
+                    current_version: "0.2.4".into(),
+                    latest_version: "0.2.5".into(),
+                    source: crate::net::update::UpdateSource::GitHub,
+                    release_url: crate::net::update::RELEASES_URL.into(),
+                    package: Some(crate::net::update::UpdatePackage {
+                        name: "fixture.pkg".into(),
+                        url: "https://example.invalid/update".into(),
+                        size: 100,
+                        digest: None,
+                        platform: crate::net::update::UpdatePlatform::current().unwrap(),
+                    }),
+                });
+                editor.update_download_progress =
+                    Some(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(50)));
+                editor.update_download_cancel = Some(cancelled.clone());
+                cx.update_global::<UpdateSession, _>(|session, _| {
+                    session.download_active = true;
+                    session.download_cancel = Some(cancelled.clone());
+                    session.download_window = Some(window.window_handle().window_id());
+                });
+                cx.notify();
+            })
+            .unwrap();
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            window.blur(cx);
+            window.focus_next(cx);
+        });
+        visual.run_until_parked();
+        assert!(
+            visual.update(|window, _| window.try_find("update-progress").is_some()),
+            "下载需要可访问的真实进度控件"
+        );
+        visual.update(|window, _| {
+            let progress = window.find("update-progress");
+            assert_eq!(progress.role(), Some(gpui::Role::ProgressIndicator));
+            assert!(progress.label().is_some_and(|label| label.contains("50")));
+            assert_eq!(
+                window.find("update-cancel").role(),
+                Some(gpui::Role::Button)
+            );
+        });
+        let mut reached_cancel = false;
+        for _ in 0..40 {
+            visual.simulate_keystrokes("tab");
+            if visual.update(|window, _| window.find("update-cancel").focused() == Some(true)) {
+                reached_cancel = true;
+                break;
+            }
+        }
+        assert!(reached_cancel, "键盘应能到达取消下载");
+        visual.update(|window, cx| window.render_frame(cx));
+        let stroke = gpui::Keystroke::parse("space").unwrap();
+        visual.simulate_event(gpui::KeyDownEvent {
+            keystroke: stroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        visual.simulate_event(gpui::KeyUpEvent { keystroke: stroke });
+        visual.run_until_parked();
+        assert!(cancelled.load(std::sync::atomic::Ordering::Relaxed));
+        handle
+            .read_with(&visual, |editor, cx| {
+                assert!(editor.update_notification.is_none());
+                assert!(!cx.global::<UpdateSession>().download_active);
+                assert_eq!(editor.buffer.text(), "正文");
+            })
+            .unwrap();
+        visual.update(|window, _| window.remove_window());
+    }
+
+    #[gpui::test]
+    fn update_notice_keeps_its_description_and_actions_inside_a_narrow_window(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        let root = std::env::temp_dir().join(format!("velora-update-layout-{}", uuid::Uuid::new_v4()));
+        let _config = crate::config::override_test_config_root(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        crate::config::preferences::update_app_preferences(|preferences| {
+            preferences.fonts.ui_size = 36;
+        })
+        .unwrap();
+        cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::config::EditorSettings::init(cx, true);
+            crate::components::init(cx);
+            super::init_update_session(cx);
+        });
+        let handle = cx
+            .update(|cx| {
+                crate::ui::open_window(gpui::WindowOptions::default(), cx, |_, cx| {
+                    cx.new(|cx| Editor::from_markdown(cx, "正文".into(), None))
+                })
+            })
+            .unwrap();
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        visual.simulate_resize(gpui::size(gpui::px(600.0), gpui::px(620.0)));
+        handle
+            .update(&mut visual, |editor, _, cx| {
+                editor.update_notification = Some(UpdateVersionInfo {
+                    current_version: "0.2.4".into(),
+                    latest_version: "0.2.5".into(),
+                    source: UpdateSource::GitHub,
+                    release_url: crate::net::update::RELEASES_URL.into(),
+                    package: None,
+                });
+                cx.notify();
+            })
+            .unwrap();
+        for _ in 0..3 {
+            visual.update(|window, cx| window.render_frame(cx));
+            visual.run_until_parked();
+        }
+        let card = visual.debug_bounds("update-notification").unwrap();
+        let body = visual.debug_bounds("update-description").unwrap();
+        let confirm = visual.debug_bounds("update-confirm").unwrap();
+        assert!(
+            card.left() >= gpui::px(0.0) && card.right() <= gpui::px(600.0),
+            "通知不能超出窗口：{card:?}"
+        );
+        assert!(
+            body.size.height >= gpui::px(36.0),
+            "版本与重启说明必须保留可滚动阅读空间：{body:?}"
+        );
+        assert!(
+            confirm.bottom() <= card.bottom() && confirm.right() <= card.right(),
+            "操作不能被正文挤出通知：{confirm:?}，{card:?}"
+        );
+        visual.update(|window, _| window.remove_window());
+    }
+
     fn missing_install_plan() -> crate::net::update::InstallPlan {
         let path = std::env::temp_dir().join(format!("missing-update-{}", uuid::Uuid::new_v4()));
         crate::net::update::InstallPlan {

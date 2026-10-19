@@ -1,5 +1,97 @@
 use super::common::*;
 
+fn exercise_kit_info_dialog(kind: crate::editor::InfoDialogKind, cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let handle = cx
+        .update(|cx| {
+            crate::ui::open_window(gpui::WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| Editor::from_markdown(cx, "原文".into(), None))
+            })
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    redraw(&mut visual);
+    let focus = handle
+        .read_with(&visual, |editor, cx| {
+            editor
+                .document
+                .first_root()
+                .unwrap()
+                .read(cx)
+                .focus_handle
+                .clone()
+        })
+        .unwrap();
+    visual.update(|window, cx| focus.focus(window, cx));
+    handle
+        .update(&mut visual, |editor, _, cx| {
+            editor.update_check_in_progress =
+                kind == crate::editor::InfoDialogKind::CheckForUpdates;
+            editor.show_info_dialog(kind, cx);
+        })
+        .unwrap();
+    redraw(&mut visual);
+    assert!(
+        visual.update(|window, cx| gpui_kit::base::active_focus_trap(window, cx).is_some()),
+        "信息框应限制焦点，防止误修改正文"
+    );
+    visual.simulate_input("误改");
+    assert_eq!(
+        handle
+            .read_with(&visual, |editor, _| editor.buffer.text())
+            .unwrap(),
+        "原文"
+    );
+    visual.simulate_keystrokes("tab");
+    if kind == crate::editor::InfoDialogKind::About {
+        visual.simulate_keystrokes("enter");
+        assert_eq!(
+            visual.opened_url(),
+            Some(crate::editor::render::ABOUT_GITHUB_URL.to_string())
+        );
+        assert!(
+            handle
+                .read_with(&visual, |editor, _| editor.info_dialog.is_some())
+                .unwrap()
+        );
+        visual.simulate_keystrokes("tab");
+    } else {
+        assert!(visual.debug_bounds("info-update-spinner").is_some());
+    }
+    visual.update(|window, _| {
+        assert_eq!(
+            window.find("dismiss-info-dialog").role(),
+            Some(gpui::Role::Button)
+        );
+        assert_eq!(window.find("dismiss-info-dialog").focused(), Some(true));
+    });
+    visual.simulate_keystrokes("enter");
+    redraw(&mut visual);
+    handle
+        .read_with(&visual, |editor, _| {
+            assert!(editor.info_dialog.is_none());
+            assert!(!editor.modal_is_open());
+            assert_eq!(
+                editor.update_check_in_progress,
+                kind == crate::editor::InfoDialogKind::CheckForUpdates
+            );
+        })
+        .unwrap();
+    assert!(visual.update(|window, _| focus.is_focused(window)));
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
+fn info_dialog_about_keeps_keyboard_link_and_dismissal(cx: &mut TestAppContext) {
+    exercise_kit_info_dialog(crate::editor::InfoDialogKind::About, cx);
+}
+
+#[gpui::test]
+fn info_dialog_check_can_close_without_cancelling_the_check(cx: &mut TestAppContext) {
+    exercise_kit_info_dialog(crate::editor::InfoDialogKind::CheckForUpdates, cx);
+}
+
 #[gpui::test]
 async fn review_window_menu_file_history_opens_overlay(cx: &mut TestAppContext) {
     // 窗口菜单白名单包含文件历史，但执行分支曾缺失。

@@ -139,17 +139,13 @@ impl Editor {
                 }
             }
         }
-        if let Some(notification) = self.render_update_notification(&theme, &strings, cx) {
+        if let Some(notification) = self.render_update_notification(&theme, &strings, window, cx) {
             root = root.child(notification);
         }
         if self.modal_is_open() {
             if let Some(modal) = self.render_modal_overlay(&theme, cx) {
                 root = root.child(deferred(modal).with_priority(20));
             }
-        } else if let Some(kind) = self.info_dialog {
-            root = root.child(
-                deferred(self.render_info_dialog_overlay(&theme, kind, cx)).with_priority(20),
-            );
         }
         root = root
             .on_action(cx.listener(Self::on_open_ai_assistant))

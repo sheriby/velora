@@ -1180,7 +1180,7 @@ impl Render for Editor {
         } else {
             base
         };
-        let base = if let Some(notification) = self.render_update_notification(&theme, &strings, cx) {
+        let base = if let Some(notification) = self.render_update_notification(&theme, &strings, window, cx) {
             base.child(self.pane_overlay(notification.into_any_element(), window))
         } else { base };
         let base = if let Some(preview) = self.render_mermaid_preview_overlay(&theme, window, cx) {
@@ -1192,8 +1192,6 @@ impl Render for Editor {
                 Some(overlay) => base.child(self.pane_overlay(overlay, window)),
                 None => base,
             }
-        } else if let Some(kind) = self.info_dialog {
-            base.child(self.render_info_dialog_overlay(&theme, kind, cx))
         } else {
             base
         };

@@ -1,4 +1,11 @@
 use super::*;
+use gpui::prelude::FluentBuilder as _;
+use gpui_kit::base::Link;
+use gpui_kit::component::{
+    ActiveTheme as _, Sizable as _,
+    dialog::DialogDescription,
+    spinner::Spinner,
+};
 
 impl Editor {
     /// Full-area welcome page for windows opened without a document: brand
@@ -300,148 +307,54 @@ impl Editor {
 
     pub(crate) fn render_info_dialog_body(
         &self,
-        theme: &Theme,
         strings: &I18nStrings,
         kind: InfoDialogKind,
+        cx: &App,
     ) -> AnyElement {
-        let c = &theme.colors;
-        let d = &theme.dimensions;
-        let t = &theme.typography;
-        let body_style = |this: Div| {
-            this.text_size(px(t.dialog_body_size))
-                .font_weight(t.dialog_body_weight.to_font_weight())
-                .line_height(relative(t.text_line_height))
-                .text_color(c.dialog_body)
-        };
-
+        let content = div().w_full().min_w_0().flex().flex_col().gap_3();
         match kind {
-            InfoDialogKind::CheckForUpdates => div()
-                .flex()
-                .flex_col()
-                .gap(px(d.dialog_gap * 0.5))
+            InfoDialogKind::CheckForUpdates => content
                 .child(
-                    body_style(div()).children(
-                        self.info_dialog_body(strings, kind)
-                            .lines()
-                            .map(|line| div().child(line.to_string())),
-                    ),
-                )
-                .into_any_element(),
-            InfoDialogKind::About => div()
-                .flex()
-                .flex_col()
-                .gap(px(d.dialog_gap * 0.5))
-                .child(body_style(div()).child(format!("Velora {}", env!("CARGO_PKG_VERSION"))))
-                .child(body_style(div()).child(strings.help_about_message.clone()))
-                .child(
-                    body_style(div())
+                    div()
                         .flex()
-                        .flex_wrap()
-                        .gap(px(4.0))
-                        .child(format!("{}:", strings.help_about_github_label))
+                        .items_center()
+                        .gap_2()
+                        .when(self.update_check_in_progress, |row| {
+                            row.child(
+                                div()
+                                    .debug_selector(|| "info-update-spinner".into())
+                                    .child(Spinner::new().small()),
+                            )
+                        })
                         .child(
-                            div()
-                                .id("about-github-link")
-                                .cursor_pointer()
-                                .text_color(c.text_link)
-                                .underline()
-                                .child(ABOUT_GITHUB_URL)
-                                .on_click(move |_, _, cx| {
-                                    open_about_github_url(cx);
-                                }),
+                            DialogDescription::new().child(self.info_dialog_body(strings, kind)),
                         ),
                 )
-                .child(body_style(div()).child(strings.help_about_star_message.clone()))
+                .into_any_element(),
+            InfoDialogKind::About => content
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::BOLD)
+                        .child(format!("Velora {}", env!("CARGO_PKG_VERSION"))),
+                )
+                .child(DialogDescription::new().child(strings.help_about_message.clone()))
+                // 组件层 Link 未接键盘语义，Base Link 保留焦点和导航行为。
+                .child(
+                    Link::new("about-github-link")
+                        .href(ABOUT_GITHUB_URL)
+                        .accessibility_label(strings.help_about_github_label.clone())
+                        .open_with(|_, _, _, cx| open_about_github_url(cx))
+                        .text_color(cx.theme().link)
+                        .underline()
+                        .debug_selector(|| "about-github-link".into())
+                        .on_action(|_: &gpui_kit::base::actions::Confirm, _, cx| {
+                            open_about_github_url(cx)
+                        })
+                        .child(strings.help_about_github_label.clone()),
+                )
+                .child(DialogDescription::new().child(strings.help_about_star_message.clone()))
                 .into_any_element(),
         }
-    }
-
-    pub(crate) fn on_dismiss_info_dialog(
-        &mut self,
-        _: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.hide_info_dialog(cx);
-    }
-
-    pub(crate) fn render_info_dialog_overlay(
-        &self,
-        theme: &Theme,
-        kind: InfoDialogKind,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let c = &theme.colors;
-        let d = &theme.dimensions;
-        let t = &theme.typography;
-        let strings = cx.global::<I18nManager>().strings();
-
-        div()
-            .id("info-dialog-overlay")
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(c.dialog_backdrop)
-            .child(
-                div()
-                    .w_full()
-                    .px(px(d.editor_padding))
-                    .flex()
-                    .justify_center()
-                    .child(
-                        div()
-                            .id("info-dialog")
-                            .w(px(d.dialog_width))
-                            .max_w(relative(1.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(d.dialog_gap))
-                            .p(px(d.dialog_padding))
-                            .bg(c.dialog_surface)
-                            .border(px(d.dialog_border_width))
-                            .border_color(c.dialog_border)
-                            .rounded(px(d.dialog_radius))
-                            .shadow_lg()
-                            .child(
-                                div()
-                                    .text_size(px(t.dialog_title_size))
-                                    .font_weight(t.dialog_title_weight.to_font_weight())
-                                    .text_color(c.dialog_title)
-                                    .child(self.info_dialog_title(strings, kind).to_string()),
-                            )
-                            .child(self.render_info_dialog_body(theme, strings, kind))
-                            .child(
-                                div()
-                                    .flex()
-                                    .justify_end()
-                                    .gap(px(d.dialog_button_gap))
-                                    .child(
-                                        div()
-                                            .id("dismiss-info-dialog")
-                                            .h(px(d.dialog_button_height))
-                                            .px(px(d.dialog_button_padding_x))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .rounded(px((d.dialog_radius - 4.0).max(0.0)))
-                                            .bg(c.dialog_primary_button_bg)
-                                            .hover(|this| this.bg(c.dialog_primary_button_hover))
-                                            .active(|this| this.opacity(0.92))
-                                            .cursor_pointer()
-                                            .text_size(px(t.dialog_button_size))
-                                            .font_weight(t.dialog_button_weight.to_font_weight())
-                                            .text_color(c.dialog_primary_button_text)
-                                            .child(strings.info_dialog_ok.clone())
-                                            .on_click(cx.listener(Self::on_dismiss_info_dialog)),
-                                    ),
-                            ),
-                    ),
-            )
     }
 }
