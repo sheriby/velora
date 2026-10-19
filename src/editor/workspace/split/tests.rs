@@ -2147,3 +2147,74 @@ fn native_nested_splits_fit_a_narrow_window_and_restore_their_proportions(cx: &m
         }
     });
 }
+
+#[gpui::test]
+fn split_session_keeps_extreme_ratios_reached_by_the_native_controls(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, _| {
+        cx.simulate_resize(gpui::size(gpui::px(3200.0), gpui::px(900.0)));
+        redraw(cx);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.split_active_document(SplitDirection::Right, window, cx)
+        });
+        for _ in 0..4 {
+            redraw(cx);
+        }
+        let state = editor.read_with(cx, |editor, _| {
+            let super::GroupNode::Split { view, .. } =
+                &editor.split_workspace.as_ref().unwrap().layout
+            else {
+                panic!("分屏根");
+            };
+            view.borrow().as_ref().unwrap().state.clone()
+        });
+        let mut comparisons = Vec::new();
+        for requested in [gpui::px(320.0), gpui::Pixels::MAX] {
+            cx.update(|window, cx| {
+                state.update(cx, |state, cx| state.resize_panel(0, requested, window, cx))
+            });
+            for _ in 0..3 {
+                redraw(cx);
+            }
+            let layout =
+                editor.read_with(cx, |editor, cx| editor.split_session_layout(cx).unwrap());
+            let crate::config::EditorGroupLayout::Split {
+                ratio: expected, ..
+            } = &layout
+            else {
+                panic!("已保存的分屏布局");
+            };
+            assert!(
+                *expected < 150 || *expected > 850,
+                "夹具必须覆盖原先恢复范围之外的合法布局"
+            );
+            let encoded = serde_json::to_string(&layout).unwrap();
+            let layout = serde_json::from_str(&encoded).unwrap();
+            let restored = cx
+                .cx
+                .new(|cx| Editor::from_markdown(cx, String::new(), None));
+            cx.update(|window, cx| {
+                restored.update(cx, |editor, cx| {
+                    editor.restore_split_session(&layout, window, cx)
+                })
+            });
+            let actual = restored.read_with(cx, |editor, cx| {
+                let crate::config::EditorGroupLayout::Split { ratio, .. } =
+                    editor.split_session_layout(cx).unwrap()
+                else {
+                    panic!("已恢复的分屏布局");
+                };
+                for group in editor.split_groups() {
+                    assert_eq!(group.read(cx).buffer.text(), "正文\n");
+                }
+                ratio
+            });
+            comparisons.push((*expected, actual));
+        }
+        assert!(
+            comparisons
+                .iter()
+                .all(|(expected, actual)| expected == actual),
+            "恢复不能把控件产生的比例改成 15% 或 85%：{comparisons:?}"
+        );
+    });
+}

@@ -122,7 +122,8 @@ impl Editor {
             } => GroupNode::Split {
                 id: uuid::Uuid::new_v4(),
                 vertical: *vertical,
-                ratio: f32::from((*ratio).clamp(150, 850)) / 1000.0,
+                // 保留控件给出的比例，正文最小尺寸由布局约束处理。
+                ratio: f32::from((*ratio).clamp(1, 999)) / 1000.0,
                 bounds: Rc::new(Cell::new(Bounds::default())),
                 view: Rc::new(RefCell::new(None)),
                 first: Box::new(self.restore_group_node(first, active_group, window, cx)),
