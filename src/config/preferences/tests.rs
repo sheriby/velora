@@ -2628,3 +2628,137 @@ fn save_failure_remains_visible_after_scrolling_and_allows_retry(cx: &mut TestAp
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn font_controls_fit_the_content_at_narrow_widths_and_large_ui_sizes(cx: &mut TestAppContext) {
+    use gpui::BorrowAppContext as _;
+    let root = std::env::temp_dir().join(format!("velora-font-layout-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let _config = crate::config::override_test_config_root(&root);
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    init_preferences_test_app(cx);
+    let handle = cx.update(|cx| {
+        open_preferences_window_with_size(
+            cx,
+            AppPreferences::default(),
+            default_theme_options(),
+            "Preferences".into(),
+            gpui::size(px(880.0), px(1600.0)),
+        )
+    });
+    handle
+        .update(cx, |preferences, _, cx| {
+            preferences.nav = PreferencesNav::Theme;
+            preferences.fonts.code_family = "Draft Typeface".into();
+            cx.notify();
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    for (width, ui_size) in [
+        (880.0, 14),
+        (680.0, 14),
+        (880.0, 21),
+        (680.0, 21),
+        (600.0, 36),
+        (880.0, 14),
+    ] {
+        visual.update(|_, cx| {
+            cx.update_global::<EditorSettings, _>(|settings, _| settings.fonts.ui_size = ui_size)
+        });
+        handle
+            .update(cx, |preferences, _, cx| {
+                preferences.fonts.ui_size = ui_size;
+                cx.notify();
+            })
+            .unwrap();
+        visual.simulate_resize(gpui::size(px(width), px(1600.0)));
+        visual.update(|window, cx| window.render_frame(cx));
+        visual.run_until_parked();
+        let page = visual.debug_bounds("preferences-page-scroll").unwrap();
+        let minimum = visual.update(|window, _| window.rem_size() * 6.0);
+        for (font, size) in [
+            ("preferences-ui-font", "preferences-ui-font-size"),
+            (
+                "preferences-markdown-font",
+                "preferences-markdown-font-size",
+            ),
+            ("preferences-code-font", "preferences-code-font-size"),
+        ] {
+            let font = visual.debug_bounds(font).unwrap();
+            let size = visual.debug_bounds(size).unwrap();
+            for bounds in [font, size] {
+                assert!(
+                    bounds.left() >= page.left() && bounds.right() <= page.right(),
+                    "窗口 {width}、界面字号 {ui_size} 的控件必须完整落在内容内：{bounds:?}，内容 {page:?}"
+                );
+                assert!(
+                    bounds.size.width >= minimum,
+                    "不能通过压缩到不可用宽度来避免裁切：{bounds:?}"
+                );
+            }
+            if font.top() < size.bottom() && size.top() < font.bottom() {
+                assert!(font.right() <= size.left(), "同行的字体与字号不得重叠");
+            }
+        }
+        visual.update(|window, _| {
+            assert_eq!(
+                window.find("preferences-code-font").value(),
+                Some("Draft Typeface"),
+                "切换排版和调整窗口后仍应保留草稿选择"
+            )
+        });
+        handle
+            .read_with(cx, |preferences, _| {
+                assert!(preferences.has_unsaved_changes())
+            })
+            .unwrap();
+    }
+}
+
+#[gpui::test]
+fn large_ui_navigation_can_scroll_to_the_last_page(cx: &mut TestAppContext) {
+    init_preferences_test_app(cx);
+    cx.update_global::<EditorSettings, _>(|settings, _| settings.fonts.ui_size = 36);
+    let mut preferences = AppPreferences::default();
+    preferences.fonts.ui_size = 36;
+    let handle = cx.update(|cx| {
+        open_preferences_window_with_size(
+            cx,
+            preferences,
+            default_theme_options(),
+            "Preferences".into(),
+            gpui::size(px(600.0), px(620.0)),
+        )
+    });
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        window.hover("preferences-nav-file", cx);
+    });
+    let position = visual
+        .debug_bounds("preferences-nav-file")
+        .unwrap()
+        .center();
+    visual.simulate_event(gpui::ScrollWheelEvent {
+        position,
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-10000.0))),
+        modifiers: gpui::Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    visual.update(|window, cx| window.render_frame(cx));
+    visual.update(|window, cx| {
+        let last = window.try_find("preferences-nav-window");
+        assert!(
+            last.is_some_and(|item| item.visible()
+                && item.bounds().top() >= px(0.0)
+                && item.bounds().bottom() <= window.viewport_size().height),
+            "最大界面字号下仍须能滚动到末尾的窗口设置"
+        );
+        window.click("preferences-nav-window", cx);
+    });
+    handle
+        .read_with(cx, |preferences, _| {
+            assert_eq!(preferences.nav, PreferencesNav::Window)
+        })
+        .unwrap();
+}

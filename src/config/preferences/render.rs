@@ -98,10 +98,10 @@ impl Render for PreferencesWindow {
                 ),
             ];
             let mut sidebar = div()
-                .w(px(196.0))
+                .w(px(PREFERENCE_SIDEBAR_WIDTH))
                 .h_full()
                 .flex_shrink_0()
-                .px(px(12.0))
+                .px(px(PREFERENCE_SIDEBAR_PADDING))
                 .py(px(16.0))
                 .bg(c.dialog_secondary_button_bg)
                 .flex()
@@ -110,8 +110,12 @@ impl Render for PreferencesWindow {
                 .border_r(px(d.dialog_border_width))
                 .border_color(c.dialog_border);
             for (id, label, icon, selected, handler) in nav_items {
-                sidebar = sidebar.child(self.nav_button(id, label, icon, selected, &theme, handler, cx));
+                sidebar = sidebar.child(
+                    self.nav_button(id, label, icon, selected, &theme, handler, window, cx),
+                );
             }
+
+            let sidebar = sidebar.overflow_y_scrollbar().id("preferences-navigation");
 
             // 内容列 flex_shrink_0、高度按内容算，
             // 这样外层 overflow_y_scroll 才有东西可滚（旧版套了一层 flex_1，
@@ -127,8 +131,8 @@ impl Render for PreferencesWindow {
                     PreferencesNav::Theme => self.render_theme_page(&theme, &strings, window, cx),
                     PreferencesNav::Image => self.render_image_page(&theme, &strings, window, cx),
                     PreferencesNav::Ai => self.render_ai_page(&theme, &strings, window, cx),
-                    PreferencesNav::Shortcuts => self.render_shortcuts_page(&theme, &strings, cx),
-                    PreferencesNav::StatusBar => self.render_status_bar_page(&theme, &strings, cx),
+                    PreferencesNav::Shortcuts => self.render_shortcuts_page(&theme, &strings, window, cx),
+                    PreferencesNav::StatusBar => self.render_status_bar_page(&theme, &strings, window, cx),
                     PreferencesNav::Window => self.render_window_page(&theme, &strings, window, cx),
                 });
 
@@ -189,9 +193,9 @@ impl Render for PreferencesWindow {
                         .child(
                             div()
                                 .w_full()
-                                .max_w(px(660.0))
+                                .max_w(px(PREFERENCE_CONTENT_WIDTH))
                                 .h_full()
-                                .px(px(24.0))
+                                .px(px(PREFERENCE_CONTENT_PADDING))
                                 .py(px(18.0))
                                 .flex()
                                 .flex_col()

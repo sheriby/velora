@@ -328,6 +328,8 @@ impl PreferencesWindow {
                             sidebar_panel,
                         ),
                     ],
+                    window,
+                    PREFERENCE_CHOICE_WIDTH,
                 ),
                 Self::preference_group(
                     "preferences-workspace-group",
@@ -347,6 +349,8 @@ impl PreferencesWindow {
                             deletion,
                         ),
                     ],
+                    window,
+                    PREFERENCE_CHOICE_WIDTH,
                 ),
                 Self::preference_group(
                     "preferences-saving-group",
@@ -358,6 +362,8 @@ impl PreferencesWindow {
                             debounce,
                         ),
                     ],
+                    window,
+                    PREFERENCE_CHOICE_WIDTH,
                 ),
                 Self::preference_group(
                     "preferences-history-group",
@@ -370,6 +376,8 @@ impl PreferencesWindow {
                         Self::preference_row(strings.preferences_history_count.clone(), count),
                         Self::preference_row(strings.preferences_history_days.clone(), days),
                     ],
+                    window,
+                    PREFERENCE_NUMBER_WIDTH,
                 ),
                 Self::preference_group(
                     "preferences-editing-group",
@@ -381,6 +389,8 @@ impl PreferencesWindow {
                             markers,
                         ),
                     ],
+                    window,
+                    rems(3.0),
                 ),
                 Self::preference_group(
                     "preferences-updates-group",
@@ -389,6 +399,8 @@ impl PreferencesWindow {
                         Self::preference_row(strings.preferences_updates_startup.clone(), updates),
                         Self::preference_row(strings.preferences_updates_beta.clone(), beta),
                     ],
+                    window,
+                    rems(3.0),
                 ),
             ])
             .into_any_element()
@@ -468,7 +480,11 @@ impl PreferencesWindow {
                 Self::preference_row(strings.preferences_local_theme.clone(), theme),
                 Self::preference_row(strings.preferences_writing_width.clone(), width),
             ],
+            window,
+            PREFERENCE_CHOICE_WIDTH,
         );
+        let font_controls_width = PREFERENCE_CHOICE_WIDTH + PREFERENCE_NUMBER_WIDTH + rems(0.5);
+        let fonts_horizontal = Self::preference_group_is_horizontal(window, font_controls_width);
         let mut fonts = Vec::new();
         for (role, label, font_label, size_label) in [
             (
@@ -490,7 +506,11 @@ impl PreferencesWindow {
                 strings.preferences_code_font_size.clone(),
             ),
         ] {
-            let font = self.font_family_field(role, &font_label, strings, window, cx);
+            let font = self
+                .font_family_field(role, &font_label, strings, window, cx)
+                .when(!fonts_horizontal, |picker| {
+                    picker.w_0().flex_1().min_w(rems(6.0))
+                });
             let size = self.font_size_field(role, &size_label, window, cx);
             fonts.push(Self::preference_row(
                 label,
@@ -498,6 +518,7 @@ impl PreferencesWindow {
                     .w_full()
                     .min_w_0()
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .justify_end()
                     .gap_2()
@@ -515,6 +536,8 @@ impl PreferencesWindow {
                 "preferences-fonts-group",
                 strings.preferences_group_fonts.clone(),
                 fonts,
+                window,
+                font_controls_width,
             ))
             .into_any_element()
     }
@@ -526,7 +549,7 @@ impl PreferencesWindow {
         strings: &crate::i18n::I18nStrings,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Div {
         let (id, option_id, value) = match role {
             FontRole::Ui => (
                 "preferences-ui-font",
@@ -666,6 +689,8 @@ impl PreferencesWindow {
                 strings.preferences_image_insert_behavior.clone(),
                 image,
             )],
+            window,
+            PREFERENCE_CHOICE_WIDTH,
         )
     }
 }

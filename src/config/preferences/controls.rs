@@ -120,7 +120,7 @@ impl PreferencesWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
         change: impl Fn(&mut Self, &str, &mut Window, &mut Context<Self>) + 'static,
-    ) -> AnyElement {
+    ) -> Div {
         let value = value.into();
         let state = if let Some(control) = self.controls.choices.get_mut(id) {
             if control.value != value {
@@ -178,7 +178,8 @@ impl PreferencesWindow {
         };
         div()
             .debug_selector(move || id.to_string())
-            .w_56()
+            .w(PREFERENCE_CHOICE_WIDTH)
+            .max_w_full()
             .min_w_0()
             .child(
                 Select::new(&state)
@@ -187,7 +188,6 @@ impl PreferencesWindow {
                     .menu_max_h(rems(15.0))
                     .w_full(),
             )
-            .into_any_element()
     }
 
     pub(super) fn sync_choice_options(
@@ -279,7 +279,8 @@ impl PreferencesWindow {
             .role(Role::Group)
             .aria_label(label)
             .debug_selector(move || id.to_string())
-            .w_32()
+            .w(PREFERENCE_NUMBER_WIDTH)
+            .max_w_full()
             .flex_shrink_0()
             .flex()
             .flex_col()
@@ -307,7 +308,7 @@ impl PreferencesWindow {
     }
 
     pub(super) fn preference_row(label: String, control: impl IntoElement) -> Field {
-        Field::new().label(label).items_center().child(
+        Field::new().label(label).child(
             div()
                 .w_full()
                 .min_w_0()
@@ -318,17 +319,36 @@ impl PreferencesWindow {
         )
     }
 
+    pub(super) fn preference_group_is_horizontal(window: &Window, control_width: Rems) -> bool {
+        // 与实际内容列和 GroupBox 内边距共用尺寸，不能按整窗宽度猜测控件是否放得下。
+        let inner_width = (window.viewport_size().width - px(PREFERENCE_SIDEBAR_WIDTH))
+            .min(px(PREFERENCE_CONTENT_WIDTH))
+            - px(PREFERENCE_CONTENT_PADDING * 2.0)
+            - window.rem_size() * 2.0;
+        let required_width = PREFERENCE_LABEL_WIDTH.to_pixels(window.rem_size())
+            + control_width.to_pixels(window.rem_size())
+            + window.rem_size();
+        inner_width >= required_width
+    }
+
     pub(super) fn preference_group(
         id: &'static str,
         label: String,
         fields: Vec<Field>,
+        window: &Window,
+        control_width: Rems,
     ) -> AnyElement {
+        let form = if Self::preference_group_is_horizontal(window, control_width) {
+            Form::horizontal().label_width(PREFERENCE_LABEL_WIDTH.to_pixels(window.rem_size()))
+        } else {
+            Form::vertical()
+        };
         GroupBox::new()
             .id(id)
             .fill()
             .when(!label.is_empty(), |group| group.title(label))
             .w_full()
-            .child(Form::horizontal().children(fields))
+            .child(form.children(fields))
             .into_any_element()
     }
 }

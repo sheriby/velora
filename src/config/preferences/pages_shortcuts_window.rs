@@ -369,6 +369,7 @@ impl PreferencesWindow {
         &self,
         _theme: &Theme,
         strings: &crate::i18n::I18nStrings,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let keybindings = normalize_shortcut_config(&self.keybindings);
@@ -399,6 +400,8 @@ impl PreferencesWindow {
                     id,
                     Self::shortcut_category_label(category, strings),
                     fields,
+                    window,
+                    rems(18.0),
                 ));
             }
         }
@@ -527,6 +530,8 @@ impl PreferencesWindow {
                 Self::preference_row(strings.preferences_window_open_position.clone(), position),
                 Self::preference_row(strings.preferences_window_remember_bounds.clone(), remember),
             ],
+            window,
+            PREFERENCE_CHOICE_WIDTH,
         )
     }
 
@@ -534,6 +539,7 @@ impl PreferencesWindow {
         &self,
         _theme: &Theme,
         strings: &crate::i18n::I18nStrings,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         Self::preference_group(
@@ -591,6 +597,8 @@ impl PreferencesWindow {
                     ),
                 ),
             ],
+            window,
+            rems(3.0),
         )
     }
 }

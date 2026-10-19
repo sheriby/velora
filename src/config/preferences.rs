@@ -21,6 +21,14 @@ pub(super) use crate::window_chrome::{custom_titlebar_height, render_custom_titl
 
 pub(super) use gpui_kit::component::switch::Switch;
 
+const PREFERENCE_SIDEBAR_WIDTH: f32 = 196.0;
+const PREFERENCE_SIDEBAR_PADDING: f32 = 12.0;
+const PREFERENCE_CONTENT_WIDTH: f32 = 660.0;
+const PREFERENCE_CONTENT_PADDING: f32 = 24.0;
+const PREFERENCE_LABEL_WIDTH: Rems = rems(9.0);
+const PREFERENCE_CHOICE_WIDTH: Rems = rems(14.0);
+const PREFERENCE_NUMBER_WIDTH: Rems = rems(8.0);
+
 const DEFAULT_THEME_ID: &str = "forest";
 const DEFAULT_LANGUAGE_ID: &str = "en-US";
 const PREFERENCES_VERSION: i64 = 3;

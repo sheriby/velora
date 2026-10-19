@@ -471,6 +471,8 @@ impl PreferencesWindow {
                         .debug_selector(|| "preferences-ai-enabled".into())
                         .child(toggle),
                 )],
+                window,
+                rems(3.0),
             ));
         if !enabled {
             return page.into_any_element();
