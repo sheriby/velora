@@ -550,6 +550,9 @@ impl Editor {
             (u128::from(progress.load(Ordering::Relaxed).min(total)) * 100 / u128::from(total))
                 as f32
         });
+        // 说明区的地板：两行正文。窗口矮、字号大时这块原本会被挤成 0——版本号与
+        // 重启说明整块看不见，也没有滚动条可拖（高度为零的滚动区滚不动）。
+        let description_min_height = cx.theme().font_size * 2.4;
         let description = match percent {
             Some(percent) if percent >= 100.0 => strings.update_preparing.clone(),
             Some(percent) => strings
@@ -648,7 +651,7 @@ impl Editor {
                     div()
                         .id("update-description")
                         .debug_selector(|| "update-description".into())
-                        .min_h_0()
+                        .min_h(description_min_height)
                         .relative()
                         .overflow_y_scroll()
                         .track_scroll(&scroll)
