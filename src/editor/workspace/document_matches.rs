@@ -131,7 +131,15 @@ impl Editor {
             return None;
         }
         let active_range = self.workspace.document_active_range.clone();
-        let current = self.workspace.document_active_index.or_else(|| {
+        // 结果行可直接改变活动区间；缓存序号必须与该区间一致才能复用。
+        let cached_index = self.workspace.document_active_index.filter(|index| {
+            self.workspace
+                .document_matches
+                .as_ref()
+                .and_then(|table| table.hits.get(*index))
+                .is_some_and(|hit| Some(&hit.range) == active_range.as_ref())
+        });
+        let current = cached_index.or_else(|| {
             let active = active_range.as_ref()?;
             let table = self.workspace.document_matches.as_ref()?;
             // 选中态多半是点侧栏结果行设的，那里只知道字节区间，先按区间回查。

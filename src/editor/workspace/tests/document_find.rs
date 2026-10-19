@@ -727,3 +727,37 @@ async fn switching_tabs_reruns_the_document_search(cx: &mut TestAppContext) {
     });
     let _ = fs::remove_dir_all(root);
 }
+
+#[gpui::test]
+fn document_find_continues_from_an_activated_result(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "needle needle needle".into(), None));
+    editor.update(cx, |editor, cx| {
+        editor.open_document_find(cx);
+        editor.workspace.search_query = "needle".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(editor.workspace.search_results.len(), 3);
+        assert_eq!(editor.workspace.document_active_index, Some(0));
+        editor.open_search_hit(2, window, cx);
+        assert_eq!(editor.workspace.document_active_range, Some(14..20));
+        editor.find_next_document_match(false, cx);
+        assert_eq!(
+            editor.workspace.document_active_range,
+            Some(0..6),
+            "从末项继续查找应环绕到首项，不能沿用激活前的缓存序号"
+        );
+        editor.open_search_hit(1, window, cx);
+        editor.find_next_document_match(true, cx);
+        assert_eq!(editor.workspace.document_active_range, Some(0..6));
+        assert_eq!(editor.buffer.text(), "needle needle needle");
+    });
+}
