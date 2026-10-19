@@ -18,9 +18,9 @@ impl I18nStrings {
         let mut strings = Self {
             dirty_title_marker: "\u{00B7}".into(),
             recovered_document_title: "恢复副本".into(),
-            unsaved_changes_title: "不保存并关闭？".into(),
+            unsaved_changes_title: "保存更改？".into(),
             unsaved_changes_message:
-                "当前文档或其他打开的标签页有未保存的更改。关闭前保存可避免丢失编辑内容。".into(),
+                "当前文档或其他标签页有未保存的更改。放弃后将丢失这些内容。".into(),
             unsaved_changes_save_and_close: "保存并关闭".into(),
             unsaved_changes_discard_and_close: "放弃并关闭".into(),
             unsaved_changes_cancel: "继续编辑".into(),
@@ -570,9 +570,9 @@ impl I18nStrings {
         Self {
             dirty_title_marker: "\u{00B7}".into(),
             recovered_document_title: "Recovered Copy".into(),
-            unsaved_changes_title: "Close without saving?".into(),
+            unsaved_changes_title: "Save changes?".into(),
             unsaved_changes_message:
-                "This document or another open tab has unsaved changes. Save before closing to avoid losing edits."
+                "This document or another open tab has unsaved changes. Discarding will lose those edits."
                     .into(),
             unsaved_changes_save_and_close: "Save and Close".into(),
             unsaved_changes_discard_and_close: "Discard and Close".into(),

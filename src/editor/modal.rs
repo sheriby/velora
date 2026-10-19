@@ -32,9 +32,54 @@ pub(crate) struct ModalSpec {
     pub(crate) cancel_index: usize,
 }
 
+#[derive(Clone)]
+enum ModalOrigin {
+    General,
+    WindowClose,
+    DroppedFile(std::path::PathBuf),
+    Folder(std::path::PathBuf),
+}
+
+impl ModalOrigin {
+    fn selectors(&self) -> (&'static str, &'static str) {
+        match self {
+            Self::General => ("editor-modal", "editor-modal-overlay"),
+            Self::WindowClose => ("unsaved-changes-dialog", "unsaved-changes-overlay"),
+            Self::DroppedFile(_) => ("drop-replace-dialog", "drop-replace-overlay"),
+            Self::Folder(_) => ("folder-choice-dialog", "folder-choice-overlay"),
+        }
+    }
+
+    fn button_ids(&self) -> &'static [&'static str] {
+        match self {
+            Self::General => &[],
+            Self::WindowClose => &[
+                "cancel-close-dialog",
+                "discard-and-close-dialog",
+                "save-and-close-dialog",
+            ],
+            Self::DroppedFile(_) => &[
+                "cancel-drop-replace-dialog",
+                "discard-and-replace-drop-dialog",
+                "save-and-replace-drop-dialog",
+            ],
+            Self::Folder(_) => &[
+                "folder-choice-cancel",
+                "folder-choice-new-window",
+                "folder-choice-replace",
+            ],
+        }
+    }
+
+    fn is_destructive(&self, choice: usize) -> bool {
+        choice == 1 && matches!(self, Self::WindowClose | Self::DroppedFile(_))
+    }
+}
+
 /// 编辑器持有的模态内容、焦点快照和完成回调。
 pub(crate) struct EditorModal {
     spec: ModalSpec,
+    origin: ModalOrigin,
     identity: uuid::Uuid,
     layer: usize,
     focus: FocusHandle,
@@ -61,6 +106,7 @@ impl Editor {
         let restore_focus = self.modal.take().and_then(|modal| modal.restore_focus);
         self.modal = Some(EditorModal {
             spec,
+            origin: ModalOrigin::General,
             identity: uuid::Uuid::new_v4(),
             layer: NEXT_MODAL_LAYER.fetch_add(1, Ordering::Relaxed),
             focus: cx.focus_handle(),
@@ -115,24 +161,165 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(mut modal) = self.modal.take() else {
+        let current = self
+            .modal
+            .as_ref()
+            .is_some_and(|modal| self.modal_origin_is_current(&modal.origin));
+        let Some(mut modal) = self.take_modal(window, cx) else {
             return;
         };
-        let on_choice = modal.on_choice.take();
-        if (modal.focus.is_focused(window) || modal.focus.contains_focused(window, cx))
-            && let Some(focus) = modal
-                .restore_focus
-                .take()
-                .flatten()
-                .and_then(|focus| focus.upgrade())
-        {
-            focus.focus(window, cx);
-        }
+        let on_choice = modal.on_choice.take().filter(|_| current);
         drop(modal);
         if let Some(on_choice) = on_choice {
             on_choice(choice, self, window, cx);
         }
         cx.notify();
+    }
+
+    fn take_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<EditorModal> {
+        let mut modal = self.modal.take()?;
+        if modal.focus.is_focused(window) || modal.focus.contains_focused(window, cx) {
+            if let Some(focus) = modal
+                .restore_focus
+                .take()
+                .flatten()
+                .and_then(|focus| focus.upgrade())
+            {
+                focus.focus(window, cx);
+            } else {
+                window.blur(cx);
+            }
+        }
+        Some(modal)
+    }
+
+    fn modal_origin_is_current(&self, origin: &ModalOrigin) -> bool {
+        match origin {
+            ModalOrigin::General => true,
+            ModalOrigin::WindowClose => {
+                self.show_unsaved_changes_dialog && !self.show_drop_replace_dialog
+            }
+            ModalOrigin::DroppedFile(path) => {
+                self.show_drop_replace_dialog
+                    && self.pending_drop_replace_path.as_ref() == Some(path)
+            }
+            ModalOrigin::Folder(path) => {
+                !self.show_unsaved_changes_dialog
+                    && !self.show_drop_replace_dialog
+                    && self.pending_folder_choice.as_ref() == Some(path)
+            }
+        }
+    }
+
+    pub(crate) fn sync_pending_decision_modal(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .modal
+            .as_ref()
+            .is_some_and(|modal| !self.modal_origin_is_current(&modal.origin))
+        {
+            drop(self.take_modal(window, cx));
+            cx.notify();
+        }
+        if self.modal.is_some() || self.info_dialog.is_some() {
+            return;
+        }
+        let origin = if self.show_drop_replace_dialog {
+            self.pending_drop_replace_path
+                .clone()
+                .map(ModalOrigin::DroppedFile)
+        } else if self.show_unsaved_changes_dialog {
+            Some(ModalOrigin::WindowClose)
+        } else {
+            self.pending_folder_choice.clone().map(ModalOrigin::Folder)
+        };
+        let Some(origin) = origin else {
+            return;
+        };
+        let strings = cx.global::<I18nManager>().strings();
+        let (title, detail, buttons) = match &origin {
+            ModalOrigin::WindowClose => (
+                strings.unsaved_changes_title.clone(),
+                strings.unsaved_changes_message.clone(),
+                vec![
+                    strings.unsaved_changes_cancel.clone().into(),
+                    strings.unsaved_changes_discard_and_close.clone().into(),
+                    strings.unsaved_changes_save_and_close.clone().into(),
+                ],
+            ),
+            ModalOrigin::DroppedFile(path) => (
+                strings.drop_replace_title.clone(),
+                format!("{}\n\n{}", strings.drop_replace_message, path.display()),
+                vec![
+                    strings.drop_replace_cancel.clone().into(),
+                    strings.drop_replace_discard_and_replace.clone().into(),
+                    strings.drop_replace_save_and_replace.clone().into(),
+                ],
+            ),
+            ModalOrigin::Folder(path) => (
+                strings.workspace_folder_choice_title.clone(),
+                path.file_name()
+                    .map(|name| format!("{}\n\n{}", name.to_string_lossy(), path.display()))
+                    .unwrap_or_else(|| path.display().to_string()),
+                vec![
+                    strings.open_link_cancel.clone().into(),
+                    strings.workspace_open_new_window_button.clone().into(),
+                    strings.workspace_replace_current_button.clone().into(),
+                ],
+            ),
+            ModalOrigin::General => return,
+        };
+        let decision = origin.clone();
+        self.show_modal(
+            ModalSpec {
+                title: title.into(),
+                detail: Some(detail.into()),
+                buttons,
+                default_index: 2,
+                cancel_index: 0,
+            },
+            move |choice, editor, window, cx| {
+                let event = ClickEvent::default();
+                match (decision, choice) {
+                    (ModalOrigin::WindowClose, 0) => {
+                        editor.on_cancel_close_dialog(&event, window, cx)
+                    }
+                    (ModalOrigin::WindowClose, 1) => {
+                        editor.on_discard_and_close(&event, window, cx)
+                    }
+                    (ModalOrigin::WindowClose, 2) => editor.on_save_and_close(&event, window, cx),
+                    (ModalOrigin::DroppedFile(_), 0) => {
+                        editor.on_cancel_drop_replace_dialog(&event, window, cx)
+                    }
+                    (ModalOrigin::DroppedFile(_), 1) => {
+                        editor.on_discard_and_replace_drop(&event, window, cx)
+                    }
+                    (ModalOrigin::DroppedFile(_), 2) => {
+                        editor.on_save_and_replace_drop(&event, window, cx)
+                    }
+                    (ModalOrigin::Folder(_), 0) => {
+                        editor.on_folder_choice_cancel(&event, window, cx)
+                    }
+                    (ModalOrigin::Folder(_), 1) => {
+                        editor.on_folder_choice_new_window(&event, window, cx)
+                    }
+                    (ModalOrigin::Folder(_), 2) => {
+                        editor.on_folder_choice_replace(&event, window, cx)
+                    }
+                    _ => {}
+                }
+            },
+            cx,
+        );
+        if let Some(modal) = self.modal.as_mut() {
+            modal.origin = origin;
+            // 这些请求原本会清空窗口焦点，先保存实际控件，再交给模态阻止后续输入。
+            modal.restore_focus = Some(window.focused(cx).map(|focus| focus.downgrade()));
+            modal.focus.focus(window, cx);
+        }
     }
 
     pub(crate) fn cancel_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -168,16 +355,28 @@ impl Editor {
         let default_index = modal.spec.default_index;
         let cancel_index = modal.spec.cancel_index;
         let focus = modal.focus.clone();
+        let (panel_selector, overlay_selector) = modal.origin.selectors();
         let mut footer = DialogFooter::new().flex_shrink_0().flex_wrap();
         let mut buttons: Vec<_> = modal.spec.buttons.iter().enumerate().collect();
         buttons.sort_by_key(|(index, _)| *index == default_index);
         for (index, label) in buttons {
+            let named_id = modal.origin.button_ids().get(index).copied();
+            let button_id: ElementId = named_id
+                .map(Into::into)
+                .unwrap_or_else(|| ("editor-modal-button", index).into());
             footer = footer.child(
-                Button::new(("editor-modal-button", index))
-                    .debug_selector(move || format!("editor-modal-button-{index}"))
+                Button::new(button_id)
+                    .debug_selector(move || {
+                        named_id
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| format!("editor-modal-button-{index}"))
+                    })
                     .label(label.clone())
                     .when(index == default_index, |button| button.primary())
                     .when(index != default_index, |button| button.outline())
+                    .when(modal.origin.is_destructive(index), |button| {
+                        button.danger().outline()
+                    })
                     .on_click(cx.listener(move |editor, _, window, cx| {
                         editor.dismiss_modal_if_current(identity, index, window, cx);
                     }))
@@ -190,8 +389,8 @@ impl Editor {
         }
         let owner = cx.entity().downgrade();
         let panel = div()
-            .id("editor-modal")
-            .debug_selector(|| "editor-modal".into())
+            .id(panel_selector)
+            .debug_selector(move || panel_selector.into())
             .occlude()
             .w(rems(28.0))
             .max_w_full()
@@ -254,7 +453,7 @@ impl Editor {
         Some(
             div()
                 .id(identity)
-                .debug_selector(|| "editor-modal-overlay".into())
+                .debug_selector(move || overlay_selector.into())
                 .absolute()
                 .inset_0()
                 .child(
@@ -295,6 +494,52 @@ mod tests {
     use super::{Editor, ModalSpec};
     use gpui::TestAppContext;
     use std::{cell::Cell, rc::Rc};
+
+    #[gpui::test]
+    fn pending_decision_filters_an_expired_drop_target(cx: &mut TestAppContext) {
+        let root =
+            std::env::temp_dir().join(format!("velora-decision-target-{}", uuid::Uuid::new_v4()));
+        let _config = crate::config::override_test_config_root(root.join("profile"));
+        std::fs::create_dir_all(&root).unwrap();
+        let first = root.join("first.md");
+        let second = root.join("second.md");
+        std::fs::write(&first, "旧请求").unwrap();
+        std::fs::write(&second, "新请求").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || std::fs::remove_dir_all(root).unwrap()
+        });
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原文".into(), None));
+        editor.update_in(cx, |editor, window, cx| {
+            editor.mark_dirty(cx);
+            editor.request_dropped_markdown_replace(first, window, cx);
+            let identity = editor.modal.as_ref().unwrap().identity;
+            editor.pending_drop_replace_path = Some(second.clone());
+            editor.dismiss_modal_if_current(identity, 1, window, cx);
+            assert_eq!(editor.buffer.text(), "原文", "旧决定不能替换为新的拖入目标");
+            assert!(editor.document_dirty);
+            assert_eq!(editor.pending_drop_replace_path.as_ref(), Some(&second));
+            editor.sync_pending_decision_modal(window, cx);
+            assert!(
+                editor
+                    .modal_spec()
+                    .unwrap()
+                    .detail
+                    .as_ref()
+                    .unwrap()
+                    .contains("second.md")
+            );
+            editor.cancel_modal(window, cx);
+            assert!(editor.pending_drop_replace_path.is_none());
+        });
+        cx.update(|window, _| window.remove_window());
+    }
 
     #[gpui::test]
     fn modal_completion_only_applies_to_the_current_instance(cx: &mut TestAppContext) {

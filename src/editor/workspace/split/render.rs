@@ -26,6 +26,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.sync_pending_save(window, cx);
+        self.sync_pending_decision_modal(window, cx);
         let Some(active) = self.active_split_editor() else {
             return div().into_any_element();
         };
@@ -141,17 +142,14 @@ impl Editor {
         if let Some(notification) = self.render_update_notification(&theme, &strings, cx) {
             root = root.child(notification);
         }
-        if let Some(kind) = self.info_dialog {
-            root = root.child(
-                deferred(self.render_info_dialog_overlay(&theme, kind, cx)).with_priority(20),
-            );
-        } else if self.modal_is_open() {
+        if self.modal_is_open() {
             if let Some(modal) = self.render_modal_overlay(&theme, cx) {
                 root = root.child(deferred(modal).with_priority(20));
             }
-        } else if self.show_unsaved_changes_dialog {
-            root = root
-                .child(deferred(self.render_unsaved_changes_overlay(&theme, cx)).with_priority(20));
+        } else if let Some(kind) = self.info_dialog {
+            root = root.child(
+                deferred(self.render_info_dialog_overlay(&theme, kind, cx)).with_priority(20),
+            );
         }
         root = root
             .on_action(cx.listener(Self::on_open_ai_assistant))

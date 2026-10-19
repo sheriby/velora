@@ -645,17 +645,6 @@ impl Editor {
         }
     }
 
-    pub(crate) fn on_folder_choice_backdrop(
-        &mut self,
-        _: &MouseDownEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.pending_folder_choice.take().is_some() {
-            cx.notify();
-        }
-    }
-
     pub(crate) fn on_folder_choice_new_window(
         &mut self,
         _: &ClickEvent,

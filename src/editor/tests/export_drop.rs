@@ -1,5 +1,280 @@
 use super::common::*;
 
+fn exercise_pending_decision_cancel(kind: &str, cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let root =
+        std::env::temp_dir().join(format!("velora-pending-decision-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(root.join("profile"));
+    std::fs::create_dir_all(root.join("folder")).unwrap();
+    std::fs::write(root.join("incoming.md"), "传入内容\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || std::fs::remove_dir_all(root).unwrap()
+    });
+    init_editor_test_app(cx);
+    let handle = cx
+        .update(|cx| {
+            crate::ui::open_window(gpui::WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| Editor::from_markdown(cx, "未保存的内容".into(), None))
+            })
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    redraw(&mut visual);
+    let focus = handle
+        .read_with(&visual, |editor, cx| {
+            editor
+                .document
+                .first_root()
+                .unwrap()
+                .read(cx)
+                .focus_handle
+                .clone()
+        })
+        .unwrap();
+    visual.update(|window, cx| focus.focus(window, cx));
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.mark_dirty(cx);
+            match kind {
+                "close" => assert!(!editor.on_window_should_close(window, cx)),
+                "drop" => {
+                    editor.request_dropped_markdown_replace(root.join("incoming.md"), window, cx)
+                }
+                "folder" => {
+                    editor.pending_folder_choice = Some(root.join("folder"));
+                    cx.notify();
+                }
+                _ => unreachable!(),
+            }
+        })
+        .unwrap();
+    redraw(&mut visual);
+    assert!(
+        visual.update(|window, cx| gpui_kit::base::active_focus_trap(window, cx).is_some()),
+        "{kind} 确认需要可操作的模态焦点范围"
+    );
+    if kind == "drop" {
+        handle
+            .update(&mut visual, |editor, _, cx| {
+                editor.show_message_modal("读取失败", "请重试", cx)
+            })
+            .unwrap();
+        redraw(&mut visual);
+        visual.update(|window, cx| window.click(("editor-modal-button", 0usize), cx));
+        redraw(&mut visual);
+        assert!(
+            handle
+                .read_with(&visual, |editor, _| editor.show_drop_replace_dialog)
+                .unwrap(),
+            "错误提示关闭后仍须能处理原决定"
+        );
+    }
+    visual.simulate_keystrokes("tab");
+    let cancel = match kind {
+        "close" => "cancel-close-dialog",
+        "drop" => "cancel-drop-replace-dialog",
+        "folder" => "folder-choice-cancel",
+        _ => unreachable!(),
+    };
+    visual.update(|window, _| {
+        let button = window.find(cancel);
+        assert_eq!(button.role(), Some(gpui::Role::Button));
+        assert_eq!(button.focused(), Some(true));
+    });
+    visual.simulate_keystrokes("enter");
+    redraw(&mut visual);
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(editor.buffer.text(), "未保存的内容");
+            assert!(editor.document_dirty);
+            assert!(!editor.show_unsaved_changes_dialog);
+            assert!(!editor.show_drop_replace_dialog);
+            assert!(editor.pending_folder_choice.is_none());
+            assert!(editor.file_path.is_none());
+        })
+        .unwrap();
+    assert!(visual.update(|window, _| focus.is_focused(window)));
+    assert_eq!(
+        std::fs::read_to_string(root.join("incoming.md")).unwrap(),
+        "传入内容\n"
+    );
+    assert_eq!(visual.cx.windows().len(), 1);
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
+fn pending_decision_close_supports_keyboard_cancel(cx: &mut TestAppContext) {
+    exercise_pending_decision_cancel("close", cx);
+}
+
+#[gpui::test]
+fn pending_decision_drop_supports_keyboard_cancel(cx: &mut TestAppContext) {
+    exercise_pending_decision_cancel("drop", cx);
+}
+
+#[gpui::test]
+fn pending_decision_folder_supports_keyboard_cancel(cx: &mut TestAppContext) {
+    exercise_pending_decision_cancel("folder", cx);
+}
+
+#[gpui::test]
+fn pending_decision_save_and_replace_preserves_disk_shape(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let root = std::env::temp_dir().join(format!("velora-decision-save-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(root.join("profile"));
+    std::fs::create_dir_all(&root).unwrap();
+    let current = root.join("current.md");
+    let incoming = root.join("incoming.md");
+    std::fs::write(&current, b"original\r\n").unwrap();
+    std::fs::write(&incoming, b"incoming\r\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || std::fs::remove_dir_all(root).unwrap()
+    });
+    init_editor_test_app(cx);
+    let loaded = crate::editor::encoding::load_document(&current).unwrap();
+    let handle = cx
+        .update(|cx| {
+            crate::ui::open_window(gpui::WindowOptions::default(), cx, {
+                let current = current.clone();
+                move |_, cx| {
+                    cx.new(move |cx| Editor::from_loaded_document(cx, loaded, Some(current)))
+                }
+            })
+        })
+        .unwrap();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    redraw(&mut visual);
+    let focus = handle
+        .read_with(&visual, |editor, cx| {
+            editor
+                .document
+                .first_root()
+                .unwrap()
+                .read(cx)
+                .focus_handle
+                .clone()
+        })
+        .unwrap();
+    visual.update(|window, cx| {
+        window.activate_window();
+        focus.focus(window, cx);
+    });
+    visual.simulate_input("修改 ");
+    redraw(&mut visual);
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.request_dropped_markdown_replace(incoming.clone(), window, cx)
+        })
+        .unwrap();
+    redraw(&mut visual);
+    visual.update(|window, cx| window.click("save-and-replace-drop-dialog", cx));
+    redraw(&mut visual);
+    assert_eq!(
+        std::fs::read(&current).unwrap(),
+        "修改 original\r\n".as_bytes()
+    );
+    assert_eq!(std::fs::read(&incoming).unwrap(), b"incoming\r\n");
+    handle
+        .read_with(&visual, |editor, _| {
+            assert_eq!(editor.buffer.text(), "incoming\n");
+            assert_eq!(
+                crate::file_url::canonical_path(editor.file_path.as_ref().unwrap()),
+                crate::file_url::canonical_path(&incoming)
+            );
+            assert!(!editor.document_dirty);
+            assert!(!editor.show_drop_replace_dialog);
+        })
+        .unwrap();
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
+fn pending_decision_folder_actions_preserve_the_document_and_window_target(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::test::TestWindowExt as _;
+    let root =
+        std::env::temp_dir().join(format!("velora-decision-folder-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(root.join("profile"));
+    std::fs::create_dir_all(root.join("folder")).unwrap();
+    let folder = crate::file_url::canonical_path(&root.join("folder"));
+    cx.on_quit({
+        let root = root.clone();
+        move || std::fs::remove_dir_all(root).unwrap()
+    });
+    init_editor_test_app(cx);
+    for new_window in [false, true] {
+        let handle = cx
+            .update(|cx| {
+                crate::ui::open_window(gpui::WindowOptions::default(), cx, |_, cx| {
+                    cx.new(|cx| Editor::from_markdown(cx, "保留原文".into(), None))
+                })
+            })
+            .unwrap();
+        let mut visual = VisualTestContext::from_window(handle.into(), cx);
+        redraw(&mut visual);
+        handle
+            .update(&mut visual, |editor, _, cx| {
+                editor.mark_dirty(cx);
+                editor.pending_folder_choice = Some(folder.clone());
+                cx.notify();
+            })
+            .unwrap();
+        redraw(&mut visual);
+        visual.update(|window, cx| {
+            window.click(
+                if new_window {
+                    "folder-choice-new-window"
+                } else {
+                    "folder-choice-replace"
+                },
+                cx,
+            )
+        });
+        redraw(&mut visual);
+        handle
+            .read_with(&visual, |editor, _| {
+                assert_eq!(editor.buffer.text(), "保留原文");
+                assert!(editor.document_dirty);
+                assert!(editor.pending_folder_choice.is_none());
+                assert_eq!(
+                    editor
+                        .workspace_root_path()
+                        .map(std::path::Path::to_path_buf),
+                    (!new_window).then(|| folder.clone())
+                );
+            })
+            .unwrap();
+        let windows = visual.cx.windows();
+        assert_eq!(windows.len(), if new_window { 2 } else { 1 });
+        if new_window {
+            let other = *windows
+                .iter()
+                .find(|window| window.window_id() != handle.window_id())
+                .unwrap();
+            let content = visual
+                .update(|_, cx| crate::ui::window_content::<Editor>(other, cx))
+                .unwrap();
+            assert_eq!(
+                content
+                    .read_with(&visual, |editor, _| editor
+                        .workspace_root_path()
+                        .map(std::path::Path::to_path_buf))
+                    .unwrap(),
+                Some(folder.clone())
+            );
+        }
+        for window in windows {
+            visual
+                .cx
+                .update_window(window, |_, window, _| window.remove_window())
+                .unwrap();
+        }
+    }
+}
+
 #[gpui::test]
 async fn export_html_writes_rendered_document_without_changing_editor_state(
     cx: &mut TestAppContext,

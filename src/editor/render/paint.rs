@@ -68,6 +68,7 @@ impl Render for Editor {
         self.sync_pending_save(window, cx);
         self.sync_pending_save_as(window, cx);
         self.sync_pending_workspace_tab_activation(window, cx);
+        self.sync_pending_decision_modal(window, cx);
         if !self.ai_result_preview && self.split_parent.is_none() { self.sync_window_edited_state(window); }
 
         let viewport_bounds = self.scroll_handle.bounds();
@@ -1185,20 +1186,14 @@ impl Render for Editor {
         let base = if let Some(preview) = self.render_mermaid_preview_overlay(&theme, window, cx) {
             base.child(self.pane_overlay(preview.into_any_element(), window))
         } else { base };
-        let base = if let Some(kind) = self.info_dialog {
-            base.child(self.render_info_dialog_overlay(&theme, kind, cx))
-        } else if self.modal_is_open() {
+        let base = if self.modal_is_open() {
             let overlay = self.render_modal_overlay(&theme, cx).map(IntoElement::into_any_element);
             match overlay {
-                Some(overlay) => base.child(self.pane_overlay(overlay.into_any_element(), window)),
+                Some(overlay) => base.child(self.pane_overlay(overlay, window)),
                 None => base,
             }
-        } else if self.show_drop_replace_dialog {
-            base.child(self.render_drop_replace_overlay(&theme, cx))
-        } else if self.show_unsaved_changes_dialog {
-            base.child(self.render_unsaved_changes_overlay(&theme, cx))
-        } else if self.pending_folder_choice.is_some() {
-            base.child(self.render_folder_choice_overlay(&theme, cx).into_any_element())
+        } else if let Some(kind) = self.info_dialog {
+            base.child(self.render_info_dialog_overlay(&theme, kind, cx))
         } else {
             base
         };
