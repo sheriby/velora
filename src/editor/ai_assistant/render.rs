@@ -88,7 +88,9 @@ impl Editor {
             return None;
         }
         let viewport = window.viewport_size();
-        let compact = session.mode == PanelMode::Task;
+        // 浮窗模式不区分形态：历史、技能等集合视图同样用浮窗尺寸与位置，
+        // 不能因为点开历史就换成贴边的宽面板。
+        let compact = true;
         let inset = window.rem_size();
         let auxiliary_top = px(crate::window_chrome::custom_titlebar_height(
             window,
@@ -125,14 +127,24 @@ impl Editor {
                 f32::from(size.height)
                     .clamp(180.0, (f32::from(viewport.height) - 80.0).max(180.0)),
             ),
-            (true, None) => (
-                default_width,
-                default_height.min(if session.saved.workspace.changes.proposals.is_empty() {
-                    520.0
+            (true, None) => {
+                // 任务浮窗保持「无提议时收紧」的默认高度；集合视图给足高度，
+                // 但以浮窗位置为顶、不再向下顶开状态栏。
+                let height = if session.mode == PanelMode::Task {
+                    default_height.min(if session.saved.workspace.changes.proposals.is_empty() {
+                        520.0
+                    } else {
+                        320.0
+                    })
                 } else {
-                    320.0
-                }),
-            ),
+                    let max_height = f32::from(
+                        viewport.height - session.origin.y - status_height - px(36.0),
+                    )
+                    .max(180.0);
+                    default_height.min(max_height)
+                };
+                (default_width, height)
+            }
             (false, _) => (default_width, default_height),
         };
         let origin = if compact {
@@ -140,7 +152,7 @@ impl Editor {
         } else {
             point((viewport.width - px(width)) * 0.5, auxiliary_top)
         };
-        let panel = if compact {
+        let panel = if session.mode == PanelMode::Task {
             self.render_ai_workbench(theme, height, false, window, cx)
         } else {
             self.render_ai_panel(theme, height, window, cx)
@@ -150,20 +162,24 @@ impl Editor {
                 .into_any_element()
         };
         let origin = if compact {
+            // 集合视图（历史/技能等）面板较高，按实际高度避让状态栏；
+            // 任务浮窗保持原有规则（空对话只预留一小条）。
+            let reserve = if session.mode == PanelMode::Task {
+                if has_messages || session.float_size.is_some() {
+                    height
+                } else {
+                    180.0
+                }
+            } else {
+                f32::from(px(height) + status_height)
+            };
             point(
                 origin
                     .x
                     .max(px(12.0))
                     .min((viewport.width - px(width) - px(12.0)).max(px(12.0))),
                 origin.y.max(px(65.0)).min(
-                    (viewport.height
-                        - px(if has_messages || session.float_size.is_some() {
-                            height
-                        } else {
-                            180.0
-                        })
-                        - px(36.0))
-                    .max(px(65.0)),
+                    (viewport.height - px(reserve) - px(36.0)).max(px(65.0)),
                 ),
             )
         } else {

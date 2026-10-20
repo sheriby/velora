@@ -6094,3 +6094,27 @@ fn ai_float_collapses_into_a_corner_button_and_restores(cx: &mut TestAppContext)
 }
 
 
+
+#[gpui::test]
+fn ai_history_opened_from_the_float_stays_at_the_float(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor.ai_session.as_mut().unwrap().mode = PanelMode::Task;
+    });
+    let origin = editor.read_with(cx, |editor, _| {
+        editor.ai_session.as_ref().unwrap().origin
+    });
+    editor.update_in(cx, |editor, _, cx| editor.show_ai_history(cx));
+    draw(cx);
+    draw(cx);
+    let bounds = cx
+        .debug_bounds("ai-history-list")
+        .expect("浮窗里应渲染历史列表");
+    assert!(
+        bounds.top() > origin.y && bounds.top() < origin.y + gpui::px(220.0),
+        "历史应渲染在浮窗位置（origin.y={origin:?}），而不是贴边宽面板：{bounds:?}"
+    );
+}
