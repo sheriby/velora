@@ -40,6 +40,8 @@ pub(crate) struct PreferencesWindow {
     pub(super) shortcut_error: Option<String>,
     /// 保存失败贴近固定保存区显示，避免提示随设置页滚出视口。
     pub(super) save_error: Option<String>,
+    /// 最近一次保存成功；再次修改（can_save 为真）时不显示。
+    pub(super) saved_feedback: bool,
     /// 右侧内容区的滚动位置（单测用它验「真的能滚」）。
     pub(super) page_scroll: ScrollHandle,
     pub(super) tree_sort: TreeSortPreference,
@@ -190,6 +192,7 @@ impl PreferencesWindow {
             recording_shortcut: None,
             shortcut_error: None,
             save_error: None,
+            saved_feedback: false,
             page_scroll: ScrollHandle::new(),
             status_bar_enabled: preferences.status_bar.enabled,
             status_bar_show_word_count: preferences.status_bar.show_word_count,
@@ -407,6 +410,7 @@ impl PreferencesWindow {
             }
         }
         self.apply_saved_preferences(preferences, window, cx);
+        self.saved_feedback = self.save_error.is_none();
     }
 
     pub(crate) fn apply_saved_preferences(

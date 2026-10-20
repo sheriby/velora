@@ -177,6 +177,7 @@ impl I18nStrings {
             preferences_theme_dark: "深色".into(),
             preferences_theme_light: "浅色".into(),
             preferences_save: "保存".into(),
+            preferences_saved: "已保存".into(),
             preferences_cancel: "取消".into(),
             preferences_save_failed_title: "保存偏好设置失败".into(),
             preferences_shortcuts_group_file: "文件".into(),
@@ -761,6 +762,7 @@ impl I18nStrings {
             preferences_image_paste_copy_to_named_assets_folder:
                 "Copy image to ./${filename}.assets folder".into(),
             preferences_save: "Save".into(),
+            preferences_saved: "Saved".into(),
             preferences_cancel: "Cancel".into(),
             preferences_save_failed_title: "Save Preferences Failed".into(),
             preferences_shortcuts_group_file: "File".into(),

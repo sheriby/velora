@@ -249,6 +249,7 @@ pub struct I18nStrings {
     pub preferences_image_paste_copy_to_named_assets_folder: String,
     /// Save button label in the preferences window.
     pub preferences_save: String,
+    pub preferences_saved: String,
     /// Cancel button label in the preferences window.
     pub preferences_cancel: String,
     /// Title shown when preferences cannot be saved.

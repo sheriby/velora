@@ -159,6 +159,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) preferences_image_paste_copy_to_assets_folder: Option<String>,
     pub(crate) preferences_image_paste_copy_to_named_assets_folder: Option<String>,
     pub(crate) preferences_save: Option<String>,
+    pub(crate) preferences_saved: Option<String>,
     pub(crate) preferences_cancel: Option<String>,
     pub(crate) preferences_save_failed_title: Option<String>,
     pub(crate) preferences_shortcuts_group_file: Option<String>,

@@ -156,6 +156,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "preferences_image_paste_copy_to_assets_folder",
     "preferences_image_paste_copy_to_named_assets_folder",
     "preferences_save",
+    "preferences_saved",
     "preferences_cancel",
     "preferences_save_failed_title",
     "preferences_shortcuts_group_file",

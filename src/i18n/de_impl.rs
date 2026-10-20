@@ -349,6 +349,7 @@ impl I18nStringsDe {
                 .preferences_image_paste_copy_to_named_assets_folder
                 .unwrap_or(defaults.preferences_image_paste_copy_to_named_assets_folder),
             preferences_save: self.preferences_save.unwrap_or(defaults.preferences_save),
+            preferences_saved: self.preferences_saved.unwrap_or(defaults.preferences_saved),
             preferences_cancel: self
                 .preferences_cancel
                 .unwrap_or(defaults.preferences_cancel),

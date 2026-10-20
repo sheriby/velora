@@ -1673,6 +1673,65 @@
             .expect("偏好窗口应可更新");
     }
 
+    /// 保存成功后必须在固定保存区给出可见反馈；再次修改后旧的反馈要消失，
+    /// 否则用户分不清当前改动到底存没存。
+    #[gpui::test]
+    async fn saving_preferences_shows_a_visible_saved_state(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_state(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "Preferences".into(),
+            )
+        });
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+
+        for id in [
+            "preferences-sidebar-open-dropdown",
+            "preferences-sidebar-open-always",
+        ] {
+            preferences_cx.update(|window, cx| window.draw(cx).clear(cx));
+            preferences_cx.run_until_parked();
+            let bounds = preferences_cx
+                .debug_bounds(id)
+                .unwrap_or_else(|| panic!("{id} 应已绘制"));
+            preferences_cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        }
+        preferences_cx.update(|window, cx| window.draw(cx).clear(cx));
+        preferences_cx.run_until_parked();
+        let save = preferences_cx
+            .debug_bounds("preferences-save")
+            .expect("保存按钮应已绘制");
+        preferences_cx.simulate_click(save.center(), gpui::Modifiers::none());
+        preferences_cx.run_until_parked();
+        preferences_cx.update(|window, cx| window.draw(cx).clear(cx));
+        preferences_cx.run_until_parked();
+        assert!(
+            preferences_cx.debug_bounds("preferences-saved").is_some(),
+            "保存成功后必须显示可见的「已保存」反馈"
+        );
+
+        for id in [
+            "preferences-sidebar-open-dropdown",
+            "preferences-sidebar-open-never",
+        ] {
+            preferences_cx.update(|window, cx| window.draw(cx).clear(cx));
+            preferences_cx.run_until_parked();
+            let bounds = preferences_cx
+                .debug_bounds(id)
+                .unwrap_or_else(|| panic!("{id} 应已绘制"));
+            preferences_cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        }
+        preferences_cx.update(|window, cx| window.draw(cx).clear(cx));
+        preferences_cx.run_until_parked();
+        assert!(
+            preferences_cx.debug_bounds("preferences-saved").is_none(),
+            "再次修改后旧的「已保存」反馈必须消失"
+        );
+    }
+
 #[test]
 fn update_preferences_default_to_startup_checks_and_preserve_beta_and_skip_settings() {
     let defaults = toml::Value::try_from(super::PreferencesFile::from(&AppPreferences::default())).expect("默认配置");

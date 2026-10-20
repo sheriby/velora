@@ -136,13 +136,23 @@ impl Render for PreferencesWindow {
                     PreferencesNav::Window => self.render_window_page(&theme, &strings, window, cx),
                 });
 
-            let footer_actions = div()
+            let mut footer_actions = div()
                 .w_full()
                 .flex_shrink_0()
                 .flex()
                 .items_center()
                 .justify_end()
-                .gap_2()
+                .gap_2();
+            if self.saved_feedback && !can_save && self.save_error.is_none() {
+                footer_actions = footer_actions.child(
+                    div()
+                        .debug_selector(|| "preferences-saved".into())
+                        .text_size(px(12.0))
+                        .text_color(c.callout_tip_border)
+                        .child(strings.preferences_saved.clone()),
+                );
+            }
+            footer_actions = footer_actions
                 .child(
                     Button::new("preferences-cancel")
                         .debug_selector(|| "preferences-cancel".into())
