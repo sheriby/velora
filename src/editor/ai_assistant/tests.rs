@@ -5626,3 +5626,66 @@ fn ai_sidebar_history_restores_a_conversation_and_keeps_the_composer(cx: &mut Te
         "恢复后必须能继续对话"
     );
 }
+
+#[gpui::test]
+fn ai_float_collapses_into_a_corner_button_and_restores(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .input
+            .update(cx, |input, cx| input.set_value("继续写", window, cx));
+    });
+    draw(cx);
+    draw(cx);
+    let before = cx
+        .debug_bounds("ai-floating-workbench")
+        .expect("浮窗必须显示");
+    let collapse = cx.debug_bounds("ai-collapse").expect("浮窗必须提供收起按钮");
+    cx.simulate_click(collapse.center(), gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-floating-workbench").is_none(),
+        "收起后浮窗必须隐藏"
+    );
+    let bubble = cx.debug_bounds("ai-collapsed").expect("右下角必须出现 AI 图标");
+    let viewport = cx.update(|window, _| window.viewport_size());
+    assert!(
+        bubble.right() > viewport.width - gpui::px(80.0),
+        "图标必须靠右：{bubble:?}"
+    );
+    assert!(
+        bubble.bottom() > viewport.height - gpui::px(120.0),
+        "图标必须靠下：{bubble:?}"
+    );
+    cx.simulate_click(bubble.center(), gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    let after = cx
+        .debug_bounds("ai-floating-workbench")
+        .expect("点击图标必须恢复浮窗");
+    assert_eq!(after.origin, before.origin, "恢复必须回到原位置");
+    assert!(cx.debug_bounds("ai-collapsed").is_none());
+    editor.read_with(cx, |editor, cx| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert!(!session.collapsed);
+        assert_eq!(session.input.read(cx).value(), "继续写");
+    });
+    cx.simulate_resize(gpui::size(gpui::px(1200.0), gpui::px(800.0)));
+    editor.update(cx, |editor, cx| {
+        editor.ai_session.as_mut().unwrap().expanded = true;
+        cx.notify();
+    });
+    draw(cx);
+    draw(cx);
+    assert!(cx.debug_bounds("ai-sidebar").is_some(), "宽窗口必须停靠");
+    assert!(
+        cx.debug_bounds("ai-collapse").is_none(),
+        "停靠侧栏不提供收起到角落"
+    );
+}

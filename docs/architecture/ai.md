@@ -22,6 +22,8 @@
 
 普通窗口与分屏宿主共用 `render.rs:render_ai_sidebar_layout`，由 Kit `ResizablePanelGroup` 管理正文区域和 AI 侧栏的宽度与指针拖动。`AiSidebarLayout` 属于窗口宿主，保留运行期间的布局状态，切换任务、隐藏或回浮窗不重置侧栏宽度；窗口缩放按当前可用空间约束尺寸。0.7.3 的分隔条没有键盘入口，应用通过共用的 `ui/resize.rs:PanelResizeHandle` 补充 `Splitter` 语义与左右箭头、Home／End，并配置焦点句柄自身的 Tab 属性，尺寸仍调用 Kit `ResizableState:resize_panel`，不另写一套拖动或边界算法。
 
+标题栏固定提供历史按钮，停靠与浮动共用：点击进入按工作区保存的会话列表，选中后恢复并保留输入框，可继续追问。浮动窗标题栏另有收起按钮；收起后正文右下角显示 AI 图标方块，点击恢复原位置与输入，停靠侧栏不提供收起。
+
 窗口放不下工作区导航、正文与 AI 侧栏时，同一任务临时以浮窗显示，停靠按钮说明需要拓宽窗口；不更改 `expanded` 偏好，不新建会话或重置输入、消息与滚动。空间恢复后继续使用原有侧栏状态。可停靠判据和缩放边界读取同一份 `workspace_navigation_width`，工作区展开或改宽后，正文仍有独立的最低空间。
 
 `experience.rs:refocus_visible_ai_review` 在工作区导航关闭后把焦点交回当前显示的审阅正文，分屏由宿主统一调度。

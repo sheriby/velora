@@ -51,6 +51,39 @@ impl Editor {
             }
             return None;
         }
+        if session.collapsed && !session.expanded {
+            let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+            return Some(
+                self.ai_button(
+                    "ai-collapsed",
+                    false,
+                    cx,
+                    |button, _cx| {
+                        button
+                            .icon(IconName::Bot)
+                            .accessibility_label(strings.ai_panel_open.clone())
+                            .tooltip(strings.ai_panel_open.clone())
+                            .outline()
+                            .with_size(gpui_kit::component::Size::Medium)
+                            .rounded(px(10.0))
+                            .shadow_lg()
+                    },
+                    |editor, window, cx| {
+                        if let Some(session) = editor.ai_session.as_mut() {
+                            session.collapsed = false;
+                            session
+                                .input
+                                .update(cx, |input, cx| input.focus(window, cx));
+                        }
+                        cx.notify();
+                    },
+                )
+                .absolute()
+                .right(px(18.0))
+                .bottom(px(36.0))
+                .into_any_element(),
+            );
+        }
         if session.expanded && self.ai_sidebar_fits(window, cx) {
             return None;
         }

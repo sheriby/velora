@@ -543,6 +543,8 @@ impl I18nStrings {
         strings.ai_panel_dock = "移至侧栏".into();
         strings.ai_panel_dock_unavailable = "拓宽窗口以停靠".into();
         strings.ai_panel_float = "浮动窗口".into();
+        strings.ai_panel_collapse = "收起到右下角".into();
+        strings.ai_panel_open = "打开 AI 助手".into();
         strings.ai_task_details = "任务详情".into();
         strings.ai_task_return = "返回正文".into();
         strings.ai_task_scope_document = "当前文档".into();
@@ -1117,6 +1119,8 @@ impl I18nStrings {
             ai_panel_dock: "Move to sidebar".into(),
             ai_panel_dock_unavailable: "Widen the window to dock".into(),
             ai_panel_float: "Float window".into(),
+            ai_panel_collapse: "Minimize to corner".into(),
+            ai_panel_open: "Open AI assistant".into(),
             ai_task_details: "Task details".into(),
             ai_task_return: "Back to document".into(),
             ai_task_scope_document: "Current document".into(),

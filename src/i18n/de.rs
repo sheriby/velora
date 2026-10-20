@@ -513,6 +513,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) ai_panel_dock: Option<String>,
     pub(crate) ai_panel_dock_unavailable: Option<String>,
     pub(crate) ai_panel_float: Option<String>,
+    pub(crate) ai_panel_collapse: Option<String>,
+    pub(crate) ai_panel_open: Option<String>,
     pub(crate) ai_task_details: Option<String>,
     pub(crate) ai_task_return: Option<String>,
     pub(crate) ai_task_scope_document: Option<String>,

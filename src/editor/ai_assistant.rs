@@ -60,6 +60,8 @@ pub(super) struct AiSession {
     settings: AiSettings,
     visible: bool,
     expanded: bool,
+    /// 浮动窗收起到右下角图标；停靠侧栏不使用。
+    collapsed: bool,
     mode: PanelMode,
     command: AiCommand,
     origin: Point<Pixels>,
@@ -843,6 +845,7 @@ impl Editor {
             let mut session = self.ai_task_sessions.remove(index);
             session.visible = true;
             session.expanded = true;
+            session.collapsed = false;
             session.panel_navigation = false;
             session.mode = PanelMode::Task;
             if let Some(previous) = self.ai_session.replace(session) {
@@ -875,6 +878,7 @@ impl Editor {
                                 session.saved = saved;
                                 session.expanded = true;
                                 session.visible = true;
+                                session.collapsed = false;
                                 session.panel_navigation = false;
                                 session.command = session
                                     .saved
@@ -961,6 +965,7 @@ impl Editor {
         } else if let Some(session) = self.ai_session.as_mut() {
             session.visible = true;
             session.expanded = true;
+            session.collapsed = false;
             session.panel_drag = None;
             session.panel_navigation = false;
             session.mode = PanelMode::Task;
@@ -1235,6 +1240,7 @@ impl Editor {
             settings,
             visible: true,
             expanded,
+            collapsed: false,
             mode: PanelMode::Task,
             command,
             origin,

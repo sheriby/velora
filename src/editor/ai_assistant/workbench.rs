@@ -117,6 +117,7 @@ impl Editor {
                 move |editor, window, cx| {
                     if let Some(session) = editor.ai_session.as_mut() {
                         session.expanded = !sidebar;
+                        session.collapsed = false;
                         session.panel_drag = None;
                         session
                             .input
@@ -125,6 +126,26 @@ impl Editor {
                     cx.notify();
                 },
             ))
+            .when(!sidebar, |header| {
+                header.child(self.ai_button(
+                    "ai-collapse",
+                    false,
+                    cx,
+                    |button, _cx| {
+                        button
+                            .icon(IconName::Minus)
+                            .accessibility_label(strings.ai_panel_collapse.clone())
+                            .tooltip(strings.ai_panel_collapse.clone())
+                    },
+                    |editor, _, cx| {
+                        if let Some(session) = editor.ai_session.as_mut() {
+                            session.collapsed = true;
+                            session.panel_drag = None;
+                        }
+                        cx.notify();
+                    },
+                ))
+            })
             .child(self.ai_button(
                 "ai-history",
                 false,

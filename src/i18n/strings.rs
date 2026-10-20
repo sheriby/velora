@@ -763,6 +763,8 @@ pub struct I18nStrings {
     pub ai_panel_dock: String,
     pub ai_panel_dock_unavailable: String,
     pub ai_panel_float: String,
+    pub ai_panel_collapse: String,
+    pub ai_panel_open: String,
     pub ai_task_details: String,
     pub ai_task_return: String,
     pub ai_task_scope_document: String,

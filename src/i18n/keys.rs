@@ -510,6 +510,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_panel_dock",
     "ai_panel_dock_unavailable",
     "ai_panel_float",
+    "ai_panel_collapse",
+    "ai_panel_open",
     "ai_task_details",
     "ai_task_return",
     "ai_task_scope_document",
