@@ -791,26 +791,6 @@ impl Editor {
                 let _ = self.jump_to_footnote_backref(id, cx);
                 cx.notify();
             }
-            BlockEvent::RequestAppendTableColumn => {
-                if block.read(cx).kind() == BlockKind::Table {
-                    self.prepare_undo_capture(
-                        crate::components::UndoCaptureKind::NonCoalescible,
-                        cx,
-                    );
-                    self.append_table_column(&block, cx);
-                    self.finalize_pending_undo_capture(cx);
-                }
-            }
-            BlockEvent::RequestAppendTableRow => {
-                if block.read(cx).kind() == BlockKind::Table {
-                    self.prepare_undo_capture(
-                        crate::components::UndoCaptureKind::NonCoalescible,
-                        cx,
-                    );
-                    self.append_table_row(&block, cx);
-                    self.finalize_pending_undo_capture(cx);
-                }
-            }
             BlockEvent::RequestTableAxisPreview {
                 kind,
                 index,
@@ -832,6 +812,23 @@ impl Editor {
             } => {
                 if block.read(cx).kind() == BlockKind::Table {
                     self.open_table_axis_menu(block.entity_id(), *kind, *index, *position, cx);
+                }
+            }
+            BlockEvent::RequestOpenTableCellMenu {
+                row,
+                column,
+                position,
+            } => {
+                if block.read(cx).kind() == BlockKind::Table {
+                    self.open_table_cell_context_menu(
+                        block.entity_id(),
+                        crate::components::TableCellPosition {
+                            row: *row,
+                            column: *column,
+                        },
+                        *position,
+                        cx,
+                    );
                 }
             }
             BlockEvent::RequestTableCellMoveHorizontal { .. }

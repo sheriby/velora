@@ -1190,10 +1190,6 @@ pub enum BlockEvent {
     RequestTableCellMoveHorizontal { delta: i32 },
     /// Move focus vertically across native table cells.
     RequestTableCellMoveVertical { delta: i32 },
-    /// Append one empty column to a native table.
-    RequestAppendTableColumn,
-    /// Append one empty body row to a native table.
-    RequestAppendTableRow,
     /// A native table axis handle was entered or left by the pointer.
     /// `hovered` distinguishes the two so the editor can ignore a leave
     /// that arrives after an adjacent handle has already taken the preview.
@@ -1208,6 +1204,12 @@ pub enum BlockEvent {
     RequestOpenTableAxisMenu {
         kind: TableAxisKind,
         index: usize,
+        position: Point<Pixels>,
+    },
+    /// Open the cell context menu for a native table cell.
+    RequestOpenTableCellMenu {
+        row: usize,
+        column: usize,
         position: Point<Pixels>,
     },
     /// Cursor reached the top of this block; move focus to the previous

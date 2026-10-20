@@ -5,7 +5,9 @@ pub(super) use std::path::PathBuf;
 pub(super) use gpui::*;
 
 pub(super) use super::{Editor, TableAxisSelection, ViewMode};
-pub(super) use crate::components::{DismissTransientUi, TableAxisKind, TableColumnAlignment, TableData};
+pub(super) use crate::components::{
+    DismissTransientUi, TableAxisKind, TableCellPosition, TableColumnAlignment, TableData,
+};
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
 pub(super) use document_menu::{
@@ -50,6 +52,13 @@ pub(super) enum ContextMenuState {
     TableAxis {
         position: Point<Pixels>,
         selection: TableAxisSelection,
+    },
+    /// Cell context menu for an existing native table: insert rows or columns
+    /// next to the clicked cell, or delete its row/column.
+    TableCell {
+        position: Point<Pixels>,
+        table_block_id: EntityId,
+        cell: TableCellPosition,
     },
     /// 图片块菜单：缩放、在文件管理器中显示、复制地址。
     Image {
@@ -256,6 +265,28 @@ impl Editor {
         self.context_menu = Some(ContextMenuState::TableAxis {
             position,
             selection,
+        });
+        cx.notify();
+    }
+
+    pub(super) fn open_table_cell_context_menu(
+        &mut self,
+        table_block_id: EntityId,
+        cell: TableCellPosition,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_read_only() || self.view_mode != ViewMode::Rendered {
+            return;
+        }
+
+        self.close_menu_bar(cx);
+        self.context_menu_submenu_close_task = None;
+        self.context_menu_popup = None;
+        self.context_menu = Some(ContextMenuState::TableCell {
+            position,
+            table_block_id,
+            cell,
         });
         cx.notify();
     }
@@ -580,6 +611,125 @@ impl Editor {
         match self.context_menu.as_ref() {
             Some(ContextMenuState::TableAxis { selection, .. }) => Some(*selection),
             _ => None,
+        }
+    }
+
+    fn active_table_cell_menu_target(&self) -> Option<(EntityId, TableCellPosition)> {
+        match self.context_menu.as_ref() {
+            Some(ContextMenuState::TableCell {
+                table_block_id,
+                cell,
+                ..
+            }) => Some((*table_block_id, *cell)),
+            _ => None,
+        }
+    }
+
+    pub(super) fn on_insert_table_row_above(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_table_row_from_cell_menu(false, cx);
+    }
+
+    pub(super) fn on_insert_table_row_below(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_table_row_from_cell_menu(true, cx);
+    }
+
+    fn insert_table_row_from_cell_menu(&mut self, below: bool, cx: &mut Context<Self>) {
+        let Some((table_block_id, cell)) = self.active_table_cell_menu_target() else {
+            return;
+        };
+        let Some(table_block) = self.table_block_by_id(table_block_id, cx) else {
+            self.close_context_menu(cx);
+            return;
+        };
+        self.close_context_menu(cx);
+        self.insert_table_row(&table_block, cell.row, below, cx);
+    }
+
+    pub(super) fn on_insert_table_column_left(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_table_column_from_cell_menu(false, cx);
+    }
+
+    pub(super) fn on_insert_table_column_right(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_table_column_from_cell_menu(true, cx);
+    }
+
+    fn insert_table_column_from_cell_menu(&mut self, right: bool, cx: &mut Context<Self>) {
+        let Some((table_block_id, cell)) = self.active_table_cell_menu_target() else {
+            return;
+        };
+        let Some(table_block) = self.table_block_by_id(table_block_id, cx) else {
+            self.close_context_menu(cx);
+            return;
+        };
+        self.close_context_menu(cx);
+        self.insert_table_column(&table_block, cell.column, right, cx);
+    }
+
+    pub(super) fn on_delete_table_cell_row(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((table_block_id, cell)) = self.active_table_cell_menu_target() else {
+            return;
+        };
+        let Some(table_block) = self.table_block_by_id(table_block_id, cx) else {
+            self.close_context_menu(cx);
+            return;
+        };
+        self.close_context_menu(cx);
+        if cell.is_header() {
+            self.delete_table_header_row(&table_block, cx);
+        } else if let Some(body_row) = cell.body_row_index() {
+            self.delete_table_row(&table_block, body_row, cx);
+        }
+    }
+
+    pub(super) fn on_delete_table_cell_column(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((table_block_id, cell)) = self.active_table_cell_menu_target() else {
+            return;
+        };
+        let Some(table_block) = self.table_block_by_id(table_block_id, cx) else {
+            self.close_context_menu(cx);
+            return;
+        };
+        let column_count = table_block
+            .read(cx)
+            .record
+            .table
+            .as_ref()
+            .map(|table| table.column_count());
+        self.close_context_menu(cx);
+        if column_count == Some(1) {
+            self.remove_table_block(&table_block, cx);
+        } else {
+            self.delete_table_column(&table_block, cell.column, cx);
         }
     }
 

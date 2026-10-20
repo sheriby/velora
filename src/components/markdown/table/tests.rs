@@ -601,6 +601,79 @@ mod tests {
     }
 
     #[test]
+    fn insert_body_row_places_a_blank_row_at_the_requested_position() {
+        let mut table = TableData {
+            header: vec![
+                InlineTextTree::plain("A".to_string()),
+                InlineTextTree::plain("B".to_string()),
+            ],
+            rows: vec![
+                vec![
+                    InlineTextTree::plain("1".to_string()),
+                    InlineTextTree::plain("2".to_string()),
+                ],
+                vec![
+                    InlineTextTree::plain("3".to_string()),
+                    InlineTextTree::plain("4".to_string()),
+                ],
+            ],
+            alignments: vec![TableColumnAlignment::Left, TableColumnAlignment::Right],
+        };
+
+        table.insert_body_row(1);
+
+        assert_eq!(table.rows.len(), 3);
+        assert_eq!(table.rows[0][0].serialize_markdown(), "1");
+        assert_eq!(table.rows[2][0].serialize_markdown(), "3");
+        assert_eq!(table.rows[1].len(), 2);
+        assert!(
+            table.rows[1]
+                .iter()
+                .all(|cell| cell.serialize_markdown().is_empty())
+        );
+    }
+
+    #[test]
+    fn insert_column_places_a_blank_column_at_the_requested_position() {
+        let mut table = TableData {
+            header: vec![
+                InlineTextTree::plain("A".to_string()),
+                InlineTextTree::plain("B".to_string()),
+            ],
+            rows: vec![
+                vec![
+                    InlineTextTree::plain("1".to_string()),
+                    InlineTextTree::plain("2".to_string()),
+                ],
+                vec![
+                    InlineTextTree::plain("3".to_string()),
+                    InlineTextTree::plain("4".to_string()),
+                ],
+            ],
+            alignments: vec![TableColumnAlignment::Left, TableColumnAlignment::Right],
+        };
+
+        table.insert_column(1, TableColumnAlignment::Right);
+
+        assert_eq!(table.header.len(), 3);
+        assert_eq!(table.header[0].serialize_markdown(), "A");
+        assert_eq!(table.header[2].serialize_markdown(), "B");
+        assert!(table.header[1].serialize_markdown().is_empty());
+        assert_eq!(
+            table.alignments,
+            vec![
+                TableColumnAlignment::Left,
+                TableColumnAlignment::Right,
+                TableColumnAlignment::Right,
+            ]
+        );
+        assert_eq!(table.rows[0][0].serialize_markdown(), "1");
+        assert_eq!(table.rows[0][2].serialize_markdown(), "2");
+        assert!(table.rows[0][1].serialize_markdown().is_empty());
+        assert_eq!(table.rows[1][2].serialize_markdown(), "4");
+    }
+
+    #[test]
     fn set_column_alignment_updates_requested_column() {
         let mut table = TableData::new_empty(2, 3);
         table.set_column_alignment(1, TableColumnAlignment::Center);

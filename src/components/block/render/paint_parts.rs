@@ -1082,42 +1082,14 @@ impl Render for Block {
                 };
 
                 let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
-                let append_column_label: SharedString = cx
-                    .global::<crate::i18n::I18nManager>()
-                    .strings()
-                    .table_append_column
-                    .clone()
-                    .into();
-                let append_row_label: SharedString = cx
-                    .global::<crate::i18n::I18nManager>()
-                    .strings()
-                    .table_append_row
-                    .clone()
-                    .into();
-                let append_extent = px(d.table_append_button_extent);
-                let append_inset = px(d.table_append_button_inset);
                 let activation_band = px(d.table_append_activation_band);
-                let column_control_visible = self.table_append_column_hovered;
-                let row_control_visible = self.table_append_row_hovered;
-                // 悬停出现的追加按钮会让行容器收窄（下方的 `pr(right_gutter)`），
-                // 列宽必须按收窄后的宽度算，否则被钉在内容宽度上的列会在悬停时换行。
-                let right_gutter = if column_control_visible {
-                    append_extent + append_inset
-                } else {
-                    px(0.0)
-                };
-                let bottom_gutter = if row_control_visible {
-                    append_extent + append_inset
-                } else {
-                    px(0.0)
-                };
                 let container_width = self
                     .table_container_width
                     .map(f32::from)
                     .unwrap_or_else(|| {
                         self.table_container_width_for_viewport(viewport_width, d, cx)
                     });
-                let table_width = (container_width - f32::from(right_gutter)).max(1.0);
+                let table_width = container_width.max(1.0);
                 let column_layout = self
                     .cached_table_column_layout(table_width, &theme, window, cx)
                     .unwrap_or_else(|| TableColumnLayout::equal(runtime.header.len()));
@@ -1125,7 +1097,6 @@ impl Render for Block {
                 let selected_marker = self.table_axis_selection;
                 let body_row_count = runtime.rows.len();
                 let column_count = runtime.header.len();
-                let column_append_top = activation_band;
                 let weak_table_block = cx.entity().downgrade();
 
                 let header_cells = runtime.header;
@@ -1209,6 +1180,7 @@ impl Render for Block {
                         let hover_block = weak_table_block.clone();
                         let select_block = weak_table_block.clone();
                         let menu_block = weak_table_block.clone();
+                        let cell_menu_block = weak_table_block.clone();
                         let marker = crate::components::TableAxisMarker {
                             kind: TableAxisKind::Column,
                             index: column,
@@ -1227,6 +1199,22 @@ impl Render for Block {
                             .w(relative(column_layout.fraction(column)))
                             .h_full()
                             .min_w(px(0.0))
+                            .when(!self.is_read_only(), |this| {
+                                let cell_menu_block = cell_menu_block.clone();
+                                this.on_mouse_down(
+                                    MouseButton::Right,
+                                    move |event, _window, cx| {
+                                        let _ = cell_menu_block.update(cx, |_block, cx| {
+                                            cx.stop_propagation();
+                                            cx.emit(BlockEvent::RequestOpenTableCellMenu {
+                                                row: 0,
+                                                column,
+                                                position: event.position,
+                                            });
+                                        });
+                                    },
+                                )
+                            })
                             .child(cell)
                             .child(
                                 div()
@@ -1286,6 +1274,7 @@ impl Render for Block {
                             let hover_block = weak_table_block.clone();
                             let select_block = weak_table_block.clone();
                             let menu_block = weak_table_block.clone();
+                            let cell_menu_block = weak_table_block.clone();
                             // Row selections are addressed by visual index, where
                             // the header is `0` and body rows follow at `1..`.
                             let visual_row = body_row_index + 1;
@@ -1374,6 +1363,25 @@ impl Render for Block {
                                         .w(relative(column_layout.fraction(column)))
                                         .h_full()
                                         .min_w(px(0.0))
+                                        .when(!self.is_read_only(), |this| {
+                                            let cell_menu_block = cell_menu_block.clone();
+                                            this.on_mouse_down(
+                                                MouseButton::Right,
+                                                move |event, _window, cx| {
+                                                    let _ =
+                                                        cell_menu_block.update(cx, |_block, cx| {
+                                                            cx.stop_propagation();
+                                                            cx.emit(
+                                                                BlockEvent::RequestOpenTableCellMenu {
+                                                                    row: visual_row,
+                                                                    column,
+                                                                    position: event.position,
+                                                                },
+                                                            );
+                                                        });
+                                                },
+                                            )
+                                        })
                                         .child(cell)
                                 }))
                         });
@@ -1383,148 +1391,6 @@ impl Render for Block {
                     rows.push(header_row.into_any_element());
                     rows.extend(body_rows.map(|row| row.into_any_element()));
 
-                    let column_edge_band = div()
-                        .id(ElementId::Name(
-                            format!("table-append-column-edge-{}", self.record.id).into(),
-                        ))
-                        .absolute()
-                        .top(column_append_top)
-                        .bottom(bottom_gutter)
-                        .right(right_gutter)
-                        .w(activation_band)
-                        .on_hover(cx.listener(Self::on_table_append_column_edge_hover));
-
-                    let row_edge_band = div()
-                        .id(ElementId::Name(
-                            format!("table-append-row-edge-{}", self.record.id).into(),
-                        ))
-                        .absolute()
-                        .left_0()
-                        .right(right_gutter)
-                        .bottom(bottom_gutter)
-                        .h(activation_band)
-                        .on_hover(cx.listener(Self::on_table_append_row_edge_hover));
-
-                    let column_control = {
-                        let base = div()
-                            .id(ElementId::Name(
-                                format!("table-append-column-zone-{}", self.record.id).into(),
-                            ))
-                            .absolute()
-                            .top(column_append_top)
-                            .bottom(bottom_gutter)
-                            .right_0()
-                            .w(right_gutter)
-                            .on_hover(cx.listener(Self::on_table_append_column_zone_hover));
-
-                        if column_control_visible {
-                            // 悬停状态挂在外面这层：Kit 按钮自己的 tooltip 已经占掉
-                            // 了元素的 hover 监听，同一个元素不能挂两份。
-                            base.child(
-                                div()
-                                    .id(ElementId::Name(
-                                        format!(
-                                            "table-append-column-button-host-{}",
-                                            self.record.id
-                                        )
-                                        .into(),
-                                    ))
-                                    .absolute()
-                                    .top(append_inset)
-                                    .bottom_0()
-                                    .right_0()
-                                    .w(append_extent)
-                                    .block_mouse_except_scroll()
-                                    .on_hover(
-                                        cx.listener(Self::on_table_append_column_button_hover),
-                                    )
-                                    .child(
-                                        Button::new(ElementId::Name(
-                                            format!(
-                                                "table-append-column-button-{}",
-                                                self.record.id
-                                            )
-                                            .into(),
-                                        ))
-                                        .ghost()
-                                        .compact()
-                                        .size_full()
-                                        .min_w(px(0.0))
-                                        .px(px(0.0))
-                                        .rounded(px(999.0))
-                                        .bg(c.table_append_button_bg)
-                                        .text_size(px(t.text_size))
-                                        .text_color(c.table_append_button_text)
-                                        .accessibility_label(append_column_label.clone())
-                                        .tooltip(append_column_label.clone())
-                                        .on_click(cx.listener(Self::on_append_table_column))
-                                        .child("+"),
-                                    ),
-                            )
-                        } else {
-                            base
-                        }
-                    };
-
-                    let row_control = {
-                        let base = div()
-                            .id(ElementId::Name(
-                                format!("table-append-row-zone-{}", self.record.id).into(),
-                            ))
-                            .absolute()
-                            .left_0()
-                            .right(right_gutter)
-                            .bottom_0()
-                            .h(bottom_gutter)
-                            .on_hover(cx.listener(Self::on_table_append_row_zone_hover));
-
-                        if row_control_visible {
-                            base.child(
-                                div()
-                                    .id(ElementId::Name(
-                                        format!(
-                                            "table-append-row-button-host-{}",
-                                            self.record.id
-                                        )
-                                        .into(),
-                                    ))
-                                    .absolute()
-                                    .left(append_inset)
-                                    .right(append_inset)
-                                    .bottom_0()
-                                    .h(append_extent)
-                                    .block_mouse_except_scroll()
-                                    .on_hover(
-                                        cx.listener(Self::on_table_append_row_button_hover),
-                                    )
-                                    .child(
-                                        Button::new(ElementId::Name(
-                                            format!(
-                                                "table-append-row-button-{}",
-                                                self.record.id
-                                            )
-                                            .into(),
-                                        ))
-                                        .ghost()
-                                        .compact()
-                                        .size_full()
-                                        .min_h(px(0.0))
-                                        .py(px(0.0))
-                                        .rounded(px(999.0))
-                                        .bg(c.table_append_button_bg)
-                                        .text_size(px(t.text_size))
-                                        .text_color(c.table_append_button_text)
-                                        .accessibility_label(append_row_label.clone())
-                                        .tooltip(append_row_label.clone())
-                                        .on_click(cx.listener(Self::on_append_table_row))
-                                        .child("+"),
-                                    ),
-                            )
-                        } else {
-                            base
-                        }
-                    };
-
                     let measure_block = cx.entity().downgrade();
                     let table_host = div()
                         .w(relative(VISUAL_BLOCK_WIDTH_RATIO))
@@ -1532,8 +1398,6 @@ impl Render for Block {
                         .relative()
                         .flex()
                         .flex_col()
-                        .pr(right_gutter)
-                        .pb(bottom_gutter)
                         .gap(px(0.0))
                         .child(
                             div().w_full().flex().flex_col()
@@ -1542,12 +1406,6 @@ impl Render for Block {
                                 .bg(c.table_cell_bg)
                                 .children(rows),
                         )
-                        .when(!self.is_read_only(), |this| {
-                            this.child(column_edge_band)
-                                .child(row_edge_band)
-                                .child(column_control)
-                                .child(row_control)
-                        })
                         .child(
                             canvas(move |bounds, _, cx| {
                                 let width = bounds.size.width;

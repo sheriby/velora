@@ -127,24 +127,41 @@ impl TableData {
     }
 
     /// Appends one empty body row while preserving the current column count.
+    #[cfg(test)]
     pub fn append_row(&mut self) {
+        self.insert_body_row(self.rows.len());
+    }
+
+    /// Inserts one empty body row before `body_index` (0-based among body rows).
+    pub fn insert_body_row(&mut self, body_index: usize) {
         self.normalize_shape();
         let columns = self.column_count();
-        self.rows.push(
+        let index = body_index.min(self.rows.len());
+        self.rows.insert(
+            index,
             (0..columns)
                 .map(|_| InlineTextTree::plain(String::new()))
                 .collect(),
         );
     }
 
-    /// Appends one empty column to the header and every body row.
-    pub fn append_column(&mut self, alignment: TableColumnAlignment) {
+    /// Inserts one empty column before `column`, using `alignment` for the new
+    /// column's delimiter.
+    pub fn insert_column(&mut self, column: usize, alignment: TableColumnAlignment) {
         self.normalize_shape();
-        self.header.push(InlineTextTree::plain(String::new()));
-        self.alignments.push(alignment);
+        let index = column.min(self.column_count());
+        self.header
+            .insert(index, InlineTextTree::plain(String::new()));
+        self.alignments.insert(index, alignment);
         for row in &mut self.rows {
-            row.push(InlineTextTree::plain(String::new()));
+            row.insert(index, InlineTextTree::plain(String::new()));
         }
+    }
+
+    /// Appends one empty column to the header and every body row.
+    #[cfg(test)]
+    pub fn append_column(&mut self, alignment: TableColumnAlignment) {
+        self.insert_column(self.column_count(), alignment);
     }
 
     /// Sets the alignment of one column if it exists.

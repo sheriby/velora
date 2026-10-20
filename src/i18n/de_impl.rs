@@ -967,10 +967,18 @@ impl I18nStringsDe {
                 .table_axis_delete_row
                 .unwrap_or(defaults.table_axis_delete_row),
             table_header_row: self.table_header_row.unwrap_or(defaults.table_header_row),
-            table_append_column: self
-                .table_append_column
-                .unwrap_or(defaults.table_append_column),
-            table_append_row: self.table_append_row.unwrap_or(defaults.table_append_row),
+            table_cell_insert_row_above: self
+                .table_cell_insert_row_above
+                .unwrap_or(defaults.table_cell_insert_row_above),
+            table_cell_insert_row_below: self
+                .table_cell_insert_row_below
+                .unwrap_or(defaults.table_cell_insert_row_below),
+            table_cell_insert_column_left: self
+                .table_cell_insert_column_left
+                .unwrap_or(defaults.table_cell_insert_column_left),
+            table_cell_insert_column_right: self
+                .table_cell_insert_column_right
+                .unwrap_or(defaults.table_cell_insert_column_right),
             table_insert_title: self
                 .table_insert_title
                 .unwrap_or(defaults.table_insert_title),

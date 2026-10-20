@@ -14,42 +14,6 @@ async fn review_indented_table_insertion_preserves_outer_padding(cx: &mut TestAp
     });
 }
 
-/// 表格的追加按钮是标准按钮：自绘 div 只有 hover 底色，辅助技术读不出
-/// 「在右侧添加一列」这种动作。
-#[gpui::test]
-async fn table_append_buttons_expose_native_semantics(cx: &mut TestAppContext) {
-    use gpui_kit::test::TestWindowExt as _;
-    init_editor_test_app(cx);
-    let source = "| A | B |\n|---|---|\n| 1 | 2 |";
-    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
-    cx.update(|window, _| window.activate_window());
-    redraw(cx);
-    let table = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
-    let record_id = table.read_with(cx, |block, _| block.record.id.to_string());
-    table.update(cx, |block, cx| {
-        block.set_table_append_column_hover_part(Some(true), None, None, cx);
-        cx.notify();
-    });
-    redraw(cx);
-    let column_button =
-        gpui::ElementId::Name(format!("table-append-column-button-{record_id}").into());
-    cx.update(|window, _| {
-        let item = window
-            .try_find(column_button)
-            .expect("悬停后应出现追加列按钮");
-        assert_eq!(
-            item.role(),
-            Some(gpui::Role::Button),
-            "追加列必须是标准按钮"
-        );
-        assert!(
-            item.label().is_some_and(|label| !label.is_empty()),
-            "追加列必须有可访问名称"
-        );
-    });
-    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
-}
-
 #[gpui::test]
 async fn review_table_structure_edits_preserve_escaped_pipes_and_padding(cx: &mut TestAppContext) {
     // 转义竖线曾触发整表重拼，连未编辑行的列宽与对齐写法也被改掉。
@@ -380,6 +344,271 @@ async fn append_row_updates_table_and_focuses_first_cell_of_new_row(cx: &mut Tes
         let focused = runtime.rows[1][0].entity_id();
         assert_eq!(editor.pending_focus, Some(focused));
     });
+}
+
+#[gpui::test]
+async fn insert_table_row_below_header_writes_a_blank_line_after_the_delimiter(
+    cx: &mut TestAppContext,
+) {
+    let markdown = ["| A | B |", "| --- | --- |", "| 1 | 2 |", "| 3 | 4 |"].join("\n");
+    let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().expect("table root").clone();
+        editor.insert_table_row(&table, 0, true, cx);
+
+        assert_eq!(
+            editor.buffer.text(),
+            ["| A | B |", "| --- | --- |", "|   |   |", "| 1 | 2 |", "| 3 | 4 |"]
+                .join("\n")
+        );
+        let record = table.read(cx).record.table.as_ref().expect("table record");
+        assert_eq!(record.rows.len(), 3);
+        assert!(
+            record.rows[0]
+                .iter()
+                .all(|cell| cell.serialize_markdown().is_empty())
+        );
+
+        let runtime = table.read(cx).table_runtime.as_ref().expect("runtime");
+        assert_eq!(editor.pending_focus, Some(runtime.rows[0][0].entity_id()));
+    });
+}
+
+#[gpui::test]
+async fn insert_table_row_above_a_body_row_keeps_the_other_lines_untouched(
+    cx: &mut TestAppContext,
+) {
+    let markdown = ["| A | B |", "| --- | --- |", "| 1 | 2 |", "| 3 | 4 |"].join("\n");
+    let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().expect("table root").clone();
+        editor.insert_table_row(&table, 2, false, cx);
+
+        assert_eq!(
+            editor.buffer.text(),
+            ["| A | B |", "| --- | --- |", "| 1 | 2 |", "|   |   |", "| 3 | 4 |"]
+                .join("\n")
+        );
+        let record = table.read(cx).record.table.as_ref().expect("table record");
+        assert_eq!(record.rows.len(), 3);
+        assert_eq!(record.rows[0][0].serialize_markdown(), "1");
+        assert_eq!(record.rows[2][0].serialize_markdown(), "3");
+        assert!(
+            record.rows[1]
+                .iter()
+                .all(|cell| cell.serialize_markdown().is_empty())
+        );
+
+        let runtime = table.read(cx).table_runtime.as_ref().expect("runtime");
+        assert_eq!(editor.pending_focus, Some(runtime.rows[1][0].entity_id()));
+    });
+}
+
+#[gpui::test]
+async fn insert_table_column_left_copies_the_reference_alignment(cx: &mut TestAppContext) {
+    let markdown = ["| A | B |", "| --- | ---: |", "| 1 | 2 |"].join("\n");
+    let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().expect("table root").clone();
+        editor.insert_table_column(&table, 1, false, cx);
+
+        assert_eq!(
+            editor.buffer.text(),
+            ["| A |  | B |", "| --- | ---: | ---: |", "| 1 |  | 2 |"].join("\n")
+        );
+        let record = table.read(cx).record.table.as_ref().expect("table record");
+        assert_eq!(
+            record.alignments,
+            vec![
+                TableColumnAlignment::Default,
+                TableColumnAlignment::Right,
+                TableColumnAlignment::Right,
+            ]
+        );
+        assert!(record.header[1].serialize_markdown().is_empty());
+
+        let runtime = table.read(cx).table_runtime.as_ref().expect("runtime");
+        assert_eq!(editor.pending_focus, Some(runtime.header[1].entity_id()));
+    });
+}
+
+#[gpui::test]
+async fn insert_table_column_right_of_the_last_column_appends_the_cell(cx: &mut TestAppContext) {
+    let markdown = ["| A | B |", "| --- | ---: |", "| 1 | 2 |"].join("\n");
+    let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().expect("table root").clone();
+        editor.insert_table_column(&table, 1, true, cx);
+
+        assert_eq!(
+            editor.buffer.text(),
+            ["| A | B |  |", "| --- | ---: | ---: |", "| 1 | 2 |  |"].join("\n")
+        );
+        let record = table.read(cx).record.table.as_ref().expect("table record");
+        assert_eq!(record.column_count(), 3);
+        assert_eq!(
+            record.alignments,
+            vec![
+                TableColumnAlignment::Default,
+                TableColumnAlignment::Right,
+                TableColumnAlignment::Right,
+            ]
+        );
+
+        let runtime = table.read(cx).table_runtime.as_ref().expect("runtime");
+        assert_eq!(editor.pending_focus, Some(runtime.header[2].entity_id()));
+    });
+}
+
+#[gpui::test]
+async fn inserting_a_table_row_can_be_undone(cx: &mut TestAppContext) {
+    let markdown = ["| A | B |", "| --- | --- |", "| 1 | 2 |"].join("\n");
+    let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.clone(), None));
+
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().expect("table root").clone();
+        editor.insert_table_row(&table, 1, false, cx);
+        assert_ne!(editor.buffer.text(), markdown);
+        editor.undo_document(cx);
+        assert_eq!(editor.buffer.text(), markdown);
+    });
+}
+
+fn table_cell_bounds(
+    editor: &gpui::Entity<Editor>,
+    cx: &mut VisualTestContext,
+    row: usize,
+    column: usize,
+) -> gpui::Bounds<gpui::Pixels> {
+    editor.read_with(cx, |editor, cx| {
+        let table = editor.document.first_root().expect("table root");
+        let runtime = table
+            .read(cx)
+            .table_runtime
+            .as_ref()
+            .expect("table runtime");
+        let cell = if row == 0 {
+            runtime.header[column].clone()
+        } else {
+            runtime.rows[row - 1][column].clone()
+        };
+        cell.read(cx).last_bounds.expect("cell bounds")
+    })
+}
+
+fn right_click_cell(cx: &mut VisualTestContext, bounds: gpui::Bounds<gpui::Pixels>) {
+    cx.simulate_mouse_down(
+        bounds.center(),
+        gpui::MouseButton::Right,
+        Modifiers::none(),
+    );
+    cx.simulate_mouse_up(
+        bounds.center(),
+        gpui::MouseButton::Right,
+        Modifiers::none(),
+    );
+    redraw(cx);
+}
+
+#[gpui::test]
+async fn right_clicking_a_table_cell_opens_the_cell_menu_and_inserts_below(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let markdown = ["| A | B |", "| --- | --- |", "| 1 | 2 |", "| 3 | 4 |"].join("\n");
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.clone(), None));
+    redraw(cx);
+    redraw(cx);
+
+    let bounds = table_cell_bounds(&editor, cx, 1, 0);
+    right_click_cell(cx, bounds);
+    editor.read_with(cx, |editor, _| match &editor.context_menu {
+        Some(crate::editor::context_menu::ContextMenuState::TableCell { cell, .. }) => {
+            assert_eq!((cell.row, cell.column), (1, 0), "菜单应记住被右击的格子");
+        }
+        _ => panic!("右键单元格应打开单元格菜单"),
+    });
+
+    // 菜单顺序：上方插行、下方插行、左侧插列、右侧插列……
+    cx.update(|window, cx| {
+        assert_eq!(
+            window.try_find("popup-menu").and_then(|menu| menu.role()),
+            Some(gpui::Role::Menu),
+            "单元格菜单应使用 Kit 菜单语义"
+        );
+        for _ in 0..2 {
+            window.press("down", cx);
+        }
+        window.press("enter", cx);
+    });
+    redraw(cx);
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.buffer.text()),
+        ["| A | B |", "| --- | --- |", "| 1 | 2 |", "|   |   |", "| 3 | 4 |"]
+            .join("\n")
+    );
+}
+
+#[gpui::test]
+async fn header_cell_menu_cannot_insert_above_the_header(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let markdown = ["| A | B |", "| --- | --- |", "| 1 | 2 |"].join("\n");
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.clone(), None));
+    redraw(cx);
+    redraw(cx);
+
+    let bounds = table_cell_bounds(&editor, cx, 0, 0);
+    right_click_cell(cx, bounds);
+    editor.read_with(cx, |editor, _| match &editor.context_menu {
+        Some(crate::editor::context_menu::ContextMenuState::TableCell { cell, .. }) => {
+            assert_eq!(cell.row, 0, "菜单应记住表头格");
+        }
+        _ => panic!("右键单元格应打开单元格菜单"),
+    });
+
+    // 「上方插行」在表头格上是禁用项，键盘应落到第一项可用动作「下方插行」。
+    cx.update(|window, cx| {
+        window.press("down", cx);
+        window.press("enter", cx);
+    });
+    redraw(cx);
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.buffer.text()),
+        ["| A | B |", "| --- | --- |", "|   |   |", "| 1 | 2 |"].join("\n")
+    );
+}
+
+#[gpui::test]
+async fn cell_menu_inserts_a_column_to_the_right(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let markdown = ["| A | B |", "| --- | ---: |", "| 1 | 2 |"].join("\n");
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.clone(), None));
+    redraw(cx);
+    redraw(cx);
+
+    let bounds = table_cell_bounds(&editor, cx, 1, 1);
+    right_click_cell(cx, bounds);
+    cx.update(|window, cx| {
+        for _ in 0..4 {
+            window.press("down", cx);
+        }
+        window.press("enter", cx);
+    });
+    redraw(cx);
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.buffer.text()),
+        ["| A | B |  |", "| --- | ---: | ---: |", "| 1 | 2 |  |"].join("\n")
+    );
 }
 
 #[gpui::test]

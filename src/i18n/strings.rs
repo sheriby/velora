@@ -625,9 +625,15 @@ pub struct I18nStrings {
     pub table_axis_delete_row: String,
     /// Table header-row menu item that toggles header styling on the top row.
     pub table_header_row: String,
+    /// Table-cell menu item for inserting a row above the clicked cell.
+    pub table_cell_insert_row_above: String,
+    /// Table-cell menu item for inserting a row below the clicked cell.
+    pub table_cell_insert_row_below: String,
+    /// Table-cell menu item for inserting a column left of the clicked cell.
+    pub table_cell_insert_column_left: String,
+    /// Table-cell menu item for inserting a column right of the clicked cell.
+    pub table_cell_insert_column_right: String,
     /// Title of the table-insert dialog.
-    pub table_append_column: String,
-    pub table_append_row: String,
     pub table_insert_title: String,
     /// Body text of the table-insert dialog.
     pub table_insert_description: String,

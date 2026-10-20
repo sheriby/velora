@@ -23,23 +23,6 @@ mod tests {
         let _ = path.parent().map(|parent| fs::remove_dir_all(parent));
     }
 
-    #[gpui::test]
-    async fn append_column_button_stays_visible_while_crossing_hover_gap(cx: &mut TestAppContext) {
-        let block = cx.new(|cx| Block::with_record(cx, BlockRecord::paragraph(String::new())));
-
-        block.update(cx, |block, cx| {
-            block.set_table_append_column_hover_part(Some(true), None, None, cx);
-            assert!(block.table_append_column_hovered);
-
-            block.set_table_append_column_hover_part(Some(false), None, Some(true), cx);
-            assert!(block.table_append_column_hovered);
-            assert!(!block.table_append_column_edge_hovered);
-            assert!(!block.table_append_column_zone_hovered);
-            assert!(block.table_append_column_button_hovered);
-            assert!(block.table_append_column_close_task.is_none());
-        });
-    }
-
     #[test]
     fn paste_image_text_accepts_plain_local_image_path() {
         let path = temp_image_path("copied.png");
@@ -112,51 +95,6 @@ mod tests {
             );
             remove_temp_image(&path);
         }
-    }
-
-    #[gpui::test]
-    async fn append_row_button_stays_visible_while_crossing_hover_gap(cx: &mut TestAppContext) {
-        let block = cx.new(|cx| Block::with_record(cx, BlockRecord::paragraph(String::new())));
-
-        block.update(cx, |block, cx| {
-            block.set_table_append_row_hover_part(Some(true), None, None, cx);
-            assert!(block.table_append_row_hovered);
-
-            block.set_table_append_row_hover_part(Some(false), None, Some(true), cx);
-            assert!(block.table_append_row_hovered);
-            assert!(!block.table_append_row_edge_hovered);
-            assert!(!block.table_append_row_zone_hovered);
-            assert!(block.table_append_row_button_hovered);
-            assert!(block.table_append_row_close_task.is_none());
-        });
-    }
-
-    #[gpui::test]
-    async fn column_edge_hover_reveals_only_column_append_control(cx: &mut TestAppContext) {
-        let block = cx.new(|cx| Block::with_record(cx, BlockRecord::paragraph(String::new())));
-
-        block.update(cx, |block, cx| {
-            block.set_table_append_column_hover_part(Some(true), None, None, cx);
-            assert!(block.table_append_column_edge_hovered);
-            assert!(block.table_append_column_hovered);
-            assert!(!block.table_append_row_hovered);
-            assert!(block.table_append_column_close_task.is_none());
-            assert!(block.table_append_row_close_task.is_none());
-        });
-    }
-
-    #[gpui::test]
-    async fn row_edge_hover_reveals_only_row_append_control(cx: &mut TestAppContext) {
-        let block = cx.new(|cx| Block::with_record(cx, BlockRecord::paragraph(String::new())));
-
-        block.update(cx, |block, cx| {
-            block.set_table_append_row_hover_part(Some(true), None, None, cx);
-            assert!(block.table_append_row_edge_hovered);
-            assert!(block.table_append_row_hovered);
-            assert!(!block.table_append_column_hovered);
-            assert!(block.table_append_column_close_task.is_none());
-            assert!(block.table_append_row_close_task.is_none());
-        });
     }
 
     #[gpui::test]

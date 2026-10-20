@@ -99,17 +99,19 @@ impl Editor {
         lines
     }
 
-    /// 表格加一行 = 在最后一行之后插一行，别的字节一个都不动。
+    /// 表格插一行 = 在 `insert_after_line` 之后插一行，别的字节一个都不动。
     ///
     /// 把整张表按模型重拼一遍会顺手洗掉用户写的列宽填充：`| 名称   | 数量 |` 变成
     /// `| 名称 | 数量 |`、`|:-------|-----:|` 变成 `| :--- | ---: |`，而用户只是
-    /// 在表尾加了一行。文件里表格的一行就是文本的一行，所以按最后一行的骨架补一行
-    /// （把每格内容换成等长空白），列宽与对齐写法原样留着。
+    /// 在中间加了一行。文件里表格的一行就是文本的一行，所以按 `skeleton_line`
+    /// 那一行的骨架补一行（把每格内容换成等长空白），列宽与对齐写法原样留着。
     ///
     /// 返回 `false` 表示表没有自己的区间，或源码槽位与列数不一致。
-    fn write_back_table_row_insertion(
+    fn write_back_table_row_insertion_at(
         &mut self,
         table_block: &Entity<Block>,
+        insert_after_line: usize,
+        skeleton_line: usize,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(span) = self.document.source_span_of(table_block.entity_id()) else {
@@ -124,16 +126,20 @@ impl Editor {
         else {
             return false;
         };
-        let Some((last_row_line, last_row_text)) = self.table_source_lines(&span).pop() else {
+        let lines = self.table_source_lines(&span);
+        if !lines.iter().any(|(line, _)| *line == insert_after_line) {
+            return false;
+        }
+        let Some((_, skeleton)) = lines.iter().find(|(line, _)| *line == skeleton_line) else {
             return false;
         };
-        let slots = table_row_slots(&last_row_text);
+        let slots = table_row_slots(skeleton);
         if slots.len() != columns {
             return false;
         }
-        let mut new_row = last_row_text.clone();
+        let mut new_row = skeleton.clone();
         for slot in slots.into_iter().rev() {
-            let Some(content) = last_row_text.get(slot.clone()) else {
+            let Some(content) = skeleton.get(slot.clone()) else {
                 return false;
             };
             if !content.chars().all(char::is_whitespace) {
@@ -142,12 +148,45 @@ impl Editor {
         }
 
         let inserted = format!("\n{new_row}");
-        let offset = self.buffer.line_range(last_row_line).end;
+        let offset = self.buffer.line_range(insert_after_line).end;
         let applied = self.buffer.edit(offset..offset, &inserted);
         self.record_buffer_edit(applied);
         let delta = inserted.len() as i64;
         self.grow_root_span_after_edit(table_block, delta as i64, offset);
         true
+    }
+
+    /// 把「在 `visual_row` 上方/下方插一行」换算成源码行号；表头是 visual 0，
+    /// 分隔行永远紧跟在表头之后。
+    fn write_back_table_row_insertion(
+        &mut self,
+        table_block: &Entity<Block>,
+        visual_row: usize,
+        below: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(span) = self.document.source_span_of(table_block.entity_id()) else {
+            return false;
+        };
+        let lines = self.table_source_lines(&span);
+        let new_visual_row = if below { visual_row + 1 } else { visual_row };
+        if new_visual_row == 0 {
+            return false;
+        }
+        let insert_after_index = if new_visual_row == 1 { 1 } else { new_visual_row };
+        let skeleton_index = if visual_row == 0 { 0 } else { visual_row + 1 };
+        let Some((insert_after_line, _)) = lines.get(insert_after_index) else {
+            return false;
+        };
+        let Some((skeleton_line, _)) = lines.get(skeleton_index) else {
+            return false;
+        };
+        self.write_back_table_row_insertion_at(
+            table_block,
+            *insert_after_line,
+            *skeleton_line,
+            cx,
+        )
     }
 
     /// 表格删一行 = 把那一行连着它前面的换行剪掉，别的字节一个都不动。
@@ -264,18 +303,19 @@ impl Editor {
         true
     }
 
-    /// 表格加一列 = 每行末尾多插这一列，已有的格一个字节都不动。
+    /// 表格插一列 = 每行在目标位置插一格，已有的格一个字节都不动。
     ///
-    /// 整张表按模型重拼会把用户手写的列宽填充和对齐写法一起重排，而新列自己该长
-    /// 什么样模型里已经写了：数据行按模型里那一格，分隔行照抄它左边那格的写法（宽
-    /// 度和风格跟着邻居，不再重排别人）。每行只在它末尾那根竖线之前插入
-    /// `|` + 新格，所以插的顺序是从后往前——前面的字节不会因为后面的插入而挪位。
+    /// `new_column` 是插入后的列号，`reference_column` 是插入前被右击的那一列。
+    /// 分隔行照抄 `reference_column` 那一格的写法，数据行按模型里新格的内容写；
+    /// 每行只插入 `|` + 新格，其余列的宽度填充和对齐写法不重排。
     ///
     /// 返回 `false` 表示插不出来：某行的竖线数跟列数对不上（格子里有转义竖线或不是
     /// 管道写法）、行数与模型对不上、表没有自己的区间。那种情况交回整块写。
     fn write_back_table_column_insertion(
         &mut self,
         table_block: &Entity<Block>,
+        new_column: usize,
+        reference_column: usize,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(span) = self.document.source_span_of(table_block.entity_id()) else {
@@ -288,8 +328,11 @@ impl Editor {
         if lines.len() != table.rows.len() + 2 {
             return false;
         }
-        // 模型里已经有这一列了，所以源码里每行该有「列数」根竖线（外层那两根算在内）。
+        // 模型里已经有这一列了，所以源码里每行该有「新列数」根竖线（外层那两根算在内）。
         let columns = table.column_count();
+        if new_column >= columns || reference_column + 1 >= columns {
+            return false;
+        }
         let mut inserts: Vec<(usize, usize, String)> = Vec::with_capacity(lines.len());
         for (index, (line, text)) in lines.iter().enumerate() {
             let pipes = unescaped_pipe_offsets(text);
@@ -299,26 +342,34 @@ impl Editor {
                 return false;
             }
             let cell = if index == 1 {
-                // 分隔行：照抄左边那一格的写法。
-                let start = pipes[pipes.len() - 2] + 1;
-                text[start..pipes[pipes.len() - 1]].to_string()
+                // 分隔行：照抄被右击那一格的写法（插入前后的列号不同，取原列）。
+                let start = pipes[reference_column] + 1;
+                text[start..pipes[reference_column + 1]].to_string()
             } else {
                 let new_cell = if index == 0 {
-                    table.header.last()
+                    table.header.get(new_column)
                 } else {
-                    table.rows.get(index - 2).and_then(|row| row.last())
+                    table.rows.get(index - 2).and_then(|row| row.get(new_column))
                 };
                 let Some(new_cell) = new_cell else { return false };
                 format!(" {} ", serialize_table_cell_markdown(new_cell))
             };
-            inserts.push((*line, pipes[pipes.len() - 1], format!("|{cell}")));
+            if new_column + 1 < columns {
+                inserts.push((
+                    *line,
+                    pipes[new_column] + 1,
+                    format!("{cell}|"),
+                ));
+            } else {
+                inserts.push((*line, pipes[columns - 1], format!("|{cell}")));
+            }
         }
 
         // 表后面的根块整体右移：以原本最后一行的行尾为界，插点都在它前面。
         let boundary = self.buffer.line_range(inserts[inserts.len() - 1].0).end;
         let mut moved = 0usize;
-        for (line, pipe, text) in inserts.into_iter().rev() {
-            let offset = self.buffer.line_range(line).start + pipe;
+        for (line, offset_in_line, text) in inserts.into_iter().rev() {
+            let offset = self.buffer.line_range(line).start + offset_in_line;
             let applied = self.buffer.edit(offset..offset, &text);
             self.record_buffer_edit(applied);
             moved += text.len();
@@ -764,9 +815,49 @@ impl Editor {
         });
     }
 
+    #[cfg(test)]
     pub(super) fn append_table_column(
         &mut self,
         table_block: &Entity<Block>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(columns) = table_block
+            .read(cx)
+            .record
+            .table
+            .as_ref()
+            .map(|table| table.column_count())
+        else {
+            return;
+        };
+        if columns == 0 {
+            return;
+        }
+        self.insert_table_column(table_block, columns - 1, true, cx);
+    }
+
+    #[cfg(test)]
+    pub(super) fn append_table_row(&mut self, table_block: &Entity<Block>, cx: &mut Context<Self>) {
+        let Some(body_rows) = table_block
+            .read(cx)
+            .record
+            .table
+            .as_ref()
+            .map(|table| table.rows.len())
+        else {
+            return;
+        };
+        // 表头是 visual 0；最后一行正文的 visual 行号就是 body 行数。
+        self.insert_table_row(table_block, body_rows, true, cx);
+    }
+
+    /// 在 `visual_row` 的上方或下方插入一行。表头之上没有行，`visual_row == 0`
+    /// 且 `below == false` 时什么都不做。
+    pub(super) fn insert_table_row(
+        &mut self,
+        table_block: &Entity<Block>,
+        visual_row: usize,
+        below: bool,
         cx: &mut Context<Self>,
     ) {
         if self.is_read_only() {
@@ -778,18 +869,20 @@ impl Editor {
         let Some(mut table) = table_block.read(cx).record.table.clone() else {
             return;
         };
+        if visual_row > table.rows.len() {
+            return;
+        }
+        let new_visual_row = if below { visual_row + 1 } else { visual_row };
+        if new_visual_row == 0 {
+            return;
+        }
         let started_local_capture = if self.pending_undo_capture.is_none() {
             self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
             true
         } else {
             false
         };
-        let alignment = table
-            .alignments
-            .last()
-            .copied()
-            .unwrap_or(TableColumnAlignment::Default);
-        table.append_column(alignment);
+        table.insert_body_row(new_visual_row - 1);
 
         table_block.update(cx, move |block, _cx| {
             block.record.table = Some(table.clone());
@@ -799,11 +892,12 @@ impl Editor {
             .read(cx)
             .table_runtime
             .as_ref()
-            .and_then(|runtime| runtime.header.last())
+            .and_then(|runtime| runtime.rows.get(new_visual_row - 1))
+            .and_then(|row| row.first())
         {
             self.focus_block(cell.entity_id());
         }
-        if self.write_back_table_column_insertion(table_block, cx) {
+        if self.write_back_table_row_insertion(table_block, visual_row, below, cx) {
             self.mark_dirty_written_back(cx);
         } else {
             self.write_back_table_structure_edit(table_block, cx);
@@ -815,7 +909,14 @@ impl Editor {
         cx.notify();
     }
 
-    pub(super) fn append_table_row(&mut self, table_block: &Entity<Block>, cx: &mut Context<Self>) {
+    /// 在 `column` 的左侧或右侧插入一列，对齐方式照抄这一列。
+    pub(super) fn insert_table_column(
+        &mut self,
+        table_block: &Entity<Block>,
+        column: usize,
+        right: bool,
+        cx: &mut Context<Self>,
+    ) {
         if self.is_read_only() {
             return;
         }
@@ -825,13 +926,22 @@ impl Editor {
         let Some(mut table) = table_block.read(cx).record.table.clone() else {
             return;
         };
+        if column >= table.column_count() {
+            return;
+        }
+        let new_column = if right { column + 1 } else { column };
+        let alignment = table
+            .alignments
+            .get(column)
+            .copied()
+            .unwrap_or(TableColumnAlignment::Default);
         let started_local_capture = if self.pending_undo_capture.is_none() {
             self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
             true
         } else {
             false
         };
-        table.append_row();
+        table.insert_column(new_column, alignment);
 
         table_block.update(cx, move |block, _cx| {
             block.record.table = Some(table.clone());
@@ -841,12 +951,11 @@ impl Editor {
             .read(cx)
             .table_runtime
             .as_ref()
-            .and_then(|runtime| runtime.rows.last())
-            .and_then(|row| row.first())
+            .and_then(|runtime| runtime.header.get(new_column))
         {
             self.focus_block(cell.entity_id());
         }
-        if self.write_back_table_row_insertion(table_block, cx) {
+        if self.write_back_table_column_insertion(table_block, new_column, column, cx) {
             self.mark_dirty_written_back(cx);
         } else {
             self.write_back_table_structure_edit(table_block, cx);

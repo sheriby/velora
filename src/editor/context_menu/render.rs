@@ -192,7 +192,9 @@ impl Editor {
                     (None, None) => overlay.into_any_element(),
                 })
             }
-            ContextMenuState::TableAxis { .. } | ContextMenuState::Image { .. } => None,
+            ContextMenuState::TableAxis { .. }
+            | ContextMenuState::TableCell { .. }
+            | ContextMenuState::Image { .. } => None,
         }
     }
 
@@ -208,6 +210,9 @@ impl Editor {
         let (position, panel_id) = match request {
             ContextMenuState::TableAxis { position, .. } => {
                 (*position, "table-axis-context-menu-panel")
+            }
+            ContextMenuState::TableCell { position, .. } => {
+                (*position, "table-cell-context-menu-panel")
             }
             ContextMenuState::Image { position, .. } => (*position, "image-context-menu-panel"),
             ContextMenuState::Document { .. } => return None,
@@ -318,6 +323,70 @@ impl Editor {
                             items
                         }
                     }
+                }
+                ContextMenuState::TableCell {
+                    table_block_id,
+                    cell,
+                    ..
+                } => {
+                    let Some(table_block) = self.table_block_by_id(*table_block_id, cx) else {
+                        return None;
+                    };
+                    if table_block.read(cx).record.table.is_none() {
+                        return None;
+                    }
+                    let mut items = Vec::new();
+                    // 表头之上没有行，不渲染一个按了没反应的禁用项。
+                    if cell.row > 0 {
+                        items.push(
+                            row(
+                                &strings.table_cell_insert_row_above,
+                                writable,
+                                false,
+                                Self::on_insert_table_row_above,
+                            )
+                            .icon(Icon::new(IconName::ArrowUp)),
+                        );
+                    }
+                    items.extend([
+                        row(
+                            &strings.table_cell_insert_row_below,
+                            writable,
+                            false,
+                            Self::on_insert_table_row_below,
+                        )
+                        .icon(Icon::new(IconName::ArrowDown)),
+                        row(
+                            &strings.table_cell_insert_column_left,
+                            writable,
+                            false,
+                            Self::on_insert_table_column_left,
+                        )
+                        .icon(Icon::new(IconName::ArrowLeft)),
+                        row(
+                            &strings.table_cell_insert_column_right,
+                            writable,
+                            false,
+                            Self::on_insert_table_column_right,
+                        )
+                        .icon(Icon::new(IconName::ArrowRight)),
+                        PopupMenuItem::separator(),
+                        row(
+                            &strings.table_axis_delete_row,
+                            writable,
+                            false,
+                            Self::on_delete_table_cell_row,
+                        )
+                        .icon(trash.clone()),
+                        row(
+                            &strings.table_axis_delete_column,
+                            writable,
+                            false,
+                            Self::on_delete_table_cell_column,
+                        )
+                        .icon(trash.clone()),
+                    ]);
+                    items
                 }
                 ContextMenuState::Image {
                     entity_id,
