@@ -1407,6 +1407,55 @@ fn ai_empty_floating_panel_can_be_resized_too(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn ai_quick_command_session_supports_follow_up_conversation(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.saved.kind = crate::ai::session::SessionKind::QuickCommand;
+        session.saved.messages = [
+            ("user", "自动生成的指令"),
+            ("assistant", "第一轮结果"),
+            ("user", "追问内容"),
+            ("assistant", "追问回复"),
+        ]
+        .into_iter()
+        .map(|(role, text)| crate::ai::session::ChatMessage {
+            role: role.into(),
+            text: text.into(),
+            thinking: "".into(),
+        })
+        .collect();
+        editor.refresh_ai_conversation(cx);
+    });
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-composer").is_some(),
+        "快捷指令完成后也要有追问输入框"
+    );
+    let session_id = editor.read_with(cx, |editor, _| {
+        editor.ai_session.as_ref().unwrap().saved.id.clone()
+    });
+    let mut row_visible = |index: usize| {
+        use gpui_kit::test::TestWindowExt as _;
+        cx.update(|window, _| {
+            window.try_find(format!("ai-message:{session_id}:{index}")).is_some()
+        })
+    };
+    assert!(
+        !row_visible(0),
+        "快捷指令的自动指令仍然隐藏"
+    );
+    assert!(row_visible(1), "助手回复可见");
+    assert!(row_visible(2), "用户追问必须可见");
+    assert!(row_visible(3), "追问的回复可见");
+}
+
+#[gpui::test]
 fn ai_tool_chain_expands_while_running_and_collapses_when_text_starts(cx: &mut TestAppContext) {
     initialize(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
@@ -2453,7 +2502,7 @@ fn ai_late_events_and_snapshot_reads_belong_to_the_original_task_even_with_equal
 }
 
 #[gpui::test]
-fn ai_quick_result_has_no_follow_up_composer_in_either_surface(cx: &mut TestAppContext) {
+fn ai_quick_result_keeps_the_follow_up_composer_in_either_surface(cx: &mut TestAppContext) {
     initialize(cx);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, "选中的原文".into(), None));
@@ -2476,8 +2525,8 @@ fn ai_quick_result_has_no_follow_up_composer_in_either_surface(cx: &mut TestAppC
     draw(cx);
     assert!(cx.debug_bounds("ai-dialog-result").is_some());
     assert!(
-        cx.debug_bounds("ai-composer").is_none(),
-        "快捷指令结果不能把用户输入接在旧选区与权限后面"
+        cx.debug_bounds("ai-composer").is_some(),
+        "快捷指令完成后同样提供追问输入，沿用该会话的选区与权限"
     );
     let dock = cx.debug_bounds("ai-expand").unwrap().center();
     cx.simulate_click(dock, gpui::Modifiers::none());
@@ -2485,8 +2534,8 @@ fn ai_quick_result_has_no_follow_up_composer_in_either_surface(cx: &mut TestAppC
     draw(cx);
     assert!(cx.debug_bounds("ai-sidebar").is_some());
     assert!(
-        cx.debug_bounds("ai-composer").is_none(),
-        "停靠不把快捷指令变成用户对话"
+        cx.debug_bounds("ai-composer").is_some(),
+        "停靠后快捷指令的追问输入仍在"
     );
 }
 

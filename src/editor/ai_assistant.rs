@@ -524,7 +524,11 @@ impl Editor {
             }
         }
         if let Some(session) = self.ai_session.as_mut() {
-            if session.saved.kind == SessionKind::QuickCommand {
+            // 纯快捷指令（只有自动指令一轮）重试仍然整轮重跑；一旦有追问，
+            // 按对话回滚失败轮，保住之前的结果。
+            if session.saved.kind == SessionKind::QuickCommand
+                && session.saved.messages.len() <= 2
+            {
                 session.saved.history.clear();
                 session.saved.messages.clear();
                 session.saved.workspace.discard_proposals();
@@ -1406,11 +1410,6 @@ impl Editor {
             .as_ref()
             .is_some_and(|session| session.mode != PanelMode::Task || session.settings_saving)
         {
-            return;
-        }
-        if self.ai_session.as_ref().is_some_and(|session| {
-            session.saved.kind == SessionKind::QuickCommand && !session.saved.messages.is_empty()
-        }) {
             return;
         }
         let editor_context = self.ai_editor_context(cx);

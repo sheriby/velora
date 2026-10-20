@@ -334,28 +334,8 @@ impl Editor {
                 |editor, window, cx| editor.retry_ai_task(window, cx),
             ));
         }
-        if session.saved.kind == SessionKind::Conversation || !has_messages {
-            panel = panel.child(self.render_ai_composer(theme, window, cx));
-        } else if session.saved.running {
-            panel = panel.child(self.ai_button(
-                "ai-stop",
-                false,
-                cx,
-                |button, cx| {
-                    button
-                        .icon(IconName::Square)
-                        .accessibility_label(
-                            cx.global::<crate::i18n::I18nManager>()
-                                .strings()
-                                .ai_panel_stop
-                                .clone(),
-                        )
-                        .with_size(gpui_kit::component::Size::Medium)
-                        .rounded_full()
-                },
-                |editor, _, cx| editor.stop_ai_task(cx),
-            ));
-        }
+        // 快捷指令完成后同样提供追问输入；运行中的停止按钮在输入框里。
+        panel = panel.child(self.render_ai_composer(theme, window, cx));
         let owner = cx.entity().downgrade();
         panel = panel.child(
             canvas(

@@ -160,7 +160,10 @@ impl MessageTranscript {
             let user = row.user;
             let source_empty = row.source.is_empty();
             let shows_thinking = self.show_thinking && !thinking.is_empty();
-            if (source_empty && records.is_empty() && !shows_thinking) || (self.quick && user) {
+            // 快捷指令只隐藏自动生成的首条指令；后续追问照常显示。
+            if (source_empty && records.is_empty() && !shows_thinking)
+                || (self.quick && user && index == 0)
+            {
                 return div().h_0().into_any_element();
             }
             if row.content.is_none() {
