@@ -211,12 +211,10 @@ impl MessageTranscript {
                     {
                         eprintln!("打开 AI 消息链接失败：{error}");
                     }
-                })
-                .w_full();
+                });
             let body = MessageContent::new()
                 .when(user, |body| {
-                    body.max_w(relative(0.9))
-                        .rounded_lg()
+                    body.rounded_lg()
                         .bg(cx.theme().muted)
                         .px_3()
                         .py_2()
@@ -255,11 +253,7 @@ impl MessageTranscript {
             .pb_4()
             .child(column.child(
                 Message::new()
-                    .alignment(if user {
-                        MessageAlignment::End
-                    } else {
-                        MessageAlignment::Start
-                    })
+                    .alignment(MessageAlignment::Start)
                     .content(body),
             ))
             .into_any_element()

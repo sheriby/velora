@@ -15,6 +15,42 @@ pub(crate) fn is_markdown_document(path: &Path) -> bool {
     })
 }
 
+/// 文本类点文件：整个名字就是「扩展名」，`Path::extension()` 对它们返回
+/// None，只能按文件名认。
+const TEXT_DOTFILES: &[&str] = &[".env", ".gitignore", ".dockerignore", ".editorconfig"];
+
+/// 判断是否为文本文档（AI 工具支持的文件类型）。
+///
+/// 包括 Markdown、纯文本、配置文件等常见文本格式。二进制文件（图片、视频、
+/// 压缩包等）不在此列。
+pub(crate) fn is_text_document(path: &Path) -> bool {
+    match path.extension() {
+        Some(extension) => {
+            let extension = extension.to_string_lossy();
+            matches!(
+                extension.to_lowercase().as_str(),
+                // Markdown
+                "md" | "markdown" |
+                // 纯文本
+                "txt" |
+                // 配置文件
+                "json" | "toml" | "yaml" | "yml" | "xml" | "ini" | "conf" | "cfg" |
+                // 代码文件（常见语言）
+                "rs" | "js" | "ts" | "jsx" | "tsx" | "py" | "java" | "c" | "cpp" | "h" | "hpp" |
+                "go" | "rb" | "php" | "swift" | "kt" | "cs" | "sh" | "bash" | "zsh" |
+                // 标记语言
+                "html" | "css" | "scss" | "less" | "svg" |
+                // 其他文本格式
+                "log" | "csv" | "env" | "gitignore" | "dockerignore" | "editorconfig"
+            )
+        }
+        None => path.file_name().is_some_and(|name| {
+            let name = name.to_string_lossy().to_ascii_lowercase();
+            TEXT_DOTFILES.contains(&name.as_str())
+        }),
+    }
+}
+
 /// Parses a local file URL into a path.
 ///
 /// GPUI's macOS `on_open_urls` callback provides `file://` URLs, while tests
@@ -217,10 +253,73 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_file_url, percent_decode, percent_decode_or_raw, strip_verbatim_prefix, url_scheme,
+        is_text_document, parse_file_url, percent_decode, percent_decode_or_raw,
+        strip_verbatim_prefix, url_scheme,
     };
     use crate::file_url::strip_file_scheme_prefix;
     use std::path::{Path, PathBuf};
+
+    /// AI 文档工具的文件类型判据只看扩展名：常见文本格式进名单，二进制与
+    /// 无扩展名的文件不进。
+    #[test]
+    fn text_document_accepts_text_extensions() {
+        for name in [
+            "note.md",
+            "NOTE.MD",
+            "readme.markdown",
+            "todo.txt",
+            "config.json",
+            "Cargo.toml",
+            "ci.yaml",
+            "feed.xml",
+            "main.rs",
+            "app.tsx",
+            "script.py",
+            "index.html",
+            "theme.css",
+            "trace.log",
+            "table.csv",
+            "notes/子目录/deep.md",
+        ] {
+            assert!(is_text_document(Path::new(name)), "{name} 应识别为文本文档");
+        }
+    }
+
+    /// 点文件的整个名字就是「扩展名」，`Path::extension()` 返回 None，
+    /// 判据必须自己看文件名，否则名单里永远缺这几个配置文件。
+    #[test]
+    fn text_document_accepts_config_dotfiles() {
+        for name in [
+            ".env",
+            ".gitignore",
+            ".dockerignore",
+            ".editorconfig",
+            "deploy/.env",
+            ".ENV",
+        ] {
+            assert!(is_text_document(Path::new(name)), "{name} 应识别为文本文档");
+        }
+    }
+
+    #[test]
+    fn text_document_rejects_binaries_and_extension_less_names() {
+        for name in [
+            "cover.png",
+            "photo.jpeg",
+            "clip.mp4",
+            "bundle.zip",
+            "report.pdf",
+            "archive.tar.gz",
+            "LICENSE",
+            "Makefile",
+            "notes",
+        ] {
+            assert!(
+                !is_text_document(Path::new(name)),
+                "{name} 不是文本文档：二进制或没有扩展名"
+            );
+        }
+    }
 
     #[test]
     fn parses_file_url_with_spaces() {

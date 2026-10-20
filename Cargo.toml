@@ -77,6 +77,8 @@ grep-matcher = "0.1.9"
 # 的过滤规则逐条一致。传递依赖（globset / walkdir / same-file / crossbeam-deque /
 # bstr / log / memchr / regex-automata）已全部在 Cargo.lock 里。
 ignore = "0.4"
+# AI 工具的文件名模式匹配（find_documents），也是 ignore 的传递依赖。
+globset = "0.4"
 notify = "6"
 uuid = "1.23"
 gpui-kit = "=0.7.3"

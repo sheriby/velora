@@ -2198,6 +2198,16 @@ impl Editor {
     }
 }
 
+/// 工作区内文件的相对路径（一律 `/` 分隔）；不在工作区内返回 None。
+/// 文档 id 与上下文里的 path 共用这一处换算：给模型看的路径必须和工具
+/// 接受的参数同一口径，两处各算一次必然漂移。
+pub(in crate::editor) fn ai_workspace_relative_path(path: &Path, root: Option<&Path>) -> Option<String> {
+    let root = root?;
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let relative = canonical.strip_prefix(root).ok()?;
+    (!relative.as_os_str().is_empty()).then(|| relative.to_string_lossy().replace('\\', "/"))
+}
+
 pub(in crate::editor) fn ai_document_id(
     path: Option<&Path>,
     root: Option<&Path>,
@@ -2207,10 +2217,10 @@ pub(in crate::editor) fn ai_document_id(
         if let Some(id) = super::workspace::untitled_document_id(path) {
             return format!("untitled:{id}");
         }
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        if let Some(relative) = root.and_then(|root| canonical.strip_prefix(root).ok()) {
-            return relative.to_string_lossy().replace('\\', "/");
+        if let Some(relative) = ai_workspace_relative_path(path, root) {
+            return relative;
         }
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         return format!(
             "external:{}",
             canonical.to_string_lossy().replace('\\', "/")

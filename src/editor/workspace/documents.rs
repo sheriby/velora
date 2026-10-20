@@ -5,7 +5,7 @@ impl Editor {
     pub(in crate::editor) fn ai_open_tabs_context(&self, root: Option<&Path>, group: usize, active_group: bool) -> Vec<serde_json::Value> {
         self.workspace.open_documents.iter().map(|tab| serde_json::json!({
             "document_id": super::super::ai_assistant::ai_document_id(Some(&tab.path), root, tab.recovery_id),
-            "path": tab.path, "group": group,
+            "path": super::super::ai_assistant::ai_workspace_relative_path(&tab.path, root), "group": group,
             "active": active_group && self.active_document_path() == Some(&tab.path),
             "modified": if self.active_document_path() == Some(&tab.path) { self.document_dirty } else { tab.dirty },
             "markdown": crate::file_url::is_markdown_document(&tab.path) || super::untitled_document_id(&tab.path).is_some()

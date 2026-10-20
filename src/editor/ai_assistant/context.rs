@@ -27,7 +27,8 @@ impl Editor {
         let excerpt_end = source.floor_char_boundary(offset.saturating_add(4096).min(source.len()));
         json!({
             "active_tab": { "document_id": ai_document_id(self.file_path.as_deref(), root, self.recovery_id),
-                "path": self.active_document_path(), "modified": self.document_dirty,
+                "path": self.active_document_path()
+                    .and_then(|path| ai_workspace_relative_path(path, root)), "modified": self.document_dirty,
                 "version": super::super::persistence::file_content_version(&source) },
             "cursor": {"byte_offset": offset, "line": line, "column": column},
             "selection": {"start": selection.range.start, "end": selection.range.end,
@@ -93,7 +94,11 @@ impl Editor {
                 fields.remove("selection");
                 fields.remove("near_cursor");
             }
-            fields.insert("workspace_path".into(), json!(root));
+            // 只传工作区名称，不传绝对路径，避免 AI 在工具调用中使用绝对路径
+            let workspace_name = root.as_ref().and_then(|path| {
+                path.file_name().and_then(|name| name.to_str()).map(|name| name.to_owned())
+            });
+            fields.insert("workspace_name".into(), json!(workspace_name));
             fields.insert("open_tabs".into(), json!(tabs));
         }
         context

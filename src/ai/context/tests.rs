@@ -35,9 +35,9 @@ fn ai_context_templates_expand_values_once_and_keep_unknown_variables() {
 fn ai_prompt_cache_keeps_workspace_prefix_stable_across_instructions_tab_order_and_cursor_changes()
 {
     let first = serde_json::json!({
-        "workspace_path":"/notes", "active_tab":{"document_id":"a.md", "version":1},
-        "open_tabs":[{"document_id":"b.md", "path":"/notes/b.md", "modified":true},
-            {"document_id":"a.md", "path":"/notes/a.md", "active":true}],
+        "workspace_name":"notes", "active_tab":{"document_id":"a.md", "version":1},
+        "open_tabs":[{"document_id":"b.md", "path":"docs/b.md", "modified":true},
+            {"document_id":"a.md", "path":"docs/a.md", "active":true}],
         "cursor":{"byte_offset":1}, "selection":{"text":"甲"}, "near_cursor":{"content":"第一处"}
     });
     let mut second = first.clone();
@@ -54,7 +54,12 @@ fn ai_prompt_cache_keeps_workspace_prefix_stable_across_instructions_tab_order_a
         left_prefix, right_prefix,
         "光标、指令和标签展示顺序不能破坏固定前缀"
     );
-    assert!(left_prefix.contains("/notes/a.md") && left_prefix.contains("/notes/b.md"));
+    assert!(left_prefix.contains("docs/a.md") && left_prefix.contains("docs/b.md"),
+        "标签页路径按工作区相对路径进入冻结前缀：{left_prefix}");
+    assert!(
+        left_prefix.contains("\"workspace_name\":\"notes\""),
+        "冻结前缀里的资料必须是工作区名称，工具参数才能用相对路径：{left_prefix}"
+    );
     assert!(left.ends_with("解释这一处"), "本次指令放在易变信息之后");
 }
 
@@ -68,7 +73,7 @@ fn ai_prompt_cache_sends_the_frozen_target_only_at_the_start_of_a_task() {
         selection: "最初的选区原文".into(),
         version: 1,
     };
-    let context = serde_json::json!({"workspace_path":"/notes", "open_tabs":[],
+    let context = serde_json::json!({"workspace_name":"notes", "open_tabs":[],
         "active_tab":{"document_id":"a.md"}, "cursor":{"byte_offset":12}});
     let first = super::task_prompt("润色", &context, Some(&target), &[], true, None);
     let next = super::task_prompt("语气自然一些", &context, Some(&target), &[], false, None);
@@ -82,7 +87,7 @@ fn ai_prompt_cache_sends_the_frozen_target_only_at_the_start_of_a_task() {
 
 #[test]
 fn ai_prompt_cache_quick_requirements_precede_the_variable_document_and_selection() {
-    let mut context = serde_json::json!({"workspace_path":"/first", "open_tabs":[],
+    let mut context = serde_json::json!({"workspace_name":"first", "open_tabs":[],
         "selection":{"text":"独立选区甲"}, "cursor":{"byte_offset":4}});
     let first = super::task_prompt(
         "润色",
@@ -95,7 +100,7 @@ fn ai_prompt_cache_quick_requirements_precede_the_variable_document_and_selectio
             "en-US",
         )),
     );
-    context["workspace_path"] = "/second".into();
+    context["workspace_name"] = "second".into();
     context["selection"]["text"] = "独立选区乙".into();
     let second = super::task_prompt(
         "润色",

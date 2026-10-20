@@ -171,9 +171,9 @@ impl AiWorkspace {
                 .canonicalize()
                 .with_context(|| format!("找不到指定资料：{reference}"))?;
             if !resolved.starts_with(root)
-                || (!resolved.is_dir() && !crate::file_url::is_markdown_document(path))
+                || (!resolved.is_dir() && !crate::file_url::is_text_document(path))
             {
-                bail!("指定资料不在工作区内或不是 Markdown：{reference}");
+                bail!("指定资料不在工作区内或不是文本文档：{reference}");
             }
             if !scope.contains(reference) {
                 scope.push(reference.clone());
@@ -281,17 +281,53 @@ impl AiWorkspace {
                     json!({"documents": selected, "total":matching.len(), "offset":offset, "next_offset":offset.saturating_add(selected.len())}),
                 )
             }
+            "find_documents" => {
+                let pattern = field(arguments, "pattern")?;
+                let folder = arguments
+                    .get("folder")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+
+                let files = self.files()?;
+                let base_path = if folder.is_empty() {
+                    String::new()
+                } else {
+                    format!("{}/", folder.trim_end_matches('/'))
+                };
+
+                // 使用 globset 进行模式匹配
+                let glob = globset::GlobBuilder::new(pattern)
+                    .case_insensitive(true)
+                    // 目录边界要当真：不开这项，`*.md` 会连 docs/xxx.md 一起命中，
+                    // 与工具描述里「* 不含 /、递归写 **」的口径相反。
+                    .literal_separator(true)
+                    .build()
+                    .map_err(|error| anyhow::anyhow!("无效的 glob 模式：{error}"))?
+                    .compile_matcher();
+
+                let matching: Vec<_> = files
+                    .into_iter()
+                    .filter(|file| {
+                        if !base_path.is_empty() && !file.starts_with(&base_path) {
+                            return false;
+                        }
+                        let relative = file.strip_prefix(&base_path).unwrap_or(file);
+                        glob.is_match(relative)
+                    })
+                    .collect();
+
+                Ok(json!({
+                    "documents": matching,
+                    "total": matching.len()
+                }))
+            }
             "search_documents" => {
-                let terms = field(arguments, "query")?
-                    .split_whitespace()
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>();
-                if terms.is_empty() {
+                let query_text = field(arguments, "query")?;
+                if query_text.trim().is_empty() {
                     bail!("搜索词不能为空");
                 }
-                // 匹配交给编辑器同款的 ripgrep 引擎（固定字符串、忽略大小写、
-                // 多词 OR），不在这里逐行折叠大小写。
-                let query = crate::editor::workspace::LiteralTermsQuery::new(&terms)
+                // 精确字符串匹配，不再按空格拆分为多个词进行 OR 查询
+                let query = crate::editor::workspace::LiteralTermsQuery::new(&[query_text.to_owned()])
                     .map_err(|error| anyhow::anyhow!(error.message))?;
                 let files = self.files()?;
                 // 活缓冲、新建文档和有待审阅修改的文件必须走 snapshot（内容不在
@@ -600,8 +636,8 @@ impl AiWorkspace {
     fn resolve(&self, id: &str, existing: bool) -> Result<PathBuf> {
         let path = Path::new(id);
         validate_relative(id)?;
-        if !crate::file_url::is_markdown_document(path) {
-            bail!("AI 文档工具仅支持 Markdown");
+        if !crate::file_url::is_text_document(path) {
+            bail!("AI 文档工具仅支持文本文档");
         }
         let root = self
             .root
@@ -702,7 +738,7 @@ impl AiWorkspace {
                     eprintln!("AI 工作区有 {skipped} 个条目无法读取，已在名单中跳过");
                 }
                 for path in paths {
-                    if crate::file_url::is_markdown_document(&path) {
+                    if crate::file_url::is_text_document(&path) {
                         if let Ok(relative) = path.strip_prefix(root) {
                             files.insert(relative.to_string_lossy().replace('\\', "/"), ());
                         }
@@ -765,8 +801,8 @@ pub(crate) fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
     vec![
         (
             "reset_proposal",
-            "仅丢弃此任务中该文档的旧提议，不改正文；当 pending_stale 为真时，先读取最新原文，再调用此工具重新生成。",
-            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
+            "仅丢弃此任务中该文档的旧提议，不改正文；当 pending_stale 为真时，先读取最新原文，再调用此工具重新生成。path 必须是工作区相对路径。",
+            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string","description":"工作区相对路径，如 docs/guide.md"}}}),
         ),
         (
             "read_skill",
@@ -775,28 +811,33 @@ pub(crate) fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
         ),
         (
             "list_documents",
-            "列举工作区 Markdown 文档；可按 folder、offset 分页。",
-            json!({"type":"object","properties":{"folder":{"type":"string"},"offset":{"type":"integer","minimum":0}}}),
+            "列举工作区文本文档；可按 folder、offset 分页。folder 必须是相对路径。",
+            json!({"type":"object","properties":{"folder":{"type":"string","description":"相对路径，如 docs"},"offset":{"type":"integer","minimum":0}}}),
+        ),
+        (
+            "find_documents",
+            "按文件名模式查找工作区文本文档。支持 glob 模式：* 匹配任意字符（不含 /），** 匹配任意路径段，? 匹配单个字符。返回的 path 是相对路径。",
+            json!({"type":"object","required":["pattern"],"properties":{"pattern":{"type":"string","description":"Glob 模式，如 **/*.md 或 test/*.txt"},"folder":{"type":"string","description":"可选的起始目录，模式在此目录下匹配"}}}),
         ),
         (
             "search_documents",
-            "搜索 Markdown 文档并返回来源路径、行号和片段。query 按空白拆分为多个关键词，命中任意一个即返回。",
-            json!({"type":"object","required":["query"],"properties":{"query":{"type":"string"}}}),
+            "在工作区文本文档中搜索包含指定文本的行。返回匹配行的路径、行号和内容。搜索是精确字符串匹配（不拆分空格），大小写不敏感。",
+            json!({"type":"object","required":["query"],"properties":{"query":{"type":"string","description":"要搜索的完整文本，如 get_outline 或 TODO: fix"}}}),
         ),
         (
             "read_document",
-            "读取文档最新内容，包括本任务待审阅修改；pending_stale 表示正文变化，此时返回最新正文。可按 start_line、limit 读取，长行用 next_offset 作为 start_offset 继续，truncated 表示不完整。",
-            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"},"start_line":{"type":"integer","minimum":1},"start_offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":300}}}),
+            "读取文档最新内容，包括本任务待审阅修改；pending_stale 表示正文变化，此时返回最新正文。可按 start_line、limit 读取，长行用 next_offset 作为 start_offset 继续，truncated 表示不完整。path 必须是工作区相对路径。",
+            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string","description":"工作区相对路径，如 src/main.rs"},"start_line":{"type":"integer","minimum":1},"start_offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":300}}}),
         ),
         (
             "get_outline",
-            "获取 Markdown 标题及对应行号。",
-            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
+            "获取 Markdown 标题及对应行号。仅支持 Markdown 文档。path 必须是工作区相对路径。",
+            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string","description":"工作区相对路径，如 docs/architecture.md"}}}),
         ),
         (
             "propose_edit",
-            "提出待审阅修改，不写正文。before 必须在已读取内容中唯一匹配；after 为替换内容；before 为空时追加到本次允许修改范围的末尾。",
-            json!({"type":"object","required":["path","before","after"],"properties":{"path":{"type":"string"},"before":{"type":"string"},"after":{"type":"string"}}}),
+            "提出待审阅修改，不写正文。before 必须在已读取内容中唯一匹配；after 为替换内容；before 为空时追加到本次允许修改范围的末尾。path 必须是工作区相对路径。",
+            json!({"type":"object","required":["path","before","after"],"properties":{"path":{"type":"string","description":"工作区相对路径，如 README.md"},"before":{"type":"string"},"after":{"type":"string"}}}),
         ),
         (
             "propose_insert_at_cursor",
@@ -805,8 +846,8 @@ pub(crate) fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
         ),
         (
             "propose_document",
-            "提出新的 Markdown 文档，接受前不创建文件。",
-            json!({"type":"object","required":["path","content"],"properties":{"path":{"type":"string"},"content":{"type":"string"}}}),
+            "提出新的文本文档，接受前不创建文件。path 必须是工作区相对路径。",
+            json!({"type":"object","required":["path","content"],"properties":{"path":{"type":"string","description":"工作区相对路径，如 notes/new-idea.md"},"content":{"type":"string"}}}),
         ),
     ]
 }

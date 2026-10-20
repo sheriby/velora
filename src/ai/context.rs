@@ -87,7 +87,7 @@ pub(crate) fn task_prompt(
         prompt.push_str(&format!(
             "<workspace_context>\n{}\n</workspace_context>\n",
             json!({
-                "workspace_path": editor_context.get("workspace_path"),
+                "workspace_name": editor_context.get("workspace_name"),
                 "open_tabs": tabs.values().collect::<Vec<_>>(), "references": references,
             })
         ));

@@ -93,10 +93,10 @@ fn ai_tools_search_multiple_notes_and_propose_new_documents_without_writing_file
     std::fs::remove_dir_all(root).unwrap();
 }
 
-/// 模型会把多个主题塞进一个 query；按整串字面量匹配时一条都中不了。
-/// 空白拆词后任意词命中即返回，且要跨文档覆盖每个词。
+/// search_documents 现在按精确字符串匹配，不再按空格拆分为 OR 查询。
+/// 多个独立主题需要分别调用，由 AI 自行组合结果。
 #[test]
-fn ai_search_matches_any_space_separated_term_across_documents() {
+fn ai_search_matches_exact_string_not_split_terms() {
     let root = fixture();
     std::fs::write(
         root.join("first.md"),
@@ -111,8 +111,9 @@ fn ai_search_matches_any_space_separated_term_across_documents() {
     std::fs::write(root.join("third.md"), "# 缓冲\n\nBuffer 容量固定。\n").unwrap();
     let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
 
+    // 精确匹配 "地址对齐" 这个完整短语
     let found = workspace
-        .call("search_documents", &json!({"query":"地址对齐 UB Buffer"}))
+        .call("search_documents", &json!({"query":"地址对齐"}))
         .unwrap();
     let paths = found["matches"]
         .as_array()
@@ -120,15 +121,26 @@ fn ai_search_matches_any_space_separated_term_across_documents() {
         .iter()
         .filter_map(|entry| entry["path"].as_str())
         .collect::<Vec<_>>();
-    assert!(paths.contains(&"first.md"), "应命中第一个词：{found}");
-    assert!(paths.contains(&"second.md"), "应命中第二个词：{found}");
-    assert!(paths.contains(&"third.md"), "应命中第三个词：{found}");
+    assert_eq!(paths, vec!["first.md"], "应精确命中包含'地址对齐'的文档：{found}");
+
+    // 精确匹配 "UB"
+    let found = workspace
+        .call("search_documents", &json!({"query":"UB"}))
+        .unwrap();
+    let paths = found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["path"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["second.md"], "应精确命中包含'UB'的文档：{found}");
+
     std::fs::remove_dir_all(root).unwrap();
 }
 
-/// 词之间可能是重复空格、制表符或全角空格；ASCII 词不区分大小写。
+/// 搜索是字面匹配、大小写不敏感，不再按空格拆分为多个词。
 #[test]
-fn ai_search_splits_terms_on_any_whitespace_and_ignores_case() {
+fn ai_search_literal_match_case_insensitive() {
     let root = fixture();
     std::fs::write(
         root.join("first.md"),
@@ -142,8 +154,9 @@ fn ai_search_splits_terms_on_any_whitespace_and_ignores_case() {
     .unwrap();
     let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
 
+    // 大小写不敏感：查询 "UB" 应该匹配到 "ub"
     let found = workspace
-        .call("search_documents", &json!({"query":"  地址对齐\tUB\u{3000}"}))
+        .call("search_documents", &json!({"query":"UB"}))
         .unwrap();
     let paths = found["matches"]
         .as_array()
@@ -151,8 +164,8 @@ fn ai_search_splits_terms_on_any_whitespace_and_ignores_case() {
         .iter()
         .filter_map(|entry| entry["path"].as_str())
         .collect::<Vec<_>>();
-    assert!(paths.contains(&"first.md"), "应命中中文词：{found}");
-    assert!(paths.contains(&"second.md"), "应大小写无关地命中：{found}");
+    assert_eq!(paths, vec!["second.md"], "应大小写无关地命中：{found}");
+
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -882,3 +895,224 @@ fn ai_propose_within_reports_overlapping_occurrences() {
         "应报告多处匹配：{error}"
     );
 }
+
+fn found_documents(workspace: &mut AiWorkspace, arguments: serde_json::Value) -> Vec<String> {
+    let found = workspace
+        .call("find_documents", &arguments)
+        .expect("find_documents 应成功");
+    let documents = found["documents"].as_array().expect("应返回 documents 数组");
+    assert_eq!(
+        found["total"].as_u64(),
+        Some(documents.len() as u64),
+        "total 必须与实际返回的条数一致：{found}"
+    );
+    documents
+        .iter()
+        .map(|file| file.as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// find_documents 的递归写法是 `**`；返回的必须是工作区相对路径，
+/// 非文本文档（图片）根本不进名单。
+#[test]
+fn ai_find_documents_matches_glob_patterns_and_returns_relative_paths() {
+    let root = fixture();
+    std::fs::create_dir_all(root.join("docs/nested")).unwrap();
+    std::fs::write(root.join("docs/guide.md"), "# 指南\n").unwrap();
+    std::fs::write(root.join("docs/nested/deep.md"), "# 更深\n").unwrap();
+    std::fs::write(root.join("notes.txt"), "杂记\n").unwrap();
+    std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(root.join("cover.png"), b"\x89PNG\r\n").unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"**/*.md"})),
+        vec!["docs/guide.md", "docs/nested/deep.md", "first.md", "second.md"]
+    );
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"**/*.txt"})),
+        vec!["notes.txt"]
+    );
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"**/*.rs"})),
+        vec!["main.rs"]
+    );
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"docs/nested/**"})),
+        vec!["docs/nested/deep.md"]
+    );
+    let everything = found_documents(&mut workspace, json!({"pattern":"**"}));
+    assert!(everything.contains(&"notes.txt".to_owned()));
+    assert!(
+        !everything.iter().any(|path| path.ends_with(".png")),
+        "图片不能出现在文本文档名单里：{everything:?}"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// 模式大小写不敏感：`.MD` 与 `.md` 找到的必须是同一批文档。
+#[test]
+fn ai_find_documents_ignores_pattern_case() {
+    let root = fixture();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"**/*.MD"})),
+        found_documents(&mut workspace, json!({"pattern":"**/*.md"})),
+    );
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"**/SECOND.md"})),
+        vec!["second.md"]
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// folder 是模式的匹配起点：名单先按 `folder/` 截取，模式再对截出来的
+/// 相对路径求值；同前缀的兄弟目录（docs-archive）不能被卷进来。
+#[test]
+fn ai_find_documents_matches_relative_to_the_given_folder() {
+    let root = fixture();
+    std::fs::create_dir_all(root.join("docs/nested")).unwrap();
+    std::fs::create_dir_all(root.join("docs-archive")).unwrap();
+    std::fs::write(root.join("docs/guide.md"), "# 指南\n").unwrap();
+    std::fs::write(root.join("docs/nested/deep.md"), "# 更深\n").unwrap();
+    std::fs::write(root.join("docs-archive/old.md"), "# 归档\n").unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+
+    let expected = vec!["docs/guide.md".to_owned(), "docs/nested/deep.md".to_owned()];
+    for folder in ["docs", "docs/"] {
+        assert_eq!(
+            found_documents(&mut workspace, json!({"pattern":"**/*.md","folder":folder})),
+            expected,
+            "folder={folder} 只能在 docs 下匹配"
+        );
+    }
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"nested/*.md","folder":"docs"})),
+        vec!["docs/nested/deep.md"]
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// find_documents 与 list_documents 共用同一份名单：排除规则、资料范围与
+/// 本任务尚未落盘的草稿都要按同一口径生效。
+#[test]
+fn ai_find_documents_respects_exclusions_scope_and_pending_drafts() {
+    let root = fixture();
+    std::fs::create_dir_all(root.join("docs")).unwrap();
+    std::fs::write(root.join("docs/guide.md"), "# 指南\n").unwrap();
+    std::fs::write(root.join("private.md"), "# 私密\n").unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+
+    workspace.excluded_paths.push("private.md".into());
+    let listed = found_documents(&mut workspace, json!({"pattern":"**/*.md"}));
+    assert!(
+        !listed.contains(&"private.md".to_owned()),
+        "被排除的文档不能出现在查找结果里：{listed:?}"
+    );
+
+    workspace
+        .call(
+            "propose_document",
+            &json!({"path":"draft.md","content":"# 草稿\n"}),
+        )
+        .unwrap();
+    assert!(
+        found_documents(&mut workspace, json!({"pattern":"**/*.md"})).contains(&"draft.md".to_owned()),
+        "待审阅的新文档必须能被查回"
+    );
+
+    workspace.set_scope(&["docs".into()], "docs").unwrap();
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"**/*.md"})),
+        vec!["docs/guide.md", "draft.md"],
+        "限定资料后只剩该目录，但本任务草稿不受限定"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn ai_find_documents_reports_bad_patterns_and_works_without_a_workspace() {
+    let root = fixture();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+    let missing = workspace
+        .call("find_documents", &json!({}))
+        .expect_err("pattern 是必填参数");
+    assert!(
+        missing.to_string().contains("pattern"),
+        "应报出缺少的参数名：{missing}"
+    );
+    let invalid = workspace
+        .call("find_documents", &json!({"pattern":"[a"}))
+        .expect_err("未闭合的字符类不是合法 glob");
+    assert!(
+        invalid.to_string().contains("glob"),
+        "应说明是 glob 模式无效：{invalid}"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+
+    let mut without_root = AiWorkspace::new(None, vec![]).unwrap();
+    assert!(
+        found_documents(&mut without_root, json!({"pattern":"**/*.md"})).is_empty(),
+        "没有工作区根目录时只能返回空名单，不能失败"
+    );
+}
+
+/// 工具描述的口径是「`*` 不含 `/`，递归写 `**`」：单层 `*` 不能越过目录，
+/// 越界会把「找 docs 下的文件名」变成全库扫描。
+#[test]
+fn ai_find_documents_keeps_single_star_within_one_directory() {
+    let root = fixture();
+    std::fs::create_dir_all(root.join("docs/nested")).unwrap();
+    std::fs::write(root.join("docs/guide.md"), "# 指南\n").unwrap();
+    std::fs::write(root.join("docs/nested/deep.md"), "# 更深\n").unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"*.md"})),
+        vec!["first.md", "second.md"],
+        "单层 * 只能匹配工作区根下的这一层"
+    );
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"docs/*.md"})),
+        vec!["docs/guide.md"],
+        "docs/*.md 不能越过一层拿到 docs/nested/deep.md"
+    );
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"docs/**/*.md"})),
+        vec!["docs/guide.md", "docs/nested/deep.md"],
+        "** 跨越零层或多层目录"
+    );
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"**/deep.md"})),
+        vec!["docs/nested/deep.md"]
+    );
+    assert_eq!(
+        found_documents(&mut workspace, json!({"pattern":"**/*.md"})),
+        vec!["docs/guide.md", "docs/nested/deep.md", "first.md", "second.md"],
+        "**/ 允许匹配零层目录，根下的文档也要能查回"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// 精确匹配的另一半：带空格的整串短语必须能命中同一行的原文，
+/// 而不是因为被拆开而命中只含其中一个词的文档。
+#[test]
+fn ai_search_matches_a_spaced_phrase_only_where_it_applies_as_a_whole() {
+    let root = fixture();
+    std::fs::write(root.join("first.md"), "# 大纲\n\nget outline 的用法。\n").unwrap();
+    std::fs::write(root.join("second.md"), "# 别的\n\n只提到 get 而已。\n").unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+
+    let found = workspace
+        .call("search_documents", &json!({"query":"get outline"}))
+        .unwrap();
+    let paths = found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["path"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["first.md"], "整串短语只应命中原文里有它的行：{found}");
+    std::fs::remove_dir_all(root).unwrap();
+}
+

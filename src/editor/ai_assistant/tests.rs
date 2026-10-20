@@ -744,7 +744,7 @@ fn native_ui_chain(cx: &mut TestAppContext, command: AiCommand) {
     }
     let requests = server.join().unwrap();
     assert_eq!(requests.len(), if writing { 1 } else { 2 });
-    assert!(requests[0].to_string().contains("workspace_path"));
+    assert!(requests[0].to_string().contains("workspace_name"));
     assert!(requests[0].to_string().contains("open_tabs"));
     if writing {
         let prompt = requests[0]
@@ -1121,22 +1121,31 @@ fn ai_editor_context_contains_workspace_tabs_active_cursor_and_selection(cx: &mu
         editor.select_document(cx);
         let context = editor.ai_editor_context(cx);
         assert_eq!(
-            context["workspace_path"].as_str(),
-            Some(root.canonicalize().unwrap().to_str().unwrap())
+            context["workspace_name"].as_str(),
+            root.file_name().and_then(|name| name.to_str())
         );
         let tabs = context["open_tabs"]
             .as_array()
             .expect("应提供全部标签页元数据");
         assert_eq!(tabs.len(), 2);
-        assert!(
-            tabs.iter()
-                .any(|tab| tab["path"].as_str() == first.to_str())
+        // 工具参数只接受工作区相对路径，上下文里出现绝对路径会诱导模型填绝对路径
+        let mut paths = tabs
+            .iter()
+            .filter_map(|tab| tab["path"].as_str())
+            .collect::<Vec<_>>();
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec!["first.md", "second.md"],
+            "标签页路径必须是工作区相对路径：{tabs:?}"
         );
-        assert!(
-            tabs.iter()
-                .any(|tab| tab["path"].as_str() == second.to_str())
-        );
-        assert_eq!(context["active_tab"]["path"].as_str(), second.to_str());
+        assert_eq!(context["active_tab"]["path"].as_str(), Some("second.md"));
+        for absolute in [&first, &second] {
+            assert!(
+                !context.to_string().contains(&absolute.to_string_lossy().to_string()),
+                "上下文不得向模型暴露绝对路径：{context}"
+            );
+        }
         assert_eq!(context["cursor"]["line"], 3);
         assert_eq!(context["selection"]["text"], "# 标题\n\n选中的文字");
         assert!(context["cursor"]["byte_offset"].as_u64().unwrap() > 0);
