@@ -5555,3 +5555,74 @@ fn ai_sidebar_separator_is_in_native_tab_order(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+fn ai_sidebar_history_restores_a_conversation_and_keeps_the_composer(cx: &mut TestAppContext) {
+    use crate::ai::session::{ChatMessage, SavedSession};
+    let root = std::env::temp_dir().join(format!(
+        "velora-ai-sidebar-history-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let _config = crate::config::override_test_config_root(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+    let mut saved = SavedSession::new(
+        crate::ai::workspace::AiWorkspace::new(None, Vec::new()).unwrap(),
+    );
+    saved.messages.push(ChatMessage {
+        role: "user".into(),
+        text: "上周的讨论".into(),
+    });
+    saved.messages.push(ChatMessage {
+        role: "assistant".into(),
+        text: "上次的结论".into(),
+    });
+    let path = saved.path().unwrap();
+    saved.save_at(&path).unwrap();
+
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor.ai_session.as_mut().unwrap().expanded = true;
+    });
+    draw(cx);
+    draw(cx);
+    assert!(cx.debug_bounds("ai-sidebar").is_some(), "对话必须停靠在侧栏");
+    let history = cx.debug_bounds("ai-history").unwrap().center();
+    cx.simulate_click(history, gpui::Modifiers::none());
+    cx.run_until_parked();
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-history-list").is_some(),
+        "侧栏必须显示历史列表"
+    );
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .history_files
+                .iter()
+                .any(|(entry, title, _)| entry == &path && title.contains("上周的讨论")),
+            "历史列表必须包含已保存的对话：{:?}",
+            editor.ai_session.as_ref().unwrap().history_files
+        );
+    });
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    draw(cx);
+    draw(cx);
+    editor.read_with(cx, |editor, _| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(session.saved.path().unwrap(), path, "必须恢复选中的会话");
+        assert!(session.mode == PanelMode::Task);
+        assert_eq!(session.saved.messages[0].text.as_ref(), "上周的讨论");
+    });
+    assert!(
+        cx.debug_bounds("ai-composer").is_some(),
+        "恢复后必须能继续对话"
+    );
+}

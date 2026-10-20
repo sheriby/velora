@@ -125,6 +125,18 @@ impl Editor {
                     cx.notify();
                 },
             ))
+            .child(self.ai_button(
+                "ai-history",
+                false,
+                cx,
+                |button, _cx| {
+                    button
+                        .icon(IconName::RotateCw)
+                        .accessibility_label(strings.ai_panel_history.clone())
+                        .tooltip(strings.ai_panel_history.clone())
+                },
+                |editor, _, cx| editor.show_ai_history(cx),
+            ))
             .child(
                 Button::new("ai-options")
                     .debug_selector(|| "ai-options".into())
