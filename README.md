@@ -12,7 +12,7 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 
 ![Live WYSIWYG Markdown editing: inline styles, tables, code highlighting and LaTeX](assets/screenshots/editor.png)
 
-More screenshots: [Workspace and tabs](assets/screenshots/workspace.png) · [Split panes](assets/screenshots/workspace-split.png) · [Formula editor](assets/screenshots/formula-editor.png) · [Six built-in themes](assets/screenshots/themes.png)
+More screenshots: [Chat from a selection](assets/screenshots/ai-selection-chat.png) · [Workspace and tabs](assets/screenshots/workspace.png) · [Split panes](assets/screenshots/workspace-split.png) · [Formula editor](assets/screenshots/formula-editor.png) · [Six built-in themes](assets/screenshots/themes.png)
 
 ## ✨ Features
 
