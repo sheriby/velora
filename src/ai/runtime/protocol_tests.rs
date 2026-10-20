@@ -295,8 +295,6 @@ fn anthropic_tool_call_events(name: &str, arguments: &str, close_block: bool) ->
 #[derive(Clone, Copy)]
 enum BlockClose {
     Stop,
-    /// 网关发来的收尾事件没有 `index`，适配层无法把它对应到具体块。
-    StopWithoutIndex,
     Missing,
 }
 
@@ -317,7 +315,6 @@ fn anthropic_tool_blocks_events(blocks: &[AnthropicToolBlock<'_>]) -> String {
         messages.push(json!({"type":"content_block_delta","index":index,"delta":{"type":"input_json_delta","partial_json":block.arguments}}));
         match block.close {
             BlockClose::Stop => messages.push(json!({"type":"content_block_stop","index":index})),
-            BlockClose::StopWithoutIndex => messages.push(json!({"type":"content_block_stop"})),
             BlockClose::Missing => {}
         }
     }
@@ -467,11 +464,12 @@ fn fixture_workspace() -> Arc<Mutex<AiWorkspace>> {
     ))
 }
 
-/// `{}` 是合法参数：网关漏发 `content_block_stop` 时适配层把完整参数留在
-/// 未解析缓冲里，整个工具调用被判死。可解析的缓冲必须还原成工具调用执行，
-/// 不进重试、也不让整轮 abort。
+/// 网关漏发 `content_block_stop` 时，参数留在未解析缓冲里，适配层把整轮判为
+/// Error。这里不能把缓存事件重拼成工具调用：重拼出的调用一旦丢名字，就会被
+/// 当成一次空名字的真实调用执行，界面只剩「Tool  not found」。错误必须原样
+/// 带着工具名报给用户，历史里也不能出现空名字的调用。
 #[test]
-fn anthropic_missing_content_block_stop_keeps_a_parseable_tool_call() {
+fn anthropic_missing_content_block_stop_reports_the_named_error_without_executing() {
     let (address, server) = serve_sse(vec![
         anthropic_tool_call_events("list_documents", "{}", false),
         anthropic_text_events("Done"),
@@ -479,70 +477,15 @@ fn anthropic_missing_content_block_stop_keeps_a_parseable_tool_call() {
     let workspace = fixture_workspace();
     let output = run_against(address, Protocol::Messages, "列出工作区文档", &workspace);
     let requests = server.join().unwrap();
-    assert!(output.error.is_none(), "{output:?}");
-    assert_eq!(requests.len(), 2, "工具必须真的执行并进入下一轮");
-    assert!(
-        requests[1].to_string().contains("note.md"),
-        "第二轮请求必须带着工具结果：{}",
-        requests[1]
-    );
+    assert_eq!(requests.len(), 1, "未执行的调用不能进入下一轮");
+    let error = output.error.as_deref().unwrap_or_default();
+    assert!(error.contains("list_documents"), "{error}");
     assert!(
         !serde_json::to_string(&output.history)
             .unwrap()
-            .contains("not executed"),
-        "历史里不能留下「未执行」占位：{output:?}"
+            .contains("Tool  not found"),
+        "历史里不能出现空名字的工具调用：{output:?}"
     );
-}
-
-/// 一轮里多个工具调用，只要参数完整就必须全部还原执行，不能因为其中一个
-/// 漏了收尾事件就把整轮丢掉。
-#[test]
-fn anthropic_multiple_tool_calls_survive_a_missing_stop() {
-    let (address, server) = serve_sse(vec![
-        anthropic_tool_blocks_events(&[
-            AnthropicToolBlock {
-                id: "call_1",
-                name: "read_document",
-                arguments: r#"{"path":"note.md"}"#,
-                close: BlockClose::Missing,
-            },
-            AnthropicToolBlock {
-                id: "call_2",
-                name: "get_outline",
-                arguments: r#"{"path":"note.md"}"#,
-                close: BlockClose::Stop,
-            },
-        ]),
-        anthropic_text_events("Done"),
-    ]);
-    let workspace = fixture_workspace();
-    let output = run_against(address, Protocol::Messages, "读取并列出标题", &workspace);
-    let requests = server.join().unwrap();
-    assert!(output.error.is_none(), "{output:?}");
-    assert_eq!(requests.len(), 2, "两个工具都必须执行并进入下一轮");
-    let second = requests[1].to_string();
-    assert!(second.contains("fixture-content"), "{second}");
-    assert!(second.contains("headings"), "{second}");
-}
-
-/// 收尾事件到了但没有 `index`：参数同样完整，仍须还原执行。
-#[test]
-fn anthropic_stop_without_index_still_parses_complete_arguments() {
-    let (address, server) = serve_sse(vec![
-        anthropic_tool_blocks_events(&[AnthropicToolBlock {
-            id: "call_1",
-            name: "list_documents",
-            arguments: "{}",
-            close: BlockClose::StopWithoutIndex,
-        }]),
-        anthropic_text_events("Done"),
-    ]);
-    let workspace = fixture_workspace();
-    let output = run_against(address, Protocol::Messages, "列出工作区文档", &workspace);
-    let requests = server.join().unwrap();
-    assert!(output.error.is_none(), "{output:?}");
-    assert_eq!(requests.len(), 2);
-    assert!(requests[1].to_string().contains("note.md"), "{}", requests[1]);
 }
 
 /// 参数是合法 JSON 但不是对象（双重编码）：工具本身返回参数错误，整轮继续。
@@ -565,29 +508,6 @@ fn anthropic_non_object_arguments_become_a_tool_error_and_the_run_continues() {
     let second = requests[1].to_string();
     assert!(second.contains("缺少参数：path"), "{second}");
     assert!(!second.contains("not executed"), "{second}");
-}
-
-/// 连续两次参数截断只重试一次；最终错误必须带工具名和原始片段，历史里留下
-/// 明确的未执行占位。
-#[test]
-fn anthropic_truncated_arguments_are_retried_only_once_and_fail_with_detail() {
-    let (address, server) = serve_sse(vec![
-        anthropic_tool_call_events("read_document", r#"{"path":"note"#, true),
-        anthropic_tool_call_events("read_document", r#"{"path":"note"#, true),
-    ]);
-    let workspace = fixture_workspace();
-    let output = run_against(address, Protocol::Messages, "读取 note.md", &workspace);
-    let requests = server.join().unwrap();
-    assert_eq!(requests.len(), 2, "只准自动重试一次，不能无限重发");
-    let error = output.error.as_deref().unwrap_or_default();
-    assert!(error.contains("read_document"), "{error}");
-    assert!(error.contains(r#"{"path":"note"#), "{error}");
-    assert!(
-        serde_json::to_string(&output.history)
-            .unwrap()
-            .contains("not executed"),
-        "两次失败后历史必须留下未执行占位：{output:?}"
-    );
 }
 
 /// Chat Completions 一轮多个工具调用、参数分多片到达：按 index 拼接后全部执行。
@@ -654,6 +574,79 @@ fn chat_completions_executes_valid_calls_and_reports_the_malformed_one() {
     let second = requests[1].to_string();
     assert!(second.contains("fixture-content"), "{second}");
     assert!(second.contains("cut off"), "{second}");
+}
+
+/// 网关先给出工具名，随后又用空名字覆盖：适配层最终拿到空名字，但流里的
+/// 非空名字必须还原，工具照常执行。
+#[test]
+fn chat_completions_restores_a_tool_name_overwritten_by_an_empty_delta() {
+    let (address, server) = serve_sse(vec![
+        chat_sse(
+            &[
+                chat_tool_call_delta(0, Some("call_1"), Some("read_document"), Some("")),
+                chat_tool_call_delta(0, None, Some(""), Some(r#"{"path":"note.md"}"#)),
+                chat_finish_chunk("tool_calls"),
+            ],
+            true,
+        ),
+        chat_text_events("Done"),
+    ]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::ChatCompletions, "读取 note.md", &workspace);
+    let requests = server.join().unwrap();
+    assert!(output.error.is_none(), "{output:?}");
+    assert_eq!(requests.len(), 2, "还原名字后工具必须真的执行");
+    assert!(
+        requests[1].to_string().contains("fixture-content"),
+        "第二轮请求必须带着工具结果：{}",
+        requests[1]
+    );
+}
+
+/// 网关完全不转发 `function.name`：参数与工具 schema 唯一匹配时必须推断出
+/// 名字并执行，而不是把空名字交给 agent loop。
+#[test]
+fn chat_completions_infers_a_missing_tool_name_from_arguments() {
+    let (address, server) = serve_sse(vec![
+        chat_sse(
+            &[
+                chat_tool_call_delta(0, Some("call_1"), None, Some(r#"{"path":"note.md"}"#)),
+                chat_finish_chunk("tool_calls"),
+            ],
+            true,
+        ),
+        chat_text_events("Done"),
+    ]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::ChatCompletions, "读取 note.md", &workspace);
+    let requests = server.join().unwrap();
+    assert!(output.error.is_none(), "{output:?}");
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests[1].to_string().contains("fixture-content"),
+        "{}",
+        requests[1]
+    );
+}
+
+/// 名字缺失且参数无法对应任何工具：不能以空名字执行，历史里也不能出现
+/// 「Tool  not found」；本轮直接结束并留下可读原因。
+#[test]
+fn chat_completions_never_executes_a_nameless_tool_call() {
+    let (address, server) = serve_sse(vec![chat_sse(
+        &[
+            chat_tool_call_delta(0, Some("call_1"), None, Some(r#"{"zzz":1}"#)),
+            chat_finish_chunk("tool_calls"),
+        ],
+        true,
+    )]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::ChatCompletions, "做点事", &workspace);
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 1, "未执行的调用不能进入下一轮");
+    let history = serde_json::to_string(&output.history).unwrap();
+    assert!(!history.contains("Tool  not found"), "{history}");
+    assert!(history.contains("缺少名称"), "{history}");
 }
 
 /// 有的网关只发 finish_reason 就关闭连接，不发 `[DONE]`；响应仍按完成处理，
@@ -736,101 +729,3 @@ fn ai_chat_completions_keeps_many_plain_turns_append_only() {
     verify_many_plain_turns(Protocol::ChatCompletions);
 }
 
-/// 自动重试只为当次请求补纠正提示；它不能进入历史，否则后续每一轮都会
-/// 重复看到一条无意义的指令。
-#[test]
-fn anthropic_retry_note_does_not_leak_into_the_next_turn() {
-    let (address, server) = serve_sse(vec![
-        anthropic_tool_call_events("read_document", r#"{"path":"note"#, true),
-        anthropic_tool_call_events("read_document", r#"{"path":"note.md"}"#, true),
-        anthropic_text_events("第一轮完成"),
-        anthropic_text_events("第二轮完成"),
-    ]);
-    let workspace = fixture_workspace();
-    let first = run_against(address.clone(), Protocol::Messages, "先读 note.md", &workspace);
-    assert!(first.error.is_none(), "{first:?}");
-    let second = run_against_with_history(
-        address,
-        Protocol::Messages,
-        "继续",
-        first.history,
-        &workspace,
-    );
-    assert!(second.error.is_none(), "{second:?}");
-    let requests = server.join().unwrap();
-    assert_eq!(requests.len(), 4);
-    for (turn, body) in requests.iter().enumerate().skip(2) {
-        assert!(
-            !body.to_string().contains("上一次的工具调用参数"),
-            "第 {turn} 个请求不能带上重试纠正提示：{body}"
-        );
-    }
-    assert!(
-        requests[3].to_string().contains("fixture-content"),
-        "下一轮必须带着上一轮的工具结果：{}",
-        requests[3]
-    );
-}
-
-/// 一轮里一个可解析、一个真截断：可解析的照常执行，坏的保留未执行占位，
-/// 不为它重跑整轮（那会丢掉已经执行成功的结果）。
-#[test]
-fn anthropic_mixed_calls_keep_the_parseable_one_and_surface_the_truncated_one() {
-    let (address, server) = serve_sse(vec![
-        anthropic_tool_blocks_events(&[
-            AnthropicToolBlock {
-                id: "call_1",
-                name: "read_document",
-                arguments: r#"{"path":"note.md"}"#,
-                close: BlockClose::Missing,
-            },
-            AnthropicToolBlock {
-                id: "call_2",
-                name: "search_documents",
-                arguments: r#"{"query":"#,
-                close: BlockClose::Stop,
-            },
-        ]),
-        anthropic_text_events("Done"),
-    ]);
-    let workspace = fixture_workspace();
-    let output = run_against(address, Protocol::Messages, "读取并搜索", &workspace);
-    let requests = server.join().unwrap();
-    assert!(output.error.is_none(), "{output:?}");
-    assert_eq!(requests.len(), 2, "不重跑整轮：合法调用已执行");
-    let second = requests[1].to_string();
-    assert!(second.contains("fixture-content"), "{second}");
-    assert!(second.contains("not executed"), "{second}");
-}
-
-/// 真正被截断的参数解析不了，只能补一条纠正提示重试一次；重试成功后整轮
-/// 继续，用户看不到「not executed」。
-#[test]
-fn anthropic_truncated_arguments_are_retried_and_the_run_continues() {
-    let (address, server) = serve_sse(vec![
-        anthropic_tool_call_events("read_document", r#"{"path":"note"#, true),
-        anthropic_tool_call_events("read_document", r#"{"path":"note.md"}"#, true),
-        anthropic_text_events("Done"),
-    ]);
-    let workspace = fixture_workspace();
-    let output = run_against(address, Protocol::Messages, "读取 note.md", &workspace);
-    let requests = server.join().unwrap();
-    assert!(output.error.is_none(), "{output:?}");
-    assert_eq!(requests.len(), 3, "第一次参数不可用后必须自动重试一次");
-    assert!(
-        requests[1].to_string().contains("上一次的工具调用参数"),
-        "重试请求必须带纠正提示：{}",
-        requests[1]
-    );
-    assert!(
-        requests[2].to_string().contains("fixture-content"),
-        "重试成功后工具必须真的执行：{}",
-        requests[2]
-    );
-    assert!(
-        !serde_json::to_string(&output.history)
-            .unwrap()
-            .contains("not executed"),
-        "历史里不能留下「未执行」占位：{output:?}"
-    );
-}

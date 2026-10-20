@@ -281,49 +281,6 @@ fn ai_runtime_reports_tool_call_arguments_and_results_for_the_trace() {
     assert!(!ends[1].2.is_empty(), "失败也要给出原因：{:?}", ends[1]);
 }
 
-struct StalledProvider;
-
-#[async_trait::async_trait]
-impl StreamProvider for StalledProvider {
-    async fn stream(
-        &self,
-        _config: StreamConfig,
-        tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
-        _cancel: CancellationToken,
-    ) -> Result<Message, ProviderError> {
-        let _ = tx.send(StreamEvent::Start);
-        std::future::pending::<()>().await;
-        unreachable!()
-    }
-}
-
-#[test]
-fn ai_provider_stall_turns_into_a_retryable_error_instead_of_waiting_forever() {
-    let provider = ToolArgumentRecoveryProvider::with_stall_timeout(
-        Arc::new(StalledProvider),
-        Duration::from_millis(50),
-    );
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let result = runtime.block_on(async {
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            provider.stream(
-                StreamConfig::new("mock", "key"),
-                tokio::sync::mpsc::unbounded_channel().0,
-                CancellationToken::new(),
-            ),
-        )
-        .await
-    });
-    let error = result
-        .expect("无数据超时必须结束请求")
-        .expect_err("挂起的 provider 不能当作成功");
-    assert!(
-        matches!(&error, ProviderError::Network(message) if message.contains("没有返回数据")),
-        "超时必须返回可重试的网络错误：{error:?}"
-    );
-}
-
 #[test]
 fn ai_runtime_executes_multiple_tools_in_one_turn() {
     let workspace = Arc::new(Mutex::new(

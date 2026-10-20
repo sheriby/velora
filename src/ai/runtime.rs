@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 use yoagent::provider::{
     ApiProtocol, ModelConfig, ProviderError, StreamConfig, StreamEvent, StreamProvider,
+    ToolDefinition,
 };
 use yoagent::{
     AgentContext, AgentEvent, AgentMessage, AgentTool, Content, Message, StopReason, StreamDelta,
@@ -146,7 +147,12 @@ pub(crate) async fn run_with_provider(
             ..RunOutput::default()
         });
     }
-    let provider: Arc<dyn StreamProvider> = Arc::new(ToolArgumentRecoveryProvider::new(provider));
+    let provider = if request.model.api == ApiProtocol::OpenAiCompletions {
+        let provider: Arc<dyn StreamProvider> = Arc::new(ChatToolNameRepairProvider::new(provider));
+        provider
+    } else {
+        provider
+    };
     let history: Vec<AgentMessage> = request
         .history
         .into_iter()
@@ -418,81 +424,61 @@ impl AgentTool for DocumentTool {
     }
 }
 
-struct TrackedToolCall {
+#[derive(Default)]
+struct TrackedToolName {
     id: String,
     name: String,
-    arguments: String,
 }
 
-/// Anthropic 适配层在 `content_block_stop` 缺失或没有 index 时，会把已经流完
-/// 的参数留在累加缓冲里，并把整轮判为 Error；agent loop 见到 Error 直接结束。
-/// 这里在 provider 与 loop 之间补两层：参数可解析的调用还原后继续执行，
-/// 真正截断的调用追加一条纠正提示重试一次，用户不再看到整轮 abort。
-struct ToolArgumentRecoveryProvider {
+/// Chat Completions 网关可能完全不转发 `function.name`，或者在中途用空字符串
+/// 覆盖它；适配层最终给出名字为空的工具调用，agent loop 按名字查工具只能得到
+/// 「Tool  not found」。在消息交给 loop 之前补齐名字，其余内容与事件原样透传。
+struct ChatToolNameRepairProvider {
     inner: Arc<dyn StreamProvider>,
-    stall_timeout: std::time::Duration,
 }
 
-impl ToolArgumentRecoveryProvider {
+impl ChatToolNameRepairProvider {
     fn new(inner: Arc<dyn StreamProvider>) -> Self {
-        Self {
-            inner,
-            stall_timeout: std::time::Duration::from_secs(120),
-        }
-    }
-
-    #[cfg(test)]
-    fn with_stall_timeout(
-        inner: Arc<dyn StreamProvider>,
-        stall_timeout: std::time::Duration,
-    ) -> Self {
-        Self {
-            inner,
-            stall_timeout,
-        }
+        Self { inner }
     }
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl StreamProvider for ToolArgumentRecoveryProvider {
+impl StreamProvider for ChatToolNameRepairProvider {
     async fn stream(
         &self,
-        mut config: StreamConfig,
+        config: StreamConfig,
         tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
         cancel: CancellationToken,
     ) -> Result<Message, ProviderError> {
-        let (mut message, calls) = forward_provider_stream(
-            self.inner.clone(),
-            config.clone(),
-            &tx,
-            cancel.clone(),
-            self.stall_timeout,
-        )
-        .await?;
-        if salvage_unusable_tool_calls(&mut message, &calls) {
-            let _ = tx.send(StreamEvent::Done {
-                message: message.clone(),
-            });
-            return Ok(message);
-        }
-        if !unusable_tool_arguments(&message)
-            || cancel.is_cancelled()
-            || !push_recovery_note(&mut config)
-        {
-            let _ = tx.send(StreamEvent::Done {
-                message: message.clone(),
-            });
-            return Ok(message);
-        }
-        let (mut retried, _) =
-            forward_provider_stream(self.inner.clone(), config, &tx, cancel, self.stall_timeout)
-                .await?;
-        carry_usage(&mut retried, &message);
-        let _ = tx.send(StreamEvent::Done {
-            message: retried.clone(),
-        });
-        Ok(retried)
+        let tools = config.tools.clone();
+        let (inner_tx, mut inner_rx) = tokio::sync::mpsc::unbounded_channel();
+        let stream = self.inner.stream(config, inner_tx, cancel);
+        tokio::pin!(stream);
+        let mut names = BTreeMap::new();
+        let mut closed = false;
+        let mut message = loop {
+            tokio::select! {
+                biased;
+                result = &mut stream => {
+                    while let Ok(event) = inner_rx.try_recv() {
+                        track_tool_name(&event, &mut names);
+                        let _ = tx.send(event);
+                    }
+                    break result?;
+                }
+                event = inner_rx.recv(), if !closed => match event {
+                    Some(event) => {
+                        track_tool_name(&event, &mut names);
+                        let _ = tx.send(event);
+                    }
+                    None => closed = true,
+                },
+            }
+        };
+        repair_tool_call_names(&mut message, &names, &tools);
+        Ok(message)
     }
 
     fn protocol(&self) -> Option<ApiProtocol> {
@@ -500,204 +486,127 @@ impl StreamProvider for ToolArgumentRecoveryProvider {
     }
 }
 
-async fn forward_provider_stream(
-    inner: Arc<dyn StreamProvider>,
-    config: StreamConfig,
-    tx: &tokio::sync::mpsc::UnboundedSender<StreamEvent>,
-    cancel: CancellationToken,
-    stall_timeout: std::time::Duration,
-) -> std::result::Result<(Message, BTreeMap<usize, TrackedToolCall>), ProviderError> {
-    let (inner_tx, mut inner_rx) = tokio::sync::mpsc::unbounded_channel();
-    // 子令牌只取消本次尝试：看门狗触发时不能把整轮任务标记为“已停止”。
-    let attempt_cancel = cancel.child_token();
-    let stream = inner.stream(config, inner_tx, attempt_cancel.clone());
-    tokio::pin!(stream);
-    let deadline = tokio::time::sleep(stall_timeout);
-    tokio::pin!(deadline);
-    let mut calls = BTreeMap::new();
-    let mut done = None;
-    let mut closed = false;
-    loop {
-        tokio::select! {
-            biased;
-            result = &mut stream => {
-                while let Ok(event) = inner_rx.try_recv() {
-                    track_stream_event(event, tx, &mut calls, &mut done);
-                }
-                let message = result?;
-                return Ok((done.unwrap_or(message), calls));
-            }
-            event = inner_rx.recv(), if !closed => {
-                deadline
-                    .as_mut()
-                    .reset(tokio::time::Instant::now() + stall_timeout);
-                match event {
-                    Some(event) => track_stream_event(event, tx, &mut calls, &mut done),
-                    None => closed = true,
-                }
-            }
-            _ = &mut deadline => {
-                attempt_cancel.cancel();
-                return Err(ProviderError::Network(format!(
-                    "模型服务在 {stall_timeout:?} 内没有返回数据，已中断本次请求"
-                )));
-            }
+fn track_tool_name(event: &StreamEvent, names: &mut BTreeMap<usize, TrackedToolName>) {
+    if let StreamEvent::ToolCallStart {
+        content_index,
+        id,
+        name,
+    } = event
+    {
+        let tracked = names.entry(*content_index).or_default();
+        if tracked.id.is_empty() {
+            tracked.id = id.clone();
+        }
+        // 网关可能先给名字、再补一条空名字；空值不能覆盖已经拿到的名字。
+        if !name.is_empty() {
+            tracked.name = name.clone();
         }
     }
 }
 
-fn track_stream_event(
-    event: StreamEvent,
-    tx: &tokio::sync::mpsc::UnboundedSender<StreamEvent>,
-    calls: &mut BTreeMap<usize, TrackedToolCall>,
-    done: &mut Option<Message>,
-) {
-    match &event {
-        StreamEvent::ToolCallStart {
-            content_index,
-            id,
-            name,
-        } => {
-            calls.insert(
-                *content_index,
-                TrackedToolCall {
-                    id: id.clone(),
-                    name: name.clone(),
-                    arguments: String::new(),
-                },
-            );
-        }
-        StreamEvent::ToolCallDelta {
-            content_index,
-            delta,
-        } => {
-            if let Some(call) = calls.get_mut(content_index) {
-                call.arguments.push_str(delta);
-            }
-        }
-        StreamEvent::Done { message } => {
-            *done = Some(message.clone());
-            return;
-        }
-        _ => {}
-    }
-    let _ = tx.send(event);
-}
-
-const UNUSABLE_PLACEHOLDER_PREFIX: &str = "[tool call `";
-const UNUSABLE_PLACEHOLDER_SUFFIX: &str =
-    "` not executed: the turn failed on unusable tool arguments]";
-
-fn unusable_placeholder_tool(text: &str) -> Option<&str> {
-    text.strip_prefix(UNUSABLE_PLACEHOLDER_PREFIX)?
-        .strip_suffix(UNUSABLE_PLACEHOLDER_SUFFIX)
-}
-
-fn unusable_tool_arguments(message: &Message) -> bool {
-    matches!(
-        message,
-        Message::Assistant {
-            stop_reason: StopReason::Error,
-            error_message: Some(detail),
-            ..
-        } if detail.contains("unusable arguments")
-    )
-}
-
-/// 适配层已经判死的调用里，参数本身完整的那些还原成工具调用；返回是否至少
-/// 还原了一个。没有还原任何调用时保持原消息，交给重试路径。
-fn salvage_unusable_tool_calls(
+fn repair_tool_call_names(
     message: &mut Message,
-    calls: &BTreeMap<usize, TrackedToolCall>,
-) -> bool {
+    names: &BTreeMap<usize, TrackedToolName>,
+    tools: &[ToolDefinition],
+) {
     let Message::Assistant {
         content,
         stop_reason,
-        error_message,
         ..
     } = message
     else {
-        return false;
+        return;
     };
-    let tracked: Vec<&TrackedToolCall> = calls.values().collect();
-    let mut used = vec![false; tracked.len()];
-    let mut rebuilt = Vec::with_capacity(content.len());
-    let mut replaced = 0;
-    for block in content.iter() {
-        let Content::Text { text } = block else {
-            rebuilt.push(block.clone());
-            continue;
-        };
-        let Some(name) = unusable_placeholder_tool(text) else {
-            rebuilt.push(block.clone());
-            continue;
-        };
-        let Some(index) = tracked
-            .iter()
-            .enumerate()
-            .find_map(|(index, call)| (!used[index] && call.name == name).then_some(index))
+    let tracked: Vec<&TrackedToolName> = names.values().collect();
+    let mut ordinal = 0;
+    for block in content.iter_mut() {
+        let Content::ToolCall {
+            id,
+            name,
+            arguments,
+            ..
+        } = block
         else {
-            rebuilt.push(block.clone());
             continue;
         };
-        let call = tracked[index];
-        let arguments = yoagent::provider::parse_tool_arguments(&call.arguments);
-        if yoagent::provider::unparsed_tool_arguments(&arguments).is_some() {
-            rebuilt.push(block.clone());
+        ordinal += 1;
+        if name.is_empty() {
+            *name = tracked
+                .get(ordinal - 1)
+                .filter(|tracked| !tracked.name.is_empty())
+                .map(|tracked| tracked.name.clone())
+                .or_else(|| {
+                    tracked
+                        .iter()
+                        .find(|tracked| {
+                            !tracked.id.is_empty()
+                                && !tracked.name.is_empty()
+                                && tracked.id == *id
+                        })
+                        .map(|tracked| tracked.name.clone())
+                })
+                .or_else(|| infer_tool_name(arguments, tools))
+                .unwrap_or_default();
+        }
+        if id.is_empty() {
+            *id = format!("call_{ordinal}");
+        }
+    }
+    if !content
+        .iter()
+        .any(|block| matches!(block, Content::ToolCall { name, .. } if name.is_empty()))
+    {
+        return;
+    }
+    *content = content
+        .drain(..)
+        .map(|block| match block {
+            Content::ToolCall { name, arguments, .. } if name.is_empty() => Content::Text {
+                text: format!("[工具调用缺少名称，本轮未执行；参数：{arguments}]"),
+            },
+            block => block,
+        })
+        .collect();
+    if matches!(stop_reason, StopReason::ToolUse) {
+        *stop_reason = StopReason::Stop;
+    }
+}
+
+fn infer_tool_name(arguments: &Value, tools: &[ToolDefinition]) -> Option<String> {
+    let object = arguments.as_object()?;
+    // 有的网关把整次调用包进参数：{"name": "...", "arguments": {...}}。
+    if let Some(Value::String(name)) = object.get("name") {
+        if tools.iter().any(|tool| tool.name == *name) {
+            return Some(name.clone());
+        }
+    }
+    let mut candidates = Vec::new();
+    for tool in tools {
+        let Some(properties) = tool.parameters.get("properties").and_then(Value::as_object) else {
+            continue;
+        };
+        let required = tool
+            .parameters
+            .get("required")
+            .and_then(Value::as_array)
+            .map(|fields| fields.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .unwrap_or_default();
+        if !required.iter().all(|field| object.contains_key(*field)) {
             continue;
         }
-        used[index] = true;
-        rebuilt.push(Content::tool_call(
-            call.id.clone(),
-            call.name.clone(),
-            arguments,
-        ));
-        replaced += 1;
+        if !object.keys().all(|key| properties.contains_key(key)) {
+            continue;
+        }
+        candidates.push(tool);
     }
-    if replaced == 0 {
-        return false;
+    // {"path": ...} 同时符合 read_document、get_outline 与 reset_proposal，
+    // 参数本身无法区分；读取正文最常见，按这个顺序兜底。
+    for preferred in ["read_document", "get_outline", "reset_proposal"] {
+        if candidates.iter().any(|tool| tool.name == preferred) {
+            return Some(preferred.to_string());
+        }
     }
-    *content = rebuilt;
-    *stop_reason = StopReason::ToolUse;
-    *error_message = None;
-    true
-}
-
-const TOOL_ARGUMENT_RECOVERY_NOTE: &str = "上一次的工具调用参数不是合法 JSON，工具没有执行。请重新调用同一个工具，参数必须是完整的 JSON 对象（字符串内的换行与引号要转义），不要重复已经写过的说明。";
-
-fn push_recovery_note(config: &mut StreamConfig) -> bool {
-    let Some(Message::User { content, .. }) = config
-        .messages
-        .iter_mut()
-        .rev()
-        .find(|message| matches!(message, Message::User { .. }))
-    else {
-        return false;
-    };
-    content.push(Content::Text {
-        text: TOOL_ARGUMENT_RECOVERY_NOTE.into(),
-    });
-    true
-}
-
-fn carry_usage(retried: &mut Message, failed: &Message) {
-    if let (
-        Message::Assistant {
-            usage: retried_usage,
-            ..
-        },
-        Message::Assistant {
-            usage: failed_usage,
-            ..
-        },
-    ) = (retried, failed)
-    {
-        retried_usage.input += failed_usage.input;
-        retried_usage.output += failed_usage.output;
-        retried_usage.cache_read += failed_usage.cache_read;
-        retried_usage.cache_write += failed_usage.cache_write;
-        retried_usage.total_tokens += failed_usage.total_tokens;
-    }
+    candidates.first().map(|tool| tool.name.clone())
 }
 
 #[cfg(test)]
