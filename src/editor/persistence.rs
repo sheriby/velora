@@ -225,6 +225,10 @@ fn autosave_payload(document: &PendingAutosaveDocument, disk_raw: &[u8]) -> Vec<
 }
 
 pub(crate) fn file_content_version(markdown: &str) -> u64 {
+    // 没有 CR 就不必为规范化再拷一份全文：AI 的每次 read_document 都会算版本。
+    if !markdown.contains('\r') {
+        return file_content_version_normalized(markdown);
+    }
     let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
     file_content_version_normalized(&normalized)
 }
@@ -1041,6 +1045,25 @@ impl Editor {
 mod tests {
     use super::{canonical_write_target, safe_code_fence, safe_code_fence_with_info, write_atomic};
     use std::path::PathBuf;
+
+    /// 版本按规范化后的换行计算：同一份内容的 LF / CRLF / 裸 CR 必须同版本，
+    /// 否则 AI 的读取记录会在换行风格变化后误判「内容已变化」。
+    #[test]
+    fn content_version_ignores_line_ending_style() {
+        let lf = "a\nb\nc";
+        assert_eq!(
+            super::file_content_version(lf),
+            super::file_content_version("a\r\nb\r\nc")
+        );
+        assert_eq!(
+            super::file_content_version(lf),
+            super::file_content_version("a\rb\rc")
+        );
+        assert_ne!(
+            super::file_content_version(lf),
+            super::file_content_version("a\nb\nc ")
+        );
+    }
 
     /// 保存侧与标签侧「同一个文件的那条路径键」必须由同一个函数给出。
     ///

@@ -42,6 +42,11 @@ impl LoadedDocument {
 }
 
 pub(crate) fn normalize_document_text(text: &str) -> String {
+    // 磁盘上的文档绝大多数已经是 LF；两次 replace 即使没有命中也会各分配一份
+    // 全文，AI 每读一次文档都要付这笔拷贝。
+    if !text.contains('\r') {
+        return text.to_owned();
+    }
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
@@ -103,6 +108,14 @@ mod tests {
     fn utf8_passes_through_unchanged() {
         let text = "# 标题\n\n正文 emoji 🎉\n";
         assert_eq!(decode_document_bytes(text.as_bytes().to_vec()), text);
+    }
+
+    #[test]
+    fn normalize_document_text_collapses_crlf_and_bare_cr() {
+        assert_eq!(normalize_document_text("a\nb\nc"), "a\nb\nc");
+        assert_eq!(normalize_document_text("a\r\nb\r\nc"), "a\nb\nc");
+        assert_eq!(normalize_document_text("a\rb\rc"), "a\nb\nc");
+        assert_eq!(normalize_document_text("a\r\n\rb"), "a\n\nb");
     }
 
     #[test]
