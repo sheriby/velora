@@ -233,6 +233,8 @@ pub(crate) fn select_release(
     Ok(UpdateCheckResult::UpdateAvailable(info))
 }
 
+// 测试构建里代理那一步被 cfg 掉，`builder` 不再被改写；mut 只在生产路径需要。
+#[cfg_attr(test, allow(unused_mut))]
 fn update_client(timeout: Duration) -> anyhow::Result<reqwest::blocking::Client> {
     let mut builder = reqwest::blocking::Client::builder();
     // 后台线程拿不到 `cx`，代理直接读盘上的那份设置。测试里直连：同进程并发跑的

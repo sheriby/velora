@@ -11,6 +11,8 @@
 
 use gpui::App;
 
+// 只有下面两个 `#[cfg(not(test))]` 的函数读它，测试构建里得跟着一起收。
+#[cfg(not(test))]
 use crate::config::EditorSettings;
 
 /// 环境变量要写的键名：大写是 curl/reqwest 的常规读法，小写是部分工具的要求。
@@ -24,6 +26,10 @@ const ENVIRONMENT_KEYS: [&str; 6] = [
 ];
 
 /// 偏好里配置的代理地址；空白串按「没设置」处理。
+///
+/// 只在生产构建里存在：唯一的调用方是 [`reqwest_proxy`]，而它在测试进程里被
+/// 整段绕开（见 net/mod.rs 的 `#[cfg(not(test))]`），留着就是测试构建的死代码。
+#[cfg(not(test))]
 pub(crate) fn configured_url(cx: &App) -> Option<String> {
     let url = EditorSettings::proxy_url(cx);
     let url = url.trim().to_string();
@@ -32,6 +38,7 @@ pub(crate) fn configured_url(cx: &App) -> Option<String> {
 
 /// 给本应用自建的 `reqwest` 客户端用的代理；地址写错时按直连处理并留下可见日志，
 /// 不让一次笔误把所有网络功能一起停掉。
+#[cfg(not(test))]
 pub(crate) fn reqwest_proxy(cx: &App) -> Option<reqwest::Proxy> {
     let url = configured_url(cx)?;
     match reqwest::Proxy::all(&url) {

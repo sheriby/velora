@@ -1417,8 +1417,7 @@ fn ai_empty_floating_panel_can_be_resized_too(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn ai_assistant_text_can_be_selected_with_the_mouse(cx: &mut TestAppContext) {
-    use gpui::{AppContext as _, Entity, InteractiveElement as _, ParentElement as _, Styled as _};
-    use gpui_kit::test::TestWindowExt as _;
+    use gpui::{AppContext as _, Entity, ParentElement as _, Styled as _};
     // 真实窗口的内容根是 Kit 的 Root，它挂载 TextSelectionLayer；测试窗口
     // 需要显式复刻这一层，选择系统才能在抬手后完成选区。
     struct SelectionRoot {
@@ -1455,9 +1454,6 @@ fn ai_assistant_text_can_be_selected_with_the_mouse(cx: &mut TestAppContext) {
     });
     draw(cx);
     draw(cx);
-    let session_id = editor.read_with(cx, |editor, _| {
-        editor.ai_session.as_ref().unwrap().saved.id.clone()
-    });
     // 以文本自身 bounds 取点击位置：行容器含内边距，竖直中心未必落在文本行上。
     let row = editor.read_with(cx, |editor, cx| {
         editor
