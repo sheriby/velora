@@ -295,6 +295,9 @@ fn render_mermaid_with_theme(source: &str, dark: bool) -> anyhow::Result<String>
     if !looks_like_supported_mermaid_source(source) {
         return Err(anyhow::anyhow!("unsupported Mermaid diagram"));
     }
+    // 作者常给 classDef/style 配浅色填充却漏掉 color；深色主题的白字会直接
+    // 变成浅底白字。按填充亮度补一个对比文字色，主题只提供其余默认值。
+    let source = ensure_authored_fill_text_contrast(source);
     let config = MermaidConfig::from_value(serde_json::json!({
         "layout": "dagre",
         "theme": if dark { "dark" } else { "default" },
@@ -311,15 +314,117 @@ fn render_mermaid_with_theme(source: &str, dark: bool) -> anyhow::Result<String>
         pipeline: Some(SvgPipeline::resvg_safe()),
         ..Default::default()
     };
-    let output = renderer.render(RenderRequest::svg(source, OperationControl::new(), request))?;
+    let output = renderer.render(RenderRequest::svg(&source, OperationControl::new(), request))?;
     let RenderOutput::Svg(Some(svg)) = output else {
         return Err(anyhow!("Mermaid renderer produced no diagram"));
     };
     Ok(svg.into_parts().0)
 }
 
+const AUTHORED_DARK_TEXT: &str = "#1f2328";
+const AUTHORED_LIGHT_TEXT: &str = "#f0f6fc";
+
+fn ensure_authored_fill_text_contrast(source: &str) -> String {
+    let mut output = String::with_capacity(source.len() + 32);
+    for line in source.lines() {
+        match rewritten_style_line(line) {
+            Some(rewritten) => output.push_str(&rewritten),
+            None => output.push_str(line),
+        }
+        output.push('\n');
+    }
+    output
+}
+
+fn rewritten_style_line(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let indent = &line[..line.len() - trimmed.len()];
+    for keyword in ["classDef ", "style "] {
+        if let Some(rest) = trimmed.strip_prefix(keyword)
+            && let Some(styles) = styles_with_contrast_text(rest)
+        {
+            return Some(format!("{indent}{keyword}{styles}"));
+        }
+    }
+    None
+}
+
+/// `rest` 形如 `name fill:#fff8e1,stroke:#f9a825`；只补 `color`，不动作者
+/// 已经写明的颜色，也不猜非十六进制/非 rgb 的填充。
+fn styles_with_contrast_text(rest: &str) -> Option<String> {
+    let split = rest.find(char::is_whitespace)?;
+    let (target, styles) = rest.split_at(split);
+    let styles = styles.trim_start();
+    if styles.is_empty() {
+        return None;
+    }
+    let mut fill = None;
+    for part in styles.split(',') {
+        let Some((key, value)) = part.split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.eq_ignore_ascii_case("color") {
+            return None;
+        }
+        if key.eq_ignore_ascii_case("fill") {
+            fill = Some(value.trim());
+        }
+    }
+    let text = if relative_luminance(fill?)? >= 0.179 {
+        AUTHORED_DARK_TEXT
+    } else {
+        AUTHORED_LIGHT_TEXT
+    };
+    Some(format!("{target} {styles},color:{text}"))
+}
+
+fn relative_luminance(value: &str) -> Option<f32> {
+    let value = value.trim();
+    let (r, g, b) = if let Some(hex) = value.strip_prefix('#') {
+        let component = |part: Option<&str>| -> Option<f32> {
+            let part = part?;
+            let channel = if part.len() == 1 {
+                u8::from_str_radix(part, 16).ok().map(|v| f32::from(v) * 17.0)?
+            } else {
+                f32::from(u8::from_str_radix(part, 16).ok()?)
+            };
+            Some(channel / 255.0)
+        };
+        match hex.len() {
+            3 => (
+                component(hex.get(0..1))?,
+                component(hex.get(1..2))?,
+                component(hex.get(2..3))?,
+            ),
+            6 | 8 => (
+                component(hex.get(0..2))?,
+                component(hex.get(2..4))?,
+                component(hex.get(4..6))?,
+            ),
+            _ => return None,
+        }
+    } else {
+        let inner = value.strip_prefix("rgb(")?.strip_suffix(')')?;
+        let mut parts = inner.split(',').map(|part| part.trim().parse::<f32>().ok());
+        (
+            parts.next()?? / 255.0,
+            parts.next()?? / 255.0,
+            parts.next()?? / 255.0,
+        )
+    };
+    let channel = |value: f32| {
+        if value <= 0.03928 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    Some(0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b))
+}
+
 /// SVG 缓存键的格式版本串：渲染器/键口径升级后旧档自然失效。
-const MERMAID_SVG_CACHE_VERSION: &str = "mermaid-svg-v3";
+const MERMAID_SVG_CACHE_VERSION: &str = "mermaid-svg-v4";
 
 /// Stable cache key for Mermaid content.
 pub(crate) fn mermaid_cache_key(source: &str) -> String {
@@ -1237,12 +1342,53 @@ flowchart TD
     #[test]
     fn cache_keys_carry_a_format_version() {
         assert!(
-            mermaid_cache_key("flowchart LR").starts_with("mermaid-svg-v3-"),
+            mermaid_cache_key("flowchart LR").starts_with("mermaid-svg-v4-"),
             "base 键缺版本前缀"
         );
         assert!(
-            mermaid_display_cache_key("flowchart LR", 1.0).starts_with("mermaid-svg-v3-"),
+            mermaid_display_cache_key("flowchart LR", 1.0).starts_with("mermaid-svg-v4-"),
             "display 键缺版本前缀"
+        );
+    }
+
+    /// 浅色填充（作者常写的 `fill:#fff8e1`）在深色主题里会撞上白字；
+    /// 必须按亮度补深色文字，浅色主题下同样保持可读。
+    #[test]
+    fn authored_light_fills_get_contrasting_text() {
+        let source = "flowchart LR\n A{决定} --> B[完成]\n classDef decision fill:#fff8e1,stroke:#f9a825\n class A decision";
+        for (dark, svg) in [
+            (false, render_mermaid_raw(source).unwrap()),
+            (true, render_mermaid_dark_raw(source).unwrap()),
+        ] {
+            assert!(
+                svg.contains(AUTHORED_DARK_TEXT),
+                "浅色填充必须显式写入深色文字（dark={dark}）：{svg}"
+            );
+        }
+    }
+
+    #[test]
+    fn authored_dark_fills_get_light_text() {
+        let source = "flowchart LR\n A[夜间] --> B[完成]\n classDef night fill:#1f2020,stroke:#444\n class A night";
+        let svg = render_mermaid_dark_raw(source).unwrap();
+        assert!(svg.contains(AUTHORED_LIGHT_TEXT), "深色填充必须写浅色文字：{svg}");
+    }
+
+    #[test]
+    fn authored_explicit_text_color_is_left_alone() {
+        let source = "flowchart LR\n A[作者指定] --> B[完成]\n classDef custom fill:#fff8e1,color:#123456\n class A custom";
+        let svg = render_mermaid_raw(source).unwrap();
+        assert!(svg.contains("123456"), "作者写明的颜色不能覆盖：{svg}");
+        assert!(!svg.contains(AUTHORED_DARK_TEXT), "已有 color 时不能再补一条：{svg}");
+    }
+
+    #[test]
+    fn named_fill_colors_are_left_untouched() {
+        let source = "flowchart LR\n A[命名色] --> B[完成]\n classDef named fill:lightgoldenrodyellow\n class A named";
+        let svg = render_mermaid_raw(source).unwrap();
+        assert!(
+            !svg.contains(AUTHORED_DARK_TEXT) && !svg.contains(AUTHORED_LIGHT_TEXT),
+            "无法计算亮度的填充不能瞎补文字色：{svg}"
         );
     }
 

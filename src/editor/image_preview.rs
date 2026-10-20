@@ -307,6 +307,13 @@ impl Editor {
                         editor.close_mermaid_preview(window, cx);
                     })),
             );
+        // 深色主题的 SVG 里连线和子图都是为深色背景配的；预览画布必须跟着
+        // 图表主题走，白色画布会让浅色连线几乎看不见。
+        let canvas_background = if theme.is_dark() {
+            c.editor_background
+        } else {
+            white()
+        };
         let canvas = div()
             .id("mermaid-preview-viewport")
             .debug_selector(|| "mermaid-preview-viewport".into())
@@ -314,7 +321,7 @@ impl Editor {
             .w(viewport.width)
             .h(viewport.height)
             .overflow_hidden()
-            .bg(white())
+            .bg(canvas_background)
             .cursor(CursorStyle::OpenHand)
             .on_scroll_wheel(cx.listener(|editor, event: &ScrollWheelEvent, _, cx| {
                 cx.stop_propagation();
