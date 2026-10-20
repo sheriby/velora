@@ -543,6 +543,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) ai_panel_stop: Option<String>,
     pub(crate) ai_panel_running: Option<String>,
     pub(crate) ai_tool_trace: Option<String>,
+    pub(crate) ai_thinking_title: Option<String>,
+    pub(crate) preferences_ai_show_thinking: Option<String>,
     pub(crate) ai_tool_running: Option<String>,
     pub(crate) ai_tool_failed: Option<String>,
     pub(crate) preferences_ai_api_base_url: Option<String>,

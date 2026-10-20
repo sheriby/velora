@@ -30,7 +30,7 @@
 
 `experience.rs` 管理原位审阅。`inline_review.rs:tracked_document` 从正式原文与待接受版本生成包含删除和新增块的只读投影；块边界取自两份文档的既有解析树，不重新猜测 Markdown 语法。删除为红色、新增为绿色，当前修改的底部操作区提供接受与拒绝，使用 Kit `Button` 并参与正常行布局，不悬浮遮住正文。跨文档导航、重试和批量接受留在浮窗中。
 
-阅读结果与对话使用 Kit `Message`、`MessageScroller` 和 `TextViewState`，由 `messages.rs:MessageTranscript` 持有会话内的展示状态。消息按会话身份与源序号保持身份，只在进入可见区或预绘区时创建富文本状态；流式追加与完成共用同一视图，不拼接整段对话或创建新 `Editor`。停靠、回浮窗及追加内容保留选区和滚动；正在跟随时显示最新内容，向上阅读后不抢位置。快捷指令不重复展示用户指令，且没有追问输入。工具调用记录在 `SavedSession:tool_calls`，按 `message_index` 归属发起它的 assistant 消息；会话下方的轨迹默认收起，展开后按时间顺序显示名称、参数摘要、状态与结果摘要，失败轮回滚时一并清理，恢复会话时停在 Running 的记录按失败收口。
+阅读结果与对话使用 Kit `Message`、`MessageScroller` 和 `TextViewState`，由 `messages.rs:MessageTranscript` 持有会话内的展示状态。消息按会话身份与源序号保持身份，只在进入可见区或预绘区时创建富文本状态；流式追加与完成共用同一视图，不拼接整段对话或创建新 `Editor`。停靠、回浮窗及追加内容保留选区和滚动；正在跟随时显示最新内容，向上阅读后不抢位置。快捷指令不重复展示用户指令，且没有追问输入。工具调用记录在 `SavedSession:tool_calls`，按 `message_index` 归属发起它的 assistant 消息，在对话流里内联渲染成工具链条：模型还没吐字时逐步展开（一行一次调用），正文开始后自动收起，标题行可手动展开；失败轮回滚时一并清理，恢复会话时停在 Running 的记录按失败收口。模型思考过程存进 `ChatMessage:thinking` 只用于展示，「偏好设置 → AI」的开关控制是否渲染，同样默认收起、灰色小字、可展开。
 
 消息使用 Kit 安装的 Base TextView 主题默认值；0.7.3 的 Component 兼容层没有图片源解析接口，因此直接使用 Base 的 `image_source`，仍复用项目唯一的图片路径解析器。代码高亮继续使用现有语言规则和配色，每份主题保留同一个高亮闭包，代码复制使用 Kit `Clipboard`。公式和图表沿用既有渲染器，通过 GPUI `Asset` 在后台生成及缓存，资源就绪后刷新布局。括号公式混排由现有只读 `Block` 渲染，复用原语法和选择逻辑，不重写判据。
 

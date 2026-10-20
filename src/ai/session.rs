@@ -9,6 +9,9 @@ pub(crate) struct ChatMessage {
     pub role: String,
     /// 对话正文用 `Arc<str>`：渲染每帧引用历史消息，逐字节克隆会随轮数线性放大。
     pub text: std::sync::Arc<str>,
+    /// 模型的思考过程，仅用于界面展示，不回传给 API。
+    #[serde(default)]
+    pub thinking: std::sync::Arc<str>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

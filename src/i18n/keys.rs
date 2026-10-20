@@ -540,6 +540,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_panel_stop",
     "ai_panel_running",
     "ai_tool_trace",
+    "ai_thinking_title",
+    "preferences_ai_show_thinking",
     "ai_tool_running",
     "ai_tool_failed",
     "preferences_ai_api_base_url",

@@ -64,8 +64,6 @@ pub(super) struct AiSession {
     expanded: bool,
     /// 浮动窗收起到右下角图标；停靠侧栏不使用。
     collapsed: bool,
-    /// 工具调用轨迹默认收起，展开状态不落盘。
-    tool_trace_open: bool,
     /// 浮动任务窗的用户尺寸；None 表示默认尺寸。
     float_size: Option<Size<Pixels>>,
     /// 右下角缩放的起点与起始尺寸。
@@ -147,6 +145,8 @@ enum WorkerEvent {
 
 /// 轨迹只留最近这些条；完整对话在 history 里，界面轨迹不承担归档。
 const AI_TOOL_TRACE_LIMIT: usize = 200;
+/// 思考文本只用于界面展示，超过这个字符数就不再追加。
+const AI_THINKING_LIMIT: usize = 20_000;
 
 impl Editor {
     pub(in crate::editor) fn sync_ai_availability(&mut self, cx: &mut Context<Self>) {
@@ -1252,7 +1252,6 @@ impl Editor {
             visible: true,
             expanded,
             collapsed: false,
-            tool_trace_open: false,
             float_size: None,
             float_resize: None,
             mode: PanelMode::Task,
@@ -1549,6 +1548,7 @@ impl Editor {
             session.saved.messages.push(ChatMessage {
                 role: "user".into(),
                 text: instruction.into(),
+                thinking: "".into(),
             });
             session
                 .input
@@ -1687,6 +1687,7 @@ impl Editor {
         session.saved.messages.push(ChatMessage {
             role: "user".into(),
             text: instruction.into(),
+            thinking: "".into(),
         });
         session
             .input
@@ -1862,10 +1863,31 @@ impl Editor {
                     session.saved.messages.push(ChatMessage {
                         role: "assistant".into(),
                         text: String::new().into(),
+                        thinking: "".into(),
                     });
                     session.stream_index = session.saved.messages.len().checked_sub(1);
                 }
                 WorkerEvent::Runtime(RunEvent::Text(text)) => stream_delta.push_str(&text),
+                WorkerEvent::Runtime(RunEvent::Thinking(text)) => {
+                    if let Some(message) = session
+                        .stream_index
+                        .and_then(|index| session.saved.messages.get_mut(index))
+                    {
+                        let mut combined = String::with_capacity(message.thinking.len() + text.len());
+                        combined.push_str(&message.thinking);
+                        combined.push_str(&text);
+                        // 思考只服务界面展示，超长部分直接截断，不随会话落盘放大。
+                        if combined.char_indices().nth(AI_THINKING_LIMIT).is_some() {
+                            let end = combined
+                                .char_indices()
+                                .nth(AI_THINKING_LIMIT)
+                                .map(|(end, _)| end)
+                                .unwrap_or(combined.len());
+                            combined.truncate(end);
+                        }
+                        message.thinking = combined.into();
+                    }
+                }
                 WorkerEvent::Runtime(RunEvent::Activity(activity)) => session.activity = activity,
                 WorkerEvent::Runtime(RunEvent::ActivityDone) => session.activity.clear(),
                 WorkerEvent::Runtime(RunEvent::ToolCallStart {
@@ -2036,14 +2058,17 @@ impl Editor {
             return;
         };
         if let Some(conversation) = &session.conversation {
-            conversation.update(cx, |view, cx| view.sync(&session.saved, cx));
+            let show_thinking = session.settings.show_thinking;
+            conversation.update(cx, |view, cx| view.sync(&session.saved, show_thinking, cx));
             return;
         }
         if session.saved.messages.is_empty() {
             return;
         }
         let owner = cx.weak_entity();
-        let preview = cx.new(|cx| messages::MessageTranscript::new(owner, &session.saved, cx));
+        let show_thinking = session.settings.show_thinking;
+        let preview =
+            cx.new(|cx| messages::MessageTranscript::new(owner, &session.saved, show_thinking, cx));
         if let Some(session) = self.ai_session.as_mut() {
             session.conversation = Some(preview);
         }

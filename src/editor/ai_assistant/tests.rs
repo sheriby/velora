@@ -977,6 +977,7 @@ fn ai_stopping_a_response_keeps_the_received_text_readable_in_the_dialog(cx: &mu
             .push(crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: "# 已完成的部分\n\n保留这段说明。".into(),
+                thinking: "".into()
             });
         editor.stop_ai_task(cx);
     });
@@ -1081,6 +1082,7 @@ fn ai_reading_result_stays_in_a_floating_window_with_no_insertion_or_bottom_bars
             .push(crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: "## 解释\n\n只供阅读的结果。".into(),
+                thinking: "".into()
             });
         editor.refresh_ai_preview(cx);
     });
@@ -1256,6 +1258,7 @@ fn ai_conversation_keeps_secondary_commands_out_of_the_reading_surface(cx: &mut 
             .push(crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: "阅读结果".into(),
+                thinking: "".into()
             });
         editor.refresh_ai_preview(cx);
     });
@@ -1318,6 +1321,7 @@ fn ai_floating_panel_resizes_from_the_bottom_right_handle(cx: &mut TestAppContex
         session.saved.messages.push(crate::ai::session::ChatMessage {
             role: "assistant".into(),
             text: "回答".into(),
+            thinking: "".into()
         });
         editor.refresh_ai_conversation(cx);
     });
@@ -1403,16 +1407,19 @@ fn ai_empty_floating_panel_can_be_resized_too(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn ai_tool_calls_stay_collapsed_until_the_trace_is_opened(cx: &mut TestAppContext) {
+fn ai_tool_chain_expands_while_running_and_collapses_when_text_starts(cx: &mut TestAppContext) {
     initialize(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
     editor.update_in(cx, |editor, window, cx| {
         window.activate_window();
         editor.open_ai_assistant(AiCommand::Ask, window, cx);
-        editor.ai_session.as_mut().unwrap().mode = PanelMode::Task;
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.saved.running = true;
         editor.receive_ai_events(
             0,
             vec![
+                super::WorkerEvent::Runtime(super::RunEvent::AssistantStart),
                 super::WorkerEvent::Runtime(super::RunEvent::ToolCallStart {
                     id: "call-1".into(),
                     name: "search_documents".into(),
@@ -1430,38 +1437,122 @@ fn ai_tool_calls_stay_collapsed_until_the_trace_is_opened(cx: &mut TestAppContex
     });
     draw(cx);
     draw(cx);
-    let header = cx
-        .debug_bounds("ai-tool-trace")
-        .expect("工具轨迹标题应可见");
     assert!(
-        cx.debug_bounds("ai-tool-trace-body").is_none(),
-        "工具轨迹默认必须收起"
+        cx.debug_bounds("ai-tool-chain").is_some(),
+        "模型未吐字时应显示工具链条"
     );
-    assert!(cx.debug_bounds("ai-tool-call-0").is_none());
-
-    cx.simulate_click(header.center(), gpui::Modifiers::none());
-    draw(cx);
-    draw(cx);
     assert!(
-        cx.debug_bounds("ai-tool-trace-body").is_some(),
-        "点击标题后应展开轨迹"
+        cx.debug_bounds("ai-tool-chain-body").is_some(),
+        "模型未吐字时链条应自动展开"
     );
     assert!(
         cx.debug_bounds("ai-tool-call-0").is_some(),
-        "展开后应列出每次调用"
+        "展开后应逐步列出每次调用"
     );
 
+    editor.update_in(cx, |editor, _, cx| {
+        editor.receive_ai_events(
+            0,
+            vec![super::WorkerEvent::Runtime(super::RunEvent::Text(
+                "第一段正文".into(),
+            ))],
+            cx,
+        );
+    });
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-tool-chain-body").is_none(),
+        "正文开始后链条必须自动收起"
+    );
+    let header = cx
+        .debug_bounds("ai-tool-chain")
+        .expect("收起后标题行仍在，可再次展开");
+    cx.simulate_click(header.center(), gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-tool-chain-body").is_some(),
+        "点击标题后应再次展开"
+    );
+    let header = cx.debug_bounds("ai-tool-chain").unwrap();
     cx.simulate_click(header.center(), gpui::Modifiers::none());
     draw(cx);
     assert!(
-        cx.debug_bounds("ai-tool-trace-body").is_none(),
-        "再次点击应收起轨迹"
+        cx.debug_bounds("ai-tool-chain-body").is_none(),
+        "再次点击应收起"
     );
     editor.read_with(cx, |editor, _| {
         let record = &editor.ai_session.as_ref().unwrap().saved.tool_calls[0];
         assert_eq!(record.name, "search_documents");
         assert_eq!(record.status, crate::ai::session::ToolCallStatus::Succeeded);
         assert!(record.result.contains("second.md"));
+    });
+}
+
+#[gpui::test]
+fn ai_thinking_renders_gray_and_collapses_when_text_starts(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.saved.running = true;
+        session.settings.show_thinking = true;
+        editor.receive_ai_events(
+            0,
+            vec![
+                super::WorkerEvent::Runtime(super::RunEvent::AssistantStart),
+                super::WorkerEvent::Runtime(super::RunEvent::Thinking("先想一下".into())),
+            ],
+            cx,
+        );
+    });
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-thinking-body").is_some(),
+        "开启显示后思考应在运行中展开"
+    );
+    editor.update_in(cx, |editor, _, cx| {
+        editor.receive_ai_events(
+            0,
+            vec![super::WorkerEvent::Runtime(super::RunEvent::Text(
+                "正文开始".into(),
+            ))],
+            cx,
+        );
+    });
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-thinking-body").is_none(),
+        "正文开始后思考应收起"
+    );
+    let header = cx.debug_bounds("ai-thinking").expect("思考标题行仍在");
+    cx.simulate_click(header.center(), gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-thinking-body").is_some(),
+        "点击后思考可再次展开"
+    );
+    editor.update_in(cx, |editor, _, cx| {
+        let session = editor.ai_session.as_mut().unwrap();
+        session.settings.show_thinking = false;
+        editor.receive_ai_events(0, vec![], cx);
+    });
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-thinking").is_none(),
+        "关闭设置后思考不再渲染"
+    );
+    editor.read_with(cx, |editor, _| {
+        let message = &editor.ai_session.as_ref().unwrap().saved.messages[0];
+        assert_eq!(&*message.thinking, "先想一下");
     });
 }
 
@@ -1604,6 +1695,7 @@ fn ai_floating_dialog_preserves_writing_width_and_docking_keeps_the_conversation
             .push(crate::ai::session::ChatMessage {
                 role: "user".into(),
                 text: "整理当前文档".into(),
+                thinking: "".into()
             });
         editor.refresh_ai_preview(cx);
         cx.notify();
@@ -1862,10 +1954,12 @@ fn writing_dialog(cx: &mut TestAppContext) -> (gpui::Entity<Editor>, &mut Visual
             crate::ai::session::ChatMessage {
                 role: "user".into(),
                 text: "润色".into(),
+                thinking: "".into()
             },
             crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: "已提出一处修改。".into(),
+                thinking: "".into()
             },
         ]);
         editor.refresh_ai_preview(cx);
@@ -2075,6 +2169,7 @@ fn ai_cmd_j_in_another_tab_starts_from_its_current_selection_and_preserves_both_
             .push(crate::ai::session::ChatMessage {
                 role: "user".into(),
                 text: "A 的指令".into(),
+                thinking: "".into()
             });
         session
             .input
@@ -2163,6 +2258,7 @@ fn ai_cmd_j_does_not_reuse_a_finished_conversation_from_another_tab(cx: &mut Tes
             .push(crate::ai::session::ChatMessage {
                 role: "user".into(),
                 text: "解释 A".into(),
+                thinking: "".into()
             });
         session
             .saved
@@ -2243,6 +2339,7 @@ fn ai_cmd_j_in_a_new_selection_of_the_same_tab_starts_an_independent_task(cx: &m
             .push(crate::ai::session::ChatMessage {
                 role: "user".into(),
                 text: "只润色第一处".into(),
+                thinking: "".into()
             });
         let baseline = session.saved.workspace.documents[&target.document_id].clone();
         session.saved.workspace.changes.proposals.insert(
@@ -2371,6 +2468,7 @@ fn ai_quick_result_has_no_follow_up_composer_in_either_surface(cx: &mut TestAppC
             .push(crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: "已完成润色".into(),
+                thinking: "".into()
             });
         editor.refresh_ai_preview(cx);
     });
@@ -2409,6 +2507,7 @@ fn ai_user_conversation_accepts_cross_document_edits_and_keeps_its_history_when_
             .push(crate::ai::session::ChatMessage {
                 role: "user".into(),
                 text: "一起整理两篇文档".into(),
+                thinking: "".into()
             });
         session
             .saved
@@ -2753,6 +2852,7 @@ fn sidebar_menu_chain(cx: &mut TestAppContext, split: bool) {
             .push(crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: "已有回答".into(),
+                thinking: "".into()
             });
         let document = session
             .saved
@@ -2865,7 +2965,7 @@ fn ai_sidebar_keeps_the_composer_at_the_bottom_across_empty_conversation_and_err
     cx.simulate_click(send.center(),gpui::Modifiers::none());
     editor.read_with(cx, |editor,_| assert!(editor.ai_session.as_ref().unwrap().saved.messages.is_empty()));
     editor.update(cx, |editor,cx| {
-        editor.ai_session.as_mut().unwrap().saved.messages.push(crate::ai::session::ChatMessage{role:"user".into(),text:"已有对话".into()});
+        editor.ai_session.as_mut().unwrap().saved.messages.push(crate::ai::session::ChatMessage{role:"user".into(),text:"已有对话".into(),thinking:"".into()});
         cx.notify();
     });
     draw(cx); draw(cx);
@@ -2948,18 +3048,22 @@ fn ai_retry_rolls_back_the_failed_conversation_round_before_sending_again() {
         ChatMessage {
             role: "user".into(),
             text: "旧问题".into(),
+            thinking: "".into()
         },
         ChatMessage {
             role: "assistant".into(),
             text: "旧回答".into(),
+            thinking: "".into()
         },
         ChatMessage {
             role: "user".into(),
             text: "失败轮的指令".into(),
+            thinking: "".into()
         },
         ChatMessage {
             role: "assistant".into(),
             text: String::new().into(),
+            thinking: "".into()
         },
     ];
     saved.rollback_failed_conversation_round();
@@ -3067,6 +3171,7 @@ fn ai_restoring_history_does_not_overwrite_a_stashed_session(cx: &mut TestAppCon
         session.saved.messages.push(crate::ai::session::ChatMessage {
             role: "user".into(),
             text: "B 的指令".into(),
+            thinking: "".into()
         });
         editor.persist_ai_session(cx);
         task_id
@@ -3078,6 +3183,7 @@ fn ai_restoring_history_does_not_overwrite_a_stashed_session(cx: &mut TestAppCon
     foreign.messages.push(crate::ai::session::ChatMessage {
         role: "user".into(),
         text: "X 的消息".into(),
+        thinking: "".into()
     });
     let foreign_path = foreign.path().unwrap();
     foreign.save_at(&foreign_path).unwrap();
@@ -4659,6 +4765,7 @@ fn ai_streaming_and_completed_messages_use_the_same_native_transcript(cx: &mut T
             .push(crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: "**第一段**".into(),
+                thinking: "".into()
             });
         let id = session.saved.id.clone();
         editor.refresh_ai_preview(cx);
@@ -4738,6 +4845,7 @@ fn ai_message_updates_do_not_pull_the_reader_away_from_earlier_messages(cx: &mut
             .map(|index| crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: format!("## 第 {index} 条\n\n{}", "需要阅读的内容。".repeat(20)).into(),
+                thinking: "".into(),
             })
             .collect();
         let id = session.saved.id.clone();
@@ -4788,6 +4896,7 @@ fn ai_message_updates_do_not_pull_the_reader_away_from_earlier_messages(cx: &mut
             .push(crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: "新的回答。".into(),
+                thinking: "".into()
             });
         editor.refresh_ai_preview(cx);
         cx.notify();
@@ -4869,6 +4978,7 @@ fn ai_native_message_selection_copies_rendered_text_and_never_edits_the_document
             .push(crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: "**结果** 与 `代码`。".into(),
+                thinking: "".into()
             });
         editor.refresh_ai_preview(cx);
         cx.notify();
@@ -4928,6 +5038,7 @@ fn ai_native_messages_keep_inline_math_display_math_and_mermaid_preview(cx: &mut
                 role: "assistant".into(),
                 text: "行内 $E=mc^2$。\n\n$$\nx^2\n$$\n\n```mermaid\nflowchart LR\n A-->B\n```"
                     .into(),
+                thinking: "".into()
             });
         editor.refresh_ai_preview(cx);
         cx.notify();
@@ -4984,6 +5095,7 @@ fn ai_native_messages_keep_parenthesized_math_in_readonly_paragraphs(cx: &mut Te
             .push(crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: source.into(),
+                thinking: "".into()
             });
         editor.refresh_ai_preview(cx);
         cx.notify();
@@ -5032,6 +5144,7 @@ fn ai_message_repaint_reuses_code_highlights_and_code_copy_keeps_the_source(
             .push(crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: format!("```rust\n{code}\n```").into(),
+                thinking: "".into(),
             });
         editor.refresh_ai_preview(cx);
         cx.notify();
@@ -5076,6 +5189,7 @@ fn ai_history_groups_native_rows_and_keeps_deletion_separate_from_restore(cx: &m
         saved.messages.push(ChatMessage {
             role: "user".into(),
             text: title.into(),
+            thinking: "".into()
         });
         let path = saved.path().unwrap();
         saved.save_at(&path).unwrap();
@@ -5089,6 +5203,7 @@ fn ai_history_groups_native_rows_and_keeps_deletion_separate_from_restore(cx: &m
         saved.messages.push(ChatMessage {
             role: "user".into(),
             text: format!("第 {index} 次文档讨论：补充背景、组织结构和完整的引用说明").into(),
+            thinking: "".into(),
         });
         saved.save_at(&saved.path().unwrap()).unwrap();
     }
@@ -5472,6 +5587,7 @@ fn compact_ai_sidebar_chain(cx: &mut TestAppContext, split: bool) {
             .push(crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: "保留这份结果。".into(),
+                thinking: "".into()
             });
         session
             .input
@@ -5731,10 +5847,12 @@ fn ai_sidebar_history_restores_a_conversation_and_keeps_the_composer(cx: &mut Te
     saved.messages.push(ChatMessage {
         role: "user".into(),
         text: "上周的讨论".into(),
+        thinking: "".into()
     });
     saved.messages.push(ChatMessage {
         role: "assistant".into(),
         text: "上次的结论".into(),
+        thinking: "".into()
     });
     let path = saved.path().unwrap();
     saved.save_at(&path).unwrap();

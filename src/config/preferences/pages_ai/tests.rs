@@ -343,10 +343,47 @@ fn ai_provider_switching_and_deleting_preserves_incomplete_drafts_and_separate_k
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
+    // 「显示思考过程」开关加高页面：先把目标控件滚进可视范围再点击。
+    let page = cx.debug_bounds("preferences-page-scroll").unwrap();
+    if let Some(bottom) = cx
+        .debug_bounds("preferences-ai-advanced")
+        .map(|bounds| bounds.bottom())
+    {
+        let overflow = bottom - page.bottom() + gpui::px(24.0);
+        if overflow > gpui::px(0.0) {
+            preferences.update_in(cx, |preferences, _, cx| {
+                let offset = preferences.page_scroll.offset();
+                preferences
+                    .page_scroll
+                    .set_offset(gpui::point(offset.x, offset.y - overflow));
+                cx.notify();
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+        }
+    }
     let advanced = cx.debug_bounds("preferences-ai-advanced").unwrap();
     cx.simulate_click(advanced.center(), gpui::Modifiers::none());
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
+    let page = cx.debug_bounds("preferences-page-scroll").unwrap();
+    if let Some(bottom) = cx
+        .debug_bounds("preferences-ai-delete")
+        .map(|bounds| bounds.bottom())
+    {
+        let overflow = bottom - page.bottom() + gpui::px(24.0);
+        if overflow > gpui::px(0.0) {
+            preferences.update_in(cx, |preferences, _, cx| {
+                let offset = preferences.page_scroll.offset();
+                preferences
+                    .page_scroll
+                    .set_offset(gpui::point(offset.x, offset.y - overflow));
+                cx.notify();
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.run_until_parked();
+        }
+    }
     let delete = cx.debug_bounds("preferences-ai-delete").unwrap();
     cx.simulate_click(delete.center(), gpui::Modifiers::none());
     cx.update(|window, cx| window.draw(cx).clear(cx));

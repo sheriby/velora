@@ -2240,8 +2240,33 @@ fn ai_preferences_can_choose_a_default_clear_a_key_and_delete_a_connection(cx: &
     let saved = crate::ai::settings::AiSettings::load_at(&path).unwrap();
     assert_eq!(saved.default_endpoint,"two"); assert_eq!(saved.endpoints[1].api_key, "");
     window_cx.update(|window,cx| window.draw(cx).clear(cx)); window_cx.run_until_parked();
+    // 「显示思考过程」开关加高页面：先把目标控件滚进可视范围再点击。
+    let page = window_cx.debug_bounds("preferences-page-scroll").unwrap();
+    if let Some(bottom) = window_cx.debug_bounds("preferences-ai-advanced").map(|bounds| bounds.bottom()) {
+        let overflow = bottom - page.bottom() + gpui::px(24.0);
+        if overflow > gpui::px(0.0) {
+            handle.update(cx, |preferences, _, cx| {
+                let offset = preferences.page_scroll.offset();
+                preferences.page_scroll.set_offset(gpui::point(offset.x, offset.y - overflow));
+                cx.notify();
+            }).unwrap();
+            window_cx.update(|window,cx| window.draw(cx).clear(cx)); window_cx.run_until_parked();
+        }
+    }
     let advanced = window_cx.debug_bounds("preferences-ai-advanced").unwrap(); window_cx.simulate_click(advanced.center(), gpui::Modifiers::none());
     window_cx.update(|window,cx| window.draw(cx).clear(cx)); window_cx.run_until_parked();
+    let page = window_cx.debug_bounds("preferences-page-scroll").unwrap();
+    if let Some(bottom) = window_cx.debug_bounds("preferences-ai-delete").map(|bounds| bounds.bottom()) {
+        let overflow = bottom - page.bottom() + gpui::px(24.0);
+        if overflow > gpui::px(0.0) {
+            handle.update(cx, |preferences, _, cx| {
+                let offset = preferences.page_scroll.offset();
+                preferences.page_scroll.set_offset(gpui::point(offset.x, offset.y - overflow));
+                cx.notify();
+            }).unwrap();
+            window_cx.update(|window,cx| window.draw(cx).clear(cx)); window_cx.run_until_parked();
+        }
+    }
     let delete = window_cx.debug_bounds("preferences-ai-delete").unwrap(); window_cx.simulate_click(delete.center(),gpui::Modifiers::none());
     window_cx.update(|window,cx| window.draw(cx).clear(cx)); window_cx.run_until_parked();
     let save = window_cx.debug_bounds("preferences-save").unwrap(); window_cx.simulate_click(save.center(),gpui::Modifiers::none());

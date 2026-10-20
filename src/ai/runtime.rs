@@ -25,6 +25,8 @@ pub(crate) struct RunControl {
 pub(crate) enum RunEvent {
     AssistantStart,
     Text(String),
+    /// 模型的思考增量，只用于界面展示。
+    Thinking(String),
     Activity(String),
     /// 工具或重试结束，界面不再显示上一次的活动文案。
     ActivityDone,
@@ -240,6 +242,10 @@ pub(crate) async fn run_with_provider(
                     delta: StreamDelta::Text { delta },
                     ..
                 } => emit(RunEvent::Text(delta)),
+                AgentEvent::MessageUpdate {
+                    delta: StreamDelta::Thinking { delta },
+                    ..
+                } => emit(RunEvent::Thinking(delta)),
                 AgentEvent::ToolExecutionStart {
                     tool_call_id,
                     tool_name,

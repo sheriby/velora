@@ -1179,6 +1179,10 @@ impl I18nStringsDe {
                 .ai_panel_running
                 .unwrap_or(defaults.ai_panel_running),
             ai_tool_trace: self.ai_tool_trace.unwrap_or(defaults.ai_tool_trace),
+            ai_thinking_title: self.ai_thinking_title.unwrap_or(defaults.ai_thinking_title),
+            preferences_ai_show_thinking: self
+                .preferences_ai_show_thinking
+                .unwrap_or(defaults.preferences_ai_show_thinking),
             ai_tool_running: self.ai_tool_running.unwrap_or(defaults.ai_tool_running),
             ai_tool_failed: self.ai_tool_failed.unwrap_or(defaults.ai_tool_failed),
             preferences_shortcut_open_ai_assistant: self

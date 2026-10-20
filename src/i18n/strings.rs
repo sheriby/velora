@@ -800,6 +800,10 @@ pub struct I18nStrings {
     pub ai_panel_running: String,
     /// AI 面板:工具调用轨迹标题。
     pub ai_tool_trace: String,
+    /// AI 面板:思考过程标题。
+    pub ai_thinking_title: String,
+    /// 偏好设置:是否显示模型思考过程。
+    pub preferences_ai_show_thinking: String,
     /// AI 面板:工具调用运行中。
     pub ai_tool_running: String,
     /// AI 面板:工具调用失败。

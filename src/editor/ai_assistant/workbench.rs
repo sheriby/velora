@@ -2,7 +2,6 @@ use super::*;
 use gpui::prelude::FluentBuilder;
 use gpui_kit::component::form::{Field, Form};
 use gpui_kit::component::menu::DropdownMenu as _;
-use gpui_kit::component::spinner::Spinner;
 
 impl Editor {
     pub(super) fn render_ai_workbench(
@@ -287,9 +286,6 @@ impl Editor {
         } else if sidebar {
             panel = panel.child(div().min_h_0().flex_1());
         }
-        if !session.saved.tool_calls.is_empty() {
-            panel = panel.child(self.render_ai_tool_trace(theme, &strings, cx));
-        }
         if session.saved.running {
             let activity = match session.activity.as_str() {
                 "read_document" => &strings.ai_activity_read,
@@ -418,149 +414,6 @@ impl Editor {
             .inset_0(),
         );
         panel.into_any_element()
-    }
-
-    /// 工具调用轨迹：默认只显示一行标题，展开后按时间顺序列出名称、参数与结果。
-    fn render_ai_tool_trace(
-        &self,
-        theme: &crate::theme::Theme,
-        strings: &crate::i18n::I18nStrings,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(session) = self.ai_session.as_ref() else {
-            return div().into_any_element();
-        };
-        let count = session.saved.tool_calls.len();
-        let open = session.tool_trace_open;
-        let header = self.ai_button(
-            "ai-tool-trace",
-            false,
-            cx,
-            |button, _cx| {
-                button
-                    .icon(if open {
-                        IconName::ChevronDown
-                    } else {
-                        IconName::ChevronRight
-                    })
-                    .label(format!("{} · {count}", strings.ai_tool_trace))
-                    .accessibility_label(strings.ai_tool_trace.clone())
-            },
-            |editor, _, cx| {
-                if let Some(session) = editor.ai_session.as_mut() {
-                    session.tool_trace_open = !session.tool_trace_open;
-                }
-                cx.notify();
-            },
-        );
-        let mut section = div()
-            .id("ai-tool-trace-section")
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .child(header);
-        if open {
-            let mut rows = div()
-                .id("ai-tool-trace-body")
-                .debug_selector(|| "ai-tool-trace-body".into())
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .max_h(px(200.0))
-                .overflow_y_scroll();
-            let first = count.saturating_sub(50);
-            for (index, record) in session.saved.tool_calls.iter().enumerate().skip(first) {
-                rows = rows.child(self.render_ai_tool_call(theme, strings, index, record));
-            }
-            section = section.child(rows);
-        }
-        section.into_any_element()
-    }
-
-    fn render_ai_tool_call(
-        &self,
-        theme: &crate::theme::Theme,
-        strings: &crate::i18n::I18nStrings,
-        index: usize,
-        record: &crate::ai::session::ToolCallRecord,
-    ) -> AnyElement {
-        use crate::ai::session::ToolCallStatus;
-        let (status_icon, status_label) = match record.status {
-            ToolCallStatus::Running => (
-                Spinner::new().small().into_any_element(),
-                strings.ai_tool_running.clone(),
-            ),
-            ToolCallStatus::Succeeded => (
-                gpui_kit::component::Icon::new(IconName::CircleCheck)
-                    .text_color(theme.colors.callout_tip_border)
-                    .into_any_element(),
-                strings.ai_task_done.clone(),
-            ),
-            ToolCallStatus::Failed => (
-                gpui_kit::component::Icon::new(IconName::CircleX)
-                    .text_color(theme.colors.callout_warning_border)
-                    .into_any_element(),
-                strings.ai_tool_failed.clone(),
-            ),
-        };
-        let arguments = tool_trace_preview(&record.arguments, 240);
-        let result = tool_trace_preview(&record.result, 600);
-        let mut row = div()
-            .id(SharedString::from(format!("ai-tool-call-{index}")))
-            .debug_selector(move || format!("ai-tool-call-{index}"))
-            .flex()
-            .flex_col()
-            .gap(px(2.0))
-            .px(px(6.0))
-            .py(px(4.0))
-            .rounded(px(4.0))
-            .border_b_1()
-            .border_color(theme.colors.dialog_border)
-            .aria_label(format!("{}: {}", record.name, status_label))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(status_icon)
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(record.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .ml_auto()
-                            .text_size(px(10.0))
-                            .text_color(theme.colors.dialog_muted)
-                            .child(status_label),
-                    ),
-            );
-        if !arguments.is_empty() {
-            row = row.child(
-                div()
-                    .truncate()
-                    .text_size(px(11.0))
-                    .text_color(theme.colors.dialog_muted)
-                    .child(arguments),
-            );
-        }
-        if !result.is_empty() {
-            row = row.child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(if record.status == ToolCallStatus::Failed {
-                        theme.colors.callout_warning_border
-                    } else {
-                        theme.colors.dialog_muted
-                    })
-                    .child(result),
-            );
-        }
-        row.into_any_element()
     }
 
     fn copy_ai_result(&self, cx: &mut Context<Self>) {
@@ -928,13 +781,5 @@ impl Editor {
             )
             .child(actions)
             .into_any_element()
-    }
-}
-
-/// 轨迹预览只取前 `limit` 个字符：完整参数与结果留在对话历史里。
-fn tool_trace_preview(text: &str, limit: usize) -> String {
-    match text.char_indices().nth(limit) {
-        Some((end, _)) => format!("{}…", &text[..end]),
-        None => text.to_owned(),
     }
 }

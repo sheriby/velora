@@ -573,6 +573,8 @@ impl I18nStrings {
         strings.ai_panel_stop = "停止".into();
         strings.ai_panel_running = "生成中…".into();
         strings.ai_tool_trace = "工具调用".into();
+        strings.ai_thinking_title = "思考过程".into();
+        strings.preferences_ai_show_thinking = "显示模型的思考过程".into();
         strings.ai_tool_running = "运行中".into();
         strings.ai_tool_failed = "失败".into();
         strings.preferences_ai_api_base_url = "API 地址".into();
@@ -1153,6 +1155,8 @@ impl I18nStrings {
             ai_panel_stop: "Stop".into(),
             ai_panel_running: "Generating…".into(),
             ai_tool_trace: "Tool calls".into(),
+            ai_thinking_title: "Thinking".into(),
+            preferences_ai_show_thinking: "Show model thinking".into(),
             ai_tool_running: "Running".into(),
             ai_tool_failed: "Failed".into(),
             preferences_shortcut_open_ai_assistant: "AI Assistant".into(),

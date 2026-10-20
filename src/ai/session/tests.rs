@@ -19,6 +19,7 @@ fn ai_session_restores_pending_changes_and_marks_running_tasks_interrupted() {
     session.messages.push(ChatMessage {
         role: "user".into(),
         text: "请修订".into(),
+        thinking: "".into()
     });
     let path = root.join("session.json");
     let saved = session.save_at(&path);
@@ -45,10 +46,12 @@ fn tool_call_trace_rolls_back_with_its_failed_round_and_never_restores_as_runnin
     session.messages.push(ChatMessage {
         role: "user".into(),
         text: "第一问".into(),
+        thinking: "".into()
     });
     session.messages.push(ChatMessage {
         role: "assistant".into(),
         text: "第一答".into(),
+        thinking: "".into()
     });
     session.tool_calls.push(ToolCallRecord {
         message_index: 1,
@@ -61,10 +64,12 @@ fn tool_call_trace_rolls_back_with_its_failed_round_and_never_restores_as_runnin
     session.messages.push(ChatMessage {
         role: "user".into(),
         text: "第二问".into(),
+        thinking: "".into()
     });
     session.messages.push(ChatMessage {
         role: "assistant".into(),
         text: String::new().into(),
+        thinking: "".into()
     });
     session.tool_calls.push(ToolCallRecord {
         message_index: 3,
@@ -109,6 +114,7 @@ fn ai_session_older_background_checkpoints_cannot_replace_a_newer_record() {
     newer.messages.push(ChatMessage {
         role: "assistant".into(),
         text: "最新完成的结果".into(),
+        thinking: "".into()
     });
     newer.save_at(&path).unwrap();
     older.save_at(&path).unwrap();

@@ -1,8 +1,10 @@
 use super::*;
 use gpui::prelude::FluentBuilder as _;
 use gpui_kit::base::TextView;
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{
     ActiveTheme as _,
+    Icon, IconName,
     message::{Message, MessageAlignment, MessageContent},
     message_scroller::{MessageScroller, MessageScrollerState},
     text::{MarkdownExtensions, TextViewState},
@@ -13,6 +15,7 @@ mod rich;
 
 struct MessageRow {
     source: Arc<str>,
+    thinking: Arc<str>,
     user: bool,
     content: Option<MessageText>,
 }
@@ -29,6 +32,12 @@ pub(in crate::editor) struct MessageTranscript {
     quick: bool,
     base: Option<PathBuf>,
     rows: Vec<MessageRow>,
+    /// 每条 assistant 消息对应的工具调用，按 message_index 分组内联渲染。
+    tool_calls: Vec<ToolCallRecord>,
+    running: bool,
+    show_thinking: bool,
+    chain_open: bool,
+    thinking_open: bool,
     scroll: Entity<MessageScrollerState>,
     highlight_theme: Arc<crate::theme::Theme>,
     code_highlighter: Arc<rich::CodeHighlighter>,
@@ -46,6 +55,7 @@ impl MessageTranscript {
     pub(super) fn new(
         owner: WeakEntity<Editor>,
         saved: &SavedSession,
+        show_thinking: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         let theme = cx.global::<crate::theme::ThemeManager>().derived_theme(cx);
@@ -55,16 +65,38 @@ impl MessageTranscript {
             quick: saved.kind == SessionKind::QuickCommand,
             base: saved.workspace.root.clone(),
             rows: Vec::new(),
+            tool_calls: Vec::new(),
+            running: saved.running,
+            show_thinking,
+            chain_open: false,
+            thinking_open: false,
             scroll: cx.new(|cx| MessageScrollerState::new(0, cx)),
             code_highlighter: rich::code_highlighter(theme.clone()),
             highlight_theme: theme,
             metrics: None,
         };
-        this.sync(saved, cx);
+        this.sync(saved, show_thinking, cx);
         this
     }
 
-    pub(super) fn sync(&mut self, saved: &SavedSession, cx: &mut Context<Self>) {
+    pub(super) fn sync(
+        &mut self,
+        saved: &SavedSession,
+        show_thinking: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show_thinking != show_thinking {
+            self.show_thinking = show_thinking;
+            cx.notify();
+        }
+        if self.tool_calls != saved.tool_calls {
+            self.tool_calls = saved.tool_calls.clone();
+            cx.notify();
+        }
+        if self.running != saved.running {
+            self.running = saved.running;
+            cx.notify();
+        }
         let old_count = self.rows.len();
         let mut changed = old_count != saved.messages.len();
         self.rows.truncate(saved.messages.len());
@@ -79,12 +111,17 @@ impl MessageTranscript {
                             .update(cx, |state, cx| state.set_text(&message.text, cx));
                     }
                 }
+                if !Arc::ptr_eq(&row.thinking, &message.thinking) {
+                    changed = true;
+                    row.thinking = message.thinking.clone();
+                }
                 let user = message.role == "user";
                 changed |= row.user != user;
                 row.user = user;
             } else {
                 self.rows.push(MessageRow {
                     source: message.text.clone(),
+                    thinking: message.thinking.clone(),
                     user: message.role == "user",
                     content: None,
                 });
@@ -108,68 +145,101 @@ impl MessageTranscript {
     }
 
     fn render_row(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some(row) = self.rows.get_mut(index) else {
-            return div().into_any_element();
-        };
-        if row.source.is_empty() || (self.quick && row.user) {
-            return div().h_0().into_any_element();
-        }
-        if row.content.is_none() {
-            let content = cx.new(|cx| TextViewState::markdown(&row.source, cx));
-            let observation = cx.observe(&content, move |this, _, cx| {
-                this.scroll.update(cx, |state, cx| {
-                    state.remeasure_items(index..index + 1, cx);
+        let rows_len = self.rows.len();
+        let records: Vec<ToolCallRecord> = self
+            .tool_calls
+            .iter()
+            .filter(|record| record.message_index == index)
+            .cloned()
+            .collect();
+        let (user, thinking, source_empty, body) = {
+            let Some(row) = self.rows.get_mut(index) else {
+                return div().into_any_element();
+            };
+            let thinking = row.thinking.clone();
+            let user = row.user;
+            let source_empty = row.source.is_empty();
+            let shows_thinking = self.show_thinking && !thinking.is_empty();
+            if (source_empty && records.is_empty() && !shows_thinking) || (self.quick && user) {
+                return div().h_0().into_any_element();
+            }
+            if row.content.is_none() {
+                let content = cx.new(|cx| TextViewState::markdown(&row.source, cx));
+                let observation = cx.observe(&content, move |this, _, cx| {
+                    this.scroll.update(cx, |state, cx| {
+                        state.remeasure_items(index..index + 1, cx);
+                    });
                 });
-            });
-            let rich = rich::extensions(
-                content.downgrade(),
-                cx.weak_entity(),
-                index,
-                self.base.clone(),
-            );
-            row.content = Some(MessageText {
-                state: content,
-                rich,
-                _observation: observation,
-            });
-        }
-        let Some(content) = row.content.as_ref() else {
-            return div().into_any_element();
+                let rich = rich::extensions(
+                    content.downgrade(),
+                    cx.weak_entity(),
+                    index,
+                    self.base.clone(),
+                );
+                row.content = Some(MessageText {
+                    state: content,
+                    rich,
+                    _observation: observation,
+                });
+            }
+            let Some(content) = row.content.as_ref() else {
+                return div().into_any_element();
+            };
+            let base = self.base.clone();
+            let owner = cx.weak_entity();
+            let text = TextView::new(&content.state)
+                .selectable(true)
+                .markdown_extensions(content.rich.extensions())
+                .shared_code_block_highlighter(self.code_highlighter.clone())
+                .code_block_actions(|block, _, cx| {
+                    gpui_kit::component::clipboard::Clipboard::new("ai-code-copy")
+                        .value(block.code())
+                        .accessibility_label(
+                            cx.global::<crate::i18n::I18nManager>()
+                                .strings()
+                                .ai_panel_copy
+                                .clone(),
+                        )
+                })
+                .image_source(move |uri| rich::image_source(uri, base.as_deref()))
+                .on_link_click(move |target, _, window, cx| {
+                    if let Err(error) =
+                        owner.update(cx, |this, cx| this.open_link(index, target, window, cx))
+                    {
+                        eprintln!("打开 AI 消息链接失败：{error}");
+                    }
+                })
+                .w_full();
+            let body = MessageContent::new()
+                .when(user, |body| {
+                    body.max_w(relative(0.9))
+                        .rounded_lg()
+                        .bg(cx.theme().muted)
+                        .px_3()
+                        .py_2()
+                })
+                .child(text);
+            (user, thinking, source_empty, body)
         };
-        let base = self.base.clone();
-        let owner = cx.weak_entity();
-        let text = TextView::new(&content.state)
-            .selectable(true)
-            .markdown_extensions(content.rich.extensions())
-            .shared_code_block_highlighter(self.code_highlighter.clone())
-            .code_block_actions(|block, _, cx| {
-                gpui_kit::component::clipboard::Clipboard::new("ai-code-copy")
-                    .value(block.code())
-                    .accessibility_label(
-                        cx.global::<crate::i18n::I18nManager>()
-                            .strings()
-                            .ai_panel_copy
-                            .clone(),
-                    )
-            })
-            .image_source(move |uri| rich::image_source(uri, base.as_deref()))
-            .on_link_click(move |target, _, window, cx| {
-                if let Err(error) =
-                    owner.update(cx, |this, cx| this.open_link(index, target, window, cx))
-                {
-                    eprintln!("打开 AI 消息链接失败：{error}");
-                }
-            })
-            .w_full();
-        let body = MessageContent::new()
-            .when(row.user, |body| {
-                body.max_w(relative(0.9))
-                    .rounded_lg()
-                    .bg(cx.theme().muted)
-                    .px_3()
-                    .py_2()
-            })
-            .child(text);
+        // 模型还没吐字且仍在运行时，链条与思考保持展开给用户反馈；一旦开始
+        // 输出正文就自动收起，用户仍可手动展开。
+        let auto_open = self.running && !user && source_empty && index + 1 == rows_len;
+        let chain =
+            (!user && !records.is_empty()).then(|| {
+                let theme = self.highlight_theme.clone();
+                self.render_tool_chain(&theme, &records, auto_open, cx)
+            });
+        let thinking_block = (!user && self.show_thinking && !thinking.is_empty()).then(|| {
+            let theme = self.highlight_theme.clone();
+            self.render_thinking_block(&theme, &thinking, auto_open, cx)
+        });
+        let mut column = div().w_full().flex().flex_col();
+        if let Some(thinking_block) = thinking_block {
+            column = column.child(thinking_block);
+        }
+        if let Some(chain) = chain {
+            column = column.child(chain);
+        }
         // Message 是展示组件，外层提供可观察且稳定的消息身份。
         div()
             .id(SharedString::from(format!(
@@ -180,16 +250,176 @@ impl MessageTranscript {
             .test_support()
             .w_full()
             .pb_4()
-            .child(
+            .child(column.child(
                 Message::new()
-                    .alignment(if row.user {
+                    .alignment(if user {
                         MessageAlignment::End
                     } else {
                         MessageAlignment::Start
                     })
                     .content(body),
+            ))
+            .into_any_element()
+    }
+
+    /// 工具调用链条：模型没吐字时逐步展示每次调用，一行一条；正文开始后
+    /// 自动收起，只剩一行可展开的标题。
+    fn render_tool_chain(
+        &mut self,
+        theme: &crate::theme::Theme,
+        records: &[ToolCallRecord],
+        auto_open: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let open = self.chain_open || auto_open;
+        let header = div()
+            .id("ai-tool-chain")
+            .debug_selector(|| "ai-tool-chain".into())
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .py(px(2.0))
+            .text_size(px(11.0))
+            .text_color(theme.colors.dialog_muted)
+            .cursor(CursorStyle::PointingHand)
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.chain_open = !this.chain_open;
+                cx.notify();
+            }))
+            .child(
+                Icon::new(if open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .text_color(theme.colors.dialog_muted),
+            )
+            .child(format!(
+                "{} · {}",
+                cx.global::<crate::i18n::I18nManager>()
+                    .strings()
+                    .ai_tool_trace
+                    .clone(),
+                records.len()
+            ));
+        let mut section = div()
+            .mb(px(4.0))
+            .flex()
+            .flex_col()
+            .child(header);
+        if open {
+            let mut body = div()
+                .id("ai-tool-chain-body")
+                .debug_selector(|| "ai-tool-chain-body".into())
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .max_h(px(200.0))
+                .overflow_y_scroll();
+            for (offset, record) in records.iter().enumerate() {
+                body = body.child(Self::render_tool_chain_row(theme, record, offset));
+            }
+            section = section.child(body);
+        }
+        section.into_any_element()
+    }
+
+    fn render_tool_chain_row(
+        theme: &crate::theme::Theme,
+        record: &ToolCallRecord,
+        index: usize,
+    ) -> AnyElement {
+        use crate::ai::session::ToolCallStatus;
+        let status_icon = match record.status {
+            ToolCallStatus::Running => Spinner::new().small().into_any_element(),
+            ToolCallStatus::Succeeded => Icon::new(IconName::CircleCheck)
+                .text_color(theme.colors.callout_tip_border)
+                .into_any_element(),
+            ToolCallStatus::Failed => Icon::new(IconName::CircleX)
+                .text_color(theme.colors.callout_warning_border)
+                .into_any_element(),
+        };
+        div()
+            .id(SharedString::from(format!("ai-tool-call-{index}")))
+            .debug_selector(move || format!("ai-tool-call-{index}"))
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .px(px(6.0))
+            .py(px(3.0))
+            .rounded(px(4.0))
+            .text_size(px(11.0))
+            .text_color(theme.colors.dialog_muted)
+            .child(status_icon)
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(record.name.clone()),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .truncate()
+                    .child(tool_trace_preview(&record.arguments, 120)),
             )
             .into_any_element()
+    }
+
+    /// 思考过程：灰色小字，默认随运行展开、正文开始后收起，可手动展开。
+    fn render_thinking_block(
+        &mut self,
+        theme: &crate::theme::Theme,
+        thinking: &str,
+        auto_open: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let open = self.thinking_open || auto_open;
+        let header = div()
+            .id("ai-thinking")
+            .debug_selector(|| "ai-thinking".into())
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .py(px(2.0))
+            .text_size(px(11.0))
+            .text_color(theme.colors.dialog_muted)
+            .cursor(CursorStyle::PointingHand)
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.thinking_open = !this.thinking_open;
+                cx.notify();
+            }))
+            .child(
+                Icon::new(if open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .text_color(theme.colors.dialog_muted),
+            )
+            .child(
+                cx.global::<crate::i18n::I18nManager>()
+                    .strings()
+                    .ai_thinking_title
+                    .clone(),
+            );
+        let mut section = div().mb(px(4.0)).flex().flex_col().child(header);
+        if open {
+            section = section.child(
+                div()
+                    .id("ai-thinking-body")
+                    .debug_selector(|| "ai-thinking-body".into())
+                    .text_size(px(11.0))
+                    .text_color(theme.colors.dialog_muted)
+                    .line_height(relative(1.5))
+                    .whitespace_normal()
+                    .max_h(px(160.0))
+                    .overflow_y_scroll()
+                    .child(thinking.to_owned()),
+            );
+        }
+        section.into_any_element()
     }
 
     pub(in crate::editor) fn open_link(
@@ -286,6 +516,14 @@ impl MessageTranscript {
             .content
             .as_ref()
             .map(|content| content.state.clone())
+    }
+}
+
+/// 轨迹预览只取前 `limit` 个字符：完整参数与结果留在对话历史里。
+fn tool_trace_preview(text: &str, limit: usize) -> String {
+    match text.char_indices().nth(limit) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_owned(),
     }
 }
 

@@ -57,6 +57,8 @@ pub(crate) struct CustomInstruction {
 #[serde(default)]
 pub(crate) struct AiSettings {
     pub enabled: bool,
+    /// 界面是否展示模型的思考过程；默认不展示。
+    pub show_thinking: bool,
     pub endpoints: Vec<Endpoint>,
     pub default_endpoint: String,
     pub instructions: Vec<CustomInstruction>,

@@ -445,6 +445,7 @@ fn ai_closing_the_window_preserves_partial_output_and_cancels_execution(cx: &mut
             .push(crate::ai::session::ChatMessage {
                 role: "assistant".into(),
                 text: "尚未完成的回答".into(),
+                thinking: "".into()
             });
         (session.saved.path().unwrap(), session.control_for_test())
     });
@@ -481,6 +482,7 @@ fn ai_answer_links_open_workspace_sources_without_making_the_answer_editable(
                 crate::ai::session::ChatMessage {
                     role: "assistant".into(),
                     text: "参考 [note](note.md)".into(),
+                    thinking: "".into()
                 },
             );
             editor.refresh_ai_preview(cx);
@@ -569,6 +571,7 @@ fn ai_completed_answers_all_keep_their_markdown_previews(cx: &mut TestAppContext
                 ["**第一条**", "`第二条`"].map(|text| crate::ai::session::ChatMessage {
                     role: "assistant".into(),
                     text: text.into(),
+                    thinking: "".into()
                 }),
             );
         editor.refresh_ai_preview(cx);

@@ -445,6 +445,7 @@ impl PreferencesWindow {
         };
         let enabled = state.settings.enabled;
         let show_instructions = state.show_instructions;
+        let show_thinking = state.settings.show_thinking;
         let toggle = Self::boolean_field(
             "preferences-ai-enabled-switch",
             strings.preferences_ai_enabled.clone(),
@@ -454,6 +455,17 @@ impl PreferencesWindow {
                 preferences.stop_ai_preferences_probe();
                 if let Some(state) = preferences.ai_preferences.as_mut() {
                     state.settings.enabled = enabled;
+                }
+            },
+        );
+        let thinking_toggle = Self::boolean_field(
+            "preferences-ai-thinking-switch",
+            strings.preferences_ai_show_thinking.clone(),
+            show_thinking,
+            cx,
+            |preferences, show| {
+                if let Some(state) = preferences.ai_preferences.as_mut() {
+                    state.settings.show_thinking = show;
                 }
             },
         );
@@ -499,12 +511,20 @@ impl PreferencesWindow {
             .child(Self::preference_group(
                 "preferences-ai-feature",
                 String::new(),
-                vec![Self::preference_row(
-                    strings.preferences_ai_enabled.clone(),
-                    div()
-                        .debug_selector(|| "preferences-ai-enabled".into())
-                        .child(toggle),
-                )],
+                vec![
+                    Self::preference_row(
+                        strings.preferences_ai_enabled.clone(),
+                        div()
+                            .debug_selector(|| "preferences-ai-enabled".into())
+                            .child(toggle),
+                    ),
+                    Self::preference_row(
+                        strings.preferences_ai_show_thinking.clone(),
+                        div()
+                            .debug_selector(|| "preferences-ai-show-thinking".into())
+                            .child(thinking_toggle),
+                    ),
+                ],
                 theme,
                 window,
                 rems(3.0),
