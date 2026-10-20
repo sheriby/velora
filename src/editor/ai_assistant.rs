@@ -7,7 +7,9 @@ use gpui::*;
 
 use super::Editor;
 use crate::ai::runtime::{RunControl, RunEvent, RunOutput, RunRequest};
-use crate::ai::session::{ChatMessage, SavedSession, SessionKind, TargetSnapshot};
+use crate::ai::session::{
+    ChatMessage, SavedSession, SessionKind, TargetSnapshot, ToolCallRecord, ToolCallStatus,
+};
 use crate::ai::settings::{AiFeature, AiSettings};
 use crate::ai::workspace::AiWorkspace;
 use crate::ai::{AiCommand, DocumentSnapshot};
@@ -62,6 +64,12 @@ pub(super) struct AiSession {
     expanded: bool,
     /// 浮动窗收起到右下角图标；停靠侧栏不使用。
     collapsed: bool,
+    /// 工具调用轨迹默认收起，展开状态不落盘。
+    tool_trace_open: bool,
+    /// 浮动任务窗的用户尺寸；None 表示默认尺寸。
+    float_size: Option<Size<Pixels>>,
+    /// 右下角缩放的起点与起始尺寸。
+    float_resize: Option<(Point<Pixels>, Size<Pixels>)>,
     mode: PanelMode,
     command: AiCommand,
     origin: Point<Pixels>,
@@ -136,6 +144,9 @@ enum WorkerEvent {
     },
     Finished(std::result::Result<RunOutput, String>),
 }
+
+/// 轨迹只留最近这些条；完整对话在 history 里，界面轨迹不承担归档。
+const AI_TOOL_TRACE_LIMIT: usize = 200;
 
 impl Editor {
     pub(in crate::editor) fn sync_ai_availability(&mut self, cx: &mut Context<Self>) {
@@ -1241,6 +1252,9 @@ impl Editor {
             visible: true,
             expanded,
             collapsed: false,
+            tool_trace_open: false,
+            float_size: None,
+            float_resize: None,
             mode: PanelMode::Task,
             command,
             origin,
@@ -1854,6 +1868,70 @@ impl Editor {
                 WorkerEvent::Runtime(RunEvent::Text(text)) => stream_delta.push_str(&text),
                 WorkerEvent::Runtime(RunEvent::Activity(activity)) => session.activity = activity,
                 WorkerEvent::Runtime(RunEvent::ActivityDone) => session.activity.clear(),
+                WorkerEvent::Runtime(RunEvent::ToolCallStart {
+                    id,
+                    name,
+                    arguments,
+                }) => {
+                    let message_index = session
+                        .stream_index
+                        .unwrap_or_else(|| session.saved.messages.len().saturating_sub(1));
+                    session.saved.tool_calls.push(ToolCallRecord {
+                        message_index,
+                        id,
+                        name,
+                        arguments,
+                        status: ToolCallStatus::Running,
+                        result: String::new(),
+                    });
+                    if session.saved.tool_calls.len() > AI_TOOL_TRACE_LIMIT {
+                        let excess = session.saved.tool_calls.len() - AI_TOOL_TRACE_LIMIT;
+                        session.saved.tool_calls.drain(..excess);
+                    }
+                }
+                WorkerEvent::Runtime(RunEvent::ToolCallEnd {
+                    id,
+                    name,
+                    ok,
+                    result,
+                }) => {
+                    let status = if ok {
+                        ToolCallStatus::Succeeded
+                    } else {
+                        ToolCallStatus::Failed
+                    };
+                    if let Some(record) = session
+                        .saved
+                        .tool_calls
+                        .iter_mut()
+                        .rev()
+                        .find(|record| record.id == id)
+                    {
+                        record.status = status;
+                        record.result = result;
+                    } else {
+                        let message_index = session
+                            .stream_index
+                            .unwrap_or_else(|| session.saved.messages.len().saturating_sub(1));
+                        session.saved.tool_calls.push(ToolCallRecord {
+                            message_index,
+                            id,
+                            name,
+                            arguments: String::new(),
+                            status,
+                            result,
+                        });
+                    }
+                    // 并行工具调用时按仍在运行的最后一项恢复活动文案，不能一律清空。
+                    session.activity = session
+                        .saved
+                        .tool_calls
+                        .iter()
+                        .rev()
+                        .find(|record| record.status == ToolCallStatus::Running)
+                        .map(|record| record.name.clone())
+                        .unwrap_or_default();
+                }
                 WorkerEvent::Runtime(RunEvent::Checkpoint { workspace, history }) => {
                     session.saved.workspace = *workspace;
                     session.review_dirty = true;

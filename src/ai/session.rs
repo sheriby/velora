@@ -19,6 +19,32 @@ pub(crate) enum SessionKind {
     QuickCommand,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ToolCallStatus {
+    #[default]
+    Running,
+    Succeeded,
+    Failed,
+}
+
+/// 一次工具调用的可回看记录：名称、参数摘要、状态与结果摘要。
+/// 只服务界面轨迹，完整结果仍在 `history` 里，不在这里重复保存。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ToolCallRecord {
+    /// 发起这次调用的 assistant 消息序号：失败轮回滚时按它清理。
+    #[serde(default)]
+    pub message_index: usize,
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub arguments: String,
+    #[serde(default)]
+    pub status: ToolCallStatus,
+    #[serde(default)]
+    pub result: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct SavedSession {
     #[serde(default)]
@@ -32,6 +58,8 @@ pub(crate) struct SavedSession {
     pub workspace: AiWorkspace,
     pub history: Vec<Value>,
     pub messages: Vec<ChatMessage>,
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCallRecord>,
     pub interrupted: bool,
     pub running: bool,
     #[serde(default)]
@@ -67,6 +95,7 @@ impl SavedSession {
             workspace,
             history: Vec::new(),
             messages: Vec::new(),
+            tool_calls: Vec::new(),
             interrupted: false,
             running: false,
             target: None,
@@ -160,6 +189,13 @@ impl SavedSession {
         }
         session.interrupted |= session.running;
         session.running = false;
+        // 上次进程在工具执行中退出时，记录会停在 Running；恢复后没有任务会再
+        // 更新它，必须在载入时收口，否则轨迹里会永远转圈。
+        for record in &mut session.tool_calls {
+            if record.status == ToolCallStatus::Running {
+                record.status = ToolCallStatus::Failed;
+            }
+        }
         Ok(session)
     }
 
@@ -174,6 +210,9 @@ impl SavedSession {
             return;
         };
         self.messages.truncate(last_user);
+        // 失败轮之后的工具轨迹同样属于被回滚的那一轮，留着会和重试后的记录重复。
+        self.tool_calls
+            .retain(|record| record.message_index < last_user);
     }
 
     pub fn directory(workspace: Option<&Path>) -> Result<PathBuf> {

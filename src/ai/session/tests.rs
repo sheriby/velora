@@ -40,6 +40,62 @@ fn ai_session_restores_pending_changes_and_marks_running_tasks_interrupted() {
 }
 
 #[test]
+fn tool_call_trace_rolls_back_with_its_failed_round_and_never_restores_as_running() {
+    let mut session = SavedSession::new(AiWorkspace::new(None, vec![]).unwrap());
+    session.messages.push(ChatMessage {
+        role: "user".into(),
+        text: "第一问".into(),
+    });
+    session.messages.push(ChatMessage {
+        role: "assistant".into(),
+        text: "第一答".into(),
+    });
+    session.tool_calls.push(ToolCallRecord {
+        message_index: 1,
+        id: "call-a".into(),
+        name: "read_document".into(),
+        arguments: "{\"path\":\"a.md\"}".into(),
+        status: ToolCallStatus::Succeeded,
+        result: "a".into(),
+    });
+    session.messages.push(ChatMessage {
+        role: "user".into(),
+        text: "第二问".into(),
+    });
+    session.messages.push(ChatMessage {
+        role: "assistant".into(),
+        text: String::new().into(),
+    });
+    session.tool_calls.push(ToolCallRecord {
+        message_index: 3,
+        id: "call-b".into(),
+        name: "search_documents".into(),
+        arguments: "{\"query\":\"UB\"}".into(),
+        status: ToolCallStatus::Running,
+        result: String::new(),
+    });
+
+    session.rollback_failed_conversation_round();
+    assert_eq!(session.messages.len(), 2, "失败轮的消息应被回滚");
+    assert_eq!(session.tool_calls.len(), 1, "失败轮的工具轨迹也要回滚");
+    assert_eq!(session.tool_calls[0].id, "call-a");
+
+    let root = std::env::temp_dir().join(format!("velora-ai-trace-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("session.json");
+    let mut restored_source = session.clone();
+    restored_source.tool_calls[0].status = ToolCallStatus::Running;
+    restored_source.save_at(&path).unwrap();
+    let restored = SavedSession::load_at(&path, None).unwrap();
+    assert_eq!(
+        restored.tool_calls[0].status,
+        ToolCallStatus::Failed,
+        "上次进程中断留下的 Running 记录不能恢复后永远转圈"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn ai_session_older_background_checkpoints_cannot_replace_a_newer_record() {
     let root = std::env::temp_dir().join(format!("velora-ai-order-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();

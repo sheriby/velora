@@ -572,6 +572,9 @@ impl I18nStrings {
         strings.ai_panel_retry = "重试".into();
         strings.ai_panel_stop = "停止".into();
         strings.ai_panel_running = "生成中…".into();
+        strings.ai_tool_trace = "工具调用".into();
+        strings.ai_tool_running = "运行中".into();
+        strings.ai_tool_failed = "失败".into();
         strings.preferences_ai_api_base_url = "API 地址".into();
         strings.preferences_ai_api_key = "API 密钥".into();
         strings.preferences_ai_model = "模型".into();
@@ -1149,6 +1152,9 @@ impl I18nStrings {
             ai_panel_retry: "Retry".into(),
             ai_panel_stop: "Stop".into(),
             ai_panel_running: "Generating…".into(),
+            ai_tool_trace: "Tool calls".into(),
+            ai_tool_running: "Running".into(),
+            ai_tool_failed: "Failed".into(),
             preferences_shortcut_open_ai_assistant: "AI Assistant".into(),
             preferences_ai_delete: "Delete".into(),
             preferences_ai_name: "Name".into(),

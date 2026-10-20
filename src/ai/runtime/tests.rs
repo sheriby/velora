@@ -216,6 +216,71 @@ fn ai_runtime_clears_the_activity_label_when_a_tool_finishes() {
     );
 }
 
+/// 工具轨迹要能显示名称、参数、结果与成败：开始/结束事件必须成对，
+/// 失败调用也不能只发 Activity 而没有结果。
+#[test]
+fn ai_runtime_reports_tool_call_arguments_and_results_for_the_trace() {
+    let workspace = Arc::new(Mutex::new(
+        AiWorkspace::new(
+            None,
+            vec![DocumentSnapshot {
+                id: "note.md".into(),
+                source: "正文".into(),
+            }],
+        )
+        .unwrap(),
+    ));
+    let provider = MockProvider::new(vec![
+        call("read_document", json!({"path":"note.md"})),
+        call("read_document", json!({})),
+        MockResponse::Text("完成。".into()),
+    ]);
+    let mut events = Vec::new();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let result = runtime
+        .block_on(run_with_provider(
+            request(),
+            workspace,
+            RunControl::default(),
+            Arc::new(provider),
+            |event| events.push(event),
+        ))
+        .unwrap();
+    assert!(result.error.is_none(), "{result:?}");
+
+    let starts = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::ToolCallStart { id, name, arguments } if name == "read_document" => {
+                Some((id.clone(), arguments.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(starts.len(), 2, "两次读取都要有开始事件：{events:?}");
+    assert!(starts[0].1.contains("note.md"), "参数摘要要带路径：{starts:?}");
+
+    let ends = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::ToolCallEnd {
+                id,
+                name,
+                ok,
+                result,
+            } if name == "read_document" => Some((id.clone(), *ok, result.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ends.len(), 2, "两次读取都要有结束事件：{events:?}");
+    assert_eq!(starts[0].0, ends[0].0, "开始与结束必须按 id 配对");
+    assert_eq!(starts[1].0, ends[1].0, "开始与结束必须按 id 配对");
+    assert!(ends[0].1, "首次读取应成功");
+    assert!(ends[0].2.contains("正文"), "结果摘要要带正文：{:?}", ends[0]);
+    assert!(!ends[1].1, "缺少路径应失败");
+    assert!(!ends[1].2.is_empty(), "失败也要给出原因：{:?}", ends[1]);
+}
+
 struct StalledProvider;
 
 #[async_trait::async_trait]

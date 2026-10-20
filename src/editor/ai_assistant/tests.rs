@@ -1307,6 +1307,165 @@ fn ai_floating_dialog_drag_moves_only_until_mouse_release(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+fn ai_floating_panel_resizes_from_the_bottom_right_handle(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.saved.messages.push(crate::ai::session::ChatMessage {
+            role: "assistant".into(),
+            text: "回答".into(),
+        });
+        editor.refresh_ai_conversation(cx);
+    });
+    draw(cx);
+    draw(cx);
+    let before = cx.debug_bounds("ai-floating-workbench").expect("浮窗应绘制");
+    let grip = cx
+        .debug_bounds("ai-float-resize")
+        .expect("对话浮窗右下角应有缩放手柄");
+    let start = grip.center();
+    let delta = gpui::point(gpui::px(60.0), gpui::px(20.0));
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(
+        start + delta,
+        Some(gpui::MouseButton::Left),
+        gpui::Modifiers::none(),
+    );
+    cx.simulate_mouse_up(start + delta, gpui::MouseButton::Left, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    let after = cx.debug_bounds("ai-floating-workbench").unwrap();
+    assert_eq!(after.origin, before.origin, "缩放不应移动左上角");
+    assert!(
+        (f32::from(after.size.width) - (f32::from(before.size.width) + 60.0)).abs() < 1.5,
+        "宽度应增加拖动距离：{before:?} → {after:?}"
+    );
+    assert!(
+        (f32::from(after.size.height) - (f32::from(before.size.height) + 20.0)).abs() < 1.5,
+        "高度应增加拖动距离：{before:?} → {after:?}"
+    );
+
+    cx.simulate_mouse_move(
+        start + delta + gpui::point(gpui::px(40.0), gpui::px(40.0)),
+        None,
+        gpui::Modifiers::none(),
+    );
+    draw(cx);
+    assert_eq!(
+        cx.debug_bounds("ai-floating-workbench").unwrap().size,
+        after.size,
+        "松手后移动鼠标不能再改变尺寸"
+    );
+}
+
+#[gpui::test]
+fn ai_empty_floating_panel_can_be_resized_too(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor.ai_session.as_mut().unwrap().mode = PanelMode::Task;
+    });
+    draw(cx);
+    draw(cx);
+    let before = cx.debug_bounds("ai-floating-workbench").expect("浮窗应绘制");
+    let grip = cx
+        .debug_bounds("ai-float-resize")
+        .expect("空对话的浮窗也应有缩放手柄");
+    let start = grip.center();
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(
+        start + gpui::point(gpui::px(60.0), gpui::px(40.0)),
+        Some(gpui::MouseButton::Left),
+        gpui::Modifiers::none(),
+    );
+    cx.simulate_mouse_up(
+        start + gpui::point(gpui::px(60.0), gpui::px(40.0)),
+        gpui::MouseButton::Left,
+        gpui::Modifiers::none(),
+    );
+    draw(cx);
+    draw(cx);
+    let after = cx.debug_bounds("ai-floating-workbench").unwrap();
+    assert!(
+        f32::from(after.size.width) > f32::from(before.size.width) + 40.0,
+        "空对话也要能加宽：{before:?} → {after:?}"
+    );
+    assert!(
+        f32::from(after.size.height) > f32::from(before.size.height) + 20.0,
+        "空对话也要能加高：{before:?} → {after:?}"
+    );
+}
+
+#[gpui::test]
+fn ai_tool_calls_stay_collapsed_until_the_trace_is_opened(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor.ai_session.as_mut().unwrap().mode = PanelMode::Task;
+        editor.receive_ai_events(
+            0,
+            vec![
+                super::WorkerEvent::Runtime(super::RunEvent::ToolCallStart {
+                    id: "call-1".into(),
+                    name: "search_documents".into(),
+                    arguments: "{\"query\":\"UB\"}".into(),
+                }),
+                super::WorkerEvent::Runtime(super::RunEvent::ToolCallEnd {
+                    id: "call-1".into(),
+                    name: "search_documents".into(),
+                    ok: true,
+                    result: "second.md:3: UB".into(),
+                }),
+            ],
+            cx,
+        );
+    });
+    draw(cx);
+    draw(cx);
+    let header = cx
+        .debug_bounds("ai-tool-trace")
+        .expect("工具轨迹标题应可见");
+    assert!(
+        cx.debug_bounds("ai-tool-trace-body").is_none(),
+        "工具轨迹默认必须收起"
+    );
+    assert!(cx.debug_bounds("ai-tool-call-0").is_none());
+
+    cx.simulate_click(header.center(), gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-tool-trace-body").is_some(),
+        "点击标题后应展开轨迹"
+    );
+    assert!(
+        cx.debug_bounds("ai-tool-call-0").is_some(),
+        "展开后应列出每次调用"
+    );
+
+    cx.simulate_click(header.center(), gpui::Modifiers::none());
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-tool-trace-body").is_none(),
+        "再次点击应收起轨迹"
+    );
+    editor.read_with(cx, |editor, _| {
+        let record = &editor.ai_session.as_ref().unwrap().saved.tool_calls[0];
+        assert_eq!(record.name, "search_documents");
+        assert_eq!(record.status, crate::ai::session::ToolCallStatus::Succeeded);
+        assert!(record.result.contains("second.md"));
+    });
+}
+
+#[gpui::test]
 fn ai_selected_writing_accepts_each_change_and_undo_restores_only_that_change(
     cx: &mut TestAppContext,
 ) {

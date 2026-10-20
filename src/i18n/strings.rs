@@ -798,6 +798,12 @@ pub struct I18nStrings {
     pub ai_panel_stop: String,
     /// AI 面板:生成中状态。
     pub ai_panel_running: String,
+    /// AI 面板:工具调用轨迹标题。
+    pub ai_tool_trace: String,
+    /// AI 面板:工具调用运行中。
+    pub ai_tool_running: String,
+    /// AI 面板:工具调用失败。
+    pub ai_tool_failed: String,
     /// AI 页:API 地址。
     pub preferences_ai_api_base_url: String,
     /// AI 页:API 密钥。

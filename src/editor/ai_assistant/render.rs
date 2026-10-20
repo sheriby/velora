@@ -99,7 +99,8 @@ impl Editor {
         } else {
             px(0.0)
         };
-        let width = if compact {
+        let has_messages = !session.saved.messages.is_empty();
+        let default_width = if compact {
             (f32::from(viewport.width) - 32.0).clamp(180.0, 620.0)
         } else {
             f32::from(
@@ -108,7 +109,7 @@ impl Editor {
                     .min(inset * 38.75),
             )
         };
-        let height = if compact {
+        let default_height = if compact {
             (f32::from(viewport.height) - 120.0).clamp(180.0, 720.0)
         } else {
             f32::from(
@@ -117,18 +118,30 @@ impl Editor {
                     .min(inset * 45.0),
             )
         };
-        let task_height = height.min(if session.saved.workspace.changes.proposals.is_empty() {
-            520.0
-        } else {
-            320.0
-        });
+        // 用户拖过右下角就按他的尺寸渲染；否则保持默认高度，避免空对话被拉长。
+        let (width, height) = match (compact, session.float_size) {
+            (true, Some(size)) => (
+                f32::from(size.width).clamp(240.0, (f32::from(viewport.width) - 24.0).max(240.0)),
+                f32::from(size.height)
+                    .clamp(180.0, (f32::from(viewport.height) - 80.0).max(180.0)),
+            ),
+            (true, None) => (
+                default_width,
+                default_height.min(if session.saved.workspace.changes.proposals.is_empty() {
+                    520.0
+                } else {
+                    320.0
+                }),
+            ),
+            (false, _) => (default_width, default_height),
+        };
         let origin = if compact {
             session.origin
         } else {
             point((viewport.width - px(width)) * 0.5, auxiliary_top)
         };
         let panel = if compact {
-            self.render_ai_workbench(theme, task_height, false, window, cx)
+            self.render_ai_workbench(theme, height, false, window, cx)
         } else {
             self.render_ai_panel(theme, height, window, cx)
                 .w(px(width))
@@ -144,10 +157,10 @@ impl Editor {
                     .min((viewport.width - px(width) - px(12.0)).max(px(12.0))),
                 origin.y.max(px(65.0)).min(
                     (viewport.height
-                        - px(if session.saved.messages.is_empty() {
-                            180.0
+                        - px(if has_messages || session.float_size.is_some() {
+                            height
                         } else {
-                            task_height
+                            180.0
                         })
                         - px(36.0))
                     .max(px(65.0)),
@@ -157,29 +170,64 @@ impl Editor {
             origin
         };
         let measured = session.panel_bounds.clone();
-        Some(
-            div()
-                .id("ai-floating-workbench")
-                .debug_selector(|| "ai-floating-workbench".into())
-                .absolute()
-                .left(origin.x)
-                .top(origin.y)
-                .w(px(width))
-                .child(panel)
-                .child(
-                    canvas(
-                        move |bounds, _, _| {
-                            if compact {
-                                measured.set(bounds);
-                            }
-                        },
-                        |_, _, _, _| {},
-                    )
-                    .absolute()
-                    .inset_0(),
+        let mut container = div()
+            .id("ai-floating-workbench")
+            .debug_selector(|| "ai-floating-workbench".into())
+            .absolute()
+            .left(origin.x)
+            .top(origin.y)
+            .w(px(width))
+            .child(panel)
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        if compact {
+                            measured.set(bounds);
+                        }
+                    },
+                    |_, _, _, _| {},
                 )
-                .into_any_element(),
-        )
+                .absolute()
+                .inset_0(),
+            );
+        if compact {
+            container = container.child(
+                div()
+                    .id("ai-float-resize")
+                    .debug_selector(|| "ai-float-resize".into())
+                    .absolute()
+                    .right(px(2.0))
+                    .bottom(px(2.0))
+                    .w(px(16.0))
+                    .h(px(16.0))
+                    .cursor(CursorStyle::ResizeUpRightDownLeft)
+                    .occlude()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|editor, event: &MouseDownEvent, _, cx| {
+                            if let Some(session) = editor.ai_session.as_mut() {
+                                let size = session.panel_bounds.get().size;
+                                if size.width > px(0.0) && size.height > px(0.0) {
+                                    session.float_resize = Some((event.position, size));
+                                }
+                            }
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .right(px(3.0))
+                            .bottom(px(3.0))
+                            .w(px(8.0))
+                            .h(px(8.0))
+                            .border_r(px(1.0))
+                            .border_b(px(1.0))
+                            .border_color(theme.colors.dialog_muted),
+                    ),
+            );
+        }
+        Some(container.into_any_element())
     }
 
     pub(in crate::editor) fn render_ai_sidebar_layout(

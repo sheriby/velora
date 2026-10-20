@@ -27,10 +27,52 @@ pub(crate) enum RunEvent {
     Activity(String),
     /// 工具或重试结束，界面不再显示上一次的活动文案。
     ActivityDone,
+    /// 一次工具调用开始；参数已转成紧凑 JSON 并截断，供界面轨迹展示。
+    ToolCallStart {
+        id: String,
+        name: String,
+        arguments: String,
+    },
+    /// 工具调用结束；结果摘要只保留文本内容，完整结果仍在对话历史里。
+    ToolCallEnd {
+        id: String,
+        name: String,
+        ok: bool,
+        result: String,
+    },
     Checkpoint {
         workspace: Box<AiWorkspace>,
         history: Vec<Value>,
     },
+}
+
+/// 轨迹是给人快速扫一眼的，不替历史保存完整参数与结果。
+const TOOL_TRACE_ARGUMENT_LIMIT: usize = 1_000;
+const TOOL_TRACE_RESULT_LIMIT: usize = 4_000;
+
+fn summarize_tool_arguments(arguments: &Value) -> String {
+    let text = serde_json::to_string(arguments).unwrap_or_else(|_| "{}".into());
+    truncate_for_trace(&text, TOOL_TRACE_ARGUMENT_LIMIT)
+}
+
+fn summarize_tool_result(result: &ToolResult) -> String {
+    let text = result
+        .content
+        .iter()
+        .filter_map(|content| match content {
+            Content::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    truncate_for_trace(&text, TOOL_TRACE_RESULT_LIMIT)
+}
+
+fn truncate_for_trace(text: &str, limit: usize) -> String {
+    match text.char_indices().nth(limit) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_owned(),
+    }
 }
 
 #[derive(Default, Debug)]
@@ -192,10 +234,32 @@ pub(crate) async fn run_with_provider(
                     delta: StreamDelta::Text { delta },
                     ..
                 } => emit(RunEvent::Text(delta)),
-                AgentEvent::ToolExecutionStart { tool_name, .. } => {
-                    emit(RunEvent::Activity(tool_name))
+                AgentEvent::ToolExecutionStart {
+                    tool_call_id,
+                    tool_name,
+                    args,
+                } => {
+                    emit(RunEvent::Activity(tool_name.clone()));
+                    emit(RunEvent::ToolCallStart {
+                        id: tool_call_id,
+                        name: tool_name,
+                        arguments: summarize_tool_arguments(&args),
+                    });
                 }
-                AgentEvent::ToolExecutionEnd { .. } => emit(RunEvent::ActivityDone),
+                AgentEvent::ToolExecutionEnd {
+                    tool_call_id,
+                    tool_name,
+                    result,
+                    is_error,
+                } => {
+                    emit(RunEvent::ActivityDone);
+                    emit(RunEvent::ToolCallEnd {
+                        id: tool_call_id,
+                        name: tool_name,
+                        ok: !is_error,
+                        result: summarize_tool_result(&result),
+                    });
+                }
                 AgentEvent::TurnEnd {
                     message,
                     tool_results,
