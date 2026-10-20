@@ -76,6 +76,12 @@ impl AiCommand {
 /// 未知内容（模型/IO 的原始报错）原样返回。
 pub(crate) fn error_text(error: &str, strings: &crate::i18n::I18nStrings) -> String {
     if let Some(detail) = error.strip_prefix("velora-ai:model-failed:") {
+        if detail.contains("unusable arguments") {
+            let evidence = detail
+                .split_once("not executed:")
+                .map_or(detail, |(_, rest)| rest.trim());
+            return format!("{}{evidence}", strings.ai_error_tool_arguments);
+        }
         return if detail.is_empty() {
             strings.ai_error_model_failed.clone()
         } else {

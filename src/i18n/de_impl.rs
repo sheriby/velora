@@ -1084,6 +1084,7 @@ impl I18nStringsDe {
             ai_error_stopped: self.ai_error_stopped.unwrap_or(defaults.ai_error_stopped),
             ai_error_budget: self.ai_error_budget.unwrap_or(defaults.ai_error_budget),
             ai_error_model_failed: self.ai_error_model_failed.unwrap_or(defaults.ai_error_model_failed),
+            ai_error_tool_arguments: self.ai_error_tool_arguments.unwrap_or(defaults.ai_error_tool_arguments),
             ai_error_no_selection: self.ai_error_no_selection.unwrap_or(defaults.ai_error_no_selection),
             ai_error_instruction_incomplete: self.ai_error_instruction_incomplete.unwrap_or(defaults.ai_error_instruction_incomplete),
             ai_error_reference_closed: self.ai_error_reference_closed.unwrap_or(defaults.ai_error_reference_closed),

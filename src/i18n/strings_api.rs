@@ -492,6 +492,7 @@ impl I18nStrings {
         strings.ai_error_stopped = "任务已停止".into();
         strings.ai_error_budget = "任务已达到执行预算，可以继续讨论".into();
         strings.ai_error_model_failed = "模型未能完成请求".into();
+        strings.ai_error_tool_arguments = "模型生成的工具参数不完整，工具没有执行（常见原因是输出被截断）。原始内容：".into();
         strings.ai_error_no_selection = "请先选择需要处理的文字".into();
         strings.ai_error_instruction_incomplete = "请输入指令名称和内容".into();
         strings.ai_error_reference_closed = "引用的未保存文档已关闭".into();
@@ -1065,6 +1066,7 @@ impl I18nStrings {
             ai_error_stopped: "Task stopped".into(),
             ai_error_budget: "Task reached its execution budget; you can continue the discussion.".into(),
             ai_error_model_failed: "The model could not complete the request".into(),
+            ai_error_tool_arguments: "The model produced incomplete tool arguments, so the tool did not run (the output was probably truncated). Raw arguments: ".into(),
             ai_error_no_selection: "Select some text first".into(),
             ai_error_instruction_incomplete: "Enter both an instruction name and content".into(),
             ai_error_reference_closed: "A referenced unsaved document has been closed".into(),

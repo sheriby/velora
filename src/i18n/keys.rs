@@ -459,6 +459,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_error_stopped",
     "ai_error_budget",
     "ai_error_model_failed",
+    "ai_error_tool_arguments",
     "ai_error_no_selection",
     "ai_error_instruction_incomplete",
     "ai_error_reference_closed",

@@ -1847,6 +1847,7 @@ impl Editor {
                 }
                 WorkerEvent::Runtime(RunEvent::Text(text)) => stream_delta.push_str(&text),
                 WorkerEvent::Runtime(RunEvent::Activity(activity)) => session.activity = activity,
+                WorkerEvent::Runtime(RunEvent::ActivityDone) => session.activity.clear(),
                 WorkerEvent::Runtime(RunEvent::Checkpoint { workspace, history }) => {
                     session.saved.workspace = *workspace;
                     session.review_dirty = true;

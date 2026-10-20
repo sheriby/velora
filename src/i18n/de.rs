@@ -462,6 +462,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) ai_error_stopped: Option<String>,
     pub(crate) ai_error_budget: Option<String>,
     pub(crate) ai_error_model_failed: Option<String>,
+    pub(crate) ai_error_tool_arguments: Option<String>,
     pub(crate) ai_error_no_selection: Option<String>,
     pub(crate) ai_error_instruction_incomplete: Option<String>,
     pub(crate) ai_error_reference_closed: Option<String>,

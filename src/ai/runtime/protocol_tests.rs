@@ -267,3 +267,570 @@ fn ai_runtime_completes_http_tools_from_a_small_native_background_stack() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+fn anthropic_sse(messages: &[Value]) -> String {
+    let mut stream = String::new();
+    for message in messages {
+        stream.push_str(&format!("event: {}\n", message["type"].as_str().unwrap()));
+        stream.push_str(&format!("data: {message}\n\n"));
+    }
+    stream
+}
+
+/// `close_block` 为 false 模拟网关漏发 `content_block_stop`：参数已经完整
+/// 流完，但适配层没有把它从累加缓冲解析成工具参数。
+fn anthropic_tool_call_events(name: &str, arguments: &str, close_block: bool) -> String {
+    anthropic_tool_blocks_events(&[AnthropicToolBlock {
+        id: "call_1",
+        name,
+        arguments,
+        close: if close_block {
+            BlockClose::Stop
+        } else {
+            BlockClose::Missing
+        },
+    }])
+}
+
+#[derive(Clone, Copy)]
+enum BlockClose {
+    Stop,
+    /// 网关发来的收尾事件没有 `index`，适配层无法把它对应到具体块。
+    StopWithoutIndex,
+    Missing,
+}
+
+struct AnthropicToolBlock<'a> {
+    id: &'a str,
+    name: &'a str,
+    arguments: &'a str,
+    close: BlockClose,
+}
+
+fn anthropic_tool_blocks_events(blocks: &[AnthropicToolBlock<'_>]) -> String {
+    let mut messages = vec![
+        json!({"type":"message_start","message":{"id":"msg_1","role":"assistant","content":[],"model":"fixture","usage":{"input_tokens":10,"output_tokens":0}}}),
+    ];
+    for (index, block) in blocks.iter().enumerate() {
+        let index = index as u64;
+        messages.push(json!({"type":"content_block_start","index":index,"content_block":{"type":"tool_use","id":block.id,"name":block.name,"input":{}}}));
+        messages.push(json!({"type":"content_block_delta","index":index,"delta":{"type":"input_json_delta","partial_json":block.arguments}}));
+        match block.close {
+            BlockClose::Stop => messages.push(json!({"type":"content_block_stop","index":index})),
+            BlockClose::StopWithoutIndex => messages.push(json!({"type":"content_block_stop"})),
+            BlockClose::Missing => {}
+        }
+    }
+    messages.push(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":2}}));
+    messages.push(json!({"type":"message_stop"}));
+    anthropic_sse(&messages)
+}
+
+fn anthropic_text_events(text: &str) -> String {
+    anthropic_sse(&[
+        json!({"type":"message_start","message":{"id":"msg_2","role":"assistant","content":[],"model":"fixture","usage":{"input_tokens":10,"output_tokens":0}}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":text}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}),
+        json!({"type":"message_stop"}),
+    ])
+}
+
+fn chat_sse(chunks: &[Value], done: bool) -> String {
+    let mut stream = String::new();
+    for chunk in chunks {
+        stream.push_str(&format!("data: {chunk}\n\n"));
+    }
+    if done {
+        stream.push_str("data: [DONE]\n\n");
+    }
+    stream
+}
+
+fn chat_tool_call_delta(
+    index: u32,
+    id: Option<&str>,
+    name: Option<&str>,
+    arguments: Option<&str>,
+) -> Value {
+    let mut function = serde_json::Map::new();
+    if let Some(name) = name {
+        function.insert("name".into(), name.into());
+    }
+    if let Some(arguments) = arguments {
+        function.insert("arguments".into(), arguments.into());
+    }
+    let mut call = serde_json::Map::new();
+    call.insert("index".into(), index.into());
+    if let Some(id) = id {
+        call.insert("id".into(), id.into());
+    }
+    call.insert("type".into(), "function".into());
+    call.insert("function".into(), Value::Object(function));
+    json!({"choices":[{"index":0,"delta":{"tool_calls":[Value::Object(call)]},"finish_reason":null}]})
+}
+
+fn chat_finish_chunk(reason: &str) -> Value {
+    json!({"choices":[{"index":0,"delta":{},"finish_reason":reason}]})
+}
+
+fn chat_text_events(text: &str) -> String {
+    chat_sse(
+        &[
+            json!({"choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]}),
+            chat_finish_chunk("stop"),
+        ],
+        true,
+    )
+}
+
+/// 按顺序回应；请求没来齐时安静退出，让失败落在断言而不是夹具线程上。
+fn serve_sse(responses: Vec<String>) -> (String, std::thread::JoinHandle<Vec<Value>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        let mut requests = Vec::new();
+        'responses: for body in responses {
+            let start = Instant::now();
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && start.elapsed() < Duration::from_secs(2) =>
+                    {
+                        std::thread::sleep(Duration::from_millis(2))
+                    }
+                    Err(_) => break 'responses,
+                }
+            };
+            requests.push(read_request(&mut stream).1);
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+        }
+        requests
+    });
+    (format!("http://{address}/v1"), server)
+}
+
+fn run_against(
+    address: String,
+    protocol: Protocol,
+    prompt: &str,
+    workspace: &Arc<Mutex<AiWorkspace>>,
+) -> RunOutput {
+    run_against_with_history(address, protocol, prompt, Vec::new(), workspace)
+}
+
+fn run_against_with_history(
+    address: String,
+    protocol: Protocol,
+    prompt: &str,
+    history: Vec<Value>,
+    workspace: &Arc<Mutex<AiWorkspace>>,
+) -> RunOutput {
+    let endpoint = Endpoint {
+        protocol,
+        name: "本地协议夹具".into(),
+        base_url: address,
+        model: "fixture".into(),
+        ..Endpoint::default()
+    };
+    run_blocking(
+        RunRequest {
+            model: endpoint.model_config().unwrap(),
+            api_key: String::new(),
+            history,
+            prompt: prompt.into(),
+            system: "测试".into(),
+            max_turns: 3,
+            timeout: Duration::from_secs(10),
+        },
+        workspace.clone(),
+        RunControl::default(),
+        |_| {},
+    )
+    .unwrap()
+}
+
+fn fixture_workspace() -> Arc<Mutex<AiWorkspace>> {
+    Arc::new(Mutex::new(
+        AiWorkspace::new(
+            None,
+            vec![crate::ai::DocumentSnapshot {
+                id: "note.md".into(),
+                source: "fixture-content".into(),
+            }],
+        )
+        .unwrap(),
+    ))
+}
+
+/// `{}` 是合法参数：网关漏发 `content_block_stop` 时适配层把完整参数留在
+/// 未解析缓冲里，整个工具调用被判死。可解析的缓冲必须还原成工具调用执行，
+/// 不进重试、也不让整轮 abort。
+#[test]
+fn anthropic_missing_content_block_stop_keeps_a_parseable_tool_call() {
+    let (address, server) = serve_sse(vec![
+        anthropic_tool_call_events("list_documents", "{}", false),
+        anthropic_text_events("Done"),
+    ]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::Messages, "列出工作区文档", &workspace);
+    let requests = server.join().unwrap();
+    assert!(output.error.is_none(), "{output:?}");
+    assert_eq!(requests.len(), 2, "工具必须真的执行并进入下一轮");
+    assert!(
+        requests[1].to_string().contains("note.md"),
+        "第二轮请求必须带着工具结果：{}",
+        requests[1]
+    );
+    assert!(
+        !serde_json::to_string(&output.history)
+            .unwrap()
+            .contains("not executed"),
+        "历史里不能留下「未执行」占位：{output:?}"
+    );
+}
+
+/// 一轮里多个工具调用，只要参数完整就必须全部还原执行，不能因为其中一个
+/// 漏了收尾事件就把整轮丢掉。
+#[test]
+fn anthropic_multiple_tool_calls_survive_a_missing_stop() {
+    let (address, server) = serve_sse(vec![
+        anthropic_tool_blocks_events(&[
+            AnthropicToolBlock {
+                id: "call_1",
+                name: "read_document",
+                arguments: r#"{"path":"note.md"}"#,
+                close: BlockClose::Missing,
+            },
+            AnthropicToolBlock {
+                id: "call_2",
+                name: "get_outline",
+                arguments: r#"{"path":"note.md"}"#,
+                close: BlockClose::Stop,
+            },
+        ]),
+        anthropic_text_events("Done"),
+    ]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::Messages, "读取并列出标题", &workspace);
+    let requests = server.join().unwrap();
+    assert!(output.error.is_none(), "{output:?}");
+    assert_eq!(requests.len(), 2, "两个工具都必须执行并进入下一轮");
+    let second = requests[1].to_string();
+    assert!(second.contains("fixture-content"), "{second}");
+    assert!(second.contains("headings"), "{second}");
+}
+
+/// 收尾事件到了但没有 `index`：参数同样完整，仍须还原执行。
+#[test]
+fn anthropic_stop_without_index_still_parses_complete_arguments() {
+    let (address, server) = serve_sse(vec![
+        anthropic_tool_blocks_events(&[AnthropicToolBlock {
+            id: "call_1",
+            name: "list_documents",
+            arguments: "{}",
+            close: BlockClose::StopWithoutIndex,
+        }]),
+        anthropic_text_events("Done"),
+    ]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::Messages, "列出工作区文档", &workspace);
+    let requests = server.join().unwrap();
+    assert!(output.error.is_none(), "{output:?}");
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].to_string().contains("note.md"), "{}", requests[1]);
+}
+
+/// 参数是合法 JSON 但不是对象（双重编码）：工具本身返回参数错误，整轮继续。
+#[test]
+fn anthropic_non_object_arguments_become_a_tool_error_and_the_run_continues() {
+    let (address, server) = serve_sse(vec![
+        anthropic_tool_blocks_events(&[AnthropicToolBlock {
+            id: "call_1",
+            name: "read_document",
+            arguments: r#""{\"path\":\"note.md\"}""#,
+            close: BlockClose::Stop,
+        }]),
+        anthropic_text_events("Done"),
+    ]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::Messages, "读取 note.md", &workspace);
+    let requests = server.join().unwrap();
+    assert!(output.error.is_none(), "{output:?}");
+    assert_eq!(requests.len(), 2, "工具错误必须交回模型而不是结束整轮");
+    let second = requests[1].to_string();
+    assert!(second.contains("缺少参数：path"), "{second}");
+    assert!(!second.contains("not executed"), "{second}");
+}
+
+/// 连续两次参数截断只重试一次；最终错误必须带工具名和原始片段，历史里留下
+/// 明确的未执行占位。
+#[test]
+fn anthropic_truncated_arguments_are_retried_only_once_and_fail_with_detail() {
+    let (address, server) = serve_sse(vec![
+        anthropic_tool_call_events("read_document", r#"{"path":"note"#, true),
+        anthropic_tool_call_events("read_document", r#"{"path":"note"#, true),
+    ]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::Messages, "读取 note.md", &workspace);
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 2, "只准自动重试一次，不能无限重发");
+    let error = output.error.as_deref().unwrap_or_default();
+    assert!(error.contains("read_document"), "{error}");
+    assert!(error.contains(r#"{"path":"note"#), "{error}");
+    assert!(
+        serde_json::to_string(&output.history)
+            .unwrap()
+            .contains("not executed"),
+        "两次失败后历史必须留下未执行占位：{output:?}"
+    );
+}
+
+/// Chat Completions 一轮多个工具调用、参数分多片到达：按 index 拼接后全部执行。
+#[test]
+fn chat_completions_executes_multiple_tool_calls_with_split_arguments() {
+    let (address, server) = serve_sse(vec![
+        chat_sse(
+            &[
+                chat_tool_call_delta(0, Some("call_1"), Some("read_document"), None),
+                chat_tool_call_delta(0, None, None, Some("{\"path\":")),
+                chat_tool_call_delta(0, None, None, Some("\"note.md\"}")),
+                chat_tool_call_delta(
+                    1,
+                    Some("call_2"),
+                    Some("get_outline"),
+                    Some("{\"path\":\"note.md\"}"),
+                ),
+                chat_finish_chunk("tool_calls"),
+            ],
+            true,
+        ),
+        chat_text_events("Done"),
+    ]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::ChatCompletions, "读取并列出标题", &workspace);
+    let requests = server.join().unwrap();
+    assert!(output.error.is_none(), "{output:?}");
+    assert_eq!(requests.len(), 2);
+    let second = requests[1].to_string();
+    assert!(second.contains("fixture-content"), "{second}");
+    assert!(second.contains("headings"), "{second}");
+}
+
+/// Chat Completions 一轮里一个合法、一个截断：合法的照常执行，坏的以工具
+/// 错误交回模型，整轮不中断。
+#[test]
+fn chat_completions_executes_valid_calls_and_reports_the_malformed_one() {
+    let (address, server) = serve_sse(vec![
+        chat_sse(
+            &[
+                chat_tool_call_delta(
+                    0,
+                    Some("call_1"),
+                    Some("read_document"),
+                    Some("{\"path\":\"note.md\"}"),
+                ),
+                chat_tool_call_delta(
+                    1,
+                    Some("call_2"),
+                    Some("search_documents"),
+                    Some("{\"query\":"),
+                ),
+                chat_finish_chunk("tool_calls"),
+            ],
+            true,
+        ),
+        chat_text_events("Done"),
+    ]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::ChatCompletions, "读取并搜索", &workspace);
+    let requests = server.join().unwrap();
+    assert!(output.error.is_none(), "{output:?}");
+    assert_eq!(requests.len(), 2);
+    let second = requests[1].to_string();
+    assert!(second.contains("fixture-content"), "{second}");
+    assert!(second.contains("cut off"), "{second}");
+}
+
+/// 有的网关只发 finish_reason 就关闭连接，不发 `[DONE]`；响应仍按完成处理，
+/// 不能挂着等终止符。
+#[test]
+fn chat_completions_finishes_when_a_gateway_closes_without_done() {
+    let (address, server) = serve_sse(vec![chat_sse(
+        &[
+            json!({"choices":[{"index":0,"delta":{"content":"Done"},"finish_reason":null}]}),
+            chat_finish_chunk("stop"),
+        ],
+        false,
+    )]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::ChatCompletions, "打招呼", &workspace);
+    let requests = server.join().unwrap();
+    assert!(output.error.is_none(), "{output:?}");
+    assert_eq!(requests.len(), 1);
+    assert!(
+        serde_json::to_string(&output.history)
+            .unwrap()
+            .contains("Done"),
+        "{output:?}"
+    );
+}
+
+fn verify_many_plain_turns(protocol: Protocol) {
+    let responses: Vec<String> = (0..5)
+        .map(|turn| match protocol {
+            Protocol::Messages => anthropic_text_events(&format!("回答{turn}")),
+            Protocol::ChatCompletions => chat_text_events(&format!("回答{turn}")),
+            _ => panic!("只覆盖两种对话协议"),
+        })
+        .collect();
+    let (address, server) = serve_sse(responses);
+    let workspace = fixture_workspace();
+    let mut history = Vec::new();
+    let mut previous_messages: Option<Value> = None;
+    for turn in 0..5 {
+        let output = run_against_with_history(
+            address.clone(),
+            protocol,
+            &format!("问题{turn}"),
+            history,
+            &workspace,
+        );
+        assert!(output.error.is_none(), "{output:?}");
+        history = output.history;
+    }
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 5);
+    for (turn, body) in requests.iter().enumerate() {
+        let messages = without_cache_breakpoints(body.get("messages").unwrap());
+        if let Some(previous) = &previous_messages {
+            assert!(
+                messages
+                    .as_array()
+                    .unwrap()
+                    .starts_with(previous.as_array().unwrap()),
+                "第 {turn} 轮请求只能追加历史，不能重写前缀"
+            );
+        }
+        let last = messages.as_array().unwrap().last().unwrap();
+        assert_eq!(last["role"], "user", "第 {turn} 轮最后一条必须是新问题");
+        assert!(
+            last["content"].to_string().contains(&format!("问题{turn}")),
+            "第 {turn} 轮问题丢失或错位：{last}"
+        );
+        previous_messages = Some(messages);
+    }
+}
+
+#[test]
+fn ai_messages_keeps_many_plain_turns_append_only() {
+    verify_many_plain_turns(Protocol::Messages);
+}
+
+#[test]
+fn ai_chat_completions_keeps_many_plain_turns_append_only() {
+    verify_many_plain_turns(Protocol::ChatCompletions);
+}
+
+/// 自动重试只为当次请求补纠正提示；它不能进入历史，否则后续每一轮都会
+/// 重复看到一条无意义的指令。
+#[test]
+fn anthropic_retry_note_does_not_leak_into_the_next_turn() {
+    let (address, server) = serve_sse(vec![
+        anthropic_tool_call_events("read_document", r#"{"path":"note"#, true),
+        anthropic_tool_call_events("read_document", r#"{"path":"note.md"}"#, true),
+        anthropic_text_events("第一轮完成"),
+        anthropic_text_events("第二轮完成"),
+    ]);
+    let workspace = fixture_workspace();
+    let first = run_against(address.clone(), Protocol::Messages, "先读 note.md", &workspace);
+    assert!(first.error.is_none(), "{first:?}");
+    let second = run_against_with_history(
+        address,
+        Protocol::Messages,
+        "继续",
+        first.history,
+        &workspace,
+    );
+    assert!(second.error.is_none(), "{second:?}");
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 4);
+    for (turn, body) in requests.iter().enumerate().skip(2) {
+        assert!(
+            !body.to_string().contains("上一次的工具调用参数"),
+            "第 {turn} 个请求不能带上重试纠正提示：{body}"
+        );
+    }
+    assert!(
+        requests[3].to_string().contains("fixture-content"),
+        "下一轮必须带着上一轮的工具结果：{}",
+        requests[3]
+    );
+}
+
+/// 一轮里一个可解析、一个真截断：可解析的照常执行，坏的保留未执行占位，
+/// 不为它重跑整轮（那会丢掉已经执行成功的结果）。
+#[test]
+fn anthropic_mixed_calls_keep_the_parseable_one_and_surface_the_truncated_one() {
+    let (address, server) = serve_sse(vec![
+        anthropic_tool_blocks_events(&[
+            AnthropicToolBlock {
+                id: "call_1",
+                name: "read_document",
+                arguments: r#"{"path":"note.md"}"#,
+                close: BlockClose::Missing,
+            },
+            AnthropicToolBlock {
+                id: "call_2",
+                name: "search_documents",
+                arguments: r#"{"query":"#,
+                close: BlockClose::Stop,
+            },
+        ]),
+        anthropic_text_events("Done"),
+    ]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::Messages, "读取并搜索", &workspace);
+    let requests = server.join().unwrap();
+    assert!(output.error.is_none(), "{output:?}");
+    assert_eq!(requests.len(), 2, "不重跑整轮：合法调用已执行");
+    let second = requests[1].to_string();
+    assert!(second.contains("fixture-content"), "{second}");
+    assert!(second.contains("not executed"), "{second}");
+}
+
+/// 真正被截断的参数解析不了，只能补一条纠正提示重试一次；重试成功后整轮
+/// 继续，用户看不到「not executed」。
+#[test]
+fn anthropic_truncated_arguments_are_retried_and_the_run_continues() {
+    let (address, server) = serve_sse(vec![
+        anthropic_tool_call_events("read_document", r#"{"path":"note"#, true),
+        anthropic_tool_call_events("read_document", r#"{"path":"note.md"}"#, true),
+        anthropic_text_events("Done"),
+    ]);
+    let workspace = fixture_workspace();
+    let output = run_against(address, Protocol::Messages, "读取 note.md", &workspace);
+    let requests = server.join().unwrap();
+    assert!(output.error.is_none(), "{output:?}");
+    assert_eq!(requests.len(), 3, "第一次参数不可用后必须自动重试一次");
+    assert!(
+        requests[1].to_string().contains("上一次的工具调用参数"),
+        "重试请求必须带纠正提示：{}",
+        requests[1]
+    );
+    assert!(
+        requests[2].to_string().contains("fixture-content"),
+        "重试成功后工具必须真的执行：{}",
+        requests[2]
+    );
+    assert!(
+        !serde_json::to_string(&output.history)
+            .unwrap()
+            .contains("not executed"),
+        "历史里不能留下「未执行」占位：{output:?}"
+    );
+}

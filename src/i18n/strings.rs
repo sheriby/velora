@@ -712,6 +712,7 @@ pub struct I18nStrings {
     pub ai_error_stopped: String,
     pub ai_error_budget: String,
     pub ai_error_model_failed: String,
+    pub ai_error_tool_arguments: String,
     pub ai_error_no_selection: String,
     pub ai_error_instruction_incomplete: String,
     pub ai_error_reference_closed: String,

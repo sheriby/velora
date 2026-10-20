@@ -82,6 +82,351 @@ fn ai_runtime_drives_multiple_tools_and_revises_pending_content_without_writing(
 }
 
 #[test]
+fn ai_runtime_keeps_a_multi_turn_conversation_and_pending_proposals() {
+    let workspace = Arc::new(Mutex::new(
+        AiWorkspace::new(
+            None,
+            vec![DocumentSnapshot {
+                id: "note.md".into(),
+                source: "原文".into(),
+            }],
+        )
+        .unwrap(),
+    ));
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let prompts = ["先读 note.md", "把原文改成第一稿", "再读一次确认", "总结一下"];
+    let responses = vec![
+        vec![
+            call("read_document", json!({"path":"note.md"})),
+            MockResponse::Text("第一轮完成".into()),
+        ],
+        vec![
+            call(
+                "propose_edit",
+                json!({"path":"note.md","before":"原文","after":"第一稿"}),
+            ),
+            MockResponse::Text("第二轮完成".into()),
+        ],
+        vec![
+            call("read_document", json!({"path":"note.md"})),
+            MockResponse::Text("第三轮完成".into()),
+        ],
+        vec![MockResponse::Text("总结完成".into())],
+    ];
+    let mut history: Vec<Value> = Vec::new();
+    for (prompt, responses) in prompts.iter().zip(responses) {
+        let provider = MockProvider::new(responses);
+        let output = runtime
+            .block_on(run_with_provider(
+                RunRequest {
+                    history: history.clone(),
+                    prompt: (*prompt).into(),
+                    ..request()
+                },
+                workspace.clone(),
+                RunControl::default(),
+                Arc::new(provider),
+                |_| {},
+            ))
+            .unwrap();
+        assert!(output.error.is_none(), "{output:?}");
+        assert!(
+            output.history.len() > history.len(),
+            "「{prompt}」必须追加历史"
+        );
+        assert_eq!(
+            &output.history[..history.len()],
+            &history[..],
+            "「{prompt}」不能重写之前的历史"
+        );
+        history = output.history;
+    }
+    let serialized = serde_json::to_string(&history).unwrap();
+    for prompt in prompts {
+        assert!(serialized.contains(prompt), "「{prompt}」必须留在历史里");
+    }
+    for text in ["第一轮完成", "第二轮完成", "第三轮完成", "总结完成"] {
+        assert!(serialized.contains(text), "「{text}」必须留在历史里");
+    }
+    let workspace = workspace.lock().unwrap();
+    let proposal = workspace
+        .changes
+        .proposals
+        .get("note.md")
+        .expect("提议必须跨轮保留");
+    assert_eq!(&*proposal.proposed, "第一稿");
+    let reads: Vec<_> = history
+        .iter()
+        .filter(|message| {
+            message.get("role").and_then(Value::as_str) == Some("toolResult")
+                && message.get("toolName").and_then(Value::as_str) == Some("read_document")
+        })
+        .collect();
+    assert_eq!(reads.len(), 2, "两轮读取都必须留下结果：{history:?}");
+    assert!(
+        reads[1]["content"].to_string().contains("第一稿"),
+        "第三轮读取必须看到待审阅版本：{:?}",
+        reads[1]
+    );
+}
+
+#[test]
+fn ai_runtime_clears_the_activity_label_when_a_tool_finishes() {
+    let workspace = Arc::new(Mutex::new(
+        AiWorkspace::new(
+            None,
+            vec![DocumentSnapshot {
+                id: "note.md".into(),
+                source: "正文".into(),
+            }],
+        )
+        .unwrap(),
+    ));
+    let provider = MockProvider::new(vec![
+        call("read_document", json!({"path":"note.md"})),
+        MockResponse::Text("已阅读。".into()),
+    ]);
+    let mut events = Vec::new();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let result = runtime
+        .block_on(run_with_provider(
+            request(),
+            workspace,
+            RunControl::default(),
+            Arc::new(provider),
+            |event| events.push(event),
+        ))
+        .unwrap();
+    assert!(result.error.is_none(), "{result:?}");
+    let activity = events
+        .iter()
+        .position(|event| matches!(event, RunEvent::Activity(name) if name == "read_document"))
+        .expect("工具开始必须设置活动文案");
+    let done = events
+        .iter()
+        .position(|event| matches!(event, RunEvent::ActivityDone))
+        .expect("工具结束必须清除活动文案");
+    let answered = events
+        .iter()
+        .rposition(|event| matches!(event, RunEvent::Text(text) if text.contains("已阅读")))
+        .expect("模型必须给出回答");
+    assert!(
+        activity < done && done < answered,
+        "工具结束到回答之间活动文案必须清空"
+    );
+}
+
+struct StalledProvider;
+
+#[async_trait::async_trait]
+impl StreamProvider for StalledProvider {
+    async fn stream(
+        &self,
+        _config: StreamConfig,
+        tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+        _cancel: CancellationToken,
+    ) -> Result<Message, ProviderError> {
+        let _ = tx.send(StreamEvent::Start);
+        std::future::pending::<()>().await;
+        unreachable!()
+    }
+}
+
+#[test]
+fn ai_provider_stall_turns_into_a_retryable_error_instead_of_waiting_forever() {
+    let provider = ToolArgumentRecoveryProvider::with_stall_timeout(
+        Arc::new(StalledProvider),
+        Duration::from_millis(50),
+    );
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let result = runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            provider.stream(
+                StreamConfig::new("mock", "key"),
+                tokio::sync::mpsc::unbounded_channel().0,
+                CancellationToken::new(),
+            ),
+        )
+        .await
+    });
+    let error = result
+        .expect("无数据超时必须结束请求")
+        .expect_err("挂起的 provider 不能当作成功");
+    assert!(
+        matches!(&error, ProviderError::Network(message) if message.contains("没有返回数据")),
+        "超时必须返回可重试的网络错误：{error:?}"
+    );
+}
+
+#[test]
+fn ai_runtime_executes_multiple_tools_in_one_turn() {
+    let workspace = Arc::new(Mutex::new(
+        AiWorkspace::new(
+            None,
+            vec![DocumentSnapshot {
+                id: "note.md".into(),
+                source: "正文".into(),
+            }],
+        )
+        .unwrap(),
+    ));
+    let provider = MockProvider::new(vec![
+        MockResponse::ToolCalls(vec![
+            MockToolCall {
+                name: "read_document".into(),
+                arguments: json!({"path":"note.md"}),
+                provider_metadata: None,
+            },
+            MockToolCall {
+                name: "get_outline".into(),
+                arguments: json!({"path":"note.md"}),
+                provider_metadata: None,
+            },
+        ]),
+        MockResponse::Text("Done".into()),
+    ]);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let result = runtime
+        .block_on(run_with_provider(
+            request(),
+            workspace,
+            RunControl::default(),
+            Arc::new(provider),
+            |_| {},
+        ))
+        .unwrap();
+    assert!(result.error.is_none(), "{result:?}");
+    let history = serde_json::to_string(&result.history).unwrap();
+    assert!(history.contains("正文"), "{history}");
+    assert!(history.contains("headings"), "{history}");
+}
+
+#[test]
+fn ai_runtime_unknown_tool_becomes_an_error_result_and_the_run_continues() {
+    let workspace = Arc::new(Mutex::new(
+        AiWorkspace::new(
+            None,
+            vec![DocumentSnapshot {
+                id: "note.md".into(),
+                source: "正文".into(),
+            }],
+        )
+        .unwrap(),
+    ));
+    let provider = MockProvider::new(vec![
+        call("missing_tool", json!({})),
+        MockResponse::Text("Done".into()),
+    ]);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let result = runtime
+        .block_on(run_with_provider(
+            request(),
+            workspace,
+            RunControl::default(),
+            Arc::new(provider),
+            |_| {},
+        ))
+        .unwrap();
+    assert!(result.error.is_none(), "{result:?}");
+    let history = serde_json::to_string(&result.history).unwrap();
+    assert!(history.contains("Tool missing_tool not found"), "{history}");
+}
+
+#[test]
+fn ai_runtime_missing_required_argument_becomes_a_tool_error_and_the_run_continues() {
+    let workspace = Arc::new(Mutex::new(
+        AiWorkspace::new(
+            None,
+            vec![DocumentSnapshot {
+                id: "note.md".into(),
+                source: "正文".into(),
+            }],
+        )
+        .unwrap(),
+    ));
+    let provider = MockProvider::new(vec![
+        call("search_documents", json!({})),
+        MockResponse::Text("Done".into()),
+    ]);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let result = runtime
+        .block_on(run_with_provider(
+            request(),
+            workspace,
+            RunControl::default(),
+            Arc::new(provider),
+            |_| {},
+        ))
+        .unwrap();
+    assert!(result.error.is_none(), "{result:?}");
+    let history = serde_json::to_string(&result.history).unwrap();
+    assert!(history.contains("缺少参数：query"), "{history}");
+}
+
+#[test]
+fn ai_runtime_a_failed_tool_does_not_skip_the_next_one() {
+    let workspace = Arc::new(Mutex::new(
+        AiWorkspace::new(
+            None,
+            vec![DocumentSnapshot {
+                id: "note.md".into(),
+                source: "正文".into(),
+            }],
+        )
+        .unwrap(),
+    ));
+    let provider = MockProvider::new(vec![
+        MockResponse::ToolCalls(vec![
+            MockToolCall {
+                name: "read_document".into(),
+                arguments: json!({"path":"missing.md"}),
+                provider_metadata: None,
+            },
+            MockToolCall {
+                name: "get_outline".into(),
+                arguments: json!({"path":"note.md"}),
+                provider_metadata: None,
+            },
+        ]),
+        MockResponse::Text("Done".into()),
+    ]);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let result = runtime
+        .block_on(run_with_provider(
+            request(),
+            workspace,
+            RunControl::default(),
+            Arc::new(provider),
+            |_| {},
+        ))
+        .unwrap();
+    assert!(result.error.is_none(), "{result:?}");
+    let results: Vec<_> = result
+        .history
+        .iter()
+        .filter(|message| {
+            message.get("role").and_then(Value::as_str) == Some("toolResult")
+        })
+        .collect();
+    assert_eq!(results.len(), 2, "两个工具都必须留下结果：{result:?}");
+    assert_eq!(
+        results
+            .iter()
+            .filter(|message| message.get("isError").and_then(Value::as_bool) == Some(true))
+            .count(),
+        1,
+        "第一个工具必须失败，第二个不能跟着被跳过：{result:?}"
+    );
+    assert!(
+        serde_json::to_string(&result.history)
+            .unwrap()
+            .contains("headings"),
+        "{result:?}"
+    );
+}
+
+#[test]
 fn ai_runtime_cancelled_before_start_does_not_execute_tools() {
     let workspace = Arc::new(Mutex::new(
         AiWorkspace::new(

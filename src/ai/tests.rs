@@ -152,6 +152,21 @@ fn ai_error_codes_localize_for_each_language_and_pass_unknown_through() {
     );
     let model = super::error_text(&super::error_codes::model_failed(Some("boom".into())), &en);
     assert!(model.contains("boom"), "{model}");
+    let unusable = super::error_text(
+        &super::error_codes::model_failed(Some(
+            "tool call(s) with unusable arguments, not executed: `search_documents` ({\"query\": \"simd\"})"
+                .into(),
+        )),
+        &zh,
+    );
+    assert!(
+        unusable.starts_with(zh.ai_error_tool_arguments.as_str()),
+        "{unusable}"
+    );
+    assert!(
+        unusable.contains("search_documents") && unusable.contains("simd"),
+        "错误文案必须保留工具名与原始参数：{unusable}"
+    );
     assert_eq!(
         super::error_text("模型返回的原始错误", &zh),
         "模型返回的原始错误"
