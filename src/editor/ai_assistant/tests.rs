@@ -1407,6 +1407,83 @@ fn ai_empty_floating_panel_can_be_resized_too(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn ai_assistant_text_can_be_selected_with_the_mouse(cx: &mut TestAppContext) {
+    use gpui::{AppContext as _, Entity, InteractiveElement as _, ParentElement as _, Styled as _};
+    use gpui_kit::test::TestWindowExt as _;
+    // 真实窗口的内容根是 Kit 的 Root，它挂载 TextSelectionLayer；测试窗口
+    // 需要显式复刻这一层，选择系统才能在抬手后完成选区。
+    struct SelectionRoot {
+        editor: Entity<Editor>,
+    }
+    impl gpui::Render for SelectionRoot {
+        fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+            gpui::div().size_full().child(gpui_kit::base::TextSelectionLayer).child(self.editor.clone())
+        }
+    }
+    initialize(cx);
+    let (root, cx) = cx.add_window_view(|_, cx| {
+        let editor = cx.new(|cx| Editor::from_markdown(cx, "正文".into(), None));
+        SelectionRoot { editor }
+    });
+    let editor = root.read_with(cx, |root, _| root.editor.clone());
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.saved.messages = [
+            ("user", "第一条提问"),
+            ("assistant", "这是一段可以被选中的回答正文"),
+        ]
+        .into_iter()
+        .map(|(role, text)| crate::ai::session::ChatMessage {
+            role: role.into(),
+            text: text.into(),
+            thinking: "".into(),
+        })
+        .collect();
+        editor.refresh_ai_conversation(cx);
+    });
+    draw(cx);
+    draw(cx);
+    let session_id = editor.read_with(cx, |editor, _| {
+        editor.ai_session.as_ref().unwrap().saved.id.clone()
+    });
+    // 以文本自身 bounds 取点击位置：行容器含内边距，竖直中心未必落在文本行上。
+    let row = editor.read_with(cx, |editor, cx| {
+        editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .conversation
+            .as_ref()
+            .and_then(|view| view.read(cx).message_state(1))
+            .map(|state| state.read(cx).bounds())
+            .expect("助手消息应已渲染")
+    });
+    let start = gpui::point(row.left() + gpui::px(2.0), row.center().y);
+    let end = gpui::point(row.right() - gpui::px(2.0), row.center().y);
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.simulate_mouse_move(end, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.simulate_mouse_up(end, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let selected = editor.read_with(cx, |editor, cx| {
+        editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .conversation
+            .as_ref()
+            .and_then(|view| view.read(cx).message_state(1))
+            .map(|state| state.read(cx).selected_text())
+            .unwrap_or_default()
+    });
+    assert!(!selected.trim().is_empty(), "拖动必须选中回答正文：{selected:?}");
+}
+
+#[gpui::test]
 fn ai_quick_command_session_supports_follow_up_conversation(cx: &mut TestAppContext) {
     initialize(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
@@ -6015,3 +6092,5 @@ fn ai_float_collapses_into_a_corner_button_and_restores(cx: &mut TestAppContext)
         "停靠侧栏不提供收起到角落"
     );
 }
+
+

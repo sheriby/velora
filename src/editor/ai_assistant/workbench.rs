@@ -246,7 +246,6 @@ impl Editor {
                     .shadow_lg()
             })
             .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .when(!sidebar, |panel| panel.child(titlebar))
             .child(header);
         if session
