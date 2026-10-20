@@ -282,49 +282,122 @@ impl AiWorkspace {
                 )
             }
             "search_documents" => {
-                let query = field(arguments, "query")?.to_lowercase();
-                if query.is_empty() {
+                let terms = field(arguments, "query")?
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                if terms.is_empty() {
                     bail!("搜索词不能为空");
                 }
+                // 匹配交给编辑器同款的 ripgrep 引擎（固定字符串、忽略大小写、
+                // 多词 OR），不在这里逐行折叠大小写。
+                let query = crate::editor::workspace::LiteralTermsQuery::new(&terms)
+                    .map_err(|error| anyhow::anyhow!(error.message))?;
+                let files = self.files()?;
+                // 活缓冲、新建文档和有待审阅修改的文件必须走 snapshot（内容不在
+                // 磁盘上）；其余文件并行扫盘，解码与缓存复用侧栏搜索那一份。
+                let mut memory_indices = std::collections::BTreeSet::new();
+                let mut disk_files = Vec::new();
+                let mut resolve_errors = BTreeMap::new();
+                for (index, path) in files.iter().enumerate() {
+                    let needs_snapshot = self.live_documents.contains(path)
+                        || self.new_documents.contains(path)
+                        || path.starts_with("untitled:")
+                        || self.changes.proposals.contains_key(path)
+                        || self.changes.invalid.contains(path);
+                    if needs_snapshot {
+                        memory_indices.insert(index);
+                    } else {
+                        match self.resolve(path, true) {
+                            Ok(absolute) => disk_files.push((index, path.clone(), absolute)),
+                            Err(error) => {
+                                resolve_errors.insert(index, error.to_string());
+                            }
+                        }
+                    }
+                }
+                let cancel = self.cancel.clone();
+                let mut disk_outcomes = crate::editor::workspace::search_files_parallel(
+                    &query,
+                    &disk_files,
+                    &move || {
+                        cancel
+                            .as_ref()
+                            .is_some_and(|token| token.is_cancelled())
+                    },
+                )
+                .into_iter()
+                .map(|(index, _id, result)| (index, result))
+                .collect::<BTreeMap<_, _>>();
+                disk_outcomes.extend(resolve_errors.into_iter().map(|(index, error)| (index, Err(error))));
+                if self.cancelled() {
+                    bail!("任务已停止");
+                }
+
                 let mut matches = Vec::new();
                 let mut errors = Vec::new();
-                for path in self.files()? {
-                    if self.cancelled() {
-                        bail!("任务已停止");
+                for (index, path) in files.iter().enumerate() {
+                    if matches.len() >= 50 {
+                        break;
                     }
-                    match self.snapshot(&path) {
-                        Ok(document) => {
-                            let stale = self.changes.invalid.contains(&path)
-                                || self.changes.proposals.get(&path).is_some_and(|proposal| {
-                                    proposal.validate(&document.source).is_err()
-                                });
-                            let source = if stale {
-                                document.source.as_ref()
-                            } else {
-                                self.changes.read(&document)
-                            };
-                            // 搜索读到的是待审阅内容时同样登记依赖：据此提出的
-                            // 修改要随前置提议的重置一并失效。
-                            if !stale && self.changes.proposals.contains_key(&path) {
-                                self.pending_reads.insert(path.clone());
-                            }
-                            for (index, line) in source.lines().enumerate() {
-                                if line.to_lowercase().contains(&query) {
-                                    matches.push(json!({"path":path,"line":index + 1,"content": line.chars().take(500).collect::<String>()}));
+                    if memory_indices.contains(&index) {
+                        if self.cancelled() {
+                            bail!("任务已停止");
+                        }
+                        match self.snapshot(path) {
+                            Ok(document) => {
+                                let stale = self.changes.invalid.contains(path)
+                                    || self.changes.proposals.get(path).is_some_and(|proposal| {
+                                        proposal.validate(&document.source).is_err()
+                                    });
+                                let source = if stale {
+                                    document.source.as_ref()
+                                } else {
+                                    self.changes.read(&document)
+                                };
+                                // 搜索读到的是待审阅内容时同样登记依赖：据此提出的
+                                // 修改要随前置提议的重置一并失效。
+                                if !stale && self.changes.proposals.contains_key(path) {
+                                    self.pending_reads.insert(path.clone());
+                                }
+                                for hit in query.find_lines(&source, 50 - matches.len()) {
+                                    matches.push(json!({
+                                        "path": path,
+                                        "line": hit.line,
+                                        "content": hit.content.chars().take(500).collect::<String>()
+                                    }));
                                     if matches.len() >= 50 {
                                         break;
                                     }
                                 }
                             }
+                            Err(error) => {
+                                if errors.len() < 20 {
+                                    errors.push(format!("{path}: {error}"));
+                                }
+                            }
                         }
-                        Err(error) => {
+                        continue;
+                    }
+                    match disk_outcomes.remove(&index) {
+                        Some(Ok(hits)) => {
+                            for hit in hits {
+                                matches.push(json!({
+                                    "path": path,
+                                    "line": hit.line,
+                                    "content": hit.content.chars().take(500).collect::<String>()
+                                }));
+                                if matches.len() >= 50 {
+                                    break;
+                                }
+                            }
+                        }
+                        Some(Err(error)) => {
                             if errors.len() < 20 {
                                 errors.push(format!("{path}: {error}"));
                             }
                         }
-                    }
-                    if matches.len() >= 50 {
-                        break;
+                        None => {}
                     }
                 }
                 Ok(json!({"matches":matches,"errors":errors,"limited":matches.len() >= 50}))
@@ -707,7 +780,7 @@ pub(crate) fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
         ),
         (
             "search_documents",
-            "搜索 Markdown 文档并返回来源路径、行号和片段。",
+            "搜索 Markdown 文档并返回来源路径、行号和片段。query 按空白拆分为多个关键词，命中任意一个即返回。",
             json!({"type":"object","required":["query"],"properties":{"query":{"type":"string"}}}),
         ),
         (

@@ -67,6 +67,34 @@ impl CompiledQuery {
         })
     }
 
+    /// 编译一组字面量词，任意一个命中即算匹配（OR）。大小写不敏感，
+    /// 词里的正则元字符按字面处理——文档工具的 query 是用户原话，不是正则。
+    pub(crate) fn compile_literals<T: AsRef<str>>(terms: &[T]) -> Result<Self, QueryError> {
+        if terms.is_empty() {
+            return Ok(Self {
+                query: String::new(),
+                matcher: None,
+                fuzzy: false,
+            });
+        }
+        let mut builder = RegexMatcherBuilder::new();
+        builder.case_insensitive(true).fixed_strings(true);
+        let matcher = builder
+            .build_many(terms)
+            .map_err(|error| QueryError {
+                message: error.to_string(),
+            })?;
+        Ok(Self {
+            query: terms
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<_>>()
+                .join(" "),
+            matcher: Some(Arc::new(matcher)),
+            fuzzy: false,
+        })
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.query.trim().is_empty()
     }

@@ -703,6 +703,8 @@ pub(super) use input_handler::*;
 pub(crate) use input_handler::document_outline;
 pub(super) use render_panel::*;
 pub(super) use search_backend::*;
+// AI 的 search_documents 复用同一套 ripgrep 匹配，需跨 editor 模块引用。
+pub(crate) use search_backend::{search_files_parallel, LiteralTermsQuery};
 pub(super) use search_engine::*;
 pub(super) use document_matches::*;
 

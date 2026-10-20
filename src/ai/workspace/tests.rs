@@ -93,6 +93,140 @@ fn ai_tools_search_multiple_notes_and_propose_new_documents_without_writing_file
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// 模型会把多个主题塞进一个 query；按整串字面量匹配时一条都中不了。
+/// 空白拆词后任意词命中即返回，且要跨文档覆盖每个词。
+#[test]
+fn ai_search_matches_any_space_separated_term_across_documents() {
+    let root = fixture();
+    std::fs::write(
+        root.join("first.md"),
+        "# 对齐\n\n地址对齐要求是 8 字节。\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("second.md"),
+        "# 未定义行为\n\nUB 来自越界访问。\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("third.md"), "# 缓冲\n\nBuffer 容量固定。\n").unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+
+    let found = workspace
+        .call("search_documents", &json!({"query":"地址对齐 UB Buffer"}))
+        .unwrap();
+    let paths = found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["path"].as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"first.md"), "应命中第一个词：{found}");
+    assert!(paths.contains(&"second.md"), "应命中第二个词：{found}");
+    assert!(paths.contains(&"third.md"), "应命中第三个词：{found}");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// 词之间可能是重复空格、制表符或全角空格；ASCII 词不区分大小写。
+#[test]
+fn ai_search_splits_terms_on_any_whitespace_and_ignores_case() {
+    let root = fixture();
+    std::fs::write(
+        root.join("first.md"),
+        "# 对齐\n\n地址对齐要求是 8 字节。\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("second.md"),
+        "# 未定义行为\n\nub 来自越界访问。\n",
+    )
+    .unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+
+    let found = workspace
+        .call("search_documents", &json!({"query":"  地址对齐\tUB\u{3000}"}))
+        .unwrap();
+    let paths = found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["path"].as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"first.md"), "应命中中文词：{found}");
+    assert!(paths.contains(&"second.md"), "应大小写无关地命中：{found}");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// 匹配换到 ripgrep 引擎后，词里的正则元字符仍必须按字面处理：
+/// `a.b` 只命中字面的 `a.b`，不能把 `axb` 也搜出来。
+#[test]
+fn ai_search_treats_query_terms_as_literals_not_patterns() {
+    let root = fixture();
+    std::fs::write(root.join("first.md"), "# 字面\n\n版本 a.b 已发布。\n").unwrap();
+    std::fs::write(root.join("second.md"), "# 正则\n\n版本 axb 未发布。\n").unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+
+    let found = workspace
+        .call("search_documents", &json!({"query":"a.b"}))
+        .unwrap();
+    let paths = found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["path"].as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"first.md"), "应命中字面的 a.b：{found}");
+    assert!(!paths.contains(&"second.md"), "不能按正则命中 axb：{found}");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn ai_search_rejects_whitespace_only_queries() {
+    let root = fixture();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+    assert!(
+        workspace
+            .call("search_documents", &json!({"query":" \t\u{3000} "}))
+            .is_err(),
+        "只有空白的 query 拆不出任何词，应拒绝"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// 未保存的活文档只能按缓冲区内容命中；不能因为磁盘上有同名旧文件
+/// 就走并行磁盘快路径把旧正文搜出来。
+#[test]
+fn ai_search_prefers_live_buffer_content_over_disk() {
+    let root = fixture();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
+    workspace.live_documents.insert("first.md".into());
+    workspace.refresh.callback = Some(std::sync::Arc::new(|id| {
+        if id == "first.md" {
+            Ok(Some(DocumentSnapshot {
+                id: "first.md".into(),
+                source: "# 第一篇\n\n未保存草稿里的独有词。\n".into(),
+            }))
+        } else {
+            Ok(None)
+        }
+    }));
+
+    let live = workspace
+        .call("search_documents", &json!({"query":"独有词"}))
+        .unwrap();
+    assert!(
+        live["matches"].to_string().contains("first.md"),
+        "活文档应按未保存缓冲区命中：{live}"
+    );
+    let disk = workspace
+        .call("search_documents", &json!({"query":"磁盘原文"}))
+        .unwrap();
+    assert!(
+        disk["matches"].as_array().unwrap().is_empty(),
+        "活文档不能回落到磁盘旧正文：{disk}"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn ai_tools_reject_paths_outside_the_workspace_and_do_not_expose_generic_tools() {
     let root = fixture();

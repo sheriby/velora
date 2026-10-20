@@ -284,6 +284,104 @@ pub(crate) fn cached_file_source(path: &Path) -> Option<std::sync::Arc<str>> {
     Some(contents)
 }
 
+/// AI 文档搜索的一行命中：1 基行号 + 整行文本（不含行终止符）。
+pub(crate) struct TextLineHit {
+    pub(crate) line: usize,
+    pub(crate) content: String,
+}
+
+/// AI 工具的多词查询：空白拆出的词按 OR 交给 ripgrep 的固定字符串引擎，
+/// 大小写不敏感，词里的正则元字符按字面处理。
+pub(crate) struct LiteralTermsQuery {
+    engine: CompiledQuery,
+}
+
+impl LiteralTermsQuery {
+    pub(crate) fn new(terms: &[String]) -> Result<Self, QueryError> {
+        Ok(Self {
+            engine: CompiledQuery::compile_literals(terms)?,
+        })
+    }
+
+    pub(crate) fn find_lines(&self, source: &str, max_lines: usize) -> Vec<TextLineHit> {
+        self.engine
+            .find_first_per_line(source.as_bytes(), max_lines)
+            .into_iter()
+            .map(|hit| {
+                let (start, end) = hit_line_bounds(source, &hit.range);
+                let line = hit
+                    .line
+                    .unwrap_or_else(|| source[..start].matches('\n').count() as u64 + 1);
+                TextLineHit {
+                    line: line as usize,
+                    content: source[start..end].to_string(),
+                }
+            })
+            .collect()
+    }
+}
+
+/// 并行扫描一批磁盘文件，供 AI 文档搜索的冷路径使用。
+///
+/// 解码与缓存复用侧栏搜索那一份（`cached_file_source`）：UTF-8/GB18030 回退、
+/// 单文件上限与总预算都只有一处判据。`should_stop` 在每篇文章前检查，取消后
+/// 不再读后面的文件。
+pub(crate) fn search_files_parallel(
+    query: &LiteralTermsQuery,
+    files: &[(usize, String, PathBuf)],
+    should_stop: &(dyn Fn() -> bool + Sync),
+) -> Vec<(usize, String, Result<Vec<TextLineHit>, String>)> {
+    if files.is_empty() {
+        return Vec::new();
+    }
+    let workers = std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(4)
+        .min(files.len());
+    let chunk_size = files.len().div_ceil(workers);
+    let (mut outcomes, panicked) = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for chunk in files.chunks(chunk_size) {
+            handles.push(scope.spawn(move || {
+                let mut results = Vec::with_capacity(chunk.len());
+                for (index, id, path) in chunk {
+                    if should_stop() {
+                        break;
+                    }
+                    let result = match cached_file_source(path) {
+                        Some(source) => Ok(query.find_lines(&source, 50)),
+                        None => Err("无法读取文件".to_string()),
+                    };
+                    results.push((*index, id.clone(), result));
+                }
+                results
+            }));
+        }
+        let mut outcomes = Vec::new();
+        let mut panicked = false;
+        for handle in handles {
+            match handle.join() {
+                Ok(results) => outcomes.extend(results),
+                Err(_) => panicked = true,
+            }
+        }
+        (outcomes, panicked)
+    });
+    if panicked {
+        // 分片 panic 不能当成「没有命中」：没交回结果的条目补一条可见错误。
+        let seen = outcomes
+            .iter()
+            .map(|(index, ..)| *index)
+            .collect::<std::collections::BTreeSet<_>>();
+        for (index, id, _) in files {
+            if !seen.contains(index) {
+                outcomes.push((*index, id.clone(), Err("搜索线程异常".to_string())));
+            }
+        }
+    }
+    outcomes
+}
+
 /// 单文件搜索：文件名匹配 +（文本文件的）内容匹配。与旧版逐文件逻辑一致。
 pub(crate) fn search_single_file(
     file: &WorkspaceSearchFile,
