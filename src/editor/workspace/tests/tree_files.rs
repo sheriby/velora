@@ -1913,3 +1913,55 @@ fn workspace_folder_icons_distinguish_styles_and_expansion_and_are_embedded() {
         }
     }
 }
+
+/// 目录层级缩进对齐 VS Code：每深一层只增加 8px。此前固定 16px，
+/// 层级一多就把文件名整段挤掉（实测相邻层级的图标列相差 16px）。
+#[gpui::test]
+async fn workspace_tree_indents_eight_pixels_per_level(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-tree-indent-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join("a/b/c")).unwrap();
+    fs::write(root.join("a/sibling.md"), "x").unwrap();
+    fs::write(root.join("a/b/c/deep.md"), "x").unwrap();
+    let canonical = root.canonicalize().unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    cx.run_until_parked();
+    for path in ["a", "a/b", "a/b/c"] {
+        let id = file_node_id(&canonical.join(path));
+        editor.update(cx, |editor, cx| editor.toggle_workspace_node(&id, cx));
+        cx.run_until_parked();
+    }
+    for _ in 0..3 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    let mut icon_left = |path: &str| {
+        let hash = super::super::stable_node_hash(&file_node_id(&canonical.join(path)));
+        let selector: &'static str =
+            Box::leak(format!("workspace-node-icon-{hash}").into_boxed_str());
+        f32::from(
+            cx.debug_bounds(selector)
+                .unwrap_or_else(|| panic!("应绘制 {path} 的图标"))
+                .left(),
+        )
+    };
+    let parent = icon_left("a");
+    let child = icon_left("a/b");
+    let grandchild = icon_left("a/b/c");
+    drop(icon_left);
+    for (shallower, deeper, label) in [
+        (parent, child, "一级到二级"),
+        (child, grandchild, "二级到三级"),
+    ] {
+        assert!(
+            (deeper - shallower - 8.0).abs() < 0.5,
+            "{label}的缩进应只有 8px：{shallower} → {deeper}"
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}

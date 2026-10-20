@@ -248,7 +248,8 @@ impl Editor {
     }
 
     pub(super) fn workspace_tree_indent(depth: usize) -> Rems {
-        rems(0.25 + depth as f32)
+        // VS Code 的层级步长是 8px：此前后每级 16px，层级一多就把文件名挤没。
+        rems(0.25 + depth as f32 * 0.5)
     }
 
     pub(crate) fn workspace_node_height(theme: &Theme) -> f32 {
