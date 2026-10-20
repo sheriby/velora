@@ -191,11 +191,13 @@ impl Editor {
                 let owner = cx.entity().downgrade();
                 let items: Vec<AnyElement> = match editor.workspace.active_tab {
                     WorkspaceTab::Files => {
-                        let rows = editor.workspace_files_rows();
+                        let rows = &editor.workspace.file_rows.rows;
                         range
                             .clone()
                             .filter_map(|index| rows.get(index))
-                            .map(|row| editor.render_workspace_tree_row(row, &theme, &owner, cx))
+                            .filter_map(|row| {
+                                editor.render_workspace_file_row(row, &theme, &owner, cx)
+                            })
                             .collect()
                     }
                     WorkspaceTab::Outline => {
@@ -321,47 +323,144 @@ impl Editor {
     /// 文件树按行摊平：顺序就是屏幕顺序。名称输入行与懒加载占位行也各占一行，
     /// 名称编辑的实际高度由原生虚拟列表测量。
     pub(crate) fn workspace_files_rows(&self) -> Vec<WorkspaceTreeRow<'_>> {
-        fn walk<'a>(
-            nodes: &'a [WorkspaceTreeNode],
-            depth: usize,
-            workspace: &WorkspaceState,
-            rows: &mut Vec<WorkspaceTreeRow<'a>>,
-        ) {
-            for node in nodes {
-                rows.push(WorkspaceTreeRow::Node(node, depth));
-                let is_expanded = workspace.expanded.contains(&node.id);
-                let name_edit = is_expanded
-                    && workspace.name_edit.as_ref().is_some_and(|edit| {
-                        !matches!(edit.kind, WorkspaceEditKind::Rename { .. })
-                            && tree_node_path(node) == edit.directory.as_path()
-                    });
-                if is_expanded && node.kind_dir() && !node.children_loaded && !node.children_load_failed {
-                    // 展开的这一层还没扫到（懒加载）：先挂一行占位，扫描落地后换成子项。
-                    rows.push(WorkspaceTreeRow::Loading(&node.id, depth + 1));
-                }
-                if is_expanded {
-                    let insertion = if name_edit {
-                        node.children.partition_point(WorkspaceTreeNode::kind_dir)
-                    } else {
-                        node.children.len()
-                    };
-                    let (before, after) = node.children.split_at(insertion);
-                    walk(before, depth + 1, workspace, rows);
-                    if name_edit {
-                        rows.push(WorkspaceTreeRow::NameEdit(depth + 1));
-                    }
-                    walk(after, depth + 1, workspace, rows);
-                }
-            }
-        }
+        #[cfg(test)]
+        self.workspace
+            .tree_row_walks
+            .set(self.workspace.tree_row_walks.get() + 1);
         let mut rows = Vec::new();
         if let Some(root) = self.workspace.file_tree.as_ref() {
-            walk(std::slice::from_ref(root), 0, &self.workspace, &mut rows);
+            walk_workspace_file_rows(root, &self.workspace, |visit, depth, _| {
+                rows.push(match visit {
+                    WorkspaceFileVisit::Node(node) => WorkspaceTreeRow::Node(node, depth),
+                    WorkspaceFileVisit::NameEdit => WorkspaceTreeRow::NameEdit(depth),
+                    WorkspaceFileVisit::Loading(id) => WorkspaceTreeRow::Loading(id, depth),
+                });
+            });
         }
         rows
     }
 
+    /// 每帧重建一次文件树行索引。Kit 的 `VirtualList` 在同一帧里会调两次渲染闭包
+    /// （测量第 0 行、预绘制可见区间），闭包里再摊平整棵树就把成本翻成三倍；
+    /// 这份索引让总行数、测量与预绘制共用同一次遍历。
+    pub(super) fn rebuild_workspace_file_rows(&mut self) {
+        #[cfg(test)]
+        self.workspace
+            .tree_row_walks
+            .set(self.workspace.tree_row_walks.get() + 1);
 
+        let mut rows = std::mem::take(&mut self.workspace.file_rows.rows);
+        let mut path = std::mem::take(&mut self.workspace.file_rows.path);
+        rows.clear();
+        path.clear();
+        let mut measured_name_row = None;
+        let mut name_edit_row = None;
+        let workspace = &self.workspace;
+        if let Some(root) = workspace.file_tree.as_ref() {
+            walk_workspace_file_rows(root, workspace, |visit, depth, node_path| {
+                let row_index = rows.len();
+                let kind = match visit {
+                    WorkspaceFileVisit::Node(node) => {
+                        if workspace.name_edit.as_ref().is_some_and(|edit| {
+                            matches!(&edit.kind, WorkspaceEditKind::Rename { source, .. }
+                                if tree_node_path(node) == source.as_path())
+                        }) {
+                            measured_name_row = Some(row_index);
+                        }
+                        WorkspaceFileRowKind::Node
+                    }
+                    WorkspaceFileVisit::NameEdit => {
+                        measured_name_row = Some(row_index);
+                        name_edit_row = Some(row_index);
+                        WorkspaceFileRowKind::NameEdit
+                    }
+                    WorkspaceFileVisit::Loading(_) => WorkspaceFileRowKind::Loading,
+                };
+                rows.push(WorkspaceFileRow {
+                    kind,
+                    depth,
+                    path_start: path.len() as u32,
+                    path_len: node_path.len() as u32,
+                });
+                path.extend_from_slice(node_path);
+            });
+        }
+
+        self.workspace.file_rows = WorkspaceFileRows {
+            rows,
+            path,
+            measured_name_row,
+            name_edit_row,
+        };
+    }
+
+    pub(super) fn workspace_file_row_node(
+        &self,
+        row: &WorkspaceFileRow,
+    ) -> Option<&WorkspaceTreeNode> {
+        let mut node = self.workspace.file_tree.as_ref()?;
+        let start = row.path_start as usize;
+        let end = start.checked_add(row.path_len as usize)?;
+        for &index in self.workspace.file_rows.path.get(start..end)? {
+            node = node.children.get(index as usize)?;
+        }
+        Some(node)
+    }
+}
+
+/// 文件树行序的唯一出处：导航要借用行、渲染要缓存行，都从这里走，避免两份
+/// 展开/名称行/懒加载占位的判据各写一遍。
+enum WorkspaceFileVisit<'a> {
+    Node(&'a WorkspaceTreeNode),
+    NameEdit,
+    Loading(&'a str),
+}
+
+fn walk_workspace_file_rows<'a>(
+    root: &'a WorkspaceTreeNode,
+    workspace: &'a WorkspaceState,
+    mut visit: impl FnMut(WorkspaceFileVisit<'a>, usize, &[u32]),
+) {
+    fn walk<'a>(
+        node: &'a WorkspaceTreeNode,
+        node_path: &mut Vec<u32>,
+        depth: usize,
+        workspace: &'a WorkspaceState,
+        visit: &mut impl FnMut(WorkspaceFileVisit<'a>, usize, &[u32]),
+    ) {
+        visit(WorkspaceFileVisit::Node(node), depth, node_path);
+        let is_expanded = workspace.expanded.contains(&node.id);
+        let name_edit = is_expanded
+            && workspace.name_edit.as_ref().is_some_and(|edit| {
+                !matches!(edit.kind, WorkspaceEditKind::Rename { .. })
+                    && tree_node_path(node) == edit.directory.as_path()
+            });
+        if is_expanded && node.kind_dir() && !node.children_loaded && !node.children_load_failed {
+            // 展开的这一层还没扫到（懒加载）：先挂一行占位，扫描落地后换成子项。
+            visit(WorkspaceFileVisit::Loading(&node.id), depth + 1, node_path);
+        }
+        if is_expanded {
+            let insertion = if name_edit {
+                node.children.partition_point(WorkspaceTreeNode::kind_dir)
+            } else {
+                node.children.len()
+            };
+            for (index, child) in node.children[..insertion].iter().enumerate() {
+                node_path.push(index as u32);
+                walk(child, node_path, depth + 1, workspace, visit);
+                node_path.pop();
+            }
+            if name_edit {
+                visit(WorkspaceFileVisit::NameEdit, depth + 1, node_path);
+            }
+            for (offset, child) in node.children[insertion..].iter().enumerate() {
+                node_path.push((insertion + offset) as u32);
+                walk(child, node_path, depth + 1, workspace, visit);
+                node_path.pop();
+            }
+        }
+    }
+    walk(root, &mut Vec::new(), 0, workspace, &mut visit);
 }
 
 /// 永久删除（roadmap H2 的「永久删除」策略）。

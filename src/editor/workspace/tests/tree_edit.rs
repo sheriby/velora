@@ -1128,6 +1128,30 @@ async fn the_file_tree_renders_only_the_rows_in_the_viewport(cx: &mut TestAppCon
     );
 }
 
+/// 文件树每帧只该摊平一遍整棵树：应用侧为了总行数走一遍，Kit 的虚拟列表又会为
+/// 测量第 0 行和预绘制可见区间各调一次渲染闭包；闭包里再摊平就是三遍，
+/// 成本随树的总节点数线性增长，与可见行数无关。
+#[gpui::test]
+async fn the_file_tree_walks_its_rows_once_per_frame(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    for index in 0..1500 {
+        fs::write(root.join(format!("file-{index:04}.md")), "# 标题\n").expect("写夹具");
+    }
+    editor.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+    redraw(cx);
+    redraw(cx);
+
+    let before = editor.read_with(cx, |editor, _| editor.workspace.tree_row_walks.get());
+    redraw(cx);
+    let after = editor.read_with(cx, |editor, _| editor.workspace.tree_row_walks.get());
+    assert_eq!(
+        after - before,
+        1,
+        "文件树一帧摊平了 {} 遍整棵树（应该只有 1 遍）",
+        after - before
+    );
+}
+
 #[gpui::test]
 fn workspace_context_menu_retargets_on_each_right_click(cx: &mut TestAppContext) {
     let (editor, cx, root) = tree_fixture(cx);

@@ -92,11 +92,12 @@ impl Editor {
             return self.render_workspace_empty_state("", &strings.workspace_empty_files, theme);
         }
 
-        let rows = self.workspace_files_rows();
-        let total = rows.len();
+        self.rebuild_workspace_file_rows();
+        let total = self.workspace.file_rows.rows.len();
         let revealed_row = self.workspace.name_edit.as_ref().and_then(|edit| {
-            rows.iter()
-                .position(|row| matches!(row, WorkspaceTreeRow::NameEdit(_)))
+            self.workspace
+                .file_rows
+                .name_edit_row
                 .filter(|index| {
                     edit.revealed_row != Some(*index) && self.reveal_workspace_row(*index)
                 })
@@ -106,17 +107,8 @@ impl Editor {
         {
             edit.revealed_row = Some(index);
         }
-        let name_row = self.workspace_name_row_index();
+        let name_row = self.workspace.file_rows.measured_name_row;
         self.render_workspace_virtual_list(total, name_row, theme, cx)
-    }
-    pub(super) fn workspace_name_row_index(&self) -> Option<usize> {
-        let edit = self.workspace.name_edit.as_ref()?;
-        self.workspace_files_rows().iter().position(|row| match row {
-            WorkspaceTreeRow::NameEdit(_) => true,
-            WorkspaceTreeRow::Node(node, _) => matches!(&edit.kind,
-                WorkspaceEditKind::Rename { source, .. } if tree_node_path(node) == source.as_path()),
-            WorkspaceTreeRow::Loading(..) => false,
-        })
     }
 
     fn render_workspace_measured_name_row(
@@ -240,6 +232,30 @@ impl Editor {
             None => {}
         }
         true
+    }
+
+    /// 缓存行变成元素：节点按路径解析回树上的实体，避免行里长期借用整棵树。
+    pub(super) fn render_workspace_file_row(
+        &self,
+        row: &WorkspaceFileRow,
+        theme: &Theme,
+        editor: &WeakEntity<Editor>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        match row.kind {
+            WorkspaceFileRowKind::Node => {
+                let node = self.workspace_file_row_node(row)?;
+                Some(self.render_workspace_node(node, row.depth, theme, editor, cx))
+            }
+            WorkspaceFileRowKind::NameEdit => Some(self.render_workspace_measured_name_row(
+                row.depth, theme, editor, cx,
+            )),
+            WorkspaceFileRowKind::Loading => {
+                let node = self.workspace_file_row_node(row)?;
+                let loading = WorkspaceTreeRow::Loading(&node.id, row.depth);
+                Some(self.render_workspace_tree_row(&loading, theme, editor, cx))
+            }
+        }
     }
 
     /// 摊平出来的一行变成元素。

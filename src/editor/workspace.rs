@@ -273,6 +273,30 @@ struct WorkspaceTreeListLayout {
     sizes: std::rc::Rc<Vec<Size<Pixels>>>,
 }
 
+/// 文件树一帧的行索引。节点用「从根往下的子节点下标路径」表示：行里不借
+/// `&WorkspaceTreeNode`，同一帧的虚拟列表测量与预绘制才能共用这份索引。
+#[derive(Default)]
+pub(super) struct WorkspaceFileRows {
+    rows: Vec<WorkspaceFileRow>,
+    path: Vec<u32>,
+    pub(super) measured_name_row: Option<usize>,
+    pub(super) name_edit_row: Option<usize>,
+}
+
+pub(super) struct WorkspaceFileRow {
+    kind: WorkspaceFileRowKind,
+    depth: usize,
+    path_start: u32,
+    path_len: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum WorkspaceFileRowKind {
+    Node,
+    NameEdit,
+    Loading,
+}
+
 struct WorkspaceNameEdit {
     kind: WorkspaceEditKind,
     directory: PathBuf,
@@ -472,6 +496,10 @@ pub(super) struct WorkspaceState {
     files_walk_count: usize,
     #[cfg(test)]
     paths_sort_count: usize,
+    /// 文件树整树摊平的次数。渲染闸门用它确认一帧只走一遍：Kit 的虚拟列表
+    /// 每帧会为测量和预绘制各调一次渲染闭包，闭包里再摊平就会成倍放大。
+    #[cfg(test)]
+    pub(super) tree_row_walks: std::cell::Cell<u64>,
     pending_wikilink_open: Option<(String, AnyWindowHandle)>,
     context_menu: Option<WorkspaceContextMenu>,
     name_edit: Option<WorkspaceNameEdit>,
@@ -484,6 +512,7 @@ pub(super) struct WorkspaceState {
     pub(crate) tree_scroll_handle: ScrollHandle,
     tree_virtual_scroll: Option<gpui_kit::component::VirtualListScrollHandle>,
     tree_list_layout: Option<WorkspaceTreeListLayout>,
+    file_rows: WorkspaceFileRows,
 }
 
 impl Default for WorkspaceState {
@@ -551,6 +580,8 @@ impl Default for WorkspaceState {
             files_walk_count: 0,
             #[cfg(test)]
             paths_sort_count: 0,
+            #[cfg(test)]
+            tree_row_walks: std::cell::Cell::new(0),
             pending_wikilink_open: None,
             context_menu: None,
             name_edit: None,
@@ -562,6 +593,7 @@ impl Default for WorkspaceState {
             tree_scroll_handle: ScrollHandle::new(),
             tree_virtual_scroll: None,
             tree_list_layout: None,
+            file_rows: WorkspaceFileRows::default(),
         }
     }
 }
