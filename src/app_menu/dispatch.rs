@@ -36,6 +36,8 @@ pub(crate) fn dispatch_menu_action_for_editor(
         let _ = target.update(cx, |editor, cx| editor.toggle_view_mode_from_ui(cx));
     } else if action.as_any().is::<ToggleFocusMode>() {
         let _ = target.update(cx, |editor, cx| editor.toggle_focus_mode(cx));
+    } else if action.as_any().is::<ToggleVimMode>() {
+        let _ = target.update(cx, |editor, cx| editor.toggle_vim_mode(window, cx));
     } else if action.as_any().is::<ToggleTypewriterMode>() {
         let _ = target.update(cx, |editor, cx| editor.toggle_typewriter_mode(cx));
     } else if action.as_any().is::<FindInDocument>() {

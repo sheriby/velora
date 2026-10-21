@@ -21,6 +21,7 @@ use crate::components::{
     PrintDocument, QuitApplication, SaveDocument, SaveDocumentAs, SelectDocument, ShowAbout,
     CheckForUpdates, StrikethroughSelection, SubscriptSelection, SuperscriptSelection,
     ToggleFocusMode, ToggleFullscreen, ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, ToggleReadingMode,
+    ToggleVimMode,
     UnderlineSelection, ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::i18n::I18nStrings;
@@ -206,6 +207,12 @@ static COMMANDS: &[CommandSpec] = &[
         View,
         command_toggle_focus_mode,
         ToggleFocusMode
+    ),
+    command!(
+        "toggle_vim_mode",
+        View,
+        command_toggle_vim_mode,
+        ToggleVimMode
     ),
     command!(
         "toggle_typewriter_mode",

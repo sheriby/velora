@@ -22,7 +22,7 @@ pub(super) use crate::components::{
     FileHistory,
     SaveDocumentAs,
     SelectLanguage, SelectTheme, ShowAbout, CopyAsHtml, ToggleFocusMode, ToggleFullscreen,
-    ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, UninstallCliTool, ZoomIn, ZoomOut,
+    ToggleSidebar, ToggleTypewriterMode, ToggleVimMode, ToggleViewMode, UninstallCliTool, ZoomIn, ZoomOut,
     ZoomReset,
 };
 use crate::config::{
@@ -890,6 +890,7 @@ fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
         || action.as_any().is::<ToggleViewMode>()
         || action.as_any().is::<ToggleFocusMode>()
         || action.as_any().is::<ToggleTypewriterMode>()
+        || action.as_any().is::<ToggleVimMode>()
         || action.as_any().is::<FindInDocument>()
         || action.as_any().is::<FindNextMatch>()
         || action.as_any().is::<FindPreviousMatch>()

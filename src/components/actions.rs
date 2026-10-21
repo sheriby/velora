@@ -101,6 +101,7 @@ actions!(
         ToggleViewMode,
         ToggleReadingMode,
         ToggleFocusMode,
+        ToggleVimMode,
         ToggleTypewriterMode,
         FindInDocument,
         FindNextMatch,

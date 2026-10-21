@@ -237,7 +237,7 @@ struct WorkspaceTabRevealKey {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum WorkspaceSearchScope {
+pub(crate) enum WorkspaceSearchScope {
     Workspace,
     #[default]
     Document,
@@ -446,7 +446,7 @@ pub(super) struct WorkspaceState {
     tabs_focus: Option<FocusHandle>,
     tabs_revealed: Option<WorkspaceTabRevealKey>,
     pub(super) search_query: String,
-    search_scope: WorkspaceSearchScope,
+    pub(crate) search_scope: WorkspaceSearchScope,
     search_active_index: Option<usize>,
     search_input_state: Option<SearchInputState>,
     replace_query: String,
@@ -461,7 +461,7 @@ pub(super) struct WorkspaceState {
     search_focus_pending: bool,
     search_select_all_pending: bool,
     search_results: Vec<WorkspaceSearchHit>,
-    document_active_range: Option<Range<usize>>,
+    pub(crate) document_active_range: Option<Range<usize>>,
     pub(super) search_navigation_selection: Option<Range<usize>>,
     search_pending: bool,
     /// 模式编译失败时引擎交回的诊断，显示在搜索框下方。
@@ -470,7 +470,7 @@ pub(super) struct WorkspaceState {
     /// 版本任一变了就重算；结果列表、高亮、跳转、全部替换四处都读它。
     document_matches: Option<DocumentMatchTable>,
     /// 文档范围当前停在第几个命中（全表索引，不是侧栏那 200 行的索引）。
-    document_active_index: Option<usize>,
+    pub(crate) document_active_index: Option<usize>,
     document_match_jump_pending: bool,
     search_generation: u64,
     /// 顶栏标签条横向滚动（诊断/断言用）。

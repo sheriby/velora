@@ -19,7 +19,7 @@ pub(super) use crate::components::{
 pub(super) use crate::export::ExportFormat;
 pub(super) use crate::i18n::{I18nManager, I18nStrings};
 pub(super) use crate::theme::{Theme, ThemeManager};
-pub(super) fn init_editor_test_app(cx: &mut TestAppContext) {
+pub(crate) fn init_editor_test_app(cx: &mut TestAppContext) {
     cx.update(|cx| {
         I18nManager::init(cx);
         ThemeManager::init(cx);
@@ -31,7 +31,7 @@ pub(super) fn init_editor_test_app(cx: &mut TestAppContext) {
 /// 扫这个根；夹具直接落在系统临时根目录，就会被扫整台机器的 T 目录（本机实测 24k
 /// 条目 / 24 万个目录，单条用例十几秒）。统一放这个扁平目录：一次扫描只剩一份目录
 /// 项列表，兄弟资源（同名 .assets、导出的 html 等）也仍然落在同一个根下。
-pub(super) fn temp_fixture_dir() -> PathBuf {
+pub(crate) fn temp_fixture_dir() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("velora-tests-{}", std::process::id()));
     fs::create_dir_all(&dir).expect("create test fixture dir");
     dir
@@ -87,7 +87,7 @@ pub(super) fn perf_delta(
     (to.0 - from.0, to.1 - from.1, to.2 - from.2, to.3 - from.3)
 }
 
-pub(super) fn redraw(cx: &mut gpui::VisualTestContext) {
+pub(crate) fn redraw(cx: &mut gpui::VisualTestContext) {
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 }

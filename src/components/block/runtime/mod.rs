@@ -148,6 +148,9 @@ pub struct Block {
     pub(crate) code_language_last_bounds: Option<Bounds<Pixels>>,
     pub(crate) code_language_is_selecting: bool,
     pub selected_range: Range<usize>,
+    /// vim 模式的块状光标开关（普通/可视/替换模式为真）。由 Editor 在模式
+    /// 切换时写进可见块；渲染层只读它决定光标画块还是画竖条。
+    pub(crate) vim_block_caret: bool,
     /// Content-local byte ranges highlighted as document search matches
     /// (roadmap B2). Owned by the editor's search panel state.
     pub(crate) search_highlight_ranges: Vec<Range<usize>>,
@@ -334,6 +337,7 @@ impl Block {
             code_language_last_bounds: None,
             code_language_is_selecting: false,
             selected_range: 0..0,
+            vim_block_caret: false,
             search_highlight_ranges: Vec::new(),
             search_active_range: None,
             folded: false,

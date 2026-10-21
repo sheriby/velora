@@ -716,6 +716,22 @@ impl I18nStringsDe {
             command_toggle_focus_mode: self
                 .command_toggle_focus_mode
                 .unwrap_or(defaults.command_toggle_focus_mode),
+            command_toggle_vim_mode: self
+                .command_toggle_vim_mode
+                .unwrap_or(defaults.command_toggle_vim_mode),
+            vim_mode_normal: self.vim_mode_normal.unwrap_or(defaults.vim_mode_normal),
+            vim_mode_insert: self.vim_mode_insert.unwrap_or(defaults.vim_mode_insert),
+            vim_mode_visual: self.vim_mode_visual.unwrap_or(defaults.vim_mode_visual),
+            vim_mode_visual_line: self
+                .vim_mode_visual_line
+                .unwrap_or(defaults.vim_mode_visual_line),
+            vim_mode_visual_block: self
+                .vim_mode_visual_block
+                .unwrap_or(defaults.vim_mode_visual_block),
+            vim_mode_replace: self.vim_mode_replace.unwrap_or(defaults.vim_mode_replace),
+            preferences_vim_mode: self
+                .preferences_vim_mode
+                .unwrap_or(defaults.preferences_vim_mode),
             command_toggle_typewriter_mode: self
                 .command_toggle_typewriter_mode
                 .unwrap_or(defaults.command_toggle_typewriter_mode),

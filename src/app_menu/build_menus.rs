@@ -508,6 +508,9 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &ToggleTypewriterMode, cx| {
         dispatch_menu_action(&ToggleTypewriterMode, cx);
     });
+    cx.on_action(|_: &ToggleVimMode, cx| {
+        dispatch_menu_action(&ToggleVimMode, cx);
+    });
     cx.on_action(|_: &OpenPreferences, cx| {
         dispatch_menu_action(&OpenPreferences, cx);
     });

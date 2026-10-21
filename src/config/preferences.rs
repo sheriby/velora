@@ -446,6 +446,79 @@ impl Default for UpdatePreferences {
     fn default() -> Self { Self { check_on_startup: true, include_prereleases: false, ignored_version: String::new() } }
 }
 
+/// vim 键映射的作用模式（`[[vim.keymap]]` 的 `mode` 字段）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VimKeymapMode {
+    Normal,
+    Insert,
+    Visual,
+}
+
+impl VimKeymapMode {
+    pub(crate) fn from_config_str(value: &str) -> Option<Self> {
+        match value {
+            "normal" => Some(Self::Normal),
+            "insert" => Some(Self::Insert),
+            "visual" => Some(Self::Visual),
+            _ => None,
+        }
+    }
+}
+
+/// vim 键映射可触发的内置动作。词汇表只有这一处，配置解析与执行侧都对着它。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VimKeymapAction {
+    Esc,
+    Insert,
+    Append,
+    Visual,
+    VisualLine,
+}
+
+impl VimKeymapAction {
+    pub(crate) fn from_config_str(value: &str) -> Option<Self> {
+        match value {
+            "esc" => Some(Self::Esc),
+            "insert" => Some(Self::Insert),
+            "append" => Some(Self::Append),
+            "visual" => Some(Self::Visual),
+            "visual_line" => Some(Self::VisualLine),
+            _ => None,
+        }
+    }
+}
+
+/// `[[vim.keymap]]` 一条：在 `mode` 模式下依次敲下 `keys`（纯字母数字，如
+/// `jj`）触发 `action`。多键序列在首键敲下后按 `timeout_ms` 等待后续键。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VimKeymapEntry {
+    pub(crate) mode: VimKeymapMode,
+    pub(crate) keys: String,
+    pub(crate) action: VimKeymapAction,
+}
+
+/// `config.toml` 顶层 `[vim]` 段：模式编辑开关与自定义键映射。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VimPreferences {
+    pub(crate) enable: bool,
+    /// 多键映射等待后续键的超时毫秒数（对齐 vim 的 `timeoutlen` 惯例）。
+    pub(crate) timeout_ms: u32,
+    /// yank 与删除是否同步系统剪贴板（vim 的 `"+` 寄存器）。
+    pub(crate) use_system_clipboard: bool,
+    pub(crate) keymaps: Vec<VimKeymapEntry>,
+}
+
+impl Default for VimPreferences {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            timeout_ms: 300,
+            use_system_clipboard: true,
+            keymaps: Vec::new(),
+        }
+    }
+}
+
 /// User preferences persisted under the app config directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AppPreferences {
@@ -495,6 +568,8 @@ pub(crate) struct AppPreferences {
     pub(crate) default_window_width: i64,
     /// Default window height when no remembered frame applies.
     pub(crate) default_window_height: i64,
+    /// 模式编辑（vim 模式）配置。
+    pub(crate) vim: VimPreferences,
 }
 
 impl Default for AppPreferences {
@@ -531,6 +606,7 @@ impl Default for AppPreferences {
             zoom_percent: 100,
             default_window_width: 1080,
             default_window_height: 720,
+            vim: VimPreferences::default(),
         }
     }
 }
@@ -590,6 +666,7 @@ pub struct EditorSettings {
     default_window_width: i64,
     default_window_height: i64,
     window_open_position: WindowOpenPosition,
+    vim: VimPreferences,
 }
 
 impl Global for EditorSettings {}
@@ -700,6 +777,11 @@ impl EditorSettings {
             .map(|settings| settings.window_open_position)
             .or_else(|| stored.as_ref().map(|preferences| preferences.window_open_position))
             .unwrap_or_default();
+        let vim = cx
+            .try_global::<Self>()
+            .map(|settings| settings.vim.clone())
+            .or_else(|| stored.as_ref().map(|preferences| preferences.vim.clone()))
+            .unwrap_or_default();
         let external_change_policy = cx
             .try_global::<Self>()
             .map(|settings| settings.external_change_policy)
@@ -743,6 +825,7 @@ impl EditorSettings {
             default_window_width,
             default_window_height,
             window_open_position,
+            vim,
             status_bar_settings: StatusBarSettings {
                 status_bar_enabled: status_bar.enabled,
                 status_bar_show_word_count: status_bar.show_word_count,
@@ -758,6 +841,33 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.file_history)
             .unwrap_or_default()
+    }
+
+    /// 模式编辑配置。全局未安装时按默认（关闭）处理，编辑器据此零开销直通。
+    pub(crate) fn vim(cx: &App) -> VimPreferences {
+        cx.try_global::<Self>()
+            .map(|settings| settings.vim.clone())
+            .unwrap_or_default()
+    }
+
+    /// 只改内存里的 vim 配置，不碰 config.toml（测试与偏好页即时生效用）。
+    #[cfg(test)]
+    pub(crate) fn set_vim_in_memory(cx: &mut App, vim: VimPreferences) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _| settings.vim = vim);
+        }
+    }
+
+    /// 切换 vim 模式：内存全局 + 落盘。各编辑器经 observe_global 同步。
+    pub(crate) fn set_vim_enabled(cx: &mut App, enable: bool) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _| settings.vim.enable = enable);
+        }
+        if let Err(error) =
+            update_app_preferences(|preferences| preferences.vim.enable = enable)
+        {
+            eprintln!("切换 vim 模式落盘失败：{error}");
+        }
     }
 
     pub(crate) fn set_file_history_in_memory(cx: &mut App, policy: HistoryPolicy) {

@@ -453,6 +453,14 @@ pub struct I18nStrings {
     pub reading_mode_enabled: String,
     /// Command label: toggle focus mode.
     pub command_toggle_focus_mode: String,
+    pub command_toggle_vim_mode: String,
+    pub vim_mode_normal: String,
+    pub vim_mode_insert: String,
+    pub vim_mode_visual: String,
+    pub vim_mode_visual_line: String,
+    pub vim_mode_visual_block: String,
+    pub vim_mode_replace: String,
+    pub preferences_vim_mode: String,
     /// Command label: toggle typewriter mode.
     pub command_toggle_typewriter_mode: String,
     /// Command label: toggle sidebar.

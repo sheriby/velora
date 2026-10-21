@@ -443,7 +443,7 @@ impl Editor {
     /// 把选区的干净区间铺到每一根块上。
     ///
     /// 切片保留干净坐标，呈现与工具栏在当前投影确定后换成显示范围。
-    fn sync_cross_block_selection_visuals(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn sync_cross_block_selection_visuals(&mut self, cx: &mut Context<Self>) {
         self.sync_document_selection_ownership(cx);
         let normalized = self.normalized_cross_block_selection(cx);
         let visible_blocks = normalized.and_then(|selection| self.document.visible_blocks()

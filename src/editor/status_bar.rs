@@ -17,6 +17,22 @@ use crate::i18n::I18nStrings;
 use crate::theme::Theme;
 
 impl Editor {
+    /// vim 当前模式的显示名（模式词汇保持 vim 习惯的双语标注）。
+    fn vim_mode_label(&self, strings: &I18nStrings) -> Option<String> {
+        use super::vim::{VimMode, VisualKind};
+        Some(
+            match self.vim.mode {
+                VimMode::Insert => &strings.vim_mode_insert,
+                VimMode::Replace => &strings.vim_mode_replace,
+                VimMode::Visual(VisualKind::Char) => &strings.vim_mode_visual,
+                VimMode::Visual(VisualKind::Line) => &strings.vim_mode_visual_line,
+                VimMode::Visual(VisualKind::Block) => &strings.vim_mode_visual_block,
+                VimMode::Normal => &strings.vim_mode_normal,
+            }
+            .clone(),
+        )
+    }
+
     /// 状态栏整篇统计的静默窗口：打字期间不重扫。
     const STATUS_SCAN_SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
 
@@ -103,6 +119,20 @@ impl Editor {
         let d = &theme.dimensions;
 
         let mut right_items: Vec<AnyElement> = Vec::new();
+
+        // vim 模式指示：开着一律显示当前模式（vim 使用者靠它确认落点）。
+        if self.vim_enabled {
+            if let Some(label) = self.vim_mode_label(strings) {
+                right_items.push(
+                    div()
+                        .text_size(px(d.status_bar_text_size))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(c.status_bar_text)
+                        .child(label)
+                        .into_any_element(),
+                );
+            }
+        }
 
         if prefs.show_cursor_position && self.view_mode == super::ViewMode::Source {
             right_items.push(render_cursor(

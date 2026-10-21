@@ -11,8 +11,56 @@ pub(crate) struct PreferencesFile {
     export: ExportPreferencesFile,
     editor: EditorPreferencesFile,
     status_bar: StatusBarPreferencesFile,
+    vim: VimPreferencesFile,
     window: WindowPreferencesFile,
     keybindings: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Serialize)]
+struct VimKeymapEntryFile {
+    mode: String,
+    keys: String,
+    action: String,
+}
+
+#[derive(Serialize)]
+struct VimPreferencesFile {
+    enable: bool,
+    timeout_ms: u32,
+    use_system_clipboard: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    keymap: Vec<VimKeymapEntryFile>,
+}
+
+impl From<&VimPreferences> for VimPreferencesFile {
+    fn from(value: &VimPreferences) -> Self {
+        Self {
+            enable: value.enable,
+            timeout_ms: value.timeout_ms,
+            use_system_clipboard: value.use_system_clipboard,
+            keymap: value
+                .keymaps
+                .iter()
+                .map(|entry| VimKeymapEntryFile {
+                    mode: match entry.mode {
+                        VimKeymapMode::Normal => "normal",
+                        VimKeymapMode::Insert => "insert",
+                        VimKeymapMode::Visual => "visual",
+                    }
+                    .into(),
+                    keys: entry.keys.clone(),
+                    action: match entry.action {
+                        VimKeymapAction::Esc => "esc",
+                        VimKeymapAction::Insert => "insert",
+                        VimKeymapAction::Append => "append",
+                        VimKeymapAction::Visual => "visual",
+                        VimKeymapAction::VisualLine => "visual_line",
+                    }
+                    .into(),
+                })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -171,6 +219,7 @@ impl From<&AppPreferences> for PreferencesFile {
                 proxy_url: value.proxy_url.clone(),
             },
             status_bar: StatusBarPreferencesFile::from(&value.status_bar),
+            vim: VimPreferencesFile::from(&value.vim),
             window: WindowPreferencesFile {
                 remember_bounds: value.remember_window_bounds,
                 frame: value.window_frame.map(WindowFrameFile::from),
@@ -520,6 +569,53 @@ pub(crate) fn app_preferences_from_toml_value(
         })
         .unwrap_or_default();
 
+    let vim = value.get("vim").map(|vim| VimPreferences {
+        enable: vim.get("enable").and_then(toml::Value::as_bool).unwrap_or(false),
+        timeout_ms: vim
+            .get("timeout_ms")
+            .and_then(toml::Value::as_integer)
+            .and_then(|ms| u32::try_from(ms).ok())
+            .filter(|ms| (50..=5_000).contains(ms))
+            .unwrap_or(300),
+        use_system_clipboard: vim
+            .get("use_system_clipboard")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(true),
+        keymaps: vim
+            .get("keymap")
+            .and_then(toml::Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let mode = entry
+                            .get("mode")
+                            .and_then(toml::Value::as_str)
+                            .and_then(VimKeymapMode::from_config_str)?;
+                        let keys = entry.get("keys").and_then(toml::Value::as_str)?;
+                        let action = entry
+                            .get("action")
+                            .and_then(toml::Value::as_str)
+                            .and_then(VimKeymapAction::from_config_str)?;
+                        // 序列只收纯 ASCII 字母数字：vim 的拦截层按「字符键」匹配，
+                        // 控制字符与标点在解析期就挡掉，运行期不用再防。
+                        if keys.is_empty() || keys.len() > 4 || !keys.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+                            eprintln!(
+                                "config.toml 里 vim 键映射 {keys:?} 不是 1..=4 个 ASCII 字母数字，已忽略"
+                            );
+                            return None;
+                        }
+                        Some(VimKeymapEntry {
+                            mode,
+                            keys: keys.to_string(),
+                            action,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }).unwrap_or_default();
+
     let window = value.get("window");
     let remember_window_bounds = window
         .and_then(|window| window.get("remember_bounds"))
@@ -600,6 +696,7 @@ pub(crate) fn app_preferences_from_toml_value(
         zoom_percent,
         default_window_width,
         default_window_height,
+        vim,
     }
 }
 

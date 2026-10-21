@@ -61,6 +61,7 @@ pub(crate) struct PreferencesWindow {
     pub(super) window_open_position: WindowOpenPosition,
     pub(super) smart_punctuation: bool,
     pub(super) hide_markdown_markers: bool,
+    pub(super) vim_enabled: bool,
     pub(super) zoom_percent: i64,
     pub(super) default_window_width: i64,
     pub(super) default_window_height: i64,
@@ -76,6 +77,7 @@ pub(crate) struct PreferencesWindow {
     pub(super) saved_window_open_position: WindowOpenPosition,
     pub(super) saved_smart_punctuation: bool,
     saved_hide_markdown_markers: bool,
+    pub(super) saved_vim_enabled: bool,
     pub(super) saved_zoom_percent: i64,
     pub(super) saved_default_window_width: i64,
     pub(super) saved_default_window_height: i64,
@@ -123,6 +125,7 @@ impl PreferencesWindow {
         let remember_window_bounds = preferences.remember_window_bounds;
         let window_open_position = preferences.window_open_position;
         let smart_punctuation = preferences.smart_punctuation;
+        let vim_enabled = preferences.vim.enable;
         let hide_markdown_markers = preferences.hide_markdown_markers;
         let zoom_percent = preferences.zoom_percent;
         let default_window_width = preferences.default_window_width;
@@ -167,6 +170,7 @@ impl PreferencesWindow {
             window_open_position,
             smart_punctuation,
             hide_markdown_markers,
+            vim_enabled,
             zoom_percent,
             default_window_width,
             default_window_height,
@@ -179,6 +183,7 @@ impl PreferencesWindow {
             saved_remember_window_bounds: remember_window_bounds,
             saved_window_open_position: window_open_position,
             saved_smart_punctuation: smart_punctuation,
+            saved_vim_enabled: vim_enabled,
             saved_hide_markdown_markers: hide_markdown_markers,
             saved_zoom_percent: zoom_percent,
             saved_default_window_width: default_window_width,
@@ -247,6 +252,7 @@ impl PreferencesWindow {
             || self.remember_window_bounds != self.saved_remember_window_bounds
             || self.window_open_position != self.saved_window_open_position
             || self.smart_punctuation != self.saved_smart_punctuation
+            || self.vim_enabled != self.saved_vim_enabled
             || self.hide_markdown_markers != self.saved_hide_markdown_markers
             || self.zoom_percent != self.saved_zoom_percent
             || self.default_window_width != self.saved_default_window_width
@@ -390,6 +396,7 @@ impl PreferencesWindow {
         EditorSettings::set_file_history_in_memory(cx, preferences.file_history);
         EditorSettings::set_smart_punctuation(cx, self.smart_punctuation);
         EditorSettings::set_autosave(cx, self.autosave);
+        EditorSettings::set_vim_enabled(cx, self.vim_enabled);
         EditorSettings::set_zoom_percent(cx, self.zoom_percent);
         EditorSettings::set_external_change_policy(cx, self.external_change_policy);
         EditorSettings::set_delete_policy(cx, self.delete_policy);
@@ -470,6 +477,7 @@ impl PreferencesWindow {
         self.saved_remember_window_bounds = self.remember_window_bounds;
         self.saved_window_open_position = self.window_open_position;
         self.saved_smart_punctuation = self.smart_punctuation;
+        self.saved_vim_enabled = self.vim_enabled;
         self.saved_hide_markdown_markers = self.hide_markdown_markers;
         self.saved_zoom_percent = self.zoom_percent;
         self.saved_default_window_width = self.default_window_width;

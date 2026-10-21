@@ -5,6 +5,7 @@ use crate::components::{
     PageDown, PageUp, SelectEnd, SelectHome, SelectLeft, SelectRight,
     WordMoveLeft, WordMoveRight, WordSelectLeft, WordSelectRight,
 };
+use crate::editor::vim;
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -22,6 +23,11 @@ impl Render for Editor {
                     let keystroke = &event.keystroke;
                     let _ = editor.update(cx, |editor, cx| {
                         if editor.split_parent.is_some() && !editor.split_active { return; }
+                        // vim 的普通/可视/替换模式吞键：阻断 keymap 派发与 IME 插字。
+                        if editor.vim_key_down(keystroke, window, cx) {
+                            cx.stop_propagation();
+                            return;
+                        }
                         let mut consumed = editor.ai_review_key_down(keystroke, window, cx);
                         consumed = consumed || editor.mermaid_preview_key_down(keystroke, cx);
                         consumed = consumed || editor.file_history_key_down(keystroke, cx);
@@ -37,6 +43,13 @@ impl Render for Editor {
         }
 
         self.window_handle = Some(window.window_handle());
+        if self.vim_settings_subscription.is_none() {
+            // 偏好里 vim 开关变化时同步本编辑器（ToggleVimMode/偏好页共用）。
+            self.vim_settings_subscription =
+                Some(cx.observe_global::<crate::config::EditorSettings>(|editor, cx| {
+                    editor.vim_set_enabled(crate::config::EditorSettings::vim(cx).enable, cx);
+                }));
+        }
         #[cfg(not(test))]
         if !self.ai_result_preview && self.split_parent.is_none() { self.maybe_check_updates_on_startup(window, cx); }
         if !self.ai_result_preview && self.system_appearance_subscription.is_none() {
@@ -64,6 +77,9 @@ impl Render for Editor {
         self.apply_pending_scroll_into_view(window, cx);
         self.apply_pending_workspace_search_focus(window, cx);
         self.apply_pending_formula_editor(window, cx);
+        if self.vim_enabled {
+            vim::command::apply_pending_vim_cmdline(self, window, cx);
+        }
         self.refresh_selection_snapshot_if_changed(cx);
         self.sync_pending_save(window, cx);
         self.sync_pending_save_as(window, cx);
@@ -786,6 +802,18 @@ impl Render for Editor {
                 .child(content_area)
                 .child(overlay)
                 .into_any_element()
+        } else if self.vim.cmdline.is_some() {
+            let overlay =
+                vim::command::render_vim_cmdline_overlay(self, window, cx);
+            div()
+                .relative()
+                .w_full()
+                .h_full()
+                .flex_1()
+                .min_w(px(0.0))
+                .child(content_area)
+                .child(overlay)
+                .into_any_element()
         } else {
             content_area
         };
@@ -796,6 +824,7 @@ impl Render for Editor {
         } else if self.image_preview.is_some()
             && self.quick_open.is_none()
             && self.command_palette.is_none()
+            && self.vim.cmdline.is_none()
         {
             self.render_image_file_preview(&theme, &strings, cx)
         } else if let Some(path) = self.unsupported_preview_path.as_ref() {

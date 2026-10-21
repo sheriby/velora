@@ -2,7 +2,7 @@
         AppPreferences, DeletePolicy, EditorSettings, ExportThemePreference,
         ExternalChangePolicy, FontPreferences, ImagePasteBehavior, PreferencesNav,
         SidebarOpenPreference, SidebarPanelPreference, StartupOpenPreference,
-        StatusBarPreferences, TreeSortPreference, WindowOpenPosition,
+        StatusBarPreferences, TreeSortPreference, VimPreferences, WindowOpenPosition,
         WritingWidthPreference,
         load_or_create_app_preferences_with_dirs_and_locales, open_preferences_window_with_size,
         open_preferences_window_with_state,
@@ -1106,6 +1106,7 @@
             zoom_percent: 100,
             default_window_width: 1080,
             default_window_height: 720,
+            vim: VimPreferences::default(),
         };
 
         save_app_preferences_with_dirs(&preferences, &dirs)
@@ -1244,6 +1245,7 @@
             zoom_percent: 100,
             default_window_width: 1080,
             default_window_height: 720,
+            vim: VimPreferences::default(),
         };
         save_app_preferences_with_dirs(&preferences, &dirs)
             .expect("preferences should save to config.toml");

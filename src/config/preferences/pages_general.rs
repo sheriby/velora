@@ -294,6 +294,13 @@ impl PreferencesWindow {
             cx,
             |this, value| this.hide_markdown_markers = value,
         );
+        let vim_mode = Self::boolean_field(
+            "preferences-vim-mode",
+            strings.preferences_vim_mode.clone(),
+            self.vim_enabled,
+            cx,
+            |this, value| this.vim_enabled = value,
+        );
         let updates = Self::boolean_field(
             "preferences-update-startup",
             strings.preferences_updates_startup.clone(),
@@ -392,6 +399,7 @@ impl PreferencesWindow {
                             strings.preferences_hide_markdown_markers.clone(),
                             markers,
                         ),
+                        Self::preference_row(strings.preferences_vim_mode.clone(), vim_mode),
                     ],
                     theme,
                     window,

@@ -57,6 +57,7 @@ mod tests;
 mod tree;
 mod update;
 pub(crate) use update::{install_pending_update, cancel_pending_install};
+mod vim;
 mod window_state;
 mod command_palette;
 mod quick_open;
@@ -81,6 +82,11 @@ pub struct Editor {
     ai_surface_visible: std::rc::Rc<std::cell::Cell<bool>>,
     ai_review_marks: Vec<ai_assistant::inline_review::ReviewMark>,
     ai_review_binding: Option<ai_assistant::inline_review::ReviewBinding>,
+    /// vim 会话（模式/寄存器/标记/宏）。`vim_enabled` 为假时所有路径直通。
+    vim: vim::VimState,
+    vim_enabled: bool,
+    /// 偏好里 vim 开关变化时同步各编辑器（ToggleVimMode/偏好页共用）。
+    vim_settings_subscription: Option<gpui::Subscription>,
     document: DocumentTree,
     /// 文档文本的**唯一事实源**：块树是它上面的一份投影，保存写的是它。
     buffer: buffer::TextBuffer,
@@ -813,6 +819,8 @@ impl Editor {
         document.set_pending_tail(pending_tail);
         document.rebuild_metadata_and_snapshot(cx);
         let pending_focus = document.first_root().map(|block| block.entity_id());
+        // 开着 vim 的新编辑器从普通模式起步；关闭时保持插入语义直通 IME。
+        let vim_enabled = crate::config::EditorSettings::vim(cx).enable;
 
         let mut editor = Self {
             document,
@@ -834,6 +842,16 @@ impl Editor {
             ai_surface_visible: Default::default(),
             ai_review_marks: Vec::new(),
             ai_review_binding: None,
+            vim: vim::VimState {
+                mode: if vim_enabled {
+                    vim::VimMode::Normal
+                } else {
+                    vim::VimMode::Insert
+                },
+                ..Default::default()
+            },
+            vim_enabled,
+            vim_settings_subscription: None,
             source_mode_fallback_required,
             code_document: false,
             pending_focus,
@@ -1019,6 +1037,9 @@ impl Editor {
         editor.pending_focus = editor.first_focusable_entity_id(cx);
         editor.active_entity_id = editor.pending_focus;
         editor.start_pending_materialization_task(cx);
+        if vim_enabled {
+            editor.sync_vim_block_carets(cx);
+        }
         // The loaded source and initial cursor are already the first undo baseline.
         editor
     }

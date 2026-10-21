@@ -576,7 +576,31 @@ impl Element for BlockTextElement {
                         current_line,
                         Vec::new(),
                         bracket_highlights,
-                        cursor_bounds.map(|bounds| fill(bounds, cursor_color)),
+                        cursor_bounds.map(|bounds| {
+                            // vim 普通/可视/替换模式：光标画成块（盖住整字素）。
+                            let mut bounds = bounds;
+                            if input.vim_block_caret {
+                                let next = input.next_boundary(cursor);
+                                if next > cursor {
+                                    if let Some(next_bounds) = cursor_bounds_for_offset(
+                                        &lines,
+                                        text_bounds,
+                                        line_height,
+                                        shared_ranges.as_slice(),
+                                        next,
+                                        text_align,
+                                        px(1.0),
+                                    ) {
+                                        if next_bounds.origin.y == bounds.origin.y
+                                            && next_bounds.left() > bounds.left()
+                                        {
+                                            bounds.size.width = next_bounds.left() - bounds.left();
+                                        }
+                                    }
+                                }
+                            }
+                            fill(bounds, cursor_color)
+                        }),
                     )
                 } else {
                     let shared_ranges = input.shared_hard_line_ranges();
