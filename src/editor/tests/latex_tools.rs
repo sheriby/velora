@@ -2376,3 +2376,57 @@ async fn indented_math_blocks_keep_their_fences_and_indent(cx: &mut TestAppConte
         });
     }
 }
+
+
+/// 现象：编辑公式时每敲一个字，整块预览和源码卡片上下跳一下。
+/// 根因：预览图走异步资产加载，换源后的首帧没有固有尺寸，预览区塌成
+/// 只剩编号那一行高；图片加载完再撑回去。
+#[gpui::test]
+async fn math_block_live_preview_keeps_its_height_while_the_formula_reloads(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = "$$\nx^2\n$$\n\n正文\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    cx.update(|window, _| window.activate_window());
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("公式块");
+    editor.update(cx, |editor, _| editor.focus_block(math.entity_id()));
+    redraw(cx);
+    redraw(cx);
+    let measure = |cx: &mut gpui::VisualTestContext| {
+        (
+            cx.debug_bounds("math-block-live-preview")
+                .map(|bounds| f32::from(bounds.size.height)),
+            cx.debug_bounds("math-block-rendered-formula")
+                .map(|bounds| f32::from(bounds.size.height)),
+            cx.debug_bounds("math-block-card")
+                .map(|bounds| f32::from(bounds.top())),
+        )
+    };
+    math.update(cx, |block, cx| {
+        let end = block.display_text().len();
+        block.replace_text_in_visible_range(end..end, " + y", None, false, cx);
+    });
+    // 只画一帧：这正是换源后新图片尚未异步加载完的那一帧。
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let (preview_during, formula_during, card_during) = measure(cx);
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let (preview_after, formula_after, card_after) = measure(cx);
+    assert!(
+        formula_during.is_some_and(|height| height > 0.0),
+        "换源首帧公式图不能塌成 0 高：{formula_during:?}"
+    );
+    assert_eq!(
+        (preview_during, formula_during),
+        (preview_after, formula_after),
+        "换源首帧与加载完成后的预览高度必须一致"
+    );
+    assert_eq!(
+        card_during, card_after,
+        "换源首帧源码卡片不能先塌再撑，必须与加载完成后同位"
+    );
+}

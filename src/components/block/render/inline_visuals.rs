@@ -138,7 +138,7 @@ impl Block {
             .as_deref()
             .unwrap_or_else(|| self.display_text());
 
-        let content = match self.render_math_source(raw, theme, editing) {
+        let content = match self.render_math_source(raw, theme, editing, cx) {
             Some(content) => {
                 if editing && self.math_edit_preview_source.as_deref() != Some(raw) {
                     self.math_edit_preview_source = Some(raw.to_string());
@@ -149,7 +149,7 @@ impl Block {
             None => self
                 .math_edit_preview_source
                 .as_deref()
-                .and_then(|source| self.render_math_source(source, theme, true))
+                .and_then(|source| self.render_math_source(source, theme, true, cx))
                 .unwrap_or_else(|| div().into_any_element()),
         };
         let container = div().w_full();
@@ -181,7 +181,13 @@ impl Block {
             .into_any_element()
     }
 
-    fn render_math_source(&self, raw: &str, theme: &Theme, editing: bool) -> Option<AnyElement> {
+    fn render_math_source(
+        &self,
+        raw: &str,
+        theme: &Theme,
+        editing: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
@@ -212,22 +218,37 @@ impl Block {
                         c.text_default,
                         display_math_font_size(t.text_size),
                     ) {
-                        Ok(rendered) => div()
-                            .w_full()
-                            .flex()
-                            .justify_center()
-                            .child(
-                                img(rendered.path)
-                                    .debug_selector(|| "math-block-rendered-formula".to_string())
-                                    .max_w(Length::Definite(relative(1.0)))
-                                    .max_h(px(if d.image_root_max_height > 0.0 {
-                                        d.image_root_max_height
-                                    } else {
-                                        420.0
-                                    }))
-                                    .object_fit(ObjectFit::Contain),
-                            )
-                            .into_any_element(),
+                        Ok(rendered) => {
+                            // 编辑预览同步出图：异步图片换源的首帧没有固有尺寸，
+                            // 预览区会塌成编号那一行高，源码卡片整块上下跳。
+                            let source: gpui::ImageSource = if editing {
+                                crate::components::latex::render_math_preview_image(
+                                    &rendered, cx,
+                                )
+                                .map(gpui::ImageSource::from)
+                                .unwrap_or_else(|| rendered.path.into())
+                            } else {
+                                rendered.path.into()
+                            };
+                            div()
+                                .w_full()
+                                .flex()
+                                .justify_center()
+                                .child(
+                                    img(source)
+                                        .debug_selector(|| {
+                                            "math-block-rendered-formula".to_string()
+                                        })
+                                        .max_w(Length::Definite(relative(1.0)))
+                                        .max_h(px(if d.image_root_max_height > 0.0 {
+                                            d.image_root_max_height
+                                        } else {
+                                            420.0
+                                        }))
+                                        .object_fit(ObjectFit::Contain),
+                                )
+                                .into_any_element()
+                        }
                         Err(_) if editing => return None,
                         Err(err) => div()
                             .debug_selector(|| "math-block-render-error".to_string())

@@ -238,6 +238,46 @@ pub(crate) struct LatexSvgRender {
     pub(crate) svg: String,
 }
 
+/// 已栅格化的编辑预览图上限：每次编辑换一份新图，只留最近几份。
+const PREVIEW_IMAGE_CACHE_SIZE: usize = 4;
+
+/// 编辑中的公式预览：同步栅格化当前 SVG。
+///
+/// 图片走资产系统要等异步加载，换源后的第一帧没有固有尺寸：预览区只剩编号
+/// 那一行高，源码卡片跟着上下跳。预览图是本地 SVG、同时只有一个，同步栅格化
+/// 换来帧内就位的尺寸；按路径缓存最近几份，避免逐帧重复解析。
+pub(crate) fn render_math_preview_image(
+    rendered: &LatexSvgRender,
+    cx: &gpui::App,
+) -> Option<std::sync::Arc<gpui::RenderImage>> {
+    static CACHE: OnceLock<Mutex<VecDeque<(PathBuf, std::sync::Arc<gpui::RenderImage>)>>> =
+        OnceLock::new();
+    let mut cache = match CACHE.get_or_init(|| Mutex::new(VecDeque::new())).lock() {
+        Ok(cache) => cache,
+        Err(error) => {
+            eprintln!("LaTeX 预览缓存锁不可用：{error}");
+            return None;
+        }
+    };
+    if let Some((_, image)) = cache.iter().find(|(path, _)| path == &rendered.path) {
+        return Some(image.clone());
+    }
+    let image = match cx
+        .svg_renderer()
+        .render_single_frame(rendered.svg.as_bytes(), 1.0)
+    {
+        Ok(image) => image,
+        Err(error) => {
+            eprintln!("公式预览栅格化失败：{error}");
+            return None;
+        }
+    };
+    cache.push_front((rendered.path.clone(), image.clone()));
+    cache.truncate(PREVIEW_IMAGE_CACHE_SIZE);
+    Some(image)
+}
+
+
 #[derive(Default)]
 struct LatexSvgCache {
     directory: Option<PathBuf>,
