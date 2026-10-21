@@ -6,6 +6,7 @@ use gpui_kit::component::{
     breadcrumb::{Breadcrumb, BreadcrumbItem},
     button::{Button, ButtonVariants},
     status_bar::StatusBar,
+    tooltip::Tooltip,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -17,20 +18,21 @@ use crate::i18n::I18nStrings;
 use crate::theme::Theme;
 
 impl Editor {
-    /// vim 当前模式的显示名（模式词汇保持 vim 习惯的双语标注）。
-    fn vim_mode_label(&self, strings: &I18nStrings) -> Option<String> {
+    /// vim 的模式名保持英文词汇；图标按模式区分，标签用常规字重。
+    fn vim_mode_icon_and_label(&self) -> (&'static str, &'static str) {
         use super::vim::{VimMode, VisualKind};
-        Some(
-            match self.vim.mode {
-                VimMode::Insert => &strings.vim_mode_insert,
-                VimMode::Replace => &strings.vim_mode_replace,
-                VimMode::Visual(VisualKind::Char) => &strings.vim_mode_visual,
-                VimMode::Visual(VisualKind::Line) => &strings.vim_mode_visual_line,
-                VimMode::Visual(VisualKind::Block) => &strings.vim_mode_visual_block,
-                VimMode::Normal => &strings.vim_mode_normal,
+        match self.vim.mode {
+            VimMode::Insert => ("icon/editor/vim-insert.svg", "Insert"),
+            VimMode::Replace => ("icon/editor/vim-replace.svg", "Replace"),
+            VimMode::Visual(VisualKind::Char) => ("icon/editor/vim-visual.svg", "Visual"),
+            VimMode::Visual(VisualKind::Line) => {
+                ("icon/editor/vim-visual.svg", "Visual Line")
             }
-            .clone(),
-        )
+            VimMode::Visual(VisualKind::Block) => {
+                ("icon/editor/vim-visual.svg", "Visual Block")
+            }
+            VimMode::Normal => ("icon/editor/vim-normal.svg", "Normal"),
+        }
     }
 
     /// 状态栏整篇统计的静默窗口：打字期间不重扫。
@@ -122,16 +124,33 @@ impl Editor {
 
         // vim 模式指示：开着一律显示当前模式（vim 使用者靠它确认落点）。
         if self.vim_enabled {
-            if let Some(label) = self.vim_mode_label(strings) {
-                right_items.push(
-                    div()
-                        .text_size(px(d.status_bar_text_size))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(c.status_bar_text)
-                        .child(label)
-                        .into_any_element(),
-                );
-            }
+            let (icon, label) = self.vim_mode_icon_and_label();
+            right_items.push(
+                div()
+                    .id("status-bar-vim-mode")
+                    .debug_selector(|| "status-bar-vim-mode".into())
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap_1()
+                    .tooltip({
+                        let label = label.to_string();
+                        move |window, cx| Tooltip::new(label.clone()).build(window, cx)
+                    })
+                    .child(
+                        Icon::empty()
+                            .path(icon)
+                            .text_color(c.status_bar_text_dim),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(d.status_bar_text_size))
+                            .font_weight(gpui::FontWeight::NORMAL)
+                            .text_color(c.status_bar_text_dim)
+                            .child(label),
+                    )
+                    .into_any_element(),
+            );
         }
 
         if prefs.show_cursor_position && self.view_mode == super::ViewMode::Source {
