@@ -12,7 +12,7 @@ Velora 是基于 Rust 与 GPUI 构建的原生 Markdown 编辑器：无 Electron
 
 ![实时所见即所得编辑：行内样式、表格、代码高亮与 LaTeX 公式](assets/screenshots/editor.png)
 
-更多截图：[工作区与多标签页](assets/screenshots/workspace.png) · [分屏阅读与编辑](assets/screenshots/workspace-split.png) · [公式编辑器](assets/screenshots/formula-editor.png) · [六套内置主题](assets/screenshots/themes.png)
+更多截图：[选中后对话](assets/screenshots/ai-selection-chat.png) · [工作区与多标签页](assets/screenshots/workspace.png) · [分屏阅读与编辑](assets/screenshots/workspace-split.png) · [公式编辑器](assets/screenshots/formula-editor.png) · [六套内置主题](assets/screenshots/themes.png)
 
 ## ✨ 功能
 

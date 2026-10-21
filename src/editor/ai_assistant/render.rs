@@ -32,7 +32,13 @@ impl Editor {
                         "ai-return",
                         false,
                         cx,
-                        |button, _cx| button.label("AI").outline(),
+                        |button, cx| {
+                            button
+                                .label("AI")
+                                .secondary()
+                                .rounded(cx.theme().radius_lg)
+                                .shadow_md()
+                        },
                         |editor, window, cx| {
                             if let Some(session) = editor.ai_session.as_mut() {
                                 session.visible = true;
@@ -58,15 +64,17 @@ impl Editor {
                     "ai-collapsed",
                     false,
                     cx,
-                    |button, _cx| {
+                    |button, cx| {
                         button
                             .icon(IconName::Bot)
                             .accessibility_label(strings.ai_panel_open.clone())
                             .tooltip(strings.ai_panel_open.clone())
-                            .outline()
+                            // Ghost 变体把边框解成 transparent，outline() 在这类按钮上
+                            // 画不出任何东西；细边框要换 Secondary 变体才有。
+                            .secondary()
                             .with_size(gpui_kit::component::Size::Medium)
-                            .rounded(px(10.0))
-                            .shadow_lg()
+                            .rounded(cx.theme().radius_lg)
+                            .shadow_md()
                     },
                     |editor, window, cx| {
                         if let Some(session) = editor.ai_session.as_mut() {
