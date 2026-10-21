@@ -1162,3 +1162,27 @@ async fn ctrl_v_switches_visual_kinds_and_exits(cx: &mut TestAppContext) {
         "块状可视里再按 ctrl-v 应退出可视"
     );
 }
+
+#[gpui::test]
+async fn g0_returns_to_the_hard_line_start(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes("$");
+    assert_eq!(first_block_caret(&editor, &cx), 4);
+    cx.simulate_keystrokes("g 0");
+    assert_eq!(first_block_caret(&editor, &cx), 0);
+}
+
+#[gpui::test]
+async fn capital_u_is_not_bound_to_redo(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes("x");
+    assert_eq!(document_text(&editor, &cx), "lpha");
+    cx.simulate_keystrokes("u");
+    assert_eq!(document_text(&editor, &cx), "alpha");
+    cx.simulate_keystrokes("U");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "alpha",
+        "U 不是重做键，不应恢复已撤销的删除"
+    );
+}

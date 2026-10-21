@@ -1280,7 +1280,6 @@ impl Editor {
                 keep_space: true,
             },
             VimKey::Char('u') => VimAction::Undo,
-            VimKey::Char('U') => VimAction::Redo,
             VimKey::Ctrl('r') => VimAction::Redo,
             VimKey::Char('.') => VimAction::Dot,
             VimKey::Char(';') => VimAction::RepeatFind { reverse: false },
@@ -1370,6 +1369,7 @@ impl Editor {
                     VimAction::Move(Motion::DocStart)
                 }
             }
+            VimKey::Char('0') => VimAction::Move(Motion::HardLineStart),
             VimKey::Char('i') => VimAction::EnterInsert(InsertPlacement::LastInsertPosition),
             VimKey::Char('I') => VimAction::EnterInsert(InsertPlacement::FirstColumn),
             VimKey::Char('J') => VimAction::JoinLines { count: 2, keep_space: false },
