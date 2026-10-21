@@ -5200,6 +5200,161 @@ fn ai_native_messages_keep_inline_math_display_math_and_mermaid_preview(cx: &mut
     });
 }
 
+/// 浮窗拖窄之后，回答正文要按新的宽度重新排版：排版宽度跟着内容区变窄、
+/// 换出更多行，而不是沿用宽时候的布局被面板裁掉。
+///
+/// 消息里带表格才测得出这条：Kit 的 TextView 外层不铺满父宽时按内容的
+/// max-content 宽度排版，一张宽表会把同一消息里的段落一起钉在旧宽度上。
+#[gpui::test]
+fn ai_float_rewraps_message_content_when_the_panel_gets_narrower(cx: &mut TestAppContext) {
+    use gpui::px;
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    let table = format!(
+        "| {} | {} |\n| --- | --- |\n| {} | {} |\n",
+        "工具", "用途", "read_document", "把目标和位置换算到当前文档再落笔"
+    );
+    let text = format!(
+        "{}\n\n{table}",
+        "这是一段需要换行的中文回答，浮窗变窄时要重新排版。".repeat(6)
+    );
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor
+            .ai_session
+            .as_mut()
+            .expect("应打开浮窗")
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: text.into(),
+                thinking: "".into(),
+            });
+        editor.refresh_ai_preview(cx);
+        cx.notify();
+    });
+    for _ in 0..8 {
+        draw(cx);
+    }
+    let wide = message_state_bounds(&editor, cx, 0);
+
+    set_ai_float_width(editor.clone(), cx, px(280.0));
+    let narrow = message_state_bounds(&editor, cx, 0);
+    let row = cx.debug_bounds("ai-message-row-0").expect("变窄后仍能测量消息行");
+    assert!(
+        f32::from(narrow.size.width) < f32::from(wide.size.width),
+        "浮窗变窄后正文排版宽度没跟着变窄：{} → {}",
+        f32::from(wide.size.width),
+        f32::from(narrow.size.width)
+    );
+    assert!(
+        f32::from(narrow.size.height) > f32::from(wide.size.height),
+        "排版宽度变窄后要换出更多行：高 {} → {}",
+        f32::from(wide.size.height),
+        f32::from(narrow.size.height)
+    );
+    assert!(
+        f32::from(narrow.size.width) <= f32::from(row.size.width) + 1.0,
+        "正文排版宽度超出内容区：正文 {} vs 行 {}",
+        f32::from(narrow.size.width),
+        f32::from(row.size.width)
+    );
+}
+
+/// 宽表格不许把正文排版宽度撑出内容区（撑出去的部分会被面板裁掉）。
+#[gpui::test]
+fn ai_float_keeps_a_wide_table_inside_the_panel(cx: &mut TestAppContext) {
+    use gpui::px;
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    let text = format!(
+        "| {} | {} |\n| --- | --- |\n| {} | {} |\n",
+        "工具", "用途", "read_document", "把目标和位置换算到当前文档再落笔"
+    );
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor
+            .ai_session
+            .as_mut()
+            .expect("应打开浮窗")
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: text.into(),
+                thinking: "".into(),
+            });
+        editor.refresh_ai_preview(cx);
+        cx.notify();
+    });
+    for _ in 0..8 {
+        draw(cx);
+    }
+
+    set_ai_float_width(editor.clone(), cx, px(280.0));
+    let panel = cx
+        .debug_bounds("ai-floating-workbench")
+        .expect("浮窗本体应有边界");
+    let row = cx.debug_bounds("ai-message-row-0").expect("表格消息行应有边界");
+    let content = message_state_bounds(&editor, cx, 0);
+    assert!(
+        f32::from(row.size.width) <= f32::from(panel.size.width) + 1.0,
+        "表格把消息行撑得比浮窗还宽：行 {} vs 浮窗 {}",
+        f32::from(row.size.width),
+        f32::from(panel.size.width)
+    );
+    assert!(
+        f32::from(content.size.width) <= f32::from(row.size.width) + 1.0,
+        "表格把正文排版宽度撑出内容区：正文 {} vs 行 {}",
+        f32::from(content.size.width),
+        f32::from(row.size.width)
+    );
+}
+
+/// 正文实际排版的边界（TextView 的布局宽度，而不是外层行容器）。
+fn message_state_bounds(
+    editor: &gpui::Entity<Editor>,
+    cx: &mut VisualTestContext,
+    index: usize,
+) -> gpui::Bounds<gpui::Pixels> {
+    editor.read_with(cx, |editor, cx| {
+        editor
+            .ai_session
+            .as_ref()
+            .expect("浮窗应打开")
+            .conversation
+            .as_ref()
+            .expect("对话应存在")
+            .read(cx)
+            .message_state(index)
+            .expect("消息正文应已渲染")
+            .read(cx)
+            .bounds()
+    })
+}
+
+/// 拖动右下角之外的等价入口：直接把浮窗宽度设成给定值并重绘若干帧。
+fn set_ai_float_width(
+    editor: gpui::Entity<Editor>,
+    cx: &mut VisualTestContext,
+    width: gpui::Pixels,
+) {
+    use gpui::{Size, px};
+    editor.update_in(cx, |editor, _, cx| {
+        if let Some(session) = editor.ai_session.as_mut() {
+            session.float_size = Some(Size {
+                width,
+                height: px(420.0),
+            });
+        }
+        cx.notify();
+    });
+    for _ in 0..8 {
+        draw(cx);
+    }
+}
+
 #[gpui::test]
 fn ai_native_messages_keep_parenthesized_math_in_readonly_paragraphs(cx: &mut TestAppContext) {
     use gpui::AppContext as _;

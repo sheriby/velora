@@ -192,6 +192,7 @@ impl MessageTranscript {
             let owner = cx.weak_entity();
             let text = TextView::new(&content.state)
                 .selectable(true)
+                .w_full()
                 .markdown_extensions(content.rich.extensions())
                 .shared_code_block_highlighter(self.code_highlighter.clone())
                 .code_block_actions(|block, _, cx| {
@@ -249,6 +250,8 @@ impl MessageTranscript {
             )))
             .role(Role::ListItem)
             .test_support()
+            // 用例要按浮窗宽度量这一行的实际排版边界（换行是否跟着宽度走）。
+            .debug_selector(move || format!("ai-message-row-{index}"))
             .w_full()
             .pb_4()
             .child(column.child(
@@ -551,11 +554,11 @@ impl Render for MessageTranscript {
             family.clone(),
             body_size,
         );
-        if self
+        let remeasured = self
             .metrics
             .as_ref()
-            .is_some_and(|previous| *previous != metrics)
-        {
+            .is_some_and(|previous| *previous != metrics);
+        if remeasured {
             self.scroll.update(cx, |state, cx| state.remeasure(cx));
         }
         self.metrics = Some(metrics);
