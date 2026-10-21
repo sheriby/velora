@@ -211,11 +211,12 @@ impl Editor {
                 self.vim_yank_range(&entities, &range, register, cx);
             }
             Operator::Delete => {
-                self.vim_delete_range(&entities, &range, register, window, cx);
+                self.vim_delete_range(&entities, &range, register, true, window, cx);
                 self.vim_place_cursor_after_delete(&range);
             }
             Operator::Change => {
-                self.vim_delete_range(&entities, &range, register, window, cx);
+                // 修改会话紧接在删除点输入，光标不能像删除那样左移。
+                self.vim_delete_range(&entities, &range, register, false, window, cx);
                 self.vim_enter_insert_inner(InsertPlacement::AtCursor, 0, &[], window, cx);
             }
             Operator::Indent | Operator::Outdent => {
@@ -298,12 +299,20 @@ impl Editor {
             Motion::Left | Motion::Right | Motion::ForwardChars | Motion::BackwardChars => {
                 let forward = !matches!(motion, Motion::Left | Motion::BackwardChars);
                 for _ in 0..count.max(1) {
-                    let next = if forward {
-                        stream.next_grapheme(target)
+                    if forward {
+                        match stream.next_grapheme(target) {
+                            Some(next) => target = next,
+                            None => {
+                                // 行尾没有下一个字素可吃：x/dl 停在硬行末，
+                                // 计数再大也不越过换行。
+                                target.offset =
+                                    stream.hard_line_range(target.block_index, target.offset).end;
+                                break;
+                            }
+                        }
                     } else {
-                        stream.prev_grapheme(target)
-                    };
-                    target = next?;
+                        target = stream.prev_grapheme(target)?;
+                    }
                 }
                 if !forward {
                     return Some(VimRange {
@@ -692,6 +701,7 @@ impl Editor {
         entities: &[Entity<Block>],
         range: &VimRange,
         register: char,
+        clamp_to_previous: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -702,6 +712,7 @@ impl Editor {
                 entities[range.start.block_index].clone(),
                 range.start.offset,
                 range.end.offset,
+                clamp_to_previous,
                 window,
                 cx,
             );
@@ -714,6 +725,7 @@ impl Editor {
             first.clone(),
             range.start.offset,
             first.read(cx).display_text().len(),
+            clamp_to_previous,
             window,
             cx,
         );
@@ -723,7 +735,14 @@ impl Editor {
         }
         let last_len = last.read(cx).display_text().len();
         if last_len > 0 || range.end.offset > 0 {
-            self.vim_delete_within_block(last.clone(), 0, range.end.offset.min(last_len), window, cx);
+            self.vim_delete_within_block(
+                last.clone(),
+                0,
+                range.end.offset.min(last_len),
+                clamp_to_previous,
+                window,
+                cx,
+            );
         }
         // 合并接缝：把末块并入首块（若末块还在）。
         let entities_after = self.vim_navigation_entities(cx);
@@ -788,6 +807,7 @@ impl Editor {
         block: Entity<Block>,
         start: usize,
         end: usize,
+        clamp_to_previous: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -802,6 +822,13 @@ impl Editor {
         block.update(cx, |block, cx| {
             block.replace_text_in_visible_range(start..end, "", Some(0..0), false, cx);
         });
+        // 删除触及块尾时块内光标会停在文本末尾；vim 把光标左移到新的末字素。
+        let text = block.read(cx).display_text().to_string();
+        let mut landing = start.min(text.len());
+        if clamp_to_previous && landing == text.len() && landing > 0 {
+            landing = prev_grapheme_start(&text, landing).unwrap_or(0);
+        }
+        Self::reset_block_cursor(&block, landing, cx);
         self.mark_dirty(cx);
     }
 
@@ -1002,6 +1029,7 @@ impl Editor {
                         entity,
                         range.start,
                         range.end,
+                        false,
                         window,
                         cx,
                     );

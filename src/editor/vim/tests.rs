@@ -1096,3 +1096,50 @@ async fn ctrl_v_enters_block_visual(cx: &mut TestAppContext) {
         "ctrl-v 应进入块状可视"
     );
 }
+
+#[gpui::test]
+async fn unicode_word_motions_and_line_end_edits_stay_on_graphemes(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "你好 世界");
+    cx.simulate_keystrokes("w");
+    assert_eq!(
+        first_block_caret(&editor, &cx),
+        7,
+        "w 应停在第二个中文词的起点"
+    );
+    cx.simulate_keystrokes("b");
+    assert_eq!(first_block_caret(&editor, &cx), 0);
+
+    cx.simulate_keystrokes("$");
+    assert_eq!(
+        first_block_caret(&editor, &cx),
+        10,
+        "$ 应停在最后一个字素的起点"
+    );
+    cx.simulate_keystrokes("x");
+    assert_eq!(document_text(&editor, &cx), "你好 世");
+    assert_eq!(
+        first_block_caret(&editor, &cx),
+        7,
+        "删掉末字后光标回落到新末字"
+    );
+}
+
+#[gpui::test]
+async fn ctrl_a_after_unicode_text_increments_the_following_number(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "编号 41");
+    cx.simulate_keystrokes("w");
+    assert_eq!(first_block_caret(&editor, &cx), 7, "w 应跳过中文词与空格");
+    cx.simulate_keystrokes("ctrl-a");
+    assert_eq!(document_text(&editor, &cx), "编号 42");
+}
+
+#[gpui::test]
+async fn count_delete_stops_at_the_end_of_the_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abcdef");
+    cx.simulate_keystrokes("$ 3 x");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "abcde",
+        "行尾的 3x 只删当前字素，不越过换行"
+    );
+}
