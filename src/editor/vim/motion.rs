@@ -51,7 +51,8 @@ impl Motion {
             Motion::WordEnd { .. }
             | Motion::WordEndBackward { .. }
             | Motion::FindChar { till: false, .. }
-            | Motion::LastNonBlank => MotionKind::Inclusive,
+            | Motion::LastNonBlank
+            | Motion::HardLineEnd => MotionKind::Inclusive,
             Motion::Down | Motion::Up => MotionKind::LineWise,
             Motion::MatchPair => MotionKind::Inclusive,
             _ => MotionKind::Exclusive,

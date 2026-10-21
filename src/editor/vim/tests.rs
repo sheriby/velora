@@ -188,21 +188,12 @@ fn visible_texts(editor: &Entity<Editor>, cx: &VisualTestContext) -> Vec<String>
             .visible_blocks()
             .iter()
             .map(|entry| entry.entity.read(cx).display_text().to_string())
-            .collect()
-    })
-}
-
-fn caret_in_block(editor: &Entity<Editor>, cx: &VisualTestContext, index: usize) -> usize {
-    editor.read_with(cx, |editor, cx| {
-        editor.document.visible_blocks()[index]
-            .entity
-            .read(cx)
-            .cursor_offset()
+            .collect::<Vec<_>>()
     })
 }
 
 fn cursor_block(editor: &Entity<Editor>, cx: &VisualTestContext) -> usize {
-    editor.read_with(cx, |editor, cx| {
+    editor.read_with(cx, |editor, _cx| {
         let active = editor.active_entity_id.expect("焦点块");
         editor
             .document
@@ -345,4 +336,168 @@ async fn ctrl_o_runs_one_normal_command_then_returns_to_insert(cx: &mut TestAppC
     cx.simulate_keystrokes("w");
     assert_eq!(current_mode(&editor, &cx), VimMode::Insert, "ctrl-o 后应回到插入");
     assert_eq!(first_block_caret(&editor, &cx), 4, "w 应已把光标移到下一个词");
+}
+
+#[gpui::test]
+async fn dd_removes_the_whole_block_and_keeps_the_next(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo");
+    cx.simulate_keystrokes("d d");
+    assert_eq!(visible_texts(&editor, &cx), vec!["two"]);
+}
+
+#[gpui::test]
+async fn count_dd_removes_several_blocks(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo\n\nthree");
+    cx.simulate_keystrokes("2 d d");
+    assert_eq!(visible_texts(&editor, &cx), vec!["three"]);
+}
+
+#[gpui::test]
+async fn cc_clears_the_line_and_enters_insert(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes("c c");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Insert);
+    cx.simulate_input("beta");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "beta");
+}
+
+#[gpui::test]
+async fn yy_then_p_duplicates_the_block(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one");
+    cx.simulate_keystrokes("y y p");
+    assert_eq!(visible_texts(&editor, &cx), vec!["one", "one"]);
+}
+
+#[gpui::test]
+async fn capital_d_deletes_to_the_end_of_the_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    cx.simulate_keystrokes("w D");
+    assert_eq!(document_text(&editor, &cx), "alpha ");
+}
+
+#[gpui::test]
+async fn capital_c_changes_to_the_end_of_the_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    cx.simulate_keystrokes("w C");
+    cx.simulate_input("BETA");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "alpha BETA");
+}
+
+#[gpui::test]
+async fn s_substitutes_the_character_under_the_cursor(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes("s");
+    cx.simulate_input("X");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "Xlpha");
+}
+
+#[gpui::test]
+async fn capital_s_clears_the_line_and_enters_insert(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes("S");
+    cx.simulate_input("beta");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "beta");
+}
+
+#[gpui::test]
+async fn r_replaces_one_character_and_count_repeats(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abcd");
+    cx.simulate_keystrokes("r z");
+    assert_eq!(document_text(&editor, &cx), "zbcd");
+    cx.simulate_keystrokes("3 r y");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "yyyd",
+        "3ry 应从光标起替换三个字符"
+    );
+}
+
+#[gpui::test]
+async fn tilde_swaps_the_case_of_the_character_under_the_cursor(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "aBc");
+    cx.simulate_keystrokes("~");
+    assert_eq!(document_text(&editor, &cx), "ABc");
+    assert_eq!(first_block_caret(&editor, &cx), 1, "~ 后光标右移一格");
+    cx.simulate_keystrokes("~");
+    assert_eq!(document_text(&editor, &cx), "Abc", "大写字符应转小写");
+}
+
+#[gpui::test]
+async fn capital_j_joins_the_next_block_with_a_space(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo");
+    cx.simulate_keystrokes("J");
+    assert_eq!(visible_texts(&editor, &cx), vec!["one two"]);
+}
+
+#[gpui::test]
+async fn g_capital_j_joins_without_inserting_a_space(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo");
+    cx.simulate_keystrokes("g J");
+    assert_eq!(visible_texts(&editor, &cx), vec!["onetwo"]);
+}
+
+#[gpui::test]
+async fn diw_deletes_the_inner_word(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    cx.simulate_keystrokes("w");
+    cx.simulate_keystrokes("d i w");
+    assert_eq!(document_text(&editor, &cx), "alpha ");
+}
+
+#[gpui::test]
+async fn daw_deletes_the_word_and_its_separator(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    cx.simulate_keystrokes("w");
+    cx.simulate_keystrokes("d a w");
+    assert_eq!(document_text(&editor, &cx), "alpha");
+}
+
+#[gpui::test]
+async fn ciw_changes_the_inner_word(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    cx.simulate_keystrokes("c i w");
+    cx.simulate_input("X");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "X beta");
+}
+
+#[gpui::test]
+async fn di_quote_deletes_inside_quotes(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "say \"hello\" now");
+    cx.simulate_keystrokes("f \"");
+    cx.simulate_keystrokes("l");
+    cx.simulate_keystrokes("d i \"");
+    assert_eq!(document_text(&editor, &cx), "say \"\" now");
+}
+
+#[gpui::test]
+async fn da_paren_deletes_around_parentheses(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "(abc)");
+    cx.simulate_keystrokes("d a (");
+    assert_eq!(document_text(&editor, &cx), "");
+}
+
+#[gpui::test]
+async fn p_pastes_characterwise_after_the_cursor(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "ab");
+    cx.simulate_keystrokes("x p");
+    assert_eq!(document_text(&editor, &cx), "ba", "p 应粘在光标字符之后");
+}
+
+#[gpui::test]
+async fn capital_p_pastes_before_the_cursor(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "ab");
+    cx.simulate_keystrokes("x P");
+    assert_eq!(document_text(&editor, &cx), "ab");
+}
+
+#[gpui::test]
+async fn d_dollar_and_d_zero_clamp_to_the_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    cx.simulate_keystrokes("w d $");
+    assert_eq!(document_text(&editor, &cx), "alpha ");
 }

@@ -271,6 +271,8 @@ pub(crate) enum VimAction {
     EnterInsert(InsertPlacement),
     EnterReplaceMode,
     ReplaceChar(char),
+    /// `~`：交换光标处 count 个字符的大小写并右移。
+    SwapCaseAtCursor,
     Paste { after: bool },
     JoinLines { count: u32, keep_space: bool },
     Undo,
@@ -944,6 +946,9 @@ impl Editor {
             }
             VimAction::EnterReplaceMode => operate::vim_enter_replace(self, cx),
             VimAction::ReplaceChar(ch) => operate::vim_replace_char(self, ch, count, window, cx),
+            VimAction::SwapCaseAtCursor => {
+                operate::vim_swap_case_at_cursor(self, count, cx);
+            }
             VimAction::Paste { after } => operate::vim_paste(self, register, after, count, window, cx),
             VimAction::JoinLines { count: join_count, keep_space } => {
                 operate::vim_join(self, join_count.max(1), keep_space, window, cx);
@@ -1154,6 +1159,7 @@ impl Editor {
                 };
                 VimAction::ReplaceChar(ch)
             }
+            VimKey::Char('~') => VimAction::SwapCaseAtCursor,
             VimKey::Char('m') => {
                 let Some(mark) = rest.first().and_then(|key| key.as_char()) else {
                     return ParseOutcome::NeedMore;
