@@ -1210,6 +1210,83 @@ async fn zt_aligns_the_current_block_to_the_viewport_top(cx: &mut TestAppContext
     );
 }
 
+/// 当前活动块的显示文本（表格用例用它看焦点落在哪一格）。
+fn active_block_text(editor: &Entity<Editor>, cx: &VisualTestContext) -> String {
+    editor.read_with(cx, |editor, cx| {
+        editor
+            .active_entity_id
+            .and_then(|entity_id| editor.focusable_entity_by_id(entity_id))
+            .map(|block| block.read(cx).display_text().to_string())
+            .unwrap_or_default()
+    })
+}
+
+#[gpui::test]
+async fn table_cells_are_editable_from_vim_normal_mode(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "para\n\n| a | b |\n| --- | --- |\n| c | d |\n\ntail");
+    cx.simulate_keystrokes("j");
+    assert_eq!(active_block_text(&editor, &cx), "a", "j 应落进表头首格");
+    cx.simulate_keystrokes("i");
+    cx.simulate_input("X");
+    cx.simulate_keystrokes("escape j");
+    assert_eq!(active_block_text(&editor, &cx), "c", "j 应在表内换到下一行");
+    cx.simulate_keystrokes("i");
+    cx.simulate_input("Y");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "para\n\n| Xa | b |\n| --- | --- |\n| Yc | d |\n\ntail",
+        "表格单元格的插入编辑要写回原文"
+    );
+}
+
+#[gpui::test]
+async fn hjkl_moves_between_table_cells_and_leaves_at_the_edge(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "para\n\n| a | b |\n| --- | --- |\n| c | d |\n\ntail");
+    cx.simulate_keystrokes("j");
+    cx.simulate_keystrokes("l");
+    assert_eq!(active_block_text(&editor, &cx), "b", "l 应换到右侧单元格");
+    cx.simulate_keystrokes("j");
+    assert_eq!(active_block_text(&editor, &cx), "d", "j 应换到下一行同一列");
+    cx.simulate_keystrokes("h");
+    assert_eq!(active_block_text(&editor, &cx), "c", "h 应换到左侧单元格");
+    cx.simulate_keystrokes("k");
+    assert_eq!(active_block_text(&editor, &cx), "a", "k 应换到上一行同一列");
+    cx.simulate_keystrokes("2 l");
+    assert_eq!(active_block_text(&editor, &cx), "c", "计数按格前进");
+    cx.simulate_keystrokes("j j");
+    assert_eq!(
+        active_block_text(&editor, &cx),
+        "tail",
+        "越过表格最后一行应回到正文块"
+    );
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}
+
+#[gpui::test]
+async fn vim_insert_on_a_table_container_lands_in_the_first_cell(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "para\n\n| a | b |\n| --- | --- |\n| c | d |\n\ntail");
+    let table = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|entry| entry.entity.read(cx).kind() == crate::components::BlockKind::Table)
+            .expect("table block")
+            .entity
+            .clone()
+    });
+    editor.update(cx, |editor, _| editor.focus_block(table.entity_id()));
+    redraw(cx);
+    cx.simulate_keystrokes("i");
+    cx.simulate_input("Z");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "para\n\n| Za | b |\n| --- | --- |\n| c | d |\n\ntail",
+        "表格容器上的 i 要落进首格并能输入"
+    );
+}
+
 #[gpui::test]
 async fn zz_centers_the_current_block_in_the_viewport(cx: &mut TestAppContext) {
     let (editor, cx) = vim_editor(cx, &tall_vim_document());

@@ -8,7 +8,7 @@
 
 use gpui::{App, Context, Window};
 
-use crate::components::Block;
+use crate::components::{Block, BlockKind};
 use crate::editor::{Editor, ScrollPlacement};
 
 use super::{
@@ -548,6 +548,11 @@ impl Editor {
         }
         // 视口跟着光标走：块内移动也要能滚，未挂载的跳转目标由 Reveal
         // 的估算路径接近（普通的聚焦只挂 IntoView，不会主动拉视口）。
+        self.vim_request_reveal();
+    }
+
+    /// 请求把当前活动实体（可以是表格单元格）滚进视口。
+    pub(super) fn vim_request_reveal(&mut self) {
         self.pending_scroll_active_block_into_view = true;
         self.pending_scroll_placement = ScrollPlacement::Reveal;
     }
@@ -560,6 +565,57 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // 表格单元格是独立实体，不在导航块列表里：hjkl 在表格内按格移动，
+        // 到边缘由单元格导航交还给相邻块；其余动作仍按块导航。
+        if let Some(binding) = self
+            .active_entity_id
+            .and_then(|entity_id| self.table_cell_binding(entity_id))
+        {
+            let step = repeat.max(1) as i32;
+            let handled = match motion {
+                Motion::Up => {
+                    self.focus_table_cell_vertical_neighbor(
+                        &binding.table_block,
+                        binding.position,
+                        -step,
+                        cx,
+                    );
+                    true
+                }
+                Motion::Down => {
+                    self.focus_table_cell_vertical_neighbor(
+                        &binding.table_block,
+                        binding.position,
+                        step,
+                        cx,
+                    );
+                    true
+                }
+                Motion::Left => {
+                    self.focus_table_cell_horizontal_neighbor(
+                        &binding.table_block,
+                        binding.position,
+                        -step,
+                        cx,
+                    );
+                    true
+                }
+                Motion::Right => {
+                    self.focus_table_cell_horizontal_neighbor(
+                        &binding.table_block,
+                        binding.position,
+                        step,
+                        cx,
+                    );
+                    true
+                }
+                _ => false,
+            };
+            if handled {
+                self.vim_request_reveal();
+                return;
+            }
+        }
         let entities = self.vim_navigation_entities(cx);
         let Some(start) = self.vim_current_position(&entities, cx) else {
             return;
@@ -573,6 +629,17 @@ impl Editor {
                         break;
                     };
                     current = next;
+                }
+                // 落到表格容器上时直接进第一格：容器本身没有可编辑文字。
+                if entities
+                    .get(current.block_index)
+                    .is_some_and(|entity| entity.read(cx).kind() == BlockKind::Table)
+                {
+                    let table = entities[current.block_index].clone();
+                    if self.focus_table_entry_cell(&table, down, cx) {
+                        self.vim_request_reveal();
+                        return;
+                    }
                 }
                 self.vim_set_cursor(&entities, current, cx);
             }

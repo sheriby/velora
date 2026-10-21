@@ -2101,7 +2101,19 @@ impl Editor {
 
     pub(super) fn vim_enter_replace_inner(&mut self, cx: &mut Context<Self>) {
         self.vim.replace_originals.clear();
+        self.vim_focus_table_cell_for_editing(cx);
         self.vim_enter_mode(VimMode::Replace, cx);
+    }
+
+    /// 表格容器本身没有可编辑文字：进入插入/替换前先落进首格。
+    fn vim_focus_table_cell_for_editing(&mut self, cx: &mut Context<Self>) {
+        let Some(block) = self.vim_active_block() else { return };
+        if block.read(cx).kind() != BlockKind::Table {
+            return;
+        }
+        if self.focus_table_entry_cell(&block, true, cx) {
+            self.vim_request_reveal();
+        }
     }
 
     // ---- 粘贴 ----
@@ -2453,6 +2465,9 @@ impl Editor {
                 return;
             }
         }
+        // 表格容器没有可编辑文字：插入命令先落进首格，否则 `i` 只是把焦点
+        // 留在空容器上，表现为「表格不能编辑」。
+        self.vim_focus_table_cell_for_editing(cx);
         let entities = self.vim_navigation_entities(cx);
         let cursor = self.vim_current_position(&entities, cx);
         if let Some(cursor) = cursor {
