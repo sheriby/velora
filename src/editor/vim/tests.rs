@@ -941,3 +941,78 @@ async fn block_visual_insert_replicates_typed_text_on_every_line(cx: &mut TestAp
     cx.simulate_keystrokes("escape");
     assert_eq!(visible_texts(&editor, &cx), vec!["Xab\nXcd"]);
 }
+
+#[gpui::test]
+async fn disabled_vim_key_path_returns_before_touching_the_document(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor_with(
+        cx,
+        "alpha",
+        VimPreferences {
+            enable: false,
+            ..Default::default()
+        },
+    );
+    let before = editor.read_with(&*cx, |editor, _| {
+        (
+            editor.source_serializations.get(),
+            editor.source_mapping_builds.get(),
+            editor.word_count_scans.get(),
+            editor.row_plan_rebuilds.get(),
+        )
+    });
+    let keystroke = gpui::Keystroke::parse("x").expect("keystroke");
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(
+            !editor.vim_key_down(&keystroke, window, cx),
+            "vim 关闭时按键必须直通"
+        );
+    });
+    let after = editor.read_with(&*cx, |editor, _| {
+        (
+            editor.source_serializations.get(),
+            editor.source_mapping_builds.get(),
+            editor.word_count_scans.get(),
+            editor.row_plan_rebuilds.get(),
+        )
+    });
+    assert_eq!(after, before, "vim 关闭时按键路径不应做任何全文工作");
+}
+
+#[gpui::test]
+async fn vim_motions_cost_no_more_than_normal_cursor_moves(cx: &mut TestAppContext) {
+    let counters = |editor: &Entity<Editor>, cx: &VisualTestContext| {
+        editor.read_with(cx, |editor, _| {
+            (
+                editor.source_serializations.get(),
+                editor.source_mapping_builds.get(),
+                editor.row_plan_rebuilds.get(),
+            )
+        })
+    };
+    let delta = |before: (u64, u64, u64), after: (u64, u64, u64)| {
+        (after.0 - before.0, after.1 - before.1, after.2 - before.2)
+    };
+
+    // 基线：不开 vim，用方向键走六步。
+    let (baseline_editor, baseline_cx) = vim_editor_with(
+        cx,
+        "alpha beta gamma",
+        VimPreferences { enable: false, ..Default::default() },
+    );
+    let baseline_before = counters(&baseline_editor, baseline_cx);
+    baseline_cx.simulate_keystrokes("right right right right right right");
+    let baseline = delta(baseline_before, counters(&baseline_editor, baseline_cx));
+
+    // vim：同样的六次光标移动。
+    let (editor, cx) = vim_editor(cx, "alpha beta gamma");
+    let before = counters(&editor, &cx);
+    cx.simulate_keystrokes("l l w b $ 0");
+    let vim = delta(before, counters(&editor, &cx));
+
+    assert_eq!(vim.0, 0, "普通模式移动不能触发整篇序列化");
+    assert_eq!(vim.2, 0, "普通模式移动不能触发行计划重建");
+    assert_eq!(
+        vim.1, baseline.1,
+        "vim 移动的映射重建次数不应超过普通方向键移动"
+    );
+}
