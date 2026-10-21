@@ -476,7 +476,9 @@ impl Editor {
         let is_focused = |block: &gpui::Entity<Block>| {
             let block = block.read(cx);
             block.focus_handle.is_focused(window)
+                || block.focus_handle.contains_focused(window, cx)
                 || block.code_language_focus_handle.is_focused(window)
+                || block.code_language_focus_handle.contains_focused(window, cx)
         };
 
         if let Some(block) = self

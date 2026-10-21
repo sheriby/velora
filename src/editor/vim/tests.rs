@@ -6,7 +6,7 @@ use crate::config::preferences::{
     EditorSettings, VimKeymapAction, VimKeymapEntry, VimKeymapMode, VimPreferences,
 };
 use crate::editor::tests::common::{init_editor_test_app, redraw, temp_fixture_dir};
-use gpui::{Entity, TestAppContext, VisualTestContext};
+use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 
 /// 建一个开了 vim 的编辑器并完成首帧聚焦。配置文件落在独立临时根，
 /// 避免读写开发者本机的 config.toml。
@@ -1767,6 +1767,96 @@ async fn ctrl_v_inserts_the_next_key_literally(cx: &mut TestAppContext) {
         "Ctrl-v 后的 j 不应参与 jj 映射"
     );
     assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}
+
+#[gpui::test]
+async fn normal_mode_swallows_typing_in_a_new_document_tab(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    editor.update_in(cx, |editor, window, cx| {
+        editor.new_workspace_document(window, cx)
+    });
+    redraw(cx);
+    redraw(cx);
+    cx.simulate_keystrokes("l l");
+    assert_eq!(
+        editor.read_with(&*cx, |editor, _| editor.buffer.text().to_string()),
+        "",
+        "新建文档标签的普通模式不能把字符落进正文"
+    );
+}
+
+#[gpui::test]
+async fn normal_mode_swallows_typing_in_an_empty_document(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "");
+    cx.simulate_keystrokes("l l");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "",
+        "空文档的普通模式不能把字符落进正文"
+    );
+    cx.simulate_keystrokes("i");
+    cx.simulate_input("X");
+    assert_eq!(document_text(&editor, &cx), "X", "i 应能进入插入并落字");
+}
+
+#[gpui::test]
+async fn focused_split_group_still_swallows_normal_mode_keys(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    let parent = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, _| {
+        editor.split_parent = Some(parent.downgrade());
+        editor.split_active = false;
+    });
+    redraw(cx);
+    redraw(cx);
+    cx.simulate_keystrokes("l l");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "alpha",
+        "聚焦的分屏组即使 split_active 为假也必须由 vim 吞键"
+    );
+}
+
+#[gpui::test]
+async fn normal_mode_swallows_typing_after_runtime_enable(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor_with(
+        cx,
+        "alpha",
+        VimPreferences {
+            enable: false,
+            ..Default::default()
+        },
+    );
+    editor.update(cx, |editor, cx| editor.vim_set_enabled(true, cx));
+    redraw(cx);
+    redraw(cx);
+    cx.simulate_keystrokes("l l");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "alpha",
+        "运行时开启 vim 后普通模式不能把字符落进正文"
+    );
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}
+
+#[gpui::test]
+async fn normal_mode_does_not_insert_text_in_source_view(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+    redraw(cx);
+    let before = document_text(&editor, &cx);
+    cx.simulate_keystrokes("l l");
+    assert_eq!(
+        document_text(&editor, &cx),
+        before,
+        "普通模式在源码视图也不能把字符落进正文"
+    );
+    cx.simulate_keystrokes("i");
+    cx.simulate_input("X");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+    assert_ne!(document_text(&editor, &cx), before, "i 应能进入插入并落字");
 }
 
 #[gpui::test]

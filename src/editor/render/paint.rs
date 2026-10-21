@@ -22,7 +22,8 @@ impl Render for Editor {
                     }
                     let keystroke = &event.keystroke;
                     let _ = editor.update(cx, |editor, cx| {
-                        if editor.split_parent.is_some() && !editor.split_active { return; }
+                        // 是否处理按键由「本文档是否有聚焦块」决定；split_active
+                        // 只是分屏的显示状态，不能挡住聚焦组的 vim 拦截。
                         // vim 的普通/可视/替换模式吞键：阻断 keymap 派发与 IME 插字。
                         if editor.vim_key_down(keystroke, window, cx) {
                             cx.stop_propagation();
