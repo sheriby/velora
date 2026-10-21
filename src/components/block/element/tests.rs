@@ -7,7 +7,7 @@
         code_highlight_color,
     };
     use gpui::{
-        AppContext, Bounds, Hsla, Modifiers, MouseButton, MouseDownEvent, SharedString,
+        AppContext, Bounds, Hsla, Modifiers, MouseButton, MouseDownEvent, Pixels, SharedString,
         TestAppContext, TextAlign, FontSizedTextRun as TextRun, VisualTestContext, font, point, px, rgba, size,
     };
 
@@ -161,11 +161,44 @@
     fn prose_spacing_keeps_code_fixed_and_adds_margins_and_autospace() {
         let text = "中文hello文 abc";
         let code = "中文".len().."中文hello".len();
-        let spacing = super::prose_spacing(text, &[code.clone()], px(0.25), px(4.0), px(4.0));
+        let spacing =
+            super::prose_spacing(text, &[code.clone()], px(0.25), px(4.0), px(4.0), None);
         assert!(spacing.contains(&(code.start, px(8.0))), "代码前应保留 margin/padding 和中西间距");
         assert!(spacing.contains(&(code.end, px(8.0))), "代码后应保留 margin/padding 和中西间距");
         assert!(!spacing.iter().any(|(index, _)| code.start < *index && *index < code.end), "代码内部仍须等宽");
         assert!(spacing.contains(&(text.len() - 1, px(0.25))), "正文应有独立字距");
+    }
+
+    #[test]
+    fn prose_spacing_skips_autospace_at_ime_marked_boundaries() {
+        // 预编辑拼音夹在已上屏汉字之间：两个边界都只留普通字距，否则光标下的
+        // 拼音会和正文之间突然多出一大段空隙。
+        let text = "中文pinyin文";
+        let marked = "中文".len().."中文pinyin".len();
+        let spacing = super::prose_spacing(
+            text,
+            &[],
+            px(0.25),
+            px(4.0),
+            px(4.0),
+            Some(marked.clone()),
+        );
+        let gap_at = |spacing: &[(usize, Pixels)], index: usize| {
+            spacing
+                .iter()
+                .find(|(at, _)| *at == index)
+                .map(|(_, gap)| *gap)
+                .unwrap_or_default()
+        };
+        assert_eq!(gap_at(&spacing, marked.start), px(0.25), "预编辑起点不能叠加 autospacing");
+        assert_eq!(gap_at(&spacing, marked.end), px(0.25), "预编辑终点不能叠加 autospacing");
+        // 同样的文本一旦上屏（没有预编辑区间），中西文边界照常加 autospacing。
+        let committed = super::prose_spacing(text, &[], px(0.25), px(4.0), px(4.0), None);
+        assert_eq!(
+            gap_at(&committed, marked.start),
+            px(4.25),
+            "非预编辑文本仍应保留中西文 autospacing"
+        );
     }
 
     #[gpui::test]
@@ -175,7 +208,7 @@
         let text = "中文hello世界 abc continuation";
         let mut lines = shaped_lines(text, px(130.0), cx);
         let indices: Vec<_> = lines[0].runs().iter().flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index)).collect();
-        let spacing = super::prose_spacing(text, &[], px(0.3), px(4.0), px(4.0));
+        let spacing = super::prose_spacing(text, &[], px(0.3), px(4.0), px(4.0), None);
         lines[0].add_horizontal_spacing(&spacing);
         let emergency: Vec<_> = text.grapheme_indices(true).map(|(index, _)| index).collect();
         lines[0].wrap_at_boundaries(&super::prose_line_breaks(text), &emergency);

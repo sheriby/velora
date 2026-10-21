@@ -1,5 +1,49 @@
 use super::common::*;
 
+/// 拼音预编辑是临时文本：它和已上屏汉字之间不能加中西文 autospacing，
+/// 否则光标下的拼音看起来与正文断开。上屏后才该按真实边界加宽。
+#[gpui::test]
+async fn ime_preedit_skips_cjk_autospacing_until_committed(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "中文".into(), None));
+    redraw(cx);
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
+    let end = "中文".len();
+    block.update(cx, |block, _| block.selected_range = end..end);
+    block.update_in(cx, |block, window, cx| {
+        block.replace_and_mark_text_in_range(None, "pinyin", Some(6..6), window, cx)
+    });
+    redraw(cx);
+    redraw(cx);
+    let (marked_width, autospace) = block.read_with(cx, |block, _| {
+        assert_eq!(block.marked_range, Some(end..end + "pinyin".len()));
+        let memo = block.shape_memo_entry().expect("组合态应完成排版");
+        (
+            memo.lines[0].width(),
+            px(f32::from_bits(memo.key.font_size) * 0.25),
+        )
+    });
+    block.update_in(cx, |block, window, cx| {
+        block.replace_text_in_range(None, "pinyin", window, cx)
+    });
+    redraw(cx);
+    redraw(cx);
+    let committed_width = block.read_with(cx, |block, _| {
+        assert!(!block.has_marked_text());
+        block
+            .shape_memo_entry()
+            .expect("上屏后应重新排版")
+            .lines[0]
+            .width()
+    });
+    let delta = committed_width - marked_width;
+    assert!(
+        (f32::from(delta) - f32::from(autospace)).abs() < 0.01,
+        "上屏后只应多出一份中西文间隔 {autospace:?}，实际多出 {delta:?}"
+    );
+}
+
 #[gpui::test]
 async fn core_repair_same_text_ime_commit_separates_following_typing(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

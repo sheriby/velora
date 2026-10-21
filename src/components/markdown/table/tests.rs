@@ -109,6 +109,7 @@ mod tests {
                             letter_spacing,
                             code_gap,
                             px(theme.typography.text_size),
+                            None,
                         );
                         let longest = shaped
                             .iter()

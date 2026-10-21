@@ -89,6 +89,8 @@ impl Element for BlockTextElement {
             .filter(|span| span.style.code)
             .map(|span| span.range.clone())
             .collect();
+        // 输入法预编辑区（拼音）是临时文本，渲染间距要能认出它的边界。
+        let marked_range = input.marked_range.clone();
         let space_prose =
             !is_placeholder && !input.is_source_raw_mode() && !input.kind().is_code_block();
         let style = window.text_style();
@@ -372,6 +374,7 @@ impl Element for BlockTextElement {
                         letter_spacing,
                         code_gap,
                         font_size,
+                        marked_range.as_ref(),
                     );
                 }
                 for line in lines.iter_mut() {

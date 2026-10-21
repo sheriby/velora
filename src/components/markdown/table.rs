@@ -503,6 +503,7 @@ fn measure_cell_preferred_width(
                 letter_spacing,
                 code_gap,
                 font_size,
+                None,
             );
             lines
                 .iter()

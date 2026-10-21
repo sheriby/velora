@@ -40,6 +40,7 @@ fn prose_spacing(
     letter_spacing: Pixels,
     code_gap: Pixels,
     autospace: Pixels,
+    marked_range: Option<Range<usize>>,
 ) -> Vec<(usize, Pixels)> {
     use unicode_segmentation::UnicodeSegmentation;
     let is_han = |c: char| matches!(c, '\u{3400}'..='\u{9fff}' | '\u{f900}'..='\u{faff}' | '\u{20000}'..='\u{323af}');
@@ -73,7 +74,13 @@ fn prose_spacing(
             {
                 gap += letter_spacing;
             }
-            if !(previous_code.is_some() && code.is_some())
+            // 输入法预编辑的拼音是临时文本：它和两侧已上屏文字之间不是真正
+            // 的「中文/英文」边界，加上 autospacing 会让拼音看起来和正文断开。
+            let at_marked_edge = marked_range
+                .as_ref()
+                .is_some_and(|range| index == range.start || index == range.end);
+            if !at_marked_edge
+                && !(previous_code.is_some() && code.is_some())
                 && ((is_han(before) && is_latin(character))
                     || (is_latin(before) && is_han(character)))
             {
@@ -93,7 +100,8 @@ fn prose_spacing(
 
 /// 在整块文本已排版的各行上复现渲染期的水平间距：行内代码两侧的 `code_gap`、
 /// 相邻非空白字形间的 `letter_spacing`、中西文边界的 autospacing。折行前调用，
-/// 行宽随间距增长。
+/// 行宽随间距增长。`marked_range` 是显示文本坐标下的输入法预编辑区，其两侧
+/// 边界不参与 autospacing。
 ///
 /// 表格列宽测量与正文渲染必须走同一条管线：测量不加间距，水位法钉在
 /// 「测量内容宽 + 余量」上的列，渲染时因间距变宽必然 mid-word 折行。
@@ -103,6 +111,7 @@ pub(crate) fn add_render_spacing(
     letter_spacing: Pixels,
     code_gap: Pixels,
     font_size: Pixels,
+    marked_range: Option<&Range<usize>>,
 ) {
     let mut line_start = 0;
     for line in lines.iter_mut() {
@@ -114,12 +123,18 @@ pub(crate) fn add_render_spacing(
                 range.start.saturating_sub(line_start)..range.end.min(line_end) - line_start
             })
             .collect();
+        let marked_range = marked_range.filter(|range| !range.is_empty()).and_then(|range| {
+            let start = range.start.max(line_start);
+            let end = range.end.min(line_end);
+            (start < end).then_some(start - line_start..end - line_start)
+        });
         let spacing = prose_spacing(
             &line.text,
             &ranges,
             letter_spacing,
             code_gap,
             font_size * 0.25,
+            marked_range,
         );
         line.add_horizontal_spacing(&spacing);
         line_start += line.len() + 1;
