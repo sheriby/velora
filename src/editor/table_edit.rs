@@ -644,6 +644,17 @@ impl Editor {
         Self::new_block(cx, BlockRecord::table(table))
     }
 
+    /// 新单元格实体默认接受系统文本输入。表格运行时会在普通模式下被整批
+    /// 重建（打开文档、撤销、改结构），新格子必须在创建时套用当前模式；
+    /// 等下一次模式切换再广播，第一次点击进格子时字符就已经漏进去了。
+    fn adopt_vim_caret_state(&self, cell: &Entity<Block>, cx: &mut Context<Self>) {
+        let (block_caret, accepts_text) = self.vim_caret_state();
+        cell.update(cx, |block, _cx| {
+            block.vim_block_caret = block_caret;
+            block.vim_accepts_text_input = accepts_text;
+        });
+    }
+
     pub(super) fn install_table_runtime_for_block(
         &mut self,
         table_block: &Entity<Block>,
@@ -664,6 +675,7 @@ impl Editor {
                     .unwrap_or(TableColumnAlignment::Default);
                 let position = TableCellPosition { row: 0, column };
                 let cell = Self::new_table_cell_block(cx, title, position, alignment, reading_mode.clone());
+                self.adopt_vim_caret_state(&cell, cx);
                 self.table_cells.insert(
                     cell.entity_id(),
                     TableCellBinding {
@@ -695,6 +707,7 @@ impl Editor {
                             column,
                         };
                         let cell = Self::new_table_cell_block(cx, title, position, alignment, reading_mode.clone());
+                        self.adopt_vim_caret_state(&cell, cx);
                         self.table_cells.insert(
                             cell.entity_id(),
                             TableCellBinding {

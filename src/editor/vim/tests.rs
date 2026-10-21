@@ -2257,6 +2257,32 @@ async fn table_cells_stop_accepting_text_input_in_normal_mode(cx: &mut TestAppCo
 }
 
 #[gpui::test]
+async fn rebuilt_table_cells_follow_the_current_vim_mode(cx: &mut TestAppContext) {
+    let source = "para\n\n| a | b |\n| --- | --- |\n| c | d |\n\ntail";
+    let (editor, cx) = vim_editor(cx, source);
+    // 文档载入与流式续建会在普通模式下整批重建表格运行时。新格子默认
+    // 接受系统输入，必须当场继承当前模式，不能等下一次广播。
+    editor.update(cx, |editor, cx| editor.rebuild_table_runtimes(cx));
+    redraw(cx);
+    cx.simulate_keystrokes("j");
+    assert_eq!(
+        active_block_text(&editor, &cx),
+        "a",
+        "j 应落进重建后的表头首格"
+    );
+    assert!(
+        !active_entity_accepts_text_input(&editor, &cx),
+        "重建出的单元格也要关闭普通模式的系统文本输入"
+    );
+    cx.simulate_input("jjj");
+    assert_eq!(
+        document_text(&editor, &cx),
+        source,
+        "普通模式的可打印字符不能落进重建后的格子"
+    );
+}
+
+#[gpui::test]
 async fn normal_mode_x_edits_the_focused_table_cell_and_undoes(cx: &mut TestAppContext) {
     let source = "para\n\n| alpha | b |\n| --- | --- |\n| c | d |\n\ntail";
     let (editor, cx) = vim_editor(cx, source);

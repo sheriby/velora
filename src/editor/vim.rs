@@ -514,9 +514,20 @@ impl Editor {
     ///
     /// 单元格是独立实体，不在 `visible_blocks` 里；漏掉它们，普通模式的
     /// 可打印字符会经系统文本输入直接落进格子（绕过 vim 按键拦截）。
+    /// 当前模式要求的块内光标形状与系统文本输入开关。
+    ///
+    /// 广播（`sync_vim_block_carets`）与新建表格单元格共用这一处判据：
+    /// 单元格实体在文档载入后才由运行时重建，默认值是可接受输入，必须
+    /// 在创建时套用当前模式，不能指望之后某次广播补上。
+    pub(super) fn vim_caret_state(&self) -> (bool, bool) {
+        (
+            self.vim_enabled && self.vim.mode.uses_block_caret(),
+            !self.vim_enabled || self.vim.mode == VimMode::Insert,
+        )
+    }
+
     pub(super) fn sync_vim_block_carets(&mut self, cx: &mut Context<Self>) {
-        let block_caret = self.vim_enabled && self.vim.mode.uses_block_caret();
-        let accepts_text = !self.vim_enabled || self.vim.mode == VimMode::Insert;
+        let (block_caret, accepts_text) = self.vim_caret_state();
         let visible = self.document.visible_blocks().to_vec();
         let cells = self
             .table_cells
