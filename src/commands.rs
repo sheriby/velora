@@ -314,6 +314,7 @@ mod tests {
                 "toggle_view_mode",
                 "toggle_reading_mode",
                 "toggle_focus_mode",
+                "toggle_vim_mode",
                 "toggle_typewriter_mode",
                 "open_command_palette",
                 "find_in_document",
