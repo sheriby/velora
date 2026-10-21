@@ -844,3 +844,100 @@ async fn insert_mapping_times_out_and_types_the_pending_key(cx: &mut TestAppCont
         "超时后缓冲键应作为普通文本落下"
     );
 }
+
+#[gpui::test]
+async fn shift_right_indents_the_line_and_moves_to_first_non_blank(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes("> >");
+    assert_eq!(document_text(&editor, &cx), "    alpha");
+    assert_eq!(first_block_caret(&editor, &cx), 4, ">> 后光标到首个非空白");
+}
+
+#[gpui::test]
+async fn shift_left_removes_one_indent_level(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes("> >");
+    assert_eq!(document_text(&editor, &cx), "    alpha");
+    cx.simulate_keystrokes("< <");
+    assert_eq!(document_text(&editor, &cx), "alpha");
+}
+
+#[gpui::test]
+async fn guu_lowercases_the_current_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "MiXeD");
+    cx.simulate_keystrokes("g u u");
+    assert_eq!(document_text(&editor, &cx), "mixed");
+}
+
+#[gpui::test]
+async fn g_upper_u_uppercases_the_current_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "mixed");
+    cx.simulate_keystrokes("g U U");
+    assert_eq!(document_text(&editor, &cx), "MIXED");
+}
+
+#[gpui::test]
+async fn g_tilde_swaps_case_over_a_motion(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "aBcD");
+    cx.simulate_keystrokes("g ~ w");
+    assert_eq!(document_text(&editor, &cx), "AbCd");
+}
+
+#[gpui::test]
+async fn capital_g_i_inserts_before_the_first_column(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "  alpha");
+    cx.simulate_keystrokes("g I");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Insert);
+    cx.simulate_input("X");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "X  alpha");
+}
+
+#[gpui::test]
+async fn g_i_returns_to_the_last_insert_position(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abcdef");
+    cx.simulate_keystrokes("i");
+    cx.simulate_input("X");
+    cx.simulate_keystrokes("escape");
+    cx.simulate_keystrokes("$");
+    cx.simulate_keystrokes("g i");
+    cx.simulate_input("Y");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "XYabcdef", "gi 回到上次插入结束处");
+}
+
+#[gpui::test]
+async fn colon_line_number_jumps_to_that_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "a\nb\nc");
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("3");
+    cx.simulate_keystrokes("enter");
+    let position = editor.read_with(&*cx, |editor, cx| {
+        editor.capture_source_selection_snapshot(cx).range.start
+    });
+    assert_eq!(position, 4, ":3 应跳到第三行行首");
+}
+
+#[gpui::test]
+async fn block_visual_delete_removes_the_selected_column(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```\nab\ncd\n```");
+    assert_eq!(visible_texts(&editor, &cx), vec!["ab\ncd"]);
+    cx.simulate_keystrokes("ctrl-q");
+    assert!(matches!(
+        current_mode(&editor, &cx),
+        VimMode::Visual(VisualKind::Block)
+    ));
+    cx.simulate_keystrokes("d");
+    assert_eq!(visible_texts(&editor, &cx), vec!["b\nd"]);
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}
+
+#[gpui::test]
+async fn block_visual_insert_replicates_typed_text_on_every_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```\nab\ncd\n```");
+    cx.simulate_keystrokes("ctrl-q I");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Insert);
+    cx.simulate_input("X");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(visible_texts(&editor, &cx), vec!["Xab\nXcd"]);
+}

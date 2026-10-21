@@ -200,6 +200,18 @@ impl Editor {
         if line.is_empty() {
             return;
         }
+        // `:N` 跳到第 N 行（1 基），光标落在行首。
+        if let Ok(line_number) = line.trim().parse::<usize>() {
+            let line_index = line_number
+                .saturating_sub(1)
+                .min(self.buffer.line_count().saturating_sub(1));
+            let start = self.buffer.line_start(line_index);
+            self.apply_selection_snapshot_in_current_mode(
+                &crate::editor::UndoSelectionSnapshot { range: start..start, reversed: false },
+                cx,
+            );
+            return;
+        }
         // 拆范围与命令体。
         let (range, body) = Self::vim_split_cmdline_range(&line);
         let body = body.trim();

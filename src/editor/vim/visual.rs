@@ -175,7 +175,8 @@ impl Editor {
         let anchor_column = self.vim.visual_block_anchor_column.unwrap_or(0);
         let focus_column = self.vim_grapheme_column(entities, focus, cx);
         let column_start = anchor_column.min(focus_column);
-        let column_end = anchor_column.max(focus_column);
+        // 块选含焦点所在的那一列，区间右端是排他的。
+        let column_end = anchor_column.max(focus_column) + 1;
         let stream = VimDocStream::new(entities, cx);
         let (first, last) = if anchor.block_index <= focus.block_index {
             (anchor, focus)
