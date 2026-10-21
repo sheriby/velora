@@ -2221,3 +2221,85 @@ async fn toggling_vim_at_runtime_switches_modes_and_passthrough(cx: &mut TestApp
     editor.update(cx, |editor, cx| editor.vim_set_enabled(true, cx));
     assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
 }
+
+fn active_entity_accepts_text_input(editor: &Entity<Editor>, cx: &VisualTestContext) -> bool {
+    editor.read_with(cx, |editor, cx| {
+        editor
+            .active_entity_id
+            .and_then(|entity_id| editor.focusable_entity_by_id(entity_id))
+            .map(|block| block.read(cx).vim_accepts_text_input)
+            .unwrap_or(true)
+    })
+}
+
+#[gpui::test]
+async fn table_cells_stop_accepting_text_input_in_normal_mode(cx: &mut TestAppContext) {
+    let source = "para\n\n| a | b |\n| --- | --- |\n| c | d |\n\ntail";
+    let (editor, cx) = vim_editor(cx, source);
+    cx.simulate_keystrokes("j");
+    assert_eq!(active_block_text(&editor, &cx), "a", "j 应落进表头首格");
+    assert!(
+        !active_entity_accepts_text_input(&editor, &cx),
+        "普通模式下单元格必须关闭系统文本输入"
+    );
+    cx.simulate_input("jjj");
+    assert_eq!(document_text(&editor, &cx), source, "普通模式的可打印字符不能经输入通道落进格子");
+    cx.simulate_keystrokes("i");
+    assert!(
+        active_entity_accepts_text_input(&editor, &cx),
+        "插入模式必须恢复单元格的文本输入"
+    );
+    cx.simulate_keystrokes("escape");
+    assert!(
+        !active_entity_accepts_text_input(&editor, &cx),
+        "退出插入模式后要重新拦住单元格输入"
+    );
+}
+
+#[gpui::test]
+async fn normal_mode_x_edits_the_focused_table_cell_and_undoes(cx: &mut TestAppContext) {
+    let source = "para\n\n| alpha | b |\n| --- | --- |\n| c | d |\n\ntail";
+    let (editor, cx) = vim_editor(cx, source);
+    cx.simulate_keystrokes("j");
+    assert_eq!(active_block_text(&editor, &cx), "alpha");
+    cx.simulate_keystrokes("x");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "para\n\n| lpha | b |\n| --- | --- |\n| c | d |\n\ntail",
+        "x 只删格内一个字符，表前后的块不能被牵连"
+    );
+    cx.simulate_keystrokes("u");
+    assert_eq!(document_text(&editor, &cx), source, "u 要撤销格内删除");
+}
+
+#[gpui::test]
+async fn normal_mode_dw_edits_the_focused_table_cell_and_undoes(cx: &mut TestAppContext) {
+    let source = "para\n\n| alpha | b |\n| --- | --- |\n| c | d |\n\ntail";
+    let (editor, cx) = vim_editor(cx, source);
+    cx.simulate_keystrokes("j");
+    assert_eq!(active_block_text(&editor, &cx), "alpha");
+    cx.simulate_keystrokes("d w");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "para\n\n|  | b |\n| --- | --- |\n| c | d |\n\ntail",
+        "dw 只清掉焦点格的内容，不能落到表后的段落上"
+    );
+    cx.simulate_keystrokes("u");
+    assert_eq!(document_text(&editor, &cx), source, "u 要撤销格内删除");
+}
+
+#[gpui::test]
+async fn normal_mode_dd_clears_the_focused_table_cell_and_undoes(cx: &mut TestAppContext) {
+    let source = "para\n\n| alpha | b |\n| --- | --- |\n| c | d |\n\ntail";
+    let (editor, cx) = vim_editor(cx, source);
+    cx.simulate_keystrokes("j");
+    assert_eq!(active_block_text(&editor, &cx), "alpha");
+    cx.simulate_keystrokes("d d");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "para\n\n|  | b |\n| --- | --- |\n| c | d |\n\ntail",
+        "dd 只能清掉焦点格；单元格没有结构删除，整张表不能被收走"
+    );
+    cx.simulate_keystrokes("u");
+    assert_eq!(document_text(&editor, &cx), source, "u 要撤销格内删除");
+}

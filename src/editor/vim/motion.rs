@@ -505,6 +505,18 @@ impl Editor {
             .collect()
     }
 
+    /// 文本动作的作用域：光标落在表格单元格里时缩成这一格。
+    ///
+    /// 单元格是独立实体，不在导航块列表里；不缩作用域，格内动作既找不到
+    /// 光标位置，操作符还可能按文档下标误伤别的块。缩成单格后所有行内
+    /// 动作与操作符都只落在格内文字上，跨块删除/合并不会发生。
+    pub(super) fn vim_text_scope_entities(&self) -> Option<Vec<gpui::Entity<Block>>> {
+        let binding = self
+            .active_entity_id
+            .and_then(|entity_id| self.table_cell_binding(entity_id))?;
+        Some(vec![binding.cell.clone()])
+    }
+
     /// 当前光标位置（导航块坐标）。
     pub(super) fn vim_current_position(
         &self,
@@ -616,7 +628,9 @@ impl Editor {
                 return;
             }
         }
-        let entities = self.vim_navigation_entities(cx);
+        let entities = self
+            .vim_text_scope_entities()
+            .unwrap_or_else(|| self.vim_navigation_entities(cx));
         let Some(start) = self.vim_current_position(&entities, cx) else {
             return;
         };

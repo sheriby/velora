@@ -510,13 +510,24 @@ impl Editor {
         cx.notify();
     }
 
-    /// 把当前模式的光标形状（块/竖条）与文本输入开关广播到可见块。
+    /// 把当前模式的光标形状（块/竖条）与文本输入开关广播到可见块与表格单元格。
+    ///
+    /// 单元格是独立实体，不在 `visible_blocks` 里；漏掉它们，普通模式的
+    /// 可打印字符会经系统文本输入直接落进格子（绕过 vim 按键拦截）。
     pub(super) fn sync_vim_block_carets(&mut self, cx: &mut Context<Self>) {
         let block_caret = self.vim_enabled && self.vim.mode.uses_block_caret();
         let accepts_text = !self.vim_enabled || self.vim.mode == VimMode::Insert;
         let visible = self.document.visible_blocks().to_vec();
-        for entry in &visible {
-            let entity = &entry.entity;
+        let cells = self
+            .table_cells
+            .values()
+            .map(|binding| binding.cell.clone())
+            .collect::<Vec<_>>();
+        let entities = visible
+            .iter()
+            .map(|entry| &entry.entity)
+            .chain(cells.iter());
+        for entity in entities {
             let (caret, accepts) = {
                 let block = entity.read(cx);
                 (block.vim_block_caret, block.vim_accepts_text_input)

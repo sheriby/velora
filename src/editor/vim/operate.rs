@@ -203,7 +203,9 @@ impl Editor {
             self.vim_apply_block_operator(operator, register, window, cx);
             return;
         }
-        let mut entities = self.vim_navigation_entities(cx);
+        let cell_scope = self.vim_text_scope_entities();
+        let cell_scoped = cell_scope.is_some();
+        let mut entities = cell_scope.unwrap_or_else(|| self.vim_navigation_entities(cx));
         let Some(cursor) = self.vim_current_position(&entities, cx) else {
             return;
         };
@@ -225,6 +227,10 @@ impl Editor {
                 self.vim_text_object_range(&entities, cursor, object, cx)
             }
             OperatorTarget::SearchMatch { reverse } => {
+                // 搜索命中是文档坐标，格内的单格作用域接不住，直接不动。
+                if cell_scoped {
+                    return;
+                }
                 let range = self.vim_search_match_vim_range_inner(reverse, cx);
                 entities = self.vim_navigation_entities(cx);
                 range
@@ -1425,6 +1431,7 @@ impl Editor {
             return;
         }
         block.update(cx, |block, cx| {
+            block.prepare_undo_capture(block.text_edit_undo_kind(), cx);
             block.replace_text_in_visible_range(start..end, "", Some(0..0), false, cx);
         });
         // 删除触及块尾时块内光标会停在文本末尾；vim 把光标左移到新的末字素。
@@ -2468,7 +2475,9 @@ impl Editor {
         // 表格容器没有可编辑文字：插入命令先落进首格，否则 `i` 只是把焦点
         // 留在空容器上，表现为「表格不能编辑」。
         self.vim_focus_table_cell_for_editing(cx);
-        let entities = self.vim_navigation_entities(cx);
+        let entities = self
+            .vim_text_scope_entities()
+            .unwrap_or_else(|| self.vim_navigation_entities(cx));
         let cursor = self.vim_current_position(&entities, cx);
         if let Some(cursor) = cursor {
             let stream = VimDocStream::new(&entities, cx);
