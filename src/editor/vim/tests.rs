@@ -1242,3 +1242,15 @@ async fn normal_mapping_timeout_flushes_the_pending_motion(cx: &mut TestAppConte
     );
     assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
 }
+
+#[gpui::test]
+async fn toggling_vim_at_runtime_switches_modes_and_passthrough(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+    editor.update(cx, |editor, cx| editor.vim_set_enabled(false, cx));
+    assert_eq!(current_mode(&editor, &cx), VimMode::Insert);
+    cx.simulate_input("X");
+    assert_eq!(document_text(&editor, &cx), "Xalpha", "关闭后输入直接落字");
+    editor.update(cx, |editor, cx| editor.vim_set_enabled(true, cx));
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}
