@@ -143,7 +143,7 @@ Kit 0.7.3 `TitleBar::on_close_window` 仅 Linux 生效，因此这里组合标�
 
 - 动作声明：`actions!(velora, [...])`（`components/actions.rs`）；带载荷的动作（选主题/语言/标签页/最近文件）用 `#[action(namespace = velora)]`。
 - `SHORTCUT_DEFINITIONS`：每条命令的 id、分类、默认键、**`context`**。`context` 语义：`Some("BlockEditor")` 只在焦点链经过块元素时匹配；`None` 是全局绑定（焦点在对话框/侧栏也生效）。可绑定命令是动作的子集；没有默认键的命令（Heading1-6、导出、部分视图开关）不在表里，靠菜单/命令面板/输入前缀触发。
-- `resolved_keybindings(config)`：全表经 `key_binding_for`（命令 → 具体动作的一对一 match，**新增可绑定命令必须在这里补一行**）展开，合并 `config.toml [keybindings]` 的用户覆盖（校验 + 规范化 + 去重；**同 context 且共享任一键**算冲突，冲突的自定义方退回默认，循环至稳定），再追加**固定绑定**（⌘P、⇧⌘P、复制为 HTML、光标历史、缩放、⌘1-9 切标签）。
+- `resolved_keybindings(config)`：全表经 `key_binding_for`（命令 → 具体动作的一对一 match，**新增可绑定命令必须在这里补一行**）展开，合并 `config.toml [keybindings]` 的用户覆盖（校验 + 规范化 + 去重；**同 context 且共享任一键**算冲突，冲突的自定义方退回默认，循环至稳定），再追加**固定绑定**（⌘P、⇧⌘P、光标历史、缩放、⌘1-9 切标签）。
 - `install_keybindings` 装键位的同时写一份 `EffectiveShortcuts` Global——**菜单与工具栏显示的快捷键只读它**，用户改绑后显示跟随。
 - **命令注册表** `COMMANDS`（`src/commands.rs`）是系统菜单与命令面板的**唯一事实源**（`CommandSpec { id, 归属菜单, label 闭包读 i18n, action }`），有守卫测试。命令面板专有两档（Edit/Format）只进面板不进菜单栏，其 id 必须与键位表同名。
 - 文件菜单的「打开文件 / 打开文件夹 / 打开最近」连续排列。Windows 的偏好设置和检查更新由 `hamburger_root_commands` 提供一级动作；macOS 保留应用菜单，帮助菜单只列关于。欢迎页的新建、打开及最近目录操作均使用 Kit Button，完整路径通过标准提示提供，移除只更新历史记录；最近目录按路径持有控件身份，文件夹外观复用图标配置。快捷键提示使用 Kit Kbd 读取有效绑定。单一滚动区域容纳短窗口和放大字号，按钮组／目录行焦点首次进入时最小滚动入视，手动滚动不会被持续聚焦的按钮拉回。

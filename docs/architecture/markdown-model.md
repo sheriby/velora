@@ -105,6 +105,8 @@
 - `normalize_fragments` 合并相邻同样式片段，但**数学片段永不合并**、link/footnote 必须相等；给片段挂新属性后要重归一化，否则同链接的相邻片段会被序列化拆成两个壳。
 - `split_at` 会把数学元数据置 None（公式是原子格，切开即丢）。
 - 粘贴一律先 CRLF→LF（缓冲区是 LF 规范空间）；剪贴板 HTML 走 `markdown/html_paste.rs` 转 markdown，表格首行提升为表头。
+- 复制的三份内容只有一处判据：默认「复制」与「复制为 Markdown」同走 `selection.rs:selected_markdown_text`（跨块取缓冲区字节，单块取 `current_range_to_markdown_range` 换算后的源码）；「复制为纯文本」走 `selection.rs:selected_plain_text`，取 `record.title.visible_text()` 的干净区间——`display_text()` 里 `**` 这类记号仍在（渲染时压成零宽），拿它当纯文本会把记号一起交出去。
+- 多行粘贴按 `markdown/paste.rs:is_soft_wrapped_paste` 分两支：连续非空且无块级结构的行是同一段的软换行，原样插在光标处；有空行或块级结构的交给导入器切块。逐物理行开块会把一段话拆成一串段落并补出空行。
 - 表格单元格序列化禁止全局反斜杠加倍，换行必须折成 `<br>`（格必须单行）。
 - 导出 HTML 的断言只看 `<body>` 之后：单文件导出把整张主题 CSS 内嵌在 `<head>`，样式表里就有 `.vlt-inline-math`、`[TOC]` 这类字面量。
 

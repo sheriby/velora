@@ -5,7 +5,9 @@
 //! 菜单里的两行与键位走的是同一个动作。
 
 use super::common::*;
-use crate::components::{Block, Copy, CopyAsMarkdown, Paste, PasteAsPlainText};
+use crate::components::{
+    Block, Copy, CopyAsMarkdown, CopyAsPlainText, Paste, PasteAsPlainText,
+};
 use gpui::{ClipboardItem, Entity, Modifiers, MouseButton, point};
 
 const URL_DOC: &str = "选中文字\n\n别段\n";
@@ -146,7 +148,7 @@ async fn copying_selected_code_uses_only_the_body_and_keeps_literal_backticks(
             cx.dispatch_action(CopyAsMarkdown);
             assert_eq!(
                 clipboard_text(cx),
-                Some(format!("{fence}{language}\n{body}")),
+                Some(format!("{fence}{language}\n{body}\n{fence}")),
                 "显式复制为 Markdown 仍应保留选区中的源码记号"
             );
         }
@@ -364,7 +366,7 @@ async fn copy_as_markdown_without_a_selection_takes_the_whole_document(cx: &mut 
     assert_eq!(
         clipboard_text(cx).as_deref(),
         Some(MARKDOWN_DOC),
-        "没有选区时与「复制为 HTML」同一条口径：整篇源码进剪贴板"
+        "没有选区时与默认「复制」同一条口径：整篇源码进剪贴板"
     );
 }
 
@@ -416,6 +418,76 @@ async fn the_paste_as_plain_text_row_in_the_menu_reaches_the_same_action(cx: &mu
 /// 都按当轮生效的那份选区，第二轮不沿用第一轮的位置。选区要按块当前那份屏幕文本取——
 /// 同一块在两种写法下屏幕文本的字节数不同（R8），写死一个数会让第二轮只盖住半句，
 /// 看着像落点错了，其实是选区本来就只到那儿。
+/// 默认「复制」带 Markdown 记号：粘贴回编辑器才是同一份内容。
+#[gpui::test]
+async fn default_copy_keeps_markdown_syntax(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(MARKDOWN_DOC, cx);
+    redraw(cx);
+
+    select(&editor, 0, 0..14, cx);
+    cx.dispatch_action(Copy);
+    redraw(cx);
+
+    assert_eq!(
+        clipboard_text(cx).as_deref(),
+        Some("前 **加粗** 后"),
+        "默认复制该给出文件里的 Markdown 源码，而不是渲染后的字"
+    );
+    assert_eq!(buffer_text(&editor, cx), MARKDOWN_DOC, "复制不该改文档");
+}
+
+/// 「复制为纯文本」是默认复制的反面：去掉 Markdown 记号。
+#[gpui::test]
+async fn copy_as_plain_text_drops_markdown_syntax(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(MARKDOWN_DOC, cx);
+    redraw(cx);
+
+    select(&editor, 0, 0..14, cx);
+    cx.dispatch_action(CopyAsPlainText);
+    redraw(cx);
+
+    assert_eq!(
+        clipboard_text(cx).as_deref(),
+        Some("前 加粗 后"),
+        "纯文本复制该去掉行内记号"
+    );
+    assert_eq!(buffer_text(&editor, cx), MARKDOWN_DOC, "复制不该改文档");
+}
+
+/// 复制—粘贴一整段软换行的 Markdown：行内记号还在，且不会一格一行、
+/// 额外补出空行。
+#[gpui::test]
+async fn copy_then_paste_soft_wrapped_markdown_reflows_into_one_paragraph(
+    cx: &mut TestAppContext,
+) {
+    const SOFT_WRAPPED: &str = "第一行 `code` 与 **粗**\n第二行\n\n粘贴处\n";
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(SOFT_WRAPPED, cx);
+    redraw(cx);
+
+    let visible_len = visible_block(&editor, 0, cx).read_with(cx, |block, _| block.visible_len());
+    select(&editor, 0, 0..visible_len, cx);
+    cx.dispatch_action(Copy);
+    redraw(cx);
+    assert_eq!(
+        clipboard_text(cx).as_deref(),
+        Some("第一行 `code` 与 **粗**\n第二行"),
+        "复制交出去的应是带记号的源码"
+    );
+
+    put_caret(&editor, 1, 9, cx);
+    cx.dispatch_action(Paste);
+    redraw(cx);
+
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "第一行 `code` 与 **粗**\n第二行\n\n粘贴处第一行 `code` 与 **粗**\n第二行\n",
+        "软换行的连续行应并回同一段，不能拆成多块或多出空行"
+    );
+}
+
 #[gpui::test]
 async fn two_menu_rounds_land_on_the_selection_in_effect(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

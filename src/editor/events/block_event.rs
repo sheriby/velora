@@ -445,11 +445,12 @@ impl Editor {
                 leading,
                 lines,
                 trailing,
-                split_physical_lines,
             } => {
                 if lines.is_empty() {
                     return;
                 }
+                let soft_wrapped =
+                    crate::components::markdown::paste::is_soft_wrapped_paste(lines);
                 let quote_related = self.block_is_quote_structure_related(&block, cx);
                 // 粘贴先按「在光标处插入一段文本」处理：能算出插入点就走缓冲区插入，
                 // 块结构由导入器从缓冲区重新认。引用/标注里的粘贴要跟着容器自己那套
@@ -460,7 +461,7 @@ impl Editor {
                         leading,
                         lines,
                         trailing,
-                        *split_physical_lines,
+                        soft_wrapped,
                         cx,
                     )
                 {
@@ -469,20 +470,29 @@ impl Editor {
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
 
                 let current_kind = block.read(cx).kind();
-                // Structural Markdown (tables, fences, containers) must be parsed
-                // as whole blocks. The plain-text path folds the first pasted line
-                // into the current paragraph, which would strip a table's header
-                // row, so structural pastes hand every line to the importer and
-                // leave the pre-cursor text in place.
-                let structural = !*split_physical_lines;
+                // 连续非空行且没有块级结构：就是一段的软换行，直接并回当前
+                // 段落，别拆块也别补空行。
+                if soft_wrapped {
+                    let mut title = leading.clone();
+                    title.append_tree(InlineTextTree::from_markdown(&lines.join("\n")));
+                    title.append_tree(trailing.clone());
+                    let cursor = title.visible_len();
+                    Self::set_block_title_and_kind(&block, current_kind, title, cursor, cx);
+                    self.focus_block(block.entity_id());
+                    if quote_related {
+                        self.normalize_rendered_quote_structure(&block, cx);
+                    } else {
+                        self.rebuild_image_runtimes(cx);
+                    }
+                    self.mark_dirty(cx);
+                    self.finalize_pending_undo_capture(cx);
+                    cx.notify();
+                    return;
+                }
+
                 let leading_empty = leading.visible_len() == 0;
-                let (mut first_title, tail_lines) = if structural {
-                    (leading.clone(), lines.clone())
-                } else {
-                    let mut first_title = leading.clone();
-                    first_title.append_tree(InlineTextTree::from_markdown(&lines[0]));
-                    (first_title, lines[1..].to_vec())
-                };
+                let mut first_title = leading.clone();
+                let tail_lines = lines.clone();
                 if tail_lines.is_empty() {
                     first_title.append_tree(trailing.clone());
                     let cursor = first_title.visible_len();
@@ -506,16 +516,10 @@ impl Editor {
                     return;
                 };
 
-                // Physical-line paste is for plain rendered text snippets. If
-                // the classifier saw structural Markdown, delegate the tail to
-                // the normal importer so tables, fences, and containers stay
-                // intact instead of becoming paragraphs.
-                let mut inserted_roots = if *split_physical_lines {
-                    Self::build_plain_paste_blocks_from_lines(cx, &tail_lines)
-                } else {
-                    Self::build_blocks_from_lines(cx, &tail_lines)
-                };
-                if structural && trailing.visible_len() > 0 {
+                // 结构块（表格、围栏、容器）由导入器整体解析；连续行按同一段
+                // 合并，空行才断块。
+                let mut inserted_roots = Self::build_blocks_from_lines(cx, &tail_lines);
+                if trailing.visible_len() > 0 {
                     inserted_roots.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
                 }
                 self.document.insert_blocks_at(
@@ -581,7 +585,7 @@ impl Editor {
                 // When structural content is pasted onto an empty line there is
                 // no pre-cursor text to keep, so drop the now-empty paragraph
                 // rather than leaving a blank line above the pasted blocks.
-                if structural && leading_empty {
+                if leading_empty {
                     self.document.with_structure_mutation(cx, |document, cx| {
                         document.remove_block_by_id_raw(block.entity_id(), cx);
                     });

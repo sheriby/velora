@@ -566,9 +566,6 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &ShowAbout, cx| {
         dispatch_menu_action(&ShowAbout, cx);
     });
-    cx.on_action(|_: &CopyAsHtml, cx| {
-        dispatch_menu_action(&CopyAsHtml, cx);
-    });
     cx.on_action(|_: &OpenCommandPalette, cx| {
         dispatch_menu_action(&OpenCommandPalette, cx);
     });

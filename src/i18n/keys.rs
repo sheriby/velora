@@ -333,7 +333,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "preferences_smart_punctuation",
     "preferences_hide_markdown_markers",
     "status_bar_long_block_source",
-    "menu_copy_as_html",
+    "context_menu_copy_as_plain_text",
     "workspace_duplicate",
     "workspace_copy",
     "workspace_paste",

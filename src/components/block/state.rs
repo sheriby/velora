@@ -1138,7 +1138,6 @@ pub enum BlockEvent {
         leading: InlineTextTree,
         lines: Vec<String>,
         trailing: InlineTextTree,
-        split_physical_lines: bool,
     },
     /// An image-like clipboard payload was pasted. The editor resolves
     /// storage preferences and inserts either an image block or image text.

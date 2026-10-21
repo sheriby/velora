@@ -21,7 +21,7 @@ pub(super) use crate::components::{
     FormatDocument, QuitApplication, SaveDocument,
     FileHistory,
     SaveDocumentAs,
-    SelectLanguage, SelectTheme, ShowAbout, CopyAsHtml, ToggleFocusMode, ToggleFullscreen,
+    SelectLanguage, SelectTheme, ShowAbout, ToggleFocusMode, ToggleFullscreen,
     ToggleSidebar, ToggleTypewriterMode, ToggleVimMode, ToggleViewMode, UninstallCliTool, ZoomIn, ZoomOut,
     ZoomReset,
 };
@@ -1034,8 +1034,6 @@ fn dispatch_menu_action_after_event(action: &dyn Action, cx: &mut App) {
         prompt_and_open_files(cx);
     } else if action.as_any().is::<OpenFolder>() {
         prompt_and_open_folder(cx);
-    } else if action.as_any().is::<CopyAsHtml>() {
-        let _ = with_active_editor(cx, |editor, _window, cx| editor.copy_as_html(cx));
     } else if action.as_any().is::<OpenCommandPalette>() {
         let _ = with_active_editor(cx, |editor, window, cx| {
             editor.toggle_command_palette(window, cx);

@@ -866,7 +866,6 @@ async fn a_real_editing_session_never_falls_back_to_whole_document_serialization
             leading: InlineTextTree::plain(String::new()),
             lines: vec!["粘贴一".to_string(), "粘贴二".to_string()],
             trailing: InlineTextTree::plain(String::new()),
-            split_physical_lines: true,
         },
         cx,
     );

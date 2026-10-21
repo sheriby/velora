@@ -69,6 +69,9 @@ impl PreferencesWindow {
             // 用同一份字符串才不会出现「菜单叫这个、偏好页叫那个」。
             ShortcutCommand::PasteAsPlainText => strings.context_menu_paste_as_plain_text.clone(),
             ShortcutCommand::CopyAsMarkdown => strings.context_menu_copy_as_markdown.clone(),
+            ShortcutCommand::CopyAsPlainText => {
+                strings.context_menu_copy_as_plain_text.clone()
+            }
             ShortcutCommand::Undo => strings.preferences_shortcut_undo.clone(),
             ShortcutCommand::Redo => strings.preferences_shortcut_redo.clone(),
             ShortcutCommand::BoldSelection => strings.preferences_shortcut_bold_selection.clone(),

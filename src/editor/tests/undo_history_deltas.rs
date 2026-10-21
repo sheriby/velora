@@ -140,7 +140,6 @@ async fn undoing_a_multiline_paste_puts_the_exact_bytes_back(cx: &mut TestAppCon
                     leading: InlineTextTree::plain(String::new()),
                     lines: vec!["粘贴一".to_string(), "粘贴二".to_string()],
                     trailing: InlineTextTree::plain("段落文字".to_string()),
-                    split_physical_lines: true,
                 },
                 cx,
             );

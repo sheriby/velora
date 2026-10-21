@@ -1,26 +1,23 @@
 //! Classification helpers for rendered-mode external paste.
 //!
-//! File import keeps CommonMark paragraph semantics, but paste should match
-//! the user's visual expectation more closely. Plain physical lines become
-//! separate blocks, while structural Markdown and block/risky HTML are left to
-//! the document block builder.
+//! 软换行粘贴：剪贴板里连续的非空行若都没有块级 Markdown 结构，就按
+//! 同一段插入，行与行之间不补空行。结构 Markdown 与块级 HTML 仍交给
+//! 文档导入器，按空行切块。
 
 use super::html::is_inline_tag;
 use super::table::collect_pipeless_table_region;
 
-pub(crate) fn should_split_plain_multiline_paste(lines: &[String]) -> bool {
+pub(crate) fn is_soft_wrapped_paste(lines: &[String]) -> bool {
     // A pipeless GFM table reads cell-by-cell as plain lines, so detect the
     // header-plus-delimiter shape explicitly and leave the whole paste to the
-    // block builder instead of splitting it into one paragraph per row.
+    // block builder instead of joining it into one paragraph.
     if (0..lines.len()).any(|start| collect_pipeless_table_region(lines, start).is_some()) {
         return false;
     }
 
     lines.iter().filter(|line| !line.trim().is_empty()).count() >= 2
-        && lines
-            .iter()
-            .filter(|line| !line.trim().is_empty())
-            .all(|line| is_plain_inline_paste_line(line))
+        && lines.iter().all(|line| !line.trim().is_empty())
+        && lines.iter().all(|line| is_plain_inline_paste_line(line))
 }
 
 fn is_plain_inline_paste_line(line: &str) -> bool {
@@ -49,8 +46,8 @@ fn is_plain_inline_paste_line(line: &str) -> bool {
 
 /// Matches a setext underline run (`=====` or `-----`). The `-` form is already
 /// covered by `is_simple_separator`, but `=` is not a thematic break, so without
-/// this a `text` + `=====` pair would be split into two plain paragraphs instead
-/// of routed to the structural importer as an H1.
+/// this a `text` + `=====` pair would be joined into one paragraph instead of
+/// routed to the structural importer as an H1.
 fn is_setext_underline(trimmed: &str) -> bool {
     let core = trimmed.trim_end();
     core.len() >= 3
@@ -137,100 +134,29 @@ fn is_simple_reference_definition(trimmed: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::should_split_plain_multiline_paste;
+    use super::is_soft_wrapped_paste;
 
-    #[test]
-    fn accepts_plain_lines_with_script_syntax() {
-        let lines = vec![
-            "H~2~O".to_string(),
-            "CO<sub>2</sub>".to_string(),
-            "x<sup>n</sup>".to_string(),
-        ];
-
-        assert!(should_split_plain_multiline_paste(&lines));
+    fn lines(text: &str) -> Vec<String> {
+        text.split('\n').map(ToOwned::to_owned).collect()
     }
 
     #[test]
-    fn accepts_closed_safe_inline_html_at_line_start() {
-        let lines = vec![
-            "<sub>2</sub>".to_string(),
-            "<sup>n</sup>".to_string(),
-            "<span style=\"color:red\">x</span>".to_string(),
-            "<strong>y</strong>".to_string(),
-        ];
-
-        assert!(should_split_plain_multiline_paste(&lines));
+    fn soft_wrapped_inline_markdown_stays_in_one_paragraph() {
+        assert!(is_soft_wrapped_paste(&lines(
+            "`v` / `V` 进入后可用移动键扩展选区\n**加粗** 与 `code`\n第三行"
+        )));
     }
 
     #[test]
-    fn rejects_block_or_unclosed_html_at_line_start() {
-        let lines = vec!["<div>x</div>".to_string(), "<p>y</p>".to_string()];
-        assert!(!should_split_plain_multiline_paste(&lines));
-
-        let lines = vec!["<script>x</script>".to_string(), "<sup>n</sup>".to_string()];
-        assert!(!should_split_plain_multiline_paste(&lines));
-
-        let lines = vec!["<style>x</style>".to_string(), "<sup>n</sup>".to_string()];
-        assert!(!should_split_plain_multiline_paste(&lines));
-
-        let lines = vec!["<span>x".to_string(), "<sup>n</sup>".to_string()];
-        assert!(!should_split_plain_multiline_paste(&lines));
+    fn structural_markdown_is_not_soft_wrapped() {
+        assert!(!is_soft_wrapped_paste(&lines("# 标题\n正文")));
+        assert!(!is_soft_wrapped_paste(&lines("- 列表\n- 列表")));
+        assert!(!is_soft_wrapped_paste(&lines("| A | B |\n| --- | --- |")));
+        assert!(!is_soft_wrapped_paste(&lines("```rust\nfn main() {}")));
     }
 
     #[test]
-    fn rejects_structural_markdown() {
-        let lines = vec!["```mermaid".to_string(), "flowchart LR".to_string()];
-        assert!(!should_split_plain_multiline_paste(&lines));
-
-        let lines = vec!["- item".to_string(), "- next".to_string()];
-        assert!(!should_split_plain_multiline_paste(&lines));
-
-        let lines = vec!["| A |".to_string(), "| --- |".to_string()];
-        assert!(!should_split_plain_multiline_paste(&lines));
-
-        let lines = vec![
-            "```rust".to_string(),
-            "fn main() {}".to_string(),
-            "```".to_string(),
-        ];
-        assert!(!should_split_plain_multiline_paste(&lines));
-
-        let lines = vec!["> quote".to_string(), "> more".to_string()];
-        assert!(!should_split_plain_multiline_paste(&lines));
-
-        let lines = vec!["# Title".to_string(), "body".to_string()];
-        assert!(!should_split_plain_multiline_paste(&lines));
-    }
-
-    #[test]
-    fn rejects_setext_underline_pairs() {
-        // "=" underline must route to the structural importer (-> H1), like the
-        // "-" underline (-> H2) already did, rather than splitting into two
-        // plain paragraphs.
-        let lines = vec!["Title".to_string(), "=====".to_string()];
-        assert!(!should_split_plain_multiline_paste(&lines));
-
-        let lines = vec!["Title".to_string(), "-----".to_string()];
-        assert!(!should_split_plain_multiline_paste(&lines));
-    }
-
-    #[test]
-    fn rejects_pipeless_table() {
-        // A pipeless GFM table has no leading `|`, so its rows look like plain
-        // lines; the header-plus-delimiter shape must still route to the block
-        // builder instead of becoming one paragraph per row.
-        let lines = vec![
-            "Header 1 | Header 2 | Header 3".to_string(),
-            "-------- | -------- | --------".to_string(),
-            "Cell 1   | Cell 2   | Cell 3".to_string(),
-        ];
-        assert!(!should_split_plain_multiline_paste(&lines));
-
-        // Prose with a stray `|` and no delimiter row still splits normally.
-        let lines = vec![
-            "see foo | bar for details".to_string(),
-            "and another | line here".to_string(),
-        ];
-        assert!(should_split_plain_multiline_paste(&lines));
+    fn blank_lines_are_paragraph_separators_not_soft_wraps() {
+        assert!(!is_soft_wrapped_paste(&lines("第一段\n\n第二段")));
     }
 }

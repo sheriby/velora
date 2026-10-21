@@ -348,7 +348,6 @@ mod tests {
         assert_eq!(command_label(export_menu, "export_pdf"), "PDF");
         assert_eq!(command_label(export_menu, "export_png"), "Image (PNG)");
         assert_eq!(command_label(export_menu, "print"), "Print…");
-        assert_eq!(command_label(export_menu, "copy_as_html"), "Copy as HTML");
 
         let language_menu = named_menu(&menus, "Language");
         assert_eq!(action_name(&language_menu.items[0]), "简体中文");
@@ -452,7 +451,6 @@ mod tests {
         assert_eq!(command_label(export_menu, "export_pdf"), "PDF");
         assert_eq!(command_label(export_menu, "export_png"), "图片（PNG 长图）");
         assert_eq!(command_label(export_menu, "print"), "打印…");
-        assert_eq!(command_label(export_menu, "copy_as_html"), "复制为 HTML");
 
         let language_menu = named_menu(&menus, "语言");
         assert_eq!(action_name(&language_menu.items[0]), "\u{2713} 简体中文");
@@ -486,16 +484,14 @@ mod tests {
         let i18n_manager = I18nManager::default();
         let menus = build_menus(&theme_manager, &i18n_manager, &[], true);
 
-        // 导出菜单就是注册表 Export 分组那五条，顺序与注册表一致（roadmap F4/F5：
-        // 打印排在 PNG 之后，复制为 HTML 顺延到最后）。逐条对照文案与动作，
-        // 多一条少一条都会失败。
+        // 导出菜单就是注册表 Export 分组那四条，顺序与注册表一致（roadmap F4/F5：
+        // 打印排在 PNG 之后）。逐条对照文案与动作，多一条少一条都会失败。
         let export_menu = command_menu(&menus, "export_html");
         let expected = [
             ("export_html", "HTML"),
             ("export_pdf", "PDF"),
             ("export_png", "Image (PNG)"),
             ("print", "Print…"),
-            ("copy_as_html", "Copy as HTML"),
         ];
         assert_eq!(export_menu.items.len(), expected.len());
         for (slot, (command_id, label)) in expected.into_iter().enumerate() {

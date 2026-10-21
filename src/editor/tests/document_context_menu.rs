@@ -16,7 +16,7 @@ const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 /// 主面板的长行，行 id 与 `document_menu_rows` 里给的一致。
 const MAIN_ROWS: [&str; 7] = [
     "copy-as-markdown",
-    "copy-as-html",
+    "copy-as-plain-text",
     "format",
     "paragraph",
     "insert",
@@ -83,9 +83,11 @@ async fn the_select_all_cycle_from_the_key_selects_the_block_then_the_document(
     );
 }
 
-/// 「复制为 HTML」给的是渲染过的那份，且不动文档字节。
+/// 「复制为纯文本」给的是渲染后的可见文字，且不动文档字节。
 #[gpui::test]
-async fn the_copy_as_html_row_puts_rendered_html_on_the_clipboard(cx: &mut TestAppContext) {
+async fn the_copy_as_plain_text_row_puts_visible_text_on_the_clipboard(
+    cx: &mut TestAppContext,
+) {
     init_editor_test_app(cx);
     let document = "前 **加粗** 后\n";
     let (editor, cx) =
@@ -93,14 +95,11 @@ async fn the_copy_as_html_row_puts_rendered_html_on_the_clipboard(cx: &mut TestA
     redraw(cx);
 
     right_click(&editor, 0, cx);
-    click_row("copy-as-html", cx);
-    let html = cx
+    click_row("copy-as-plain-text", cx);
+    let text = cx
         .update(|_window, cx| cx.read_from_clipboard().and_then(|item| item.text()))
-        .expect("剪贴板里该有那份 HTML");
-    assert!(
-        html.contains("<strong>加粗</strong>"),
-        "复制为 HTML 给的该是渲染过的那份：{html}"
-    );
+        .expect("剪贴板里该有可见文本");
+    assert_eq!(text, "前 加粗 后", "纯文本复制应去掉 Markdown 记号");
     assert_eq!(buffer_text(&editor, cx), document, "复制不该改文档");
 }
 
@@ -332,7 +331,7 @@ async fn right_click_inside_a_block_opens_the_document_menu(cx: &mut TestAppCont
     // 图标条在最上面，长行按复制为 → 格式 / 段落 / 插入 → 视图的顺序往下排。
     let strip_bottom = f32::from(quick_action_bounds("undo", cx).bottom());
     let markdown_top = f32::from(row_bounds("copy-as-markdown", cx).top());
-    let html_top = f32::from(row_bounds("copy-as-html", cx).top());
+    let plain_top = f32::from(row_bounds("copy-as-plain-text", cx).top());
     let format_top = f32::from(row_bounds("format", cx).top());
     let view_top = f32::from(row_bounds("toggle-source-view", cx).top());
     assert!(
@@ -340,7 +339,7 @@ async fn right_click_inside_a_block_opens_the_document_menu(cx: &mut TestAppCont
         "图标条该在第一条长行之上：图标条底 {strip_bottom} vs 第一行顶 {markdown_top}"
     );
     assert!(
-        markdown_top < html_top && html_top < format_top && format_top < view_top,
+        markdown_top < plain_top && plain_top < format_top && format_top < view_top,
         "长行的顺序变了"
     );
     assert!(menu_is_open(&editor, cx));
@@ -1131,9 +1130,9 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
         ),
         "撤销那颗带上的是键位表里那一份撤销键"
     );
-    // 「复制为 HTML」的 ⌘⇧C 是写死的一份绑定，不在键位表里，这一列留空。
+    // 「复制为纯文本」没有键位，这一列留空。
     assert_eq!(
-        shortcut_of(DocumentMenuCommand::CopyAsHtml, cx),
+        shortcut_of(DocumentMenuCommand::CopyAsPlainText, cx),
         None,
         "没有表内键位的行不该凭空造一个"
     );

@@ -578,57 +578,49 @@ impl Editor {
         self.workspace.root.clone()
     }
 
-    /// F2 复制为 HTML：把选区（无选区时全文）渲染为 HTML 并写入剪贴板。
-    pub(crate) fn copy_as_html(&mut self, cx: &mut Context<Self>) {
-        let theme = cx.global::<ThemeManager>().current_arc();
-        let markdown = self
-            .selected_markdown_text(cx)
-            .unwrap_or_else(|| self.current_document_source(cx));
-        if markdown.trim().is_empty() {
-            return;
-        }
-        let base_dir = self.file_path.as_ref().and_then(|path| path.parent().map(Path::to_path_buf));
-        let title = self
-            .file_path
-            .as_ref()
-            .and_then(|path| path.file_stem().map(|stem| stem.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "Velora".into());
-        // 整篇渲染（LaTeX/mermaid 转 SVG、本地图读盘转 base64）是 CPU 密集，
-        // 与 HTML/PDF/PNG 导出同属后台活：前台同步跑会冻结窗口（评审报告
-        // 维度四建议 6）。剪贴板写回必须回主线程。
-        let weak_editor = cx.entity().downgrade();
-        let worker = cx.background_spawn(async move {
-            crate::export::html::render_html_with_base_dir(
-                &markdown,
-                &theme,
-                &title,
-                base_dir.as_deref(),
-            )
-        });
-        self.copy_html_task = Some(cx.spawn(
-            async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
-                let html = worker.await;
-                if weak_editor
-                    .update(cx, |editor, cx| {
-                        if let Err(error) = crate::components::markdown::html_paste::write_html_to_clipboard(&html, cx) {
-                            let title = cx.global::<I18nManager>().strings().menu_copy_as_html.clone();
-                            editor.show_message_modal(title, error.to_string(), cx);
-                        }
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    // 编辑器实体已消失（窗口关掉）：剪贴板没处写，丢弃即可；
-                    // 渲染 API 不带失败分支（内部错误都退化成可见占位），
-                    // 没有需要送应用内模态的失败路径。
+    /// 「复制为纯文本」：把选区（无选区时全文）的可见文本写进剪贴板。
+    /// 与「复制为 Markdown」相反，这里去掉全部 Markdown 记号。
+    pub(crate) fn copy_as_plain_text(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(text) = self
+            .selected_plain_text(cx)
+            .or_else(|| Some(self.document_plain_text(cx)))
+            .filter(|text| !text.is_empty())
+        else {
+            return false;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        cx.notify();
+        true
+    }
+
+    /// 纯文本复制用的整篇可见文本：表格按行展开，其余块取渲染后的文字。
+    fn document_plain_text(&self, cx: &App) -> String {
+        let mut parts = Vec::new();
+        for entry in self.document.visible_blocks() {
+            let block = entry.entity.read(cx);
+            if block.kind() == BlockKind::Table {
+                let Some(runtime) = block.table_runtime.as_ref() else {
+                    continue;
+                };
+                for row in std::iter::once(&runtime.header).chain(runtime.rows.iter()) {
+                    let cells = row
+                        .iter()
+                        .map(|cell| cell.read(cx).record.title.visible_text().to_string())
+                        .collect::<Vec<_>>();
+                    parts.push(cells.join(" | "));
                 }
-            },
-        ));
+                continue;
+            }
+            let text = block.record.title.visible_text().to_string();
+            if !text.is_empty() {
+                parts.push(text);
+            }
+        }
+        parts.join("\n\n")
     }
 
     /// 「复制为 Markdown」：把选区的源码文本（无选区时整篇）原样写进剪贴板。
-    /// 与「复制」两条不同的地方在内容来源：那一条走 gpui 自己的选区拷贝，
-    /// 拿的是渲染之后的可见文本（`**加粗**` 只剩「加粗」）；这一条拿的是文件里的那几个字节。
+    /// 与默认「复制」同一来源；「复制为纯文本」才拿渲染后的可见文本。
     pub(crate) fn copy_as_markdown(&mut self, cx: &mut Context<Self>) -> bool {
         let markdown = self
             .selected_markdown_text(cx)

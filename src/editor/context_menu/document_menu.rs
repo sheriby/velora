@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use super::super::{ContextMenuState, Editor};
 use crate::components::{
-    Copy, CopyAsHtml, CopyAsMarkdown, Cut, InlineFormat, Paste, PasteAsPlainText, Redo,
+    Copy, CopyAsMarkdown, CopyAsPlainText, Cut, InlineFormat, Paste, PasteAsPlainText, Redo,
     ShortcutCommand, ToggleViewMode, Undo, effective_shortcut_key,
     menu::{MENU_ICON_SIZE, MENU_ROW_GAP},
 };
@@ -59,7 +59,7 @@ pub(crate) fn document_menu_command_icon(command: DocumentMenuCommand) -> Option
         DocumentMenuCommand::Paste => Some("icon/editor/paste.svg"),
         DocumentMenuCommand::PasteAsPlainText => Some("icon/editor/paste-plain.svg"),
         DocumentMenuCommand::CopyAsMarkdown => Some("icon/editor/copy-markdown.svg"),
-        DocumentMenuCommand::CopyAsHtml => Some("icon/editor/copy-html.svg"),
+        DocumentMenuCommand::CopyAsPlainText => Some("icon/editor/copy.svg"),
         DocumentMenuCommand::ToggleReadingMode => Some("icon/workspace/reading-mode.svg"),
         DocumentMenuCommand::ToggleSourceView => Some("icon/editor/toggle-source.svg"),
         DocumentMenuCommand::Format(_)
@@ -111,8 +111,8 @@ pub(crate) enum DocumentMenuCommand {
     PasteAsPlainText,
     /// 「复制为 Markdown」：选区的源码文本（无选区时整篇）进剪贴板。
     CopyAsMarkdown,
-    /// 「复制为 HTML」：整篇的 HTML 进剪贴板，与导出那一条同一份内容。
-    CopyAsHtml,
+    /// 「复制为纯文本」：去掉 Markdown 记号后的可见文本进剪贴板。
+    CopyAsPlainText,
     Format(InlineFormat),
     Heading(u8),
     NormalText,
@@ -159,7 +159,7 @@ impl DocumentMenuCommand {
             Self::Paste => "paste",
             Self::PasteAsPlainText => "paste-as-plain-text",
             Self::CopyAsMarkdown => "copy-as-markdown",
-            Self::CopyAsHtml => "copy-as-html",
+            Self::CopyAsPlainText => "copy-as-plain-text",
             Self::Format(InlineFormat::Bold) => "bold",
             Self::Format(InlineFormat::Italic) => "italic",
             Self::Format(InlineFormat::Underline) => "underline",
@@ -211,7 +211,7 @@ impl DocumentMenuCommand {
             | Self::Paste
             | Self::PasteAsPlainText
             | Self::CopyAsMarkdown
-            | Self::CopyAsHtml
+            | Self::CopyAsPlainText
             | Self::InsertTable
             | Self::InsertImage
             | Self::InsertCodeBlock
@@ -349,8 +349,8 @@ impl Editor {
                     enabled: true,
                 },
                 DocumentMenuRow::Item {
-                    command: DocumentMenuCommand::CopyAsHtml,
-                    name: "copy-as-html",
+                    command: DocumentMenuCommand::CopyAsPlainText,
+                    name: "copy-as-plain-text",
                     enabled: true,
                 },
                 DocumentMenuRow::Separator,
@@ -375,8 +375,8 @@ impl Editor {
                 enabled: !self.document.root_blocks().is_empty(),
             },
             DocumentMenuRow::Item {
-                command: DocumentMenuCommand::CopyAsHtml,
-                name: "copy-as-html",
+                command: DocumentMenuCommand::CopyAsPlainText,
+                name: "copy-as-plain-text",
                 enabled: !self.document.root_blocks().is_empty(),
             },
             DocumentMenuRow::Separator,
@@ -561,7 +561,9 @@ impl Editor {
             DocumentMenuCommand::CopyAsMarkdown => {
                 window.dispatch_action(Box::new(CopyAsMarkdown), cx);
             }
-            DocumentMenuCommand::CopyAsHtml => window.dispatch_action(Box::new(CopyAsHtml), cx),
+            DocumentMenuCommand::CopyAsPlainText => {
+                window.dispatch_action(Box::new(CopyAsPlainText), cx);
+            }
             DocumentMenuCommand::Format(format) => {
                 self.toggle_inline_format_on_selection(format, cx);
             }
@@ -757,7 +759,9 @@ pub(crate) fn document_menu_label(
             strings.context_menu_paste_as_plain_text.clone()
         }
         DocumentMenuCommand::CopyAsMarkdown => strings.context_menu_copy_as_markdown.clone(),
-        DocumentMenuCommand::CopyAsHtml => strings.menu_copy_as_html.clone(),
+        DocumentMenuCommand::CopyAsPlainText => {
+            strings.context_menu_copy_as_plain_text.clone()
+        }
         DocumentMenuCommand::Format(format) => inline_format_label(format, strings),
         DocumentMenuCommand::Heading(level) => match level {
             1 => strings.paragraph_heading1.clone(),
@@ -850,7 +854,7 @@ pub(crate) fn document_menu_shortcut(
         | DocumentMenuCommand::InsertSeparator
         | DocumentMenuCommand::InsertToc
         | DocumentMenuCommand::InsertFrontMatter
-        | DocumentMenuCommand::CopyAsHtml => return None,
+        | DocumentMenuCommand::CopyAsPlainText => return None,
     };
     Some(SharedString::from(key_label(&effective_shortcut_key(
         shortcut, cx,

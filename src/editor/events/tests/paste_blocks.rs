@@ -5,7 +5,7 @@
     use gpui::{AppContext, TestAppContext};
 
     #[gpui::test]
-    async fn plain_multiline_paste_with_scripts_splits_physical_lines(cx: &mut TestAppContext) {
+    async fn plain_multiline_paste_merges_soft_wrapped_scripts(cx: &mut TestAppContext) {
         let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
 
         editor.update(cx, |editor, cx| {
@@ -20,17 +20,14 @@
                         "x<sup>n</sup>".to_string(),
                     ],
                     trailing: InlineTextTree::plain(String::new()),
-                    split_physical_lines: true,
                 },
                 cx,
             );
 
             let visible = editor.document.visible_blocks();
-            assert_eq!(visible.len(), 3);
-            assert_eq!(visible[0].entity.read(cx).display_text(), "H2O");
-            assert_eq!(visible[1].entity.read(cx).display_text(), "CO2");
-            assert_eq!(visible[2].entity.read(cx).display_text(), "xn");
-            assert_eq!(editor.document.markdown_text(cx), "H~2~O\n\nCO~2~\n\nx^n^");
+            assert_eq!(visible.len(), 1, "连续行属于同一段，不该按物理行拆块");
+            assert_eq!(visible[0].entity.read(cx).display_text(), "H2O\nCO2\nxn");
+            assert_eq!(editor.document.markdown_text(cx), "H~2~O\nCO~2~\nx^n^");
         });
     }
 
@@ -50,7 +47,6 @@
                         "| 1 | 2 |".to_string(),
                     ],
                     trailing: InlineTextTree::plain(String::new()),
-                    split_physical_lines: false,
                 },
                 cx,
             );
@@ -91,7 +87,6 @@
                         "```".to_string(),
                     ],
                     trailing: InlineTextTree::plain(String::new()),
-                    split_physical_lines: false,
                 },
                 cx,
             );
@@ -135,7 +130,6 @@
                         "| 1 | 2 |".to_string(),
                     ],
                     trailing: InlineTextTree::plain("after"),
-                    split_physical_lines: false,
                 },
                 cx,
             );
@@ -171,7 +165,6 @@
                         "```".to_string(),
                     ],
                     trailing: InlineTextTree::plain("after"),
-                    split_physical_lines: false,
                 },
                 cx,
             );
@@ -208,7 +201,6 @@
                     leading: InlineTextTree::plain("intro"),
                     lines: vec!["***".to_string()],
                     trailing: InlineTextTree::plain(String::new()),
-                    split_physical_lines: false,
                 },
                 cx,
             );
@@ -239,7 +231,6 @@
                     leading: InlineTextTree::plain("intro"),
                     lines: vec!["> quoted".to_string()],
                     trailing: InlineTextTree::plain(String::new()),
-                    split_physical_lines: false,
                 },
                 cx,
             );
@@ -273,7 +264,6 @@
                     leading: InlineTextTree::plain("intro"),
                     lines: vec!["> [!NOTE]".to_string(), "> body".to_string()],
                     trailing: InlineTextTree::plain(String::new()),
-                    split_physical_lines: false,
                 },
                 cx,
             );
@@ -306,7 +296,6 @@
                     leading: InlineTextTree::plain("intro"),
                     lines: vec!["[^note]: definition body".to_string()],
                     trailing: InlineTextTree::plain(String::new()),
-                    split_physical_lines: false,
                 },
                 cx,
             );
@@ -336,7 +325,6 @@
                     leading: InlineTextTree::plain("intro"),
                     lines: vec!["![alt](pic.png)".to_string()],
                     trailing: InlineTextTree::plain(String::new()),
-                    split_physical_lines: false,
                 },
                 cx,
             );
@@ -372,7 +360,6 @@
                         String::new(),
                     ],
                     trailing: InlineTextTree::plain(String::new()),
-                    split_physical_lines: true,
                 },
                 cx,
             );
@@ -386,7 +373,7 @@
     }
 
     #[gpui::test]
-    async fn plain_multiline_paste_with_leading_inline_html_splits_physical_lines(
+    async fn plain_multiline_paste_merges_soft_wrapped_inline_html(
         cx: &mut TestAppContext,
     ) {
         let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
@@ -403,19 +390,16 @@
                         "<span style=\"color:red\">x</span>".to_string(),
                     ],
                     trailing: InlineTextTree::plain(String::new()),
-                    split_physical_lines: true,
                 },
                 cx,
             );
 
             let visible = editor.document.visible_blocks();
-            assert_eq!(visible.len(), 3);
-            assert_eq!(visible[0].entity.read(cx).display_text(), "2");
-            assert_eq!(visible[1].entity.read(cx).display_text(), "n");
-            assert_eq!(visible[2].entity.read(cx).display_text(), "x");
+            assert_eq!(visible.len(), 1, "连续行属于同一段，不该按物理行拆块");
+            assert_eq!(visible[0].entity.read(cx).display_text(), "2\nn\nx");
             assert_eq!(
                 editor.document.markdown_text(cx),
-                "<sub>2</sub>\n\n<sup>n</sup>\n\n<span style=\"color: rgba(255,0,0,1.000);\">x</span>"
+                "<sub>2</sub>\n<sup>n</sup>\n<span style=\"color: rgba(255,0,0,1.000);\">x</span>"
             );
         });
     }
@@ -433,7 +417,6 @@
                     leading: InlineTextTree::plain(String::new()),
                     lines: vec![tibetan.to_string()],
                     trailing: InlineTextTree::plain(String::new()),
-                    split_physical_lines: true,
                 },
                 cx,
             );

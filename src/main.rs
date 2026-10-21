@@ -320,9 +320,6 @@ impl AssetSource for VeloraAssets {
             "icon/editor/copy-markdown.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/editor/copy-markdown.svg"
             )))),
-            "icon/editor/copy-html.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icon/editor/copy-html.svg"
-            )))),
             "icon/editor/toggle-source.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/editor/toggle-source.svg"
             )))),

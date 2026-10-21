@@ -256,31 +256,6 @@ async fn tree_paste_writes_clipboard_image_with_date_hash_name(cx: &mut TestAppC
 }
 
 #[gpui::test]
-fn copy_as_html_preserves_the_plain_html_source(cx: &mut TestAppContext) {
-    let html = "<h1>Title</h1>".to_string();
-    cx.update(|cx| {
-        crate::components::markdown::html_paste::write_html_to_clipboard(&html, cx).expect("复制 HTML");
-        assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()), Some(html));
-    });
-}
-
-#[gpui::test]
-async fn copy_as_html_writes_html_source_to_clipboard(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
-    let (editor, cx) = cx.add_window_view(|_window, cx| {
-        Editor::from_markdown(cx, "# Title\n\nbody".into(), None)
-    });
-    editor.update(cx, |editor, cx| editor.copy_as_html(cx));
-    // 渲染在后台任务里跑，泵执行器后产物才落剪贴板。
-    cx.run_until_parked();
-    let text = cx.update(|_window, cx| {
-        cx.read_from_clipboard().and_then(|item| item.text())
-    });
-    let text = text.expect("clipboard should hold HTML source");
-    assert!(text.contains("<h1"), "expected rendered HTML, got: {text}");
-}
-
-#[gpui::test]
 async fn long_paragraph_renders_as_plain_source(cx: &mut TestAppContext) {
     // roadmap B12：单块超阈值时渲染态降级为源码文本。
     init_editor_test_app(cx);
@@ -583,30 +558,3 @@ async fn markdown_source_mode_highlights_with_monospace_pipeline(cx: &mut TestAp
     });
 }
 
-/// 「复制为 HTML」的整篇渲染（LaTeX/mermaid 转 SVG、本地图读盘转 base64）
-/// 不在动作派发里同步跑（评审报告维度四建议 6）：大文档渲染是 CPU 密集，
-/// 前台跑会冻结窗口。判据取派发边界——动作返回时剪贴板必须还是空的，
-/// 只泵后台执行器后产物才到位。
-#[gpui::test]
-async fn copy_as_html_defers_rendering_to_the_background(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
-    let (editor, cx) = cx.add_window_view(|_window, cx| {
-        Editor::from_markdown(cx, "# 标题\n\n正文段落。\n\n$$x^2$$\n".into(), None)
-    });
-
-    editor.update(cx, |editor, cx| editor.copy_as_html(cx));
-    let immediate = cx.update(|_window, cx| {
-        cx.read_from_clipboard().and_then(|item| item.text())
-    });
-    assert!(
-        immediate.is_none(),
-        "动作返回时渲染不许已完成（前台同步渲染的形状）：{immediate:?}"
-    );
-
-    cx.run_until_parked();
-    let text = cx.update(|_window, cx| {
-        cx.read_from_clipboard().and_then(|item| item.text())
-    });
-    let text = text.expect("泵后台执行器后剪贴板应有渲染产物");
-    assert!(text.contains("<h1"), "产物应是渲染后的 HTML：{text}");
-}

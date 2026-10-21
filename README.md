@@ -23,7 +23,7 @@ More screenshots: [Chat from a selection](assets/screenshots/ai-selection-chat.p
 - **A full block set** — headings, ordered/bulleted/task lists, tables, code blocks, quotes, footnotes, callouts, horizontal rules and images; inline bold/italic, inline code, links and strikethrough.
 - **Math & diagrams in place** — LaTeX formulas and Mermaid diagrams render directly inside the document.
 - **Images** — paste or drag one in and it is copied into the document's assets folder with a relative link; 100% maps to 95% of the visible text column by default and images never overflow it; right-click offers 25% / 50% / 75% / 100% scaling that keeps the aspect ratio, and the chosen ratio is written back to the source as `{width=NN%}`.
-- **Editing conveniences** — lists continue on `Enter`; typing a paired character wraps the selection; pasting a URL over a selection creates a link; HTML copied from a browser or Word is converted to Markdown on paste.
+- **Editing conveniences** — lists continue on `Enter`; typing a paired character wraps the selection; pasting a URL over a selection creates a link; HTML copied from a browser or Word is converted to Markdown on paste; copying keeps the Markdown source, with a separate Copy as Plain Text entry.
 - **Smart punctuation** (off by default, one switch in Settings) — context-aware curly quotes and `--` → em dash.
 - **Vim mode** (off by default, one switch in Settings) — modal editing modeled on Zed: Normal, Insert, Replace and character/line/block Visual modes with operators and text objects, registers, macros, marks, search, the `:` command line and dot-repeat; map sequences such as `jj` to Esc in `config.toml`. See the [Vim mode guide](docs/vim.md).
 - **VS Code–style find & replace** — powered by ripgrep's engine, in-process: case, whole-word, regex (multi-line patterns included) and fuzzy matching; every match is highlighted while the panel is open, and the result list, highlighting, jumping and replace-all read the same match table.
@@ -66,7 +66,7 @@ More screenshots: [Chat from a selection](assets/screenshots/ai-selection-chat.p
 
 ### Export
 
-- **Formats** — single-file HTML with images embedded as data URIs, PDF, full-height PNG capture, system printing, and copy-as-HTML.
+- **Formats** — single-file HTML with images embedded as data URIs, PDF, full-height PNG capture, system printing.
 - **Export theme** — pick *current*, *light* or *dark* for anything you export.
 - **Chromium requirement** — PDF, printing and PNG rendering go through a headless Chromium. Have Chrome, Chromium or Edge installed, or point the `CHROME` environment variable at a browser binary.
 
@@ -91,7 +91,6 @@ macOS keys shown; Ctrl-based equivalents work on other platforms. Shortcuts are 
 | `⌘B` / `⌘I` / `⌘U` / `` ⌘` `` | Bold / italic / underline / inline code |
 | `⇧⌘A` | Select the entire document |
 | `⌘S` / `⇧⌘S` | Save / save as |
-| `⇧⌘C` | Copy selection or document as HTML |
 | `⌥⌘P` | Print |
 | `⌘1`–`⌘9` | Switch to tab N |
 | `⌥⌘←` / `⌥⌘→` | Cursor history: back / forward |

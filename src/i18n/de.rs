@@ -336,7 +336,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) preferences_smart_punctuation: Option<String>,
     pub(crate) preferences_hide_markdown_markers: Option<String>,
     pub(crate) status_bar_long_block_source: Option<String>,
-    pub(crate) menu_copy_as_html: Option<String>,
+    pub(crate) context_menu_copy_as_plain_text: Option<String>,
     pub(crate) workspace_duplicate: Option<String>,
     pub(crate) workspace_copy: Option<String>,
     pub(crate) workspace_paste: Option<String>,

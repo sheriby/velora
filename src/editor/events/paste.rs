@@ -16,7 +16,7 @@ impl Editor {
         leading: &crate::components::InlineTextTree,
         lines: &[String],
         trailing: &crate::components::InlineTextTree,
-        split_physical_lines: bool,
+        soft_wrapped: bool,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(mapping) = self.source_mapping_for_entity(block.entity_id(), cx) else {
@@ -34,27 +34,19 @@ impl Editor {
         let Some(source_end) = mapping.content_to_source.get(markdown_range.end).copied() else { return false; };
         let source_range = mapping.full_source_range.start + source_start
             ..mapping.full_source_range.start + source_end;
-        // 物理行粘贴是「一段一行」：空行丢掉，行与行之间补分隔空行。
-        // 结构粘贴保留剪贴板原样的换行，但结构块必须独占一行，所以只在光标那一侧
-        // 还留着文字时补空行把它和前后隔开。
-        let inserted = if split_physical_lines {
-            lines
-                .iter()
-                .filter(|line| !line.trim().is_empty())
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        } else {
-            let mut text = String::new();
+        // 软换行的连续行就是同一段的一部分：原样插在光标处，不补空行。
+        // 结构粘贴保留剪贴板原样的换行，但结构块必须独占一行，所以只在
+        // 光标那一侧还留着文字时补空行把它和前后隔开。
+        let mut inserted = String::new();
+        if !soft_wrapped {
             if leading.visible_len() > 0 {
-                text.push_str("\n\n");
+                inserted.push_str("\n\n");
             }
-            text.push_str(&lines.join("\n"));
-            if trailing.visible_len() > 0 {
-                text.push_str("\n\n");
-            }
-            text
-        };
+        }
+        inserted.push_str(&lines.join("\n"));
+        if !soft_wrapped && trailing.visible_len() > 0 {
+            inserted.push_str("\n\n");
+        }
         if inserted.is_empty() {
             return false;
         }
@@ -65,9 +57,7 @@ impl Editor {
         let caret = applied.new_range.end;
         self.record_buffer_edit(applied);
         self.rebuild_document_from_buffer(cx);
-        if !split_physical_lines
-            && let Some(last_root) = self.document.root_blocks().last().cloned()
-        {
+        if let Some(last_root) = self.document.root_blocks().last().cloned() {
             // 结构块落在文档末尾时下面没有行，光标得有段落落脚。
             self.ensure_trailing_paragraph_after_structural(&last_root, cx);
         }
@@ -84,30 +74,6 @@ impl Editor {
         true
     }
 
-    pub(crate) fn build_plain_paste_blocks_from_lines(
-        cx: &mut Context<Self>,
-        lines: &[String],
-    ) -> Vec<Entity<crate::editor::Block>> {
-        let mut blocks = lines
-            .iter()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| {
-                Self::new_block(
-                    cx,
-                    BlockRecord::new(BlockKind::Paragraph, InlineTextTree::from_markdown(line)),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        if blocks.is_empty() && !lines.is_empty() {
-            blocks.push(Self::new_block(
-                cx,
-                BlockRecord::new(BlockKind::Paragraph, InlineTextTree::plain(String::new())),
-            ));
-        }
-
-        blocks
-    }
     pub(crate) fn current_image_paste_behavior() -> ImagePasteBehavior {
         read_app_preferences()
             .map(|preferences| preferences.image_paste_behavior)

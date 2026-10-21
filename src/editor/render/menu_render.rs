@@ -669,13 +669,13 @@ impl Editor {
         }
     }
 
-    pub(crate) fn on_copy_as_html(
+    pub(crate) fn on_copy_as_plain_text(
         &mut self,
-        _: &crate::components::CopyAsHtml,
+        _: &crate::components::CopyAsPlainText,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.copy_as_html(cx);
+        self.copy_as_plain_text(cx);
     }
 
     pub(crate) fn on_copy_as_markdown(

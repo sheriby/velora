@@ -1015,7 +1015,6 @@ async fn multiline_paste_keeps_the_other_blocks_bytes_untouched(cx: &mut TestApp
                     leading: InlineTextTree::plain(String::new()),
                     lines: vec!["粘贴一".to_string(), "粘贴二".to_string()],
                     trailing: InlineTextTree::plain("段落文字".to_string()),
-                    split_physical_lines: true,
                 },
                 cx,
             );
@@ -2600,7 +2599,6 @@ async fn copy_then_paste_a_cross_block_selection_keeps_the_writing_style(cx: &mu
                 leading: InlineTextTree::plain(String::new()),
                 lines,
                 trailing: InlineTextTree::plain(trailing),
-                split_physical_lines: true,
             },
             cx,
         );

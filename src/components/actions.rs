@@ -46,6 +46,7 @@ actions!(
         Cut,
         Paste,
         PasteAsPlainText,
+        CopyAsPlainText,
         CopyAsMarkdown,
         Undo,
         Redo,
@@ -115,7 +116,6 @@ actions!(
         AiSummarize,
         AiExplain,
         AiExpand,
-        CopyAsHtml,
         CursorHistoryBack,
         CursorHistoryForward,
         ZoomIn,
@@ -208,6 +208,7 @@ pub(crate) enum ShortcutCommand {
     Paste,
     PasteAsPlainText,
     CopyAsMarkdown,
+    CopyAsPlainText,
     Undo,
     Redo,
     BoldSelection,
@@ -523,6 +524,13 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         id: "copy_as_markdown",
         category: ShortcutCategory::Edit,
         default_keys: &["cmd-shift-m", "ctrl-shift-m"],
+        context: None,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::CopyAsPlainText,
+        id: "copy_as_plain_text",
+        category: ShortcutCategory::Edit,
+        default_keys: &[],
         context: None,
     },
     ShortcutDefinition {
@@ -1043,6 +1051,7 @@ fn key_binding_for(
         ShortcutCommand::Paste => KeyBinding::new(key, Paste, context),
         ShortcutCommand::PasteAsPlainText => KeyBinding::new(key, PasteAsPlainText, context),
         ShortcutCommand::CopyAsMarkdown => KeyBinding::new(key, CopyAsMarkdown, context),
+        ShortcutCommand::CopyAsPlainText => KeyBinding::new(key, CopyAsPlainText, context),
         ShortcutCommand::Undo => KeyBinding::new(key, Undo, context),
         ShortcutCommand::Redo => KeyBinding::new(key, Redo, context),
         ShortcutCommand::BoldSelection => KeyBinding::new(key, BoldSelection, context),
@@ -1160,8 +1169,6 @@ pub(crate) fn resolved_keybindings(config: &BTreeMap<String, Vec<String>>) -> Ve
     ));
     bindings.push(KeyBinding::new("cmd-p", QuickOpen, None));
     bindings.push(KeyBinding::new("ctrl-p", QuickOpen, None));
-    bindings.push(KeyBinding::new("cmd-shift-c", CopyAsHtml, None));
-    bindings.push(KeyBinding::new("ctrl-shift-c", CopyAsHtml, None));
     bindings.push(KeyBinding::new("cmd-shift-p", OpenCommandPalette, None));
     bindings.push(KeyBinding::new("ctrl-shift-p", OpenCommandPalette, None));
     bindings.push(KeyBinding::new("alt-cmd-left", CursorHistoryBack, None));

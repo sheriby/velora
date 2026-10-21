@@ -4,7 +4,7 @@ use super::common::*;
 async fn core_repair_multiline_paste_replaces_the_original_selection(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let mut mismatches = Vec::new();
-    for (source, expected) in [("abcde", "aX\n\nYde"), ("**abcde** tail", "**aX\n\nYde** tail"), ("a <strong>bcde</strong> end", "a <strong>bX\n\nYde</strong> end")] {
+    for (source, expected) in [("abcde", "aX\nYde"), ("**abcde** tail", "**aX\nYde** tail"), ("a <strong>bcde</strong> end", "a <strong>bX\nYde</strong> end")] {
         let (editor, window_cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
         redraw(window_cx);
         let block = editor.read_with(window_cx, |editor, _| editor.document.first_root().unwrap().clone());
@@ -152,7 +152,7 @@ async fn core_repair_multiline_paste_after_html_markup_preserves_the_original_by
     redraw(cx);
     assert_eq!(
         editor.read_with(cx, |editor, _| editor.buffer.text()),
-        "a <strong>b</strong> X\n\nYZ"
+        "a <strong>b</strong> X\nYZ"
     );
 }
 

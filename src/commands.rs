@@ -13,7 +13,7 @@
 use gpui::Action;
 
 use crate::components::{
-    OpenAiAssistant, ToggleAiSidebar, BoldSelection, ClearFormatSelection, CloseWindow, CodeSelection, CopyAsHtml, CopyAsMarkdown,
+    OpenAiAssistant, ToggleAiSidebar, BoldSelection, ClearFormatSelection, CloseWindow, CodeSelection, CopyAsMarkdown, CopyAsPlainText,
     SplitEditorLeft, SplitEditorRight, SplitEditorUp, SplitEditorDown,
     CloseTab, ExportHtml, ExportPdf, ExportPng, FileHistory, FindInDocument, FindNextMatch,
     FindPreviousMatch, FormatDocument, HighlightSelection, ItalicSelection, LinkSelection,
@@ -127,6 +127,12 @@ static COMMANDS: &[CommandSpec] = &[
         context_menu_copy_as_markdown,
         CopyAsMarkdown
     ),
+    command!(
+        "copy_as_plain_text",
+        Edit,
+        context_menu_copy_as_plain_text,
+        CopyAsPlainText
+    ),
     command!(sep "bold_selection", Format, format_bold, BoldSelection),
     command!("italic_selection", Format, format_italic, ItalicSelection),
     command!(
@@ -172,7 +178,6 @@ static COMMANDS: &[CommandSpec] = &[
     command!("export_pdf", Export, menu_export_pdf, ExportPdf),
     command!("export_png", Export, menu_export_png, ExportPng),
     command!("print", Export, menu_print, PrintDocument),
-    command!("copy_as_html", Export, menu_copy_as_html, CopyAsHtml),
     // 视图
     command!("split_editor_left", View, split_editor_left, SplitEditorLeft),
     command!("split_editor_right", View, split_editor_right, SplitEditorRight),
@@ -341,7 +346,6 @@ mod tests {
                 "export_pdf",
                 "export_png",
                 "print",
-                "copy_as_html",
             ]
         );
 
@@ -350,7 +354,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             edit_ids,
-            vec!["ai_polish", "ai_translate", "ai_summarize", "ai_explain", "ai_expand", "select_document", "paste_as_plain_text", "copy_as_markdown"]
+            vec!["ai_polish", "ai_translate", "ai_summarize", "ai_explain", "ai_expand", "select_document", "paste_as_plain_text", "copy_as_markdown", "copy_as_plain_text"]
         );
 
         let format_ids = super::commands_for(CommandMenu::Format)

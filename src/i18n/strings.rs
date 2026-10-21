@@ -501,8 +501,8 @@ pub struct I18nStrings {
     pub preferences_smart_punctuation: String,
     pub preferences_hide_markdown_markers: String,
     pub status_bar_long_block_source: String,
-    /// Export menu item: copy rendered HTML source to clipboard.
-    pub menu_copy_as_html: String,
+    /// Document context menu: copy the selection as plain visible text.
+    pub context_menu_copy_as_plain_text: String,
     /// Workspace action: duplicate the selected file.
     pub workspace_duplicate: String,
     pub workspace_copy: String,

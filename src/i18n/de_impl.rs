@@ -798,7 +798,9 @@ impl I18nStringsDe {
             status_bar_long_block_source: self
                 .status_bar_long_block_source
                 .unwrap_or(defaults.status_bar_long_block_source),
-            menu_copy_as_html: self.menu_copy_as_html.unwrap_or(defaults.menu_copy_as_html),
+            context_menu_copy_as_plain_text: self
+                .context_menu_copy_as_plain_text
+                .unwrap_or(defaults.context_menu_copy_as_plain_text),
             workspace_duplicate: self
                 .workspace_duplicate
                 .unwrap_or(defaults.workspace_duplicate),

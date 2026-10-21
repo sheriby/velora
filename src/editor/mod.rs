@@ -367,10 +367,6 @@ pub struct Editor {
     update_download_progress: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
     update_download_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     update_task: Option<Task<()>>,
-    /// 「复制为 HTML」的后台渲染任务：整篇渲染（公式/图表转 SVG、本地图转
-    /// base64）不在动作派发里同步跑；句柄存字段保命，连点两次时前一趟被
-    /// 覆盖取消（剪贴板只落最新一趟）。
-    copy_html_task: Option<Task<()>>,
     /// 窗内菜单树缓存（Windows/Linux 每帧渲染用）：get_menus 在平台层深拷
     /// 整棵树（含「打开最近」的完整路径），树只在 install_menus 时变，按
     /// 菜单树代数缓存，未变帧只做 Rc 引用计数。
@@ -1014,7 +1010,6 @@ impl Editor {
             update_download_progress: None,
             update_download_cancel: None,
             update_task: None,
-            copy_html_task: None,
             window_menu_cache: None,
             workspace: WorkspaceState::default(),
             context_menu: None,

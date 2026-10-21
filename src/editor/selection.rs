@@ -110,12 +110,28 @@ impl Editor {
             cx.stop_propagation();
             return;
         }
-        let Some(markdown) = self.cross_block_selected_markdown(cx) else {
+        // 默认复制带 Markdown 记号：粘贴回编辑器才是同一份内容。渲染后的
+        // 可见文本由「复制为纯文本」提供。
+        let markdown = self
+            .selected_markdown_text(cx)
+            .or_else(|| self.current_line_markdown_text(cx));
+        let Some(markdown) = markdown else {
             cx.propagate();
             return;
         };
         cx.write_to_clipboard(ClipboardItem::new_string(markdown));
         cx.stop_propagation();
+    }
+
+    /// 没有选区时默认复制光标所在硬行，内容同样取 Markdown 源码。
+    fn current_line_markdown_text(&self, cx: &App) -> Option<String> {
+        let block = self.current_edit_target_from_state(cx)?;
+        let block = block.read(cx);
+        let markdown_range =
+            block.current_range_to_markdown_range(block.cursor_line_display_range());
+        let markdown = block.record.title.serialize_markdown();
+        let range = clamp_range_to_char_boundaries(&markdown, markdown_range);
+        (!range.is_empty()).then(|| markdown[range].to_owned())
     }
 
     pub(super) fn on_cut_capture(&mut self, _: &Cut, _window: &mut Window, cx: &mut Context<Self>) {
@@ -579,11 +595,9 @@ impl Editor {
         }
         let block = mapping.entity.read(cx);
         if clean_offset >= block.clean_visible_len() {
-            return mapping
-                .content_to_source
-                .last()
-                .map(|offset| mapping.full_source_range.start + *offset)
-                .or(Some(mapping.full_source_range.end));
+            // 选区盖到块尾就盖住了整块：代码围栏、公式的收尾 `$$` 不在可见
+            // 偏移里，按内容末尾截会把它们漏在选区外，复制出来就是残缺源码。
+            return Some(mapping.full_source_range.end);
         }
         let markdown_offset = block
             .record
@@ -649,13 +663,21 @@ impl Editor {
                                at_end: bool,
                                cx: &App|
          -> Option<usize> {
+            let range = self.block_source_range(visible.get(index)?.entity.entity_id(), cx)?;
+            // 端点盖住整块时按块的实际区间取尾：公式/代码的收尾围栏不在可见
+            // 文本里，内容映射到不了它们，按映射截会复制出残缺源码。
+            if at_end
+                && endpoint.offset
+                    >= visible.get(index)?.entity.read(cx).clean_visible_len()
+            {
+                return Some(range.end);
+            }
             if let Some(mapping) = self.source_mapping_for_entity(endpoint.entity_id, cx)
                 && let Some(offset) =
                     self.mapping_source_range_endpoint(&mapping, endpoint.offset, at_end, cx)
             {
                 return Some(offset);
             }
-            let range = self.block_source_range(visible.get(index)?.entity.entity_id(), cx)?;
             Some(if at_end { range.end } else { range.start })
         };
 
@@ -916,6 +938,54 @@ impl Editor {
         self.status_bar_selection_block_reads
             .set(self.status_bar_selection_block_reads.get() + scanned);
         found
+    }
+
+    /// 「复制为纯文本」用的选中文本：与 `selected_visible_text` 同一套选区口径，
+    /// 取的是去掉 Markdown 记号后的那份文字（`display_text` 里 `**` 仍在，
+    /// 只是渲染时压成零宽）。
+    pub(crate) fn selected_plain_text(&self, cx: &App) -> Option<String> {
+        if let Some(text) = self.table_text_selection_text(cx) {
+            return Some(text);
+        }
+        if let Some(selection) = self.normalized_cross_block_selection(cx) {
+            let visible = self.document.visible_blocks();
+            let mut text = String::new();
+            let mut wrote_chunk = false;
+            for index in selection.start_index..=selection.end_index {
+                let block = visible.get(index)?.entity.read(cx);
+                let len = block.clean_visible_len();
+                let range = if selection.start_index == selection.end_index {
+                    selection.start.offset.min(len)..selection.end.offset.min(len)
+                } else if index == selection.start_index {
+                    selection.start.offset.min(len)..len
+                } else if index == selection.end_index {
+                    0..selection.end.offset.min(len)
+                } else {
+                    0..len
+                };
+                let plain = block.record.title.visible_text();
+                let range = clamp_range_to_char_boundaries(&plain, range);
+                if range.is_empty() {
+                    continue;
+                }
+                if wrote_chunk {
+                    text.push('\n');
+                }
+                text.push_str(&plain[range]);
+                wrote_chunk = true;
+            }
+            return wrote_chunk.then_some(text);
+        }
+        let active_id = self.active_entity_id.or(self.pending_focus)?;
+        let entity = self.focusable_entity_by_id(active_id)?;
+        let block = entity.read_untracked(cx);
+        if block.selected_range.is_empty() {
+            return None;
+        }
+        let clean = block.current_to_clean_range(block.selected_range.clone());
+        let plain = block.record.title.visible_text();
+        let range = clamp_range_to_char_boundaries(&plain, clean);
+        (!range.is_empty()).then(|| plain[range].to_owned())
     }
 
     /// Returns the markdown text of the current selection, whether cross-block

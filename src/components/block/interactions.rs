@@ -12,7 +12,6 @@ pub(super) use super::{
     Block, BlockEvent, BlockKind, InlineFormat, InlineTextTree, PastedImageSource, UndoCaptureKind,
 };
 pub(super) use crate::components::markdown::inline::clamp_range_to_char_boundaries;
-use crate::components::markdown::paste::should_split_plain_multiline_paste;
 use crate::components::{
     BlockDown, BlockUp, BoldSelection, CodeSelection, Copy, Cut, Delete, DeleteBack,
     HighlightSelection, StrikethroughSelection, SubscriptSelection, SuperscriptSelection,

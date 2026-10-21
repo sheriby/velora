@@ -336,12 +336,10 @@ impl Block {
                     .split('\n')
                     .map(ToOwned::to_owned)
                     .collect::<Vec<_>>();
-                let split_physical_lines = should_split_plain_multiline_paste(&lines);
                 cx.emit(BlockEvent::RequestPasteMultiline {
                     leading,
                     lines,
                     trailing,
-                    split_physical_lines,
                 });
                 return;
             }

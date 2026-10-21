@@ -1,4 +1,4 @@
-//! 原始复现素材的整篇回归：覆盖阅读、复制为 HTML 与编辑保存，避免片段单测
+//! 原始复现素材的整篇回归：覆盖阅读、复制 Markdown 与编辑保存，避免片段单测
 //! 通过时遗漏真实文档的入口和上下文。素材统一放在 `fixtures/regressions/`。
 
 use std::path::{Path, PathBuf};
@@ -453,8 +453,21 @@ fn item15_named_callout_keeps_its_type_and_title() {
     );
 }
 
+/// 走真实的「全选 → 复制」入口：默认复制应给出文件里的 Markdown 源码。
+fn select_all_and_copy(cx: &mut gpui::VisualTestContext) {
+    let (select_all, copy) = if cfg!(target_os = "macos") {
+        ("cmd-a", "cmd-c")
+    } else {
+        ("ctrl-a", "ctrl-c")
+    };
+    // 渲染态第一次全选只选当前块，第二次才选整篇。
+    cx.simulate_keystrokes(&format!("{select_all} {select_all}"));
+    cx.simulate_keystrokes(copy);
+    redraw(cx);
+}
+
 #[gpui::test]
-async fn reported_documents_copy_html_through_the_actual_shortcut(cx: &mut TestAppContext) {
+async fn reported_documents_copy_markdown_through_the_actual_shortcut(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     for name in [
         "01-utf16",
@@ -486,22 +499,14 @@ async fn reported_documents_copy_html_through_the_actual_shortcut(cx: &mut TestA
             cx.add_window_view(move |_, cx| Editor::from_loaded_document(cx, document, Some(path)));
         redraw(cx);
         redraw(cx);
-        cx.simulate_keystrokes("ctrl-shift-c");
-        let html = cx
+        select_all_and_copy(cx);
+        let copied = cx
             .update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
-            .expect("实际复制命令应写入 HTML");
-        let body = html.split_once("<body").expect("应有 HTML 正文").1;
-        let expected = cx.update(|_, cx| {
-            crate::export::html::render_html_with_base_dir(
-                &original,
-                cx.global::<ThemeManager>().current(),
-                name,
-                Some(&fixture_dir()),
-            )
-        });
+            .expect("实际复制命令应写入 Markdown");
+        // 跨块选区按块的内容区间取字节：块尾那条换行是块间分隔，不在选区里。
         assert_eq!(
-            body,
-            expected.split_once("<body").expect("应有 HTML 正文").1,
+            copied,
+            original.trim_end_matches('\n'),
             "{name} 从实际复制入口输出的内容应与原始文档一致"
         );
         editor.read_with(cx, |editor, _| {
@@ -798,20 +803,14 @@ async fn item03_applying_formula_edits_preserves_tail_text_and_neighboring_formu
                 );
                 assert_eq!(editor.undo_history.len(), undo_before + usize::from(edited));
             });
-            cx.simulate_keystrokes("ctrl-shift-c");
-            let html = cx
+            select_all_and_copy(cx);
+            let copied = cx
                 .update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
-                .expect("复制应得到 HTML");
-            let body = html.split_once("<body").expect("应有正文").1;
-            let tail = if source.contains("LOST_SENTINEL") {
-                "LOST_SENTINEL"
-            } else {
-                "中文尾文🌿"
-            };
-            assert!(body.contains(tail), "编辑后的 HTML 不能丢尾文");
+                .expect("复制应得到 Markdown");
             assert_eq!(
-                body.matches("<svg").count(),
-                if source.contains("y^2") { 2 } else { 1 }
+                copied,
+                expected.replace("\r\n", "\n").trim_end_matches('\n'),
+                "编辑后的复制结果不能丢尾文或其他公式"
             );
             if edited {
                 cx.simulate_keystrokes("ctrl-z");
@@ -868,9 +867,9 @@ async fn formula_dialog_restores_document_keyboard_focus_after_apply_or_cancel(
                 "应用或取消公式弹窗后，正文快捷键必须继续收到事件；apply={apply}"
             );
         });
-        cx.simulate_keystrokes("ctrl-shift-c");
+        select_all_and_copy(cx);
         let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
-        assert!(copied.is_some_and(|html| html.contains("LOST_SENTINEL")));
+        assert!(copied.is_some_and(|text| text.contains("LOST_SENTINEL")));
     }
 }
 
