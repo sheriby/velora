@@ -200,6 +200,7 @@ pub(super) struct DotRecord {
 pub(super) struct VimSearchState {
     pub query: String,
     pub reverse: bool,
+    pub whole_word: bool,
 }
 
 /// vim 会话状态，挂在 `Editor` 实体上（分屏各自一份会话）。
@@ -346,7 +347,7 @@ pub(crate) enum VimAction {
     /// zz/z./z<CR> 居中，zt/zb 顶/底。
     ViewportAlign(ViewportAlign),
     Search { reverse: bool },
-    SearchWord { reverse: bool },
+    SearchWord { reverse: bool, whole_word: bool },
     SearchNext { reverse: bool },
     OpenCmdline(command::CmdlineKind),
     ToggleVisual(VisualKind),
@@ -1158,7 +1159,9 @@ impl Editor {
                 command::CmdlineKind::Search { reverse },
                 cx,
             ),
-            VimAction::SearchWord { reverse } => command::vim_search_word(self, reverse, window, cx),
+            VimAction::SearchWord { reverse, whole_word } => {
+                command::vim_search_word(self, reverse, whole_word, window, cx);
+            }
             VimAction::SearchNext { reverse } => command::vim_search_next(self, reverse, cx),
             VimAction::OpenCmdline(kind) => command::vim_request_cmdline(self, kind, cx),
             VimAction::ToggleVisual(kind) => visual::vim_toggle_visual(self, kind, cx),
@@ -1589,8 +1592,8 @@ impl Editor {
             VimKey::Char('?') => VimAction::Search { reverse: true },
             VimKey::Char('n') => VimAction::SearchNext { reverse: false },
             VimKey::Char('N') => VimAction::SearchNext { reverse: true },
-            VimKey::Char('*') => VimAction::SearchWord { reverse: false },
-            VimKey::Char('#') => VimAction::SearchWord { reverse: true },
+            VimKey::Char('*') => VimAction::SearchWord { reverse: false, whole_word: true },
+            VimKey::Char('#') => VimAction::SearchWord { reverse: true, whole_word: true },
             VimKey::Char(':') => VimAction::OpenCmdline(command::CmdlineKind::Command),
             VimKey::Char('%') => VimAction::Move(Motion::MatchPair),
             VimKey::Char('|') => VimAction::Move(Motion::ColumnNo(count.max(1))),
@@ -1679,8 +1682,8 @@ impl Editor {
             VimKey::Char('E') => VimAction::Move(Motion::WordEndBackward { big: true }),
             VimKey::Char('n') => VimAction::SelectSearchMatch { reverse: false },
             VimKey::Char('N') => VimAction::SelectSearchMatch { reverse: true },
-            VimKey::Char('*') => VimAction::SearchWord { reverse: false },
-            VimKey::Char('#') => VimAction::SearchWord { reverse: true },
+            VimKey::Char('*') => VimAction::SearchWord { reverse: false, whole_word: false },
+            VimKey::Char('#') => VimAction::SearchWord { reverse: true, whole_word: false },
             VimKey::Char('_') => VimAction::Move(Motion::LastNonBlank),
             VimKey::Char('u') | VimKey::Char('U') | VimKey::Char('~') => {
                 let operator = match next {

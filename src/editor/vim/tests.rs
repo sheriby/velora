@@ -741,6 +741,26 @@ async fn capital_n_repeats_search_backward(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn star_matches_whole_words_only(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "two twothree two");
+    cx.simulate_keystrokes("*");
+    let position = editor.read_with(&*cx, |editor, cx| {
+        editor.capture_source_selection_snapshot(cx).range.start
+    });
+    assert_eq!(position, 13, "* 应跳过 twothree 中的子串");
+}
+
+#[gpui::test]
+async fn g_star_matches_substrings(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "two twothree two");
+    cx.simulate_keystrokes("g *");
+    let position = editor.read_with(&*cx, |editor, cx| {
+        editor.capture_source_selection_snapshot(cx).range.start
+    });
+    assert_eq!(position, 4, "g* 应允许匹配词内子串");
+}
+
+#[gpui::test]
 async fn star_searches_the_word_under_the_cursor(cx: &mut TestAppContext) {
     let (editor, cx) = vim_editor(cx, "one two three two");
     cx.simulate_keystrokes("w *");

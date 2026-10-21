@@ -75,7 +75,7 @@ impl Editor {
         match state.kind {
             CmdlineKind::Search { reverse } => {
                 let query = raw.trim_start_matches(['/', '?']).trim().to_string();
-                self.vim_execute_search(&query, reverse, cx);
+                self.vim_execute_search(&query, reverse, false, cx);
             }
             CmdlineKind::Command | CmdlineKind::VisualCommand => {
                 // 可视 `:` 的范围按 vim 的 `<`/`>` 行界扩展；命令执行前
@@ -105,19 +105,37 @@ impl Editor {
         }
     }
 
-    fn vim_execute_search(&mut self, query: &str, reverse: bool, cx: &mut Context<Self>) {
+    fn vim_execute_search(
+        &mut self,
+        query: &str,
+        reverse: bool,
+        whole_word: bool,
+        cx: &mut Context<Self>,
+    ) {
         if query.is_empty() {
             return;
         }
-        self.vim.last_search = Some(VimSearchState { query: query.to_string(), reverse });
+        self.vim.last_search = Some(VimSearchState {
+            query: query.to_string(),
+            reverse,
+            whole_word,
+        });
         self.vim.hlsearch = true;
-        self.vim_apply_search_query(&query, cx);
+        self.vim_apply_search_query(query, whole_word, cx);
         self.find_next_document_match(reverse, cx);
     }
 
-    pub(super) fn vim_apply_search_query(&mut self, query: &str, cx: &mut Context<Self>) {
-        if self.workspace.search_query != query {
+    pub(super) fn vim_apply_search_query(
+        &mut self,
+        query: &str,
+        whole_word: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.search_query != query
+            || self.workspace.search_whole_word != whole_word
+        {
             self.workspace.search_query = query.to_string();
+            self.workspace.search_whole_word = whole_word;
             self.workspace.search_scope =
                 crate::editor::workspace::WorkspaceSearchScope::Document;
         }
@@ -128,7 +146,7 @@ impl Editor {
         let Some(search) = self.vim.last_search.clone() else {
             return;
         };
-        self.vim_apply_search_query(&search.query, cx);
+        self.vim_apply_search_query(&search.query, search.whole_word, cx);
         let reverse = search.reverse != opposite;
         self.find_next_document_match(reverse, cx);
     }
@@ -136,6 +154,7 @@ impl Editor {
     pub(super) fn vim_search_word_inner(
         &mut self,
         reverse: bool,
+        whole_word: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -183,17 +202,8 @@ impl Editor {
         if word.is_empty() {
             return;
         }
-        let query: String = word
-            .chars()
-            .flat_map(|ch| {
-                if ch.is_alphanumeric() || ch == '_' {
-                    vec![ch]
-                } else {
-                    vec!['\\', ch]
-                }
-            })
-            .collect();
-        self.vim_execute_search(&query, reverse, cx);
+        // 应用查找直接收原词：整词与否交给 SearchOptions，标点不再手工转义。
+        self.vim_execute_search(&word, reverse, whole_word, cx);
         // `/` 的首次命中就是第一处；`*`/`#` 要从光标所在词之后算起。命中表导航
         // 以活动区间为准（首次为空 → 第一处），再前进一格即跳过当前词。
         self.find_next_document_match(reverse, cx);
@@ -208,7 +218,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<std::ops::Range<usize>> {
         let search = self.vim.last_search.clone()?;
-        self.vim_apply_search_query(&search.query, cx);
+        self.vim_apply_search_query(&search.query, search.whole_word, cx);
         let hits = self.document_matches(cx)?;
         if hits.is_empty() {
             return None;
@@ -618,10 +628,11 @@ pub(crate) fn apply_pending_vim_cmdline(
 pub(super) fn vim_search_word(
     editor: &mut Editor,
     reverse: bool,
+    whole_word: bool,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    editor.vim_search_word_inner(reverse, window, cx);
+    editor.vim_search_word_inner(reverse, whole_word, window, cx);
 }
 
 pub(super) fn vim_search_next(

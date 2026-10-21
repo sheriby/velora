@@ -454,7 +454,7 @@ pub(super) struct WorkspaceState {
     replace_focus: Option<FocusHandle>,
     replace_input_state: Option<SearchInputState>,
     search_match_case: bool,
-    search_whole_word: bool,
+    pub(crate) search_whole_word: bool,
     search_use_regex: bool,
     search_fuzzy: bool,
     search_focus: Option<FocusHandle>,
