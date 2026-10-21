@@ -2327,6 +2327,7 @@ impl Editor {
                 self.vim.insert_typed.clear();
                 self.vim.insert_entry_keys = entry_keys.to_vec();
                 self.vim.insert_visual_repeat = None;
+                self.vim.insert_literal_pending = false;
                 self.vim.insert_repeat_count = 1;
                 self.vim_enter_mode(VimMode::Insert, cx);
                 return;
@@ -2410,6 +2411,7 @@ impl Editor {
         self.vim.insert_typed.clear();
         self.vim.insert_entry_keys = entry_keys.to_vec();
         self.vim.insert_visual_repeat = None;
+        self.vim.insert_literal_pending = false;
         self.vim.insert_repeat_count = count;
         self.vim_enter_mode(VimMode::Insert, cx);
     }
@@ -2461,6 +2463,22 @@ impl Editor {
             }
         }
         // 记录 `.` 素材与 gi 位置。
+        self.vim.insert_literal_pending = false;
+        let mut inserted = String::new();
+        for key in &self.vim.insert_typed {
+            match key {
+                VimKey::Char(ch) => inserted.push(*ch),
+                VimKey::Enter => inserted.push('\n'),
+                VimKey::Tab => inserted.push('\t'),
+                VimKey::Backspace => {
+                    inserted.pop();
+                }
+                _ => {}
+            }
+        }
+        if !inserted.is_empty() {
+            self.vim.last_insert_text = inserted;
+        }
         let entities = self.vim_navigation_entities(cx);
         if let Some(cursor) = self.vim_current_position(&entities, cx) {
             if let Some(entity) = entities.get(cursor.block_index) {

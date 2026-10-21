@@ -1736,6 +1736,40 @@ async fn command_mapping_runs_the_registered_command(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn ctrl_a_reinserts_the_last_inserted_text(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes("i");
+    cx.simulate_input("XY");
+    cx.simulate_keystrokes("escape");
+    cx.simulate_keystrokes("a");
+    cx.simulate_keystrokes("ctrl-a");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "XYXYalpha");
+}
+
+#[gpui::test]
+async fn ctrl_v_inserts_the_next_key_literally(cx: &mut TestAppContext) {
+    let preferences = VimPreferences {
+        enable: true,
+        keymaps: vec![VimKeymapEntry {
+            mode: VimKeymapMode::Insert,
+            keys: "jj".into(),
+            action: VimKeymapAction::Esc,
+        }],
+        ..Default::default()
+    };
+    let (editor, cx) = vim_editor_with(cx, "alpha", preferences);
+    cx.simulate_keystrokes("i");
+    cx.simulate_keystrokes("ctrl-v j j escape");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "jjalpha",
+        "Ctrl-v 后的 j 不应参与 jj 映射"
+    );
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}
+
+#[gpui::test]
 async fn toggling_vim_at_runtime_switches_modes_and_passthrough(cx: &mut TestAppContext) {
     let (editor, cx) = vim_editor(cx, "alpha");
     assert_eq!(current_mode(&editor, &cx), VimMode::Normal);

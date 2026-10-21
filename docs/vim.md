@@ -62,6 +62,10 @@ action = "command:save"
 | `R` | 替换模式 |
 | `v` `V` `Ctrl-v` / `Ctrl-q` | 字符、行、块状可视 |
 
+插入模式常用键：`Ctrl-a` 重插上次插入的文本，`Ctrl-v` / `Ctrl-q` 原样插入
+下一个键（绕过映射），`Ctrl-r{reg}` 插入寄存器，`Ctrl-o` 执行一条普通命令
+后返回，`Ctrl-u` / `Ctrl-w` 删到行首/删除前一个词。
+
 ### 移动
 
 | 按键 | 动作 |

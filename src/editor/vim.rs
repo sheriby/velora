@@ -234,6 +234,10 @@ pub(crate) struct VimState {
     pub(super) mapping_timeout_task: Option<Task<()>>,
     /// 本插入会话已敲过的键（`.` 重放素材；IME 组合输入不在其中，已知限制）。
     pub(super) insert_typed: Vec<VimKey>,
+    /// 上一次插入会话实际落下的文本（插入模式 Ctrl-a 重插）。
+    pub(super) last_insert_text: String,
+    /// 插入模式 Ctrl-v 之后等待原样插入的下一键。
+    pub(super) insert_literal_pending: bool,
     /// 可视操作进入的插入会话，Esc 时把选区形状并进 `.` 素材。
     pub(super) insert_visual_repeat: Option<VisualRepeat>,
     /// 触发本插入会话的命令键（`3o` 的重放素材）。
@@ -281,6 +285,8 @@ impl Default for VimState {
             mapping_epoch: 0,
             mapping_timeout_task: None,
             insert_typed: Vec::new(),
+            last_insert_text: String::new(),
+            insert_literal_pending: false,
             insert_visual_repeat: None,
             insert_entry_keys: Vec::new(),
             insert_repeat_count: 0,
@@ -554,6 +560,21 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.vim.insert_literal_pending {
+            self.vim.insert_literal_pending = false;
+            if !self.vim.replaying {
+                self.vim_record_insert_typed(key);
+            }
+            match key {
+                VimKey::Char(ch) => {
+                    self.vim_insert_raw_text(&ch.to_string(), window, cx);
+                }
+                VimKey::Tab => self.vim_insert_raw_text("\t", window, cx),
+                VimKey::Enter => self.vim_insert_newline(window, cx),
+                _ => {}
+            }
+            return true;
+        }
         if self.vim.insert_awaiting_register {
             self.vim.insert_awaiting_register = false;
             if let Some(reg) = key.as_register_name() {
@@ -603,6 +624,23 @@ impl Editor {
             }
             VimKey::Ctrl('r') => {
                 self.vim.insert_awaiting_register = true;
+                true
+            }
+            VimKey::Ctrl('v') | VimKey::Ctrl('q') => {
+                if !self.vim.replaying {
+                    self.vim_record_insert_typed(key);
+                }
+                self.vim.insert_literal_pending = true;
+                true
+            }
+            VimKey::Ctrl('a') => {
+                let text = self.vim.last_insert_text.clone();
+                if !text.is_empty() {
+                    if !self.vim.replaying {
+                        self.vim_record_insert_typed(key);
+                    }
+                    self.vim_insert_raw_text(&text, window, cx);
+                }
                 true
             }
             VimKey::Ctrl('u') => {
