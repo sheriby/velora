@@ -867,6 +867,67 @@ impl Editor {
         cx.notify();
     }
 
+    /// ctrl-a / ctrl-x：把光标处（或其后最近的）十进制整数加 `delta * count`。
+    pub(super) fn vim_increment_inner(&mut self, delta: i64, count: u32, cx: &mut Context<Self>) {
+        let Some(block) = self.vim_active_block() else { return };
+        let text = block.read(cx).display_text().to_string();
+        let cursor = block.read(cx).cursor_offset().min(text.len());
+        let line = block.read(cx).cursor_line_display_range();
+        let line_start = line.start.min(text.len());
+        let line_end = line.end.min(text.len()).max(line_start);
+        let line_text = &text[line_start..line_end];
+        // 按字符边界扫描，避免光标落在多字节字符中间时切出非法 UTF-8。
+        let mut number_range: Option<std::ops::Range<usize>> = None;
+        for (index, character) in line_text.char_indices() {
+            let offset = line_start + index;
+            if !character.is_ascii_digit() {
+                if let Some(range) = number_range.take() {
+                    if range.end > cursor {
+                        number_range = Some(range);
+                        break;
+                    }
+                }
+                continue;
+            }
+            match number_range {
+                Some(ref mut range) => range.end = offset + 1,
+                None => {
+                    if offset + 1 > cursor {
+                        number_range = Some(offset..offset + 1);
+                    }
+                }
+            }
+        }
+        let Some(digits) = number_range.filter(|range| range.end > cursor) else {
+            return;
+        };
+        let start = digits.start;
+        let end = digits.end;
+        let mut sign = start;
+        if sign > line_start && matches!(text.as_bytes()[sign - 1], b'-' | b'+') {
+            sign -= 1;
+        }
+        let Ok(value) = text[sign..end].parse::<i64>() else { return };
+        let new_value = value.saturating_add(delta.saturating_mul(i64::from(count.max(1))));
+        let width = end - start;
+        let replacement = if new_value >= 0 && width > 1 && text.as_bytes()[start] == b'0' {
+            format!("{new_value:0width$}")
+        } else {
+            new_value.to_string()
+        };
+        block.update(cx, |block, cx| {
+            block.replace_text_in_visible_range(
+                sign..end,
+                &replacement,
+                Some(replacement.len()..replacement.len()),
+                false,
+                cx,
+            );
+        });
+        Self::reset_block_cursor(&block, sign + replacement.len() - 1, cx);
+        self.mark_dirty(cx);
+    }
+
     /// `~`：交换光标处连续 `count` 个字素的大小写；光标停在最后一个被交换的字素上。
     pub(super) fn vim_swap_case_at_cursor(
         &mut self,
@@ -1943,4 +2004,13 @@ pub(super) fn vim_swap_case_at_cursor(
     cx: &mut Context<Editor>,
 ) {
     Editor::vim_swap_case_at_cursor(editor, count, cx);
+}
+
+pub(super) fn vim_increment(
+    editor: &mut Editor,
+    delta: i64,
+    count: u32,
+    cx: &mut Context<Editor>,
+) {
+    Editor::vim_increment_inner(editor, delta, count, cx);
 }

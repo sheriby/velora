@@ -1016,3 +1016,83 @@ async fn vim_motions_cost_no_more_than_normal_cursor_moves(cx: &mut TestAppConte
         "vim 移动的映射重建次数不应超过普通方向键移动"
     );
 }
+
+#[gpui::test]
+async fn ctrl_a_and_ctrl_x_increment_the_number_under_the_cursor(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "count 41");
+    cx.simulate_keystrokes("w");
+    assert_eq!(first_block_caret(&editor, &cx), 6, "w 应停在数字首位");
+    cx.simulate_keystrokes("ctrl-a");
+    assert_eq!(document_text(&editor, &cx), "count 42");
+    assert_eq!(
+        first_block_caret(&editor, &cx),
+        7,
+        "自增后光标应停在数字末位"
+    );
+    cx.simulate_keystrokes("ctrl-x");
+    assert_eq!(document_text(&editor, &cx), "count 41");
+}
+
+#[gpui::test]
+async fn ctrl_a_keeps_zero_padding_and_applies_count(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "step 007");
+    cx.simulate_keystrokes("w 3 ctrl-a");
+    assert_eq!(document_text(&editor, &cx), "step 010", "三位零填充应保留");
+}
+
+#[gpui::test]
+async fn ctrl_a_skips_to_the_next_number_when_cursor_is_past_one(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "a 1 b 20");
+    // 光标停在 `1` 之后的 `b` 上，应改后面的 20。
+    cx.simulate_keystrokes("w w");
+    assert_eq!(first_block_caret(&editor, &cx), 4);
+    cx.simulate_keystrokes("ctrl-a");
+    assert_eq!(document_text(&editor, &cx), "a 1 b 21");
+}
+
+#[gpui::test]
+async fn ctrl_f_and_ctrl_b_scroll_by_a_page(cx: &mut TestAppContext) {
+    let markdown = (0..200)
+        .map(|index| format!("line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let (editor, cx) = vim_editor(cx, &markdown);
+    cx.update(|window, _cx| {
+        window.resize(gpui::size(gpui::px(600.0), gpui::px(400.0)))
+    });
+    for _ in 0..4 {
+        redraw(cx);
+    }
+    let offset = |editor: &Entity<Editor>, cx: &VisualTestContext| {
+        editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y)
+    };
+    let before = offset(&editor, &cx);
+    cx.simulate_keystrokes("ctrl-f");
+    redraw(cx);
+    let after_page_down = offset(&editor, &cx);
+    let viewport = editor.read_with(cx, |editor, _| {
+        (editor.scroll_handle.bounds().size.height, editor.scroll_handle.max_offset().y)
+    });
+    assert!(
+        after_page_down < before,
+        "ctrl-f 应向下翻页：{before} -> {after_page_down}，视口 {viewport:?}"
+    );
+    cx.simulate_keystrokes("ctrl-b");
+    redraw(cx);
+    let after_page_up = offset(&editor, &cx);
+    assert!(
+        after_page_up > after_page_down,
+        "ctrl-b 应向上翻页：{after_page_down} -> {after_page_up}"
+    );
+}
+
+#[gpui::test]
+async fn ctrl_v_enters_block_visual(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes("ctrl-v");
+    assert_eq!(
+        current_mode(&editor, &cx),
+        VimMode::Visual(VisualKind::Block),
+        "ctrl-v 应进入块状可视"
+    );
+}

@@ -277,6 +277,8 @@ pub(crate) enum VimAction {
     ReplaceChar(char),
     /// `~`：交换光标处 count 个字符的大小写并右移。
     SwapCaseAtCursor,
+    /// ctrl-a / ctrl-x：光标处（或其后最近的）十进制数加/减 count。
+    Increment(i64),
     Paste { after: bool },
     JoinLines { count: u32, keep_space: bool },
     Undo,
@@ -338,6 +340,8 @@ pub(crate) enum ScrollKind {
     HalfPageUp,
     LineDown,
     LineUp,
+    PageDown,
+    PageUp,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -924,6 +928,8 @@ impl Editor {
                 | VimAction::VisualReplaceChar(_)
                 | VimAction::Paste { .. }
                 | VimAction::JoinLines { .. }
+                | VimAction::Increment(_)
+                | VimAction::SwapCaseAtCursor
                 | VimAction::EnterInsert(_)
         );
         // 撤销分组在编辑器层同步建立：块级 PrepareUndo 是排队事件，vim 直接改
@@ -958,6 +964,9 @@ impl Editor {
             VimAction::ReplaceChar(ch) => operate::vim_replace_char(self, ch, count, window, cx),
             VimAction::SwapCaseAtCursor => {
                 operate::vim_swap_case_at_cursor(self, count, cx);
+            }
+            VimAction::Increment(delta) => {
+                operate::vim_increment(self, delta, count, cx);
             }
             VimAction::Paste { after } => operate::vim_paste(self, register, after, count, window, cx),
             VimAction::JoinLines { count: join_count, keep_space } => {
@@ -1236,7 +1245,9 @@ impl Editor {
             VimKey::Char('O') => VimAction::EnterInsert(InsertPlacement::Above),
             VimKey::Char('v') => VimAction::ToggleVisual(VisualKind::Char),
             VimKey::Char('V') => VimAction::ToggleVisual(VisualKind::Line),
-            VimKey::Ctrl('q') => VimAction::ToggleVisual(VisualKind::Block),
+            VimKey::Ctrl('q') | VimKey::Ctrl('v') => {
+                VimAction::ToggleVisual(VisualKind::Block)
+            }
             VimKey::Char('R') => VimAction::EnterReplaceMode,
             VimKey::Char('x') => VimAction::Operate(
                 Operator::Delete,
@@ -1329,6 +1340,10 @@ impl Editor {
             VimKey::Char('L') => VimAction::Move(Motion::ScreenLine(ScreenCursorKind::Bottom)),
             VimKey::Ctrl('d') => VimAction::Scroll(ScrollKind::HalfPageDown),
             VimKey::Ctrl('u') => VimAction::Scroll(ScrollKind::HalfPageUp),
+            VimKey::Ctrl('f') => VimAction::Scroll(ScrollKind::PageDown),
+            VimKey::Ctrl('b') => VimAction::Scroll(ScrollKind::PageUp),
+            VimKey::Ctrl('a') => VimAction::Increment(1),
+            VimKey::Ctrl('x') => VimAction::Increment(-1),
             VimKey::Ctrl('e') => VimAction::Scroll(ScrollKind::LineDown),
             VimKey::Ctrl('y') => VimAction::Scroll(ScrollKind::LineUp),
             VimKey::Ctrl('o') => VimAction::JumplistBack,

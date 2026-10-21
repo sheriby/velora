@@ -1049,7 +1049,7 @@ pub(super) fn vim_repeat_find(
     vim_move(editor, motion, count, window, cx);
 }
 
-/// 滚动（ctrl-d/u/e/y）。
+/// 滚动（ctrl-d/u/f/b/e/y）。滚动偏移向下为负，与 `scroll_handle.offset()` 一致。
 pub(super) fn vim_scroll(
     editor: &mut Editor,
     kind: ScrollKind,
@@ -1060,10 +1060,12 @@ pub(super) fn vim_scroll(
     let repeat = count.max(1) as f32;
     let viewport_height = editor.scroll_handle.bounds().size.height;
     let delta = match kind {
-        ScrollKind::HalfPageDown => viewport_height / 2.0 * repeat,
-        ScrollKind::HalfPageUp => -(viewport_height / 2.0 * repeat),
-        ScrollKind::LineDown => gpui::px(repeat),
-        ScrollKind::LineUp => gpui::px(-repeat),
+        ScrollKind::HalfPageDown => -(viewport_height / 2.0 * repeat),
+        ScrollKind::HalfPageUp => viewport_height / 2.0 * repeat,
+        ScrollKind::LineDown => gpui::px(-repeat),
+        ScrollKind::LineUp => gpui::px(repeat),
+        ScrollKind::PageDown => -(viewport_height * 0.9 * repeat),
+        ScrollKind::PageUp => viewport_height * 0.9 * repeat,
     };
     let _ = window;
     editor.scroll_viewport_by(delta, cx);
