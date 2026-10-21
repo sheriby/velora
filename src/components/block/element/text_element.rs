@@ -510,6 +510,10 @@ impl Element for BlockTextElement {
         let cursor_width = theme.dimensions.cursor_width;
         let selection_color = theme.colors.selection;
         let text_align = input.text_align();
+        // 光标高度比字形略高一点（约 1.2 字号），但不超出整行行高。
+        let block_cursor_width = font_size * 0.5;
+        let caret_height = (font_size * 1.2).min(line_height);
+        let caret_top = (line_height - caret_height) / 2.0;
 
         let (current_line_quads, selection_quads, bracket_quads, cursor_quad) =
             if (focused || editor_selection_display_range.is_some()) && !lines.is_empty() {
@@ -520,16 +524,34 @@ impl Element for BlockTextElement {
                     let cursor_pos = layout
                         .position_for_index(0, line_height)
                         .unwrap_or_default();
+                    let block = input.vim_block_caret;
+                    let color = if block {
+                        super::vim_block_cursor_color(
+                            theme.colors.selection,
+                            theme.colors.text_default,
+                            cursor_opacity,
+                        )
+                    } else {
+                        cursor_color
+                    };
+                    let width = if block {
+                        block_cursor_width
+                    } else {
+                        px(cursor_width)
+                    };
                     (
                         Vec::new(),
                         Vec::new(),
                         Vec::new(),
                         Some(fill(
                             Bounds::new(
-                                point(origin_x + cursor_pos.x, text_bounds.top() + cursor_pos.y),
-                                size(px(cursor_width), line_height),
+                                point(
+                                    origin_x + cursor_pos.x,
+                                    text_bounds.top() + cursor_pos.y + caret_top,
+                                ),
+                                size(width, caret_height),
                             ),
-                            cursor_color,
+                            color,
                         )),
                     )
                 } else if selected_range.is_empty() && !input.is_read_only() {
@@ -585,6 +607,7 @@ impl Element for BlockTextElement {
                             // vim 普通/可视/替换模式：光标画成块（盖住整字素）。
                             let mut bounds = bounds;
                             if input.vim_block_caret {
+                                let mut expanded = false;
                                 let next = input.next_boundary(cursor);
                                 if next > cursor {
                                     if let Some(next_bounds) = cursor_bounds_for_offset(
@@ -600,11 +623,17 @@ impl Element for BlockTextElement {
                                             && next_bounds.left() > bounds.left()
                                         {
                                             bounds.size.width = next_bounds.left() - bounds.left();
+                                            expanded = true;
                                         }
                                     }
                                 }
+                                if !expanded {
+                                    bounds.size.width = block_cursor_width;
+                                }
                             }
-                            let color = if input.vim_block_caret && !self.is_placeholder {
+                            bounds.origin.y += caret_top;
+                            bounds.size.height = caret_height;
+                            let color = if input.vim_block_caret {
                                 super::vim_block_cursor_color(
                                     theme.colors.selection,
                                     theme.colors.text_default,
@@ -734,7 +763,7 @@ impl Element for BlockTextElement {
             source_line_number_gutter_width,
             long_line_markers,
             cursor: cursor_quad,
-            vim_block_cursor: input.vim_block_caret && !self.is_placeholder,
+            vim_block_cursor: input.vim_block_caret,
             current_line: current_line_quads,
             bracket_highlights: bracket_quads,
             selection: selection_quads,
