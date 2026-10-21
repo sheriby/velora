@@ -707,7 +707,7 @@ async fn undo_and_redo_a_visible_character_keep_the_viewport_still(cx: &mut Test
     editor.update(cx, |editor, cx| {
         editor.focus_block(target);
         editor.pending_scroll_active_block_into_view = true;
-        editor.pending_scroll_center_into_view = true;
+        editor.pending_scroll_placement = crate::editor::ScrollPlacement::Center;
         editor.pending_scroll_recheck_after_layout = true;
         cx.notify();
     });

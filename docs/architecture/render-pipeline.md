@@ -86,6 +86,7 @@
 - **断言几何之前先重绘**：命中测试读的是上一帧写下的 `last_bounds`/`last_layout`，没画过就是 0。
 - `last_bounds`/`last_layout` 为空的三种情况：从未 paint；数学/mermaid 未聚焦；只画图片或混合视觉的块（`block_bounds_recorder` 只写 bounds，判据是 `has_text_layout()`）——这类块的命中测试只能整块粒度。表格块自己没有文本元素（可见长度 0），所以跨块落点换算把"上一块底与下一块顶之间"那段空间归给中间量不出文本布局的块。
 - `render/sync.rs:scroll_target_bounds` 统一文字范围与原子壳（公式/图片）几何：搜索跳转可以用原子边界，普通光标跟随等待实际光标；所有等待分支共用重试预算。
+- 滚动请求带落点口径 `ScrollPlacement`：`IntoView` 只做最小可见调整（初始加载、普通聚焦），`Reveal` 是用户跳转（目标未挂载时按行序号估算接近，一次都没挪过视口就当场收请求），`Top`/`Bottom`/`Center` 是绝对对齐并按偏差收敛。`ensure_focused_caret_visible` 返回「拿到几何 / 这一帧真的挪过视口」，只有稳定帧才清请求；`IntoView` 的校验帧不因移动续期，否则用户手动滚走后会被一直拽回活动块。
 
 ## 8. 陷阱
 

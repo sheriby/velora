@@ -13,7 +13,7 @@ pub(crate) mod stride_probe {
 
 pub(super) use gpui::*;
 
-pub(super) use super::{Editor, InfoDialogKind, MountedRun, tree::VisibleTreeAnchors};
+pub(super) use super::{Editor, InfoDialogKind, MountedRun, ScrollPlacement, tree::VisibleTreeAnchors};
 pub(super) use crate::app_menu::{dispatch_menu_action_for_editor, welcome_recent_entries};
 pub(super) use crate::components::CalloutVariant;
 pub(super) use crate::components::{AddLanguageConfig, AddThemeConfig, Block, BlockKind, NoRecentFiles};

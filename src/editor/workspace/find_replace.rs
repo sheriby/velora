@@ -202,7 +202,7 @@ impl Editor {
             cx,
         );
         self.pending_scroll_active_block_into_view = true;
-        self.pending_scroll_center_into_view = true;
+        self.pending_scroll_placement = crate::editor::ScrollPlacement::Center;
         self.pending_scroll_recheck_after_layout = true;
         cx.notify();
     }
@@ -255,7 +255,7 @@ impl Editor {
             self.workspace.search_focus_pending = true;
         }
         self.pending_scroll_active_block_into_view = true;
-        self.pending_scroll_center_into_view = true;
+        self.pending_scroll_placement = crate::editor::ScrollPlacement::Center;
         self.pending_scroll_recheck_after_layout = true;
         // 活动命中变了（跳转/循环）：重算文档内高亮，让用户看得出当前
         // 停在哪一个命中上。

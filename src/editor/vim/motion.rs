@@ -9,7 +9,7 @@
 use gpui::{App, Context, Window};
 
 use crate::components::Block;
-use crate::editor::Editor;
+use crate::editor::{Editor, ScrollPlacement};
 
 use super::{
     FindChar, ScreenCursorKind, ScrollKind, ViewportAlign, VimMode,
@@ -546,6 +546,10 @@ impl Editor {
             Self::reset_block_cursor(entity, position.offset, cx);
             self.focus_block(entity.entity_id());
         }
+        // 视口跟着光标走：块内移动也要能滚，未挂载的跳转目标由 Reveal
+        // 的估算路径接近（普通的聚焦只挂 IntoView，不会主动拉视口）。
+        self.pending_scroll_active_block_into_view = true;
+        self.pending_scroll_placement = ScrollPlacement::Reveal;
     }
 
     /// 主移动入口：普通模式按动作移动。
@@ -1098,7 +1102,7 @@ pub(super) fn vim_scroll(
     editor.scroll_viewport_by(delta, cx);
 }
 
-/// zz / zt / zb：光标所在块对齐视口。
+/// zz / zt / zb：光标所在块对齐视口中部、顶部、底部。
 pub(super) fn vim_viewport_align(
     editor: &mut Editor,
     align: ViewportAlign,
@@ -1109,10 +1113,10 @@ pub(super) fn vim_viewport_align(
     };
     editor.focus_block(entity_id);
     editor.pending_scroll_active_block_into_view = true;
-    editor.pending_scroll_center_into_view = align == ViewportAlign::Center;
-    // zt/zb 用「进视野」即可（对齐顶端），居中走现成中心标记。
-    if align != ViewportAlign::Center {
-        editor.pending_scroll_center_into_view = false;
-    }
+    editor.pending_scroll_placement = match align {
+        ViewportAlign::Top => ScrollPlacement::Top,
+        ViewportAlign::Bottom => ScrollPlacement::Bottom,
+        ViewportAlign::Center => ScrollPlacement::Center,
+    };
     cx.notify();
 }

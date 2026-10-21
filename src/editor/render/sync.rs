@@ -1,6 +1,15 @@
 use super::*;
 use std::time::Duration;
 
+/// 一次「让光标可见」调整的结果。
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct CaretScroll {
+    /// 目标块已经画过，拿到了可用几何。
+    has_bounds: bool,
+    /// 这一帧真的移动了视口。稳定帧（未移动）才允许清掉滚动请求。
+    moved: bool,
+}
+
 impl Editor {
 
     /// 状态栏整篇字数
@@ -51,7 +60,11 @@ impl Editor {
         }
     }
 
-    pub(crate) fn ensure_focused_caret_visible(&mut self, window: &Window, cx: &App) -> bool {
+    pub(crate) fn ensure_focused_caret_visible(
+        &mut self,
+        window: &Window,
+        cx: &App,
+    ) -> CaretScroll {
         // 搜索跳转会把焦点交还查询框：滚动目标改用 active_entity_id，
         // 不让「滚到命中」依赖正文块持有焦点，也避免挂着的滚动请求在
         // 没有焦点块时反复排后续帧。
@@ -79,13 +92,14 @@ impl Editor {
                 block
             }
         });
-        let focused_block = if self.pending_scroll_center_into_view {
+        let placement = self.pending_scroll_placement;
+        let focused_block = if placement != ScrollPlacement::IntoView {
             scroll_block
         } else {
             self.focused_edit_target(window, cx).or(scroll_block)
         };
         let Some(focused_block) = focused_block else {
-            return false;
+            return CaretScroll::default();
         };
         // 居中坐标：cell 锚点优先用命中单元格自己的 bounds——长表格整体
         // 中心离命中行可能差几屏，滚「表格中心」等于没跳到那一行（用户报
@@ -94,24 +108,22 @@ impl Editor {
         let active_bounds_from_anchor = if is_cell_anchor
             && let Some(cell) = anchor_block.as_ref()
         {
-            self.scroll_target_bounds(cell, self.pending_scroll_center_into_view, cx)
+            self.scroll_target_bounds(cell, placement.is_aligned(), cx)
         } else {
             None
         };
         let Some(active_bounds) = active_bounds_from_anchor
-            .or_else(|| {
-                self.scroll_target_bounds(&focused_block, self.pending_scroll_center_into_view, cx)
-            })
+            .or_else(|| self.scroll_target_bounds(&focused_block, placement.is_aligned(), cx))
         else {
             // 目标块尚未绘制：渲染窗口只画视口附近的块，窗外的块既没有
             // last_bounds 也没有文本布局，精确居中无从算起——但不滚就永远
             // 不会画，死锁。
-            // 估算/爬行只在程序性跳转（center 标志）时进行：初始加载的
-            // pending 不带 center，视口在哪都该原地不动，否则用户手动滚走
-            // 后活动块出窗、无边界，会被估算一路拉回（回归：reading_to_
-            // the_bottom 测试实测视口被拽回顶部）。
-            if !self.pending_scroll_center_into_view {
-                return false;
+            // 估算/爬行只在用户跳转时进行：初始加载的 pending 是 IntoView，
+            // 视口在哪都该原地不动，否则用户手动滚走后活动块出窗、无边界，
+            // 会被估算一路拉回（回归：reading_to_the_bottom 测试实测视口被
+            // 拽回顶部）。
+            if placement == ScrollPlacement::IntoView {
+                return CaretScroll::default();
             }
             //
             // 危险在于估算和绘制互相干扰：比例跳一步把目标拉进窗口，目标
@@ -135,10 +147,19 @@ impl Editor {
                 let total = self.document.visible_blocks().len().max(1);
                 let estimate_y = content_height * (index as f32 + 0.5) / total as f32;
                 let mut offset = self.scroll_handle.offset();
-                let target_y = -(estimate_y - viewport_height * 0.5);
+                let content_top = -f32::from(offset.y);
+                let target_y = match placement {
+                    ScrollPlacement::Top => -estimate_y,
+                    ScrollPlacement::Bottom => viewport_height - estimate_y,
+                    // 跳转只求可见：估算落点在视口上方就贴顶，否则贴底。
+                    ScrollPlacement::Reveal if estimate_y < content_top => -estimate_y,
+                    ScrollPlacement::Reveal => viewport_height - estimate_y,
+                    _ => -(estimate_y - viewport_height * 0.5),
+                };
                 let max_offset_y = f32::from(self.scroll_handle.max_offset().y).max(0.0);
                 let target_y = target_y.min(0.0).max(-max_offset_y);
                 let current = f32::from(offset.y);
+                let mut moved = false;
                 if (current - target_y).abs() <= viewport_height * 1.5 {
                     // 接近：每帧半屏单调爬向目标，永不出冲。
                     let step = viewport_height * 0.5;
@@ -150,16 +171,19 @@ impl Editor {
                     if (next - current).abs() > 1.0 {
                         offset.y = px(next);
                         self.scroll_handle.set_offset(offset);
+                        moved = true;
                     }
                 } else {
                     let clamped = target_y;
                     if (current - clamped).abs() > 1.0 {
                         offset.y = px(clamped);
                         self.scroll_handle.set_offset(offset);
+                        moved = true;
                     }
                 }
+                return CaretScroll { has_bounds: false, moved };
             }
-            return false;
+            return CaretScroll::default();
         };
 
 
@@ -179,31 +203,30 @@ impl Editor {
                 caret_center,
                 f32::from(self.scroll_handle.max_offset().y),
             );
-            if (target - f32::from(offset.y)).abs() > 0.5 {
+            let moved = (target - f32::from(offset.y)).abs() > 0.5;
+            if moved {
                 offset.y = px(target);
                 self.caret_scroll_applications
                     .set(self.caret_scroll_applications.get() + 1);
                 self.scroll_handle.set_offset(offset);
             }
-            return true;
+            return CaretScroll { has_bounds: true, moved };
         }
-        // Outline/search jumps land the target at the viewport center. The
-        // scroll range already reserves half a viewport past the end, so
-        // trailing content can center too; top-of-document clamps to 0.
-        if self.pending_scroll_center_into_view {
-            let viewport_center = f32::from(viewport.top()) + f32::from(viewport.size.height) * 0.5;
-            let target_center =
-                f32::from(active_bounds.top()) + f32::from(active_bounds.size.height) * 0.5;
+        // 跳转落点：按口径把目标贴到视口上沿、下沿或中线。滚动范围在文末
+        // 多留了半屏，末尾内容也能对齐；越界时钳到滚动范围两端。
+        if placement.is_aligned() {
+            let delta = Self::alignment_delta(viewport, active_bounds, placement);
             let mut offset = self.scroll_handle.offset();
-            offset.y += px(viewport_center - target_center);
+            offset.y += px(delta);
             let max_offset_y = self.scroll_handle.max_offset().y.max(px(0.0));
             offset.y = offset.y.min(px(0.0)).max(-max_offset_y);
-            if self.scroll_handle.offset().y != offset.y {
+            let moved = self.scroll_handle.offset().y != offset.y;
+            if moved {
                 self.caret_scroll_applications
                     .set(self.caret_scroll_applications.get() + 1);
             }
             self.scroll_handle.set_offset(offset);
-            return true;
+            return CaretScroll { has_bounds: true, moved };
         }
 
         let padding = px(20.0);
@@ -220,28 +243,48 @@ impl Editor {
             changed = true;
         }
 
+        let before = self.scroll_handle.offset();
         if changed {
             let max_offset_y = self.scroll_handle.max_offset().y.max(px(0.0));
             offset.y = offset.y.min(px(0.0)).max(-max_offset_y);
-            if self.scroll_handle.offset().y != offset.y {
+            if before.y != offset.y {
                 self.caret_scroll_applications
                     .set(self.caret_scroll_applications.get() + 1);
             }
             self.scroll_handle.set_offset(offset);
         }
-
-        true
+        CaretScroll {
+            has_bounds: true,
+            moved: self.scroll_handle.offset().y != before.y,
+        }
     }
 
     /// 初始加载/普通可见性滚动的校验帧数（16ms 一帧，约 100ms）。
     const SCROLL_SETTLE_FRAMES: u8 = 6;
-    /// 跳转型滚动（center 标志）的帧数硬上限（~1.5s）。center 是绝对定位，
-    /// 本应一帧到位；大文档跳转时渲染窗口扩展、行高测量逐帧漂移，居中要
-    /// 追着漂移校正。清除条件改为「偏差达标即停」（见 apply），帧数只作
-    /// 防呆上限——此前 24 帧耗尽即弃，命中停在视口边缘。
+    /// 跳转对齐的帧数硬上限（~1.5s）。绝对对齐本应一帧到位；大文档跳转时
+    /// 渲染窗口扩展、行高测量逐帧漂移，对齐要追着漂移校正。清除条件改为
+    /// 「偏差达标即停」（见 apply），帧数只作防呆上限——此前 24 帧耗尽即弃，
+    /// 命中停在视口边缘。
     const JUMP_SCROLL_SETTLE_FRAMES: u8 = 90;
-    /// 跳转居中收敛阈值：目标中心与视口中线偏差 ≤ 此值即视为到位。
-    const JUMP_CENTER_TOLERANCE_PX: f32 = 2.0;
+    /// 跳转对齐收敛阈值：目标位置与视口边界的偏差 ≤ 此值即视为到位。
+    const JUMP_ALIGN_TOLERANCE_PX: f32 = 2.0;
+
+    /// 目标块按口径对齐到视口所需的纵向位移（像素）。
+    fn alignment_delta(
+        viewport: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
+        placement: ScrollPlacement,
+    ) -> f32 {
+        let (anchor, target) = match placement {
+            ScrollPlacement::Top => (bounds.top(), viewport.top()),
+            ScrollPlacement::Bottom => (bounds.bottom(), viewport.bottom()),
+            _ => (
+                bounds.top() + bounds.size.height * 0.5,
+                viewport.top() + viewport.size.height * 0.5,
+            ),
+        };
+        f32::from(target) - f32::from(anchor)
+    }
 
     pub(crate) fn apply_pending_scroll_into_view(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.scrollbar_drag.is_some() {
@@ -251,6 +294,19 @@ impl Editor {
         if !self.pending_scroll_active_block_into_view {
             return;
         }
+        // 跳转请求自己带帧预算：目标未挂载时靠估算 + 爬行接近，只给一帧
+        // 会停在半路（vim 的 gg/G 不经过搜索跳转的 recheck 路径）。
+        let settle_budget = if self.pending_scroll_placement.is_aligned() {
+            Self::JUMP_SCROLL_SETTLE_FRAMES
+        } else {
+            Self::SCROLL_SETTLE_FRAMES
+        };
+        if self.pending_scroll_placement != ScrollPlacement::IntoView
+            && self.scroll_settle_frames == 0
+        {
+            self.scroll_settle_frames = settle_budget;
+            self.scroll_request_moved_viewport = false;
+        }
 
         // 撤销/换模式/打开文件会替换整篇块：这一帧块边界和行高还来自旧布局或
         // 估计值，拿它算「光标离边界多远」会多滚一截，下一帧再被真实布局纠正
@@ -258,10 +314,10 @@ impl Editor {
         // 布局再滚一次，之后再校验几帧直到测量落定。
         if self.pending_scroll_recheck_after_layout {
             self.pending_scroll_recheck_after_layout = false;
-            self.scroll_settle_frames = if self.pending_scroll_center_into_view {
-                Self::JUMP_SCROLL_SETTLE_FRAMES
-            } else {
+            self.scroll_settle_frames = if self.pending_scroll_placement == ScrollPlacement::IntoView {
                 Self::SCROLL_SETTLE_FRAMES
+            } else {
+                Self::JUMP_SCROLL_SETTLE_FRAMES
             };
             self.schedule_followup_frame(cx);
             return;
@@ -269,22 +325,44 @@ impl Editor {
 
         // scroll_to_item indexed children by position, which the spacers break;
         // the focused block is always mounted, so pixel math on its bounds works.
-        let has_bounds = self.ensure_focused_caret_visible(window, cx);
-        let centered = has_bounds && self.pending_scroll_center_into_view && self.jump_center_converged(cx);
-        if !centered && self.scroll_settle_frames > 0 {
-            self.scroll_settle_frames -= 1;
-            self.schedule_followup_frame(cx);
-            return;
+        let caret = self.ensure_focused_caret_visible(window, cx);
+        if caret.moved {
+            self.scroll_request_moved_viewport = true;
+        }
+        let placement = self.pending_scroll_placement;
+        let settled = (caret.has_bounds
+            && placement.is_aligned()
+            && !caret.moved
+            && self.jump_alignment_converged(placement, cx))
+            // 跳转一次都没挪过视口：光标本来就在窗里，不必再校验帧。
+            || (caret.has_bounds
+                && placement == ScrollPlacement::Reveal
+                && !caret.moved
+                && !self.scroll_request_moved_viewport);
+        if !settled {
+            // 还在移动就续满预算：跳转后行高逐帧补测，块会继续漂；停稳
+            // 若干帧才算收敛，否则会停在半路。IntoView 不续：初始加载的
+            // 校验帧要用完就收，否则用户手动滚走后会被一直拽回活动块。
+            if caret.moved && placement != ScrollPlacement::IntoView {
+                self.scroll_settle_frames = settle_budget;
+            } else {
+                self.scroll_settle_frames = self.scroll_settle_frames.saturating_sub(1);
+            }
+            if self.scroll_settle_frames > 0 {
+                self.schedule_followup_frame(cx);
+                return;
+            }
         }
         self.pending_scroll_active_block_into_view = false;
-        self.pending_scroll_center_into_view = false;
+        self.pending_scroll_placement = ScrollPlacement::IntoView;
+        self.scroll_request_moved_viewport = false;
         self.scroll_settle_frames = 0;
         self.scroll_recheck_task = None;
     }
 
-    /// 跳转居中是否已收敛：滚动锚点（cell 时取命中单元格自身）的中心与
-    /// 视口中线偏差 ≤ 容差。
-    fn jump_center_converged(&self, cx: &App) -> bool {
+    /// 跳转是否已对齐：再走一遍对齐位移，位移量落在容差内即到位；目标已经
+    /// 顶到滚动范围端点时也按到位处理（再滚也到不了）。
+    fn jump_alignment_converged(&self, placement: ScrollPlacement, cx: &App) -> bool {
         let anchor_id = self.active_entity_id;
         let Some(anchor_block) = anchor_id.and_then(|id| {
             self.document
@@ -310,10 +388,11 @@ impl Editor {
             return false;
         };
         let viewport = self.scroll_handle.bounds();
-        let viewport_center =
-            f32::from(viewport.top()) + f32::from(viewport.size.height) * 0.5;
-        let target_center = f32::from(bounds.top()) + f32::from(bounds.size.height) * 0.5;
-        (target_center - viewport_center).abs() <= Self::JUMP_CENTER_TOLERANCE_PX
+        let delta = Self::alignment_delta(viewport, bounds, placement);
+        let current = f32::from(self.scroll_handle.offset().y);
+        let max_offset_y = f32::from(self.scroll_handle.max_offset().y).max(0.0);
+        let clamped = (current + delta).min(0.0).max(-max_offset_y);
+        (clamped - current).abs() <= Self::JUMP_ALIGN_TOLERANCE_PX
     }
 
     pub(crate) fn scroll_target_bounds(

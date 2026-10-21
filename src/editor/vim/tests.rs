@@ -1154,6 +1154,184 @@ async fn ctrl_f_and_ctrl_b_scroll_by_a_page(cx: &mut TestAppContext) {
     );
 }
 
+/// 视口对齐类用例的公共布景：200 个单行段落，窗口 600×400。
+fn tall_vim_document() -> String {
+    (0..200)
+        .map(|index| format!("line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn settle_scroll(cx: &mut VisualTestContext) {
+    for _ in 0..40 {
+        cx.executor().advance_clock(std::time::Duration::from_millis(16));
+        cx.run_until_parked();
+        redraw(cx);
+    }
+}
+
+fn active_block_vertical_bounds(
+    editor: &Entity<Editor>,
+    cx: &VisualTestContext,
+) -> (f32, f32) {
+    editor.read_with(cx, |editor, cx| {
+        let block = editor
+            .document
+            .block_entity_by_id(editor.active_entity_id.expect("活动块"))
+            .expect("活动块在文档树里");
+        let bounds = editor
+            .scroll_target_bounds(&block, true, cx)
+            .expect("活动块已挂载");
+        (f32::from(bounds.top()), f32::from(bounds.bottom()))
+    })
+}
+
+fn viewport_vertical_bounds(editor: &Entity<Editor>, cx: &VisualTestContext) -> (f32, f32) {
+    editor.read_with(cx, |editor, _| {
+        let viewport = editor.scroll_handle.bounds();
+        (f32::from(viewport.top()), f32::from(viewport.bottom()))
+    })
+}
+
+#[gpui::test]
+async fn zt_aligns_the_current_block_to_the_viewport_top(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, &tall_vim_document());
+    for _ in 0..100 {
+        cx.simulate_keystrokes("j");
+    }
+    settle_scroll(cx);
+    cx.simulate_keystrokes("z t");
+    settle_scroll(cx);
+    let (block_top, _) = active_block_vertical_bounds(&editor, &cx);
+    let (viewport_top, _) = viewport_vertical_bounds(&editor, &cx);
+    assert!(
+        (block_top - viewport_top).abs() <= 2.0,
+        "zt 应把当前块贴到视口顶：块 {block_top} / 视口 {viewport_top}"
+    );
+}
+
+#[gpui::test]
+async fn zz_centers_the_current_block_in_the_viewport(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, &tall_vim_document());
+    for _ in 0..100 {
+        cx.simulate_keystrokes("j");
+    }
+    settle_scroll(cx);
+    cx.simulate_keystrokes("z z");
+    settle_scroll(cx);
+    let (block_top, block_bottom) = active_block_vertical_bounds(&editor, &cx);
+    let (viewport_top, viewport_bottom) = viewport_vertical_bounds(&editor, &cx);
+    let block_center = (block_top + block_bottom) * 0.5;
+    let viewport_center = (viewport_top + viewport_bottom) * 0.5;
+    assert!(
+        (block_center - viewport_center).abs() <= 2.0,
+        "zz 应把当前块放到视口中线：块中心 {block_center} / 视口中心 {viewport_center}"
+    );
+}
+
+#[gpui::test]
+async fn zb_aligns_the_current_block_to_the_viewport_bottom(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, &tall_vim_document());
+    for _ in 0..100 {
+        cx.simulate_keystrokes("j");
+    }
+    settle_scroll(cx);
+    cx.simulate_keystrokes("z b");
+    settle_scroll(cx);
+    let (_, block_bottom) = active_block_vertical_bounds(&editor, &cx);
+    let (_, viewport_bottom) = viewport_vertical_bounds(&editor, &cx);
+    assert!(
+        (block_bottom - viewport_bottom).abs() <= 2.0,
+        "zb 应把当前块贴到视口底：块 {block_bottom} / 视口 {viewport_bottom}"
+    );
+}
+
+#[gpui::test]
+async fn gg_scrolls_the_viewport_back_to_the_document_start(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, &tall_vim_document());
+    for _ in 0..40 {
+        cx.simulate_keystrokes("j");
+    }
+    settle_scroll(cx);
+    let scrolled = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
+    assert!(scrolled < gpui::px(0.0), "向下走了 40 行后视口应已滚离文首");
+    cx.simulate_keystrokes("g g");
+    settle_scroll(cx);
+    let offset = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
+    assert!(
+        offset > scrolled,
+        "gg 后视口应回到文首方向：{scrolled} -> {offset}"
+    );
+    let (viewport_top, viewport_bottom) = viewport_vertical_bounds(&editor, &cx);
+    let (first_top, first_bottom) = editor.read_with(cx, |editor, cx| {
+        let first = editor.document.visible_blocks()[0].entity.clone();
+        let bounds = editor
+            .scroll_target_bounds(&first, true, cx)
+            .expect("首块挂载");
+        (f32::from(bounds.top()), f32::from(bounds.bottom()))
+    });
+    assert!(
+        first_top < viewport_bottom && first_bottom > viewport_top,
+        "gg 后首块应在视口内：块 {first_top}..{first_bottom} / 视口 {viewport_top}..{viewport_bottom}"
+    );
+}
+
+#[gpui::test]
+async fn capital_g_scrolls_the_viewport_to_the_document_end(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, &tall_vim_document());
+    for _ in 0..4 {
+        redraw(cx);
+    }
+    let before = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
+    cx.simulate_keystrokes("G");
+    settle_scroll(cx);
+    let offset = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
+    assert!(
+        offset < before,
+        "G 后视口应滚向文末：{before} -> {offset}"
+    );
+    let (viewport_top, viewport_bottom) = viewport_vertical_bounds(&editor, &cx);
+    let (last_top, last_bottom) = editor.read_with(cx, |editor, cx| {
+        let last = editor.document.visible_blocks().last().unwrap().entity.clone();
+        let bounds = editor
+            .scroll_target_bounds(&last, true, cx)
+            .expect("末块挂载");
+        (f32::from(bounds.top()), f32::from(bounds.bottom()))
+    });
+    assert!(
+        last_top < viewport_bottom && last_bottom > viewport_top,
+        "G 后末块应在视口内：块 {last_top}..{last_bottom} / 视口 {viewport_top}..{viewport_bottom}"
+    );
+}
+
+#[gpui::test]
+async fn j_inside_a_tall_code_block_scrolls_the_viewport(cx: &mut TestAppContext) {
+    let code = (0..80)
+        .map(|index| format!("let value_{index} = {index};"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (editor, cx) = vim_editor(cx, &format!("```rust\n{code}\n```"));
+    for _ in 0..4 {
+        redraw(cx);
+    }
+    let before = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
+    for _ in 0..60 {
+        cx.simulate_keystrokes("j");
+    }
+    settle_scroll(cx);
+    let after = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
+    assert!(
+        after < before,
+        "代码块内下移应带动视口：{before} -> {after}"
+    );
+    let (viewport_top, viewport_bottom) = viewport_vertical_bounds(&editor, &cx);
+    let (caret_top, caret_bottom) = active_block_vertical_bounds(&editor, &cx);
+    assert!(
+        caret_top >= viewport_top - 1.0 && caret_bottom <= viewport_bottom + 1.0,
+        "代码块内光标应留在视口里：光标 {caret_top}..{caret_bottom} / 视口 {viewport_top}..{viewport_bottom}"
+    );
+}
+
 #[gpui::test]
 async fn ctrl_v_enters_block_visual(cx: &mut TestAppContext) {
     let (editor, cx) = vim_editor(cx, "alpha");

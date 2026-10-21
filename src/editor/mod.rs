@@ -106,9 +106,12 @@ pub struct Editor {
     pending_focus: Option<EntityId>,
     active_entity_id: Option<EntityId>,
     pending_scroll_active_block_into_view: bool,
-    /// Jump-style scroll (outline/search): land the target at the viewport
-    /// center instead of the minimal scroll-into-view adjustment.
-    pending_scroll_center_into_view: bool,
+    /// 跳转滚动的落点口径。`IntoView` 只做最小可见性调整，初始加载/普通聚焦
+    /// 都走它；其余三种是用户显式跳转，目标未挂载时允许按序号估算接近。
+    pending_scroll_placement: ScrollPlacement,
+    /// 本次滚动请求是否真的挪过视口。挪过就要多校验几帧吸收行高漂移；
+    /// 一次都没挪（光标本来就在视口里）当场收请求，不排多余帧。
+    scroll_request_moved_viewport: bool,
     pending_scroll_recheck_after_layout: bool,
     /// 标签切换的阅读现场，只在新行计划就绪的首帧交还。
     pub(super) pending_scroll_restore: Option<DocumentView>,
@@ -718,6 +721,31 @@ pub(crate) enum InfoDialogKind {
     About,
 }
 
+/// 待执行滚动的落点口径。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ScrollPlacement {
+    /// 最小可见性调整：目标进视口即止。初始加载与普通聚焦走这条，
+    /// 因此不能用位置估算把用户手动滚走的视口拽回活动块。
+    #[default]
+    IntoView,
+    /// 用户跳转（`gg`、标记、搜索命中）：目标未挂载时允许按可见序号估算
+    /// 接近，挂载后仍只做最小可见性调整。
+    Reveal,
+    /// 目标块顶部贴视口上沿。
+    Top,
+    /// 目标块底部贴视口下沿。
+    Bottom,
+    /// 目标块中部贴视口中线。
+    Center,
+}
+
+impl ScrollPlacement {
+    /// 绝对对齐口径：需要把目标放到固定位置，而不是「进视口就停」。
+    pub(crate) fn is_aligned(self) -> bool {
+        matches!(self, ScrollPlacement::Top | ScrollPlacement::Bottom | ScrollPlacement::Center)
+    }
+}
+
 impl Editor {
     const HISTORY_LIMIT: usize = 200;
     const HISTORY_COALESCE_WINDOW: Duration = Duration::from_millis(1_000);
@@ -857,7 +885,8 @@ impl Editor {
             pending_focus,
             active_entity_id: pending_focus,
             pending_scroll_active_block_into_view: true,
-            pending_scroll_center_into_view: false,
+            pending_scroll_placement: ScrollPlacement::IntoView,
+            scroll_request_moved_viewport: false,
             pending_scroll_recheck_after_layout: true,
             pending_scroll_restore: None,
             pending_view_mode_scroll: None,

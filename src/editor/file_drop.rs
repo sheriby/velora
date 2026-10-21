@@ -443,7 +443,7 @@ impl Editor {
                 // 拽向活动块（通常是文档首块）。行高与偏移一起在首帧交还，不能在
                 // 后续帧重摆偏移，否则会覆盖用户输入触发的光标滚动。
                 self.pending_scroll_active_block_into_view = false;
-                self.pending_scroll_center_into_view = false;
+                self.pending_scroll_placement = crate::editor::ScrollPlacement::IntoView;
                 self.pending_scroll_recheck_after_layout = false;
                 self.scroll_handle
                     .set_offset(point(px(0.0), px(view.scroll_y)));

@@ -77,7 +77,7 @@ async fn core_repair_visual_search_targets_finish_scroll_without_taking_query_fo
             window_cx.run_until_parked();
         }
         editor.read_with(window_cx, |editor, cx| {
-            if editor.pending_scroll_active_block_into_view || editor.pending_scroll_center_into_view {
+            if editor.pending_scroll_active_block_into_view || editor.pending_scroll_placement != crate::editor::ScrollPlacement::IntoView {
                 pending.push(visual);
             }
             let host = editor.document.block_entity_by_id(editor.active_entity_id.unwrap()).unwrap();
@@ -105,7 +105,7 @@ async fn core_repair_missing_scroll_geometry_also_consumes_the_retry_budget(cx: 
         editor.active_entity_id = Some(missing.entity_id());
         editor.pending_focus = None;
         editor.pending_scroll_active_block_into_view = true;
-        editor.pending_scroll_center_into_view = true;
+        editor.pending_scroll_placement = crate::editor::ScrollPlacement::Center;
         editor.pending_scroll_recheck_after_layout = false;
         editor.scroll_settle_frames = 2;
     });
