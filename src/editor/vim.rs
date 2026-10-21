@@ -51,6 +51,35 @@ pub(crate) enum VisualKind {
     Block,
 }
 
+/// surround 的定界符对：open/close 是实际插入的文本（开括号按 vim-surround
+/// 惯例带内空格），open_char/close_char 用于查找已有配对。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct SurroundPair {
+    pub open: &'static str,
+    pub close: &'static str,
+    pub open_char: char,
+    pub close_char: char,
+}
+
+impl SurroundPair {
+    fn from_delimiter(ch: char) -> Option<Self> {
+        Some(match ch {
+            '"' => Self { open: "\"", close: "\"", open_char: '"', close_char: '"' },
+            '\'' => Self { open: "'", close: "'", open_char: '\'', close_char: '\'' },
+            '`' => Self { open: "`", close: "`", open_char: '`', close_char: '`' },
+            '(' => Self { open: "( ", close: " )", open_char: '(', close_char: ')' },
+            ')' | 'b' => Self { open: "(", close: ")", open_char: '(', close_char: ')' },
+            '[' => Self { open: "[ ", close: " ]", open_char: '[', close_char: ']' },
+            ']' => Self { open: "[", close: "]", open_char: '[', close_char: ']' },
+            '{' => Self { open: "{ ", close: " }", open_char: '{', close_char: '}' },
+            '}' | 'B' => Self { open: "{", close: "}", open_char: '{', close_char: '}' },
+            '<' => Self { open: "< ", close: " >", open_char: '<', close_char: '>' },
+            '>' => Self { open: "<", close: ">", open_char: '<', close_char: '>' },
+            _ => return None,
+        })
+    }
+}
+
 /// 拦截层里的最小按键表示。带 cmd/alt/function 修饰的组合一开始就放行，
 /// 不进本类型；ctrl 只认无 shift 的单字母。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,11 +179,21 @@ pub(super) struct FindChar {
     pub till: bool,
 }
 
+/// 可视操作的重放形状：字素步数（Char）或硬行数减一（Line）。
+#[derive(Clone, Copy, Debug)]
+pub(super) struct VisualRepeat {
+    pub kind: VisualKind,
+    pub forward: bool,
+    pub distance: usize,
+}
+
 /// `.` 重放的一条变更记录：进入插入前的命令键 + 插入会话里敲过的键。
 #[derive(Clone, Debug, Default)]
 pub(super) struct DotRecord {
     pub entry_keys: Vec<VimKey>,
     pub insert_keys: Vec<VimKey>,
+    /// 可视操作按选区形状重放；普通操作为空。
+    pub visual: Option<VisualRepeat>,
 }
 
 #[derive(Clone, Debug)]
@@ -194,6 +233,8 @@ pub(crate) struct VimState {
     pub(super) mapping_timeout_task: Option<Task<()>>,
     /// 本插入会话已敲过的键（`.` 重放素材；IME 组合输入不在其中，已知限制）。
     pub(super) insert_typed: Vec<VimKey>,
+    /// 可视操作进入的插入会话，Esc 时把选区形状并进 `.` 素材。
+    pub(super) insert_visual_repeat: Option<VisualRepeat>,
     /// 触发本插入会话的命令键（`3o` 的重放素材）。
     pub(super) insert_entry_keys: Vec<VimKey>,
     pub(super) insert_repeat_count: u32,
@@ -239,6 +280,7 @@ impl Default for VimState {
             mapping_epoch: 0,
             mapping_timeout_task: None,
             insert_typed: Vec::new(),
+            insert_visual_repeat: None,
             insert_entry_keys: Vec::new(),
             insert_repeat_count: 0,
             insert_one_shot_normal: false,
@@ -269,9 +311,18 @@ pub(crate) enum VimAction {
     /// 选区版（行/块语义由当前可视种类决定）。
     Operate(Operator, OperatorTarget),
     /// 可视模式里把选区扩到文本对象。
-    VisualObject(TextObject),
-    /// 可视模式 r{char}：整段选区换成同一字符。
+    VisualObject(TextObject),    /// 可视模式 r{char}：整段选区换成同一字符。
     VisualReplaceChar(char),
+    /// ys{motion}{delim}：给目标区间加环绕定界符。
+    SurroundAdd { target: OperatorTarget, pair: SurroundPair },
+    /// ds{delim}：删除光标所在配对。
+    SurroundDelete(SurroundPair),
+    /// cs{old}{new}：替换光标所在配对的定界符。
+    SurroundChange { old: SurroundPair, new: SurroundPair },
+    /// 可视模式 S{delim}：给选区加环绕定界符。
+    VisualSurround(SurroundPair),
+    /// gn/gN：选中下一/上一处搜索命中。
+    SelectSearchMatch { reverse: bool },
     EnterInsert(InsertPlacement),
     EnterReplaceMode,
     ReplaceChar(char),
@@ -318,6 +369,8 @@ pub(crate) enum OperatorTarget {
     TextObject(TextObject),
     CurrentLines,
     Selection,
+    /// 下一/上一处搜索命中（gn/gN 作为操作符目标）。
+    SearchMatch { reverse: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -929,15 +982,28 @@ impl Editor {
             action,
             VimAction::Operate(Operator::Delete | Operator::Change | Operator::Indent
                 | Operator::Outdent | Operator::Lowercase | Operator::Uppercase
-                | Operator::SwapCase, _)
+                | Operator::SwapCase | Operator::ReplaceWithRegister | Operator::ToggleComment, _)
                 | VimAction::ReplaceChar(_)
                 | VimAction::VisualReplaceChar(_)
+                | VimAction::SurroundAdd { .. }
+                | VimAction::SurroundDelete(_)
+                | VimAction::SurroundChange { .. }
+                | VimAction::VisualSurround(_)
                 | VimAction::Paste { .. }
                 | VimAction::JoinLines { .. }
                 | VimAction::Increment(_)
                 | VimAction::SwapCaseAtCursor
                 | VimAction::EnterInsert(_)
         );
+        // 可视粘贴的入口键（p/P）在普通模式下无法重放；视觉重放素材单独记录。
+        let visual_paste = matches!(action, VimAction::Paste { .. })
+            && matches!(self.vim.mode, VimMode::Visual(VisualKind::Char | VisualKind::Line));
+        let was_visual = matches!(self.vim.mode, VimMode::Visual(_));
+        let visual_repeat = if was_visual {
+            self.vim_capture_visual_repeat(cx)
+        } else {
+            None
+        };
         // 撤销分组在编辑器层同步建立：块级 PrepareUndo 是排队事件，vim 直接改
         // 文本时事件还没到，撤销栈里就一条记录也没有。
         let capture_undo = is_change
@@ -956,12 +1022,42 @@ impl Editor {
             }
             VimAction::Operate(operator, target) => {
                 operate::vim_apply_operator(self, operator, target, count, register, window, cx);
+                // c 类操作符的插入会话要带上入口键，Esc 时才能把「删到哪里 +
+                // 输入了什么」一起交给 `.`。可视 c 还要带上选区形状。
+                if operator == Operator::Change
+                    && self.vim.mode == VimMode::Insert
+                    && self.vim.insert_entry_keys.is_empty()
+                {
+                    if was_visual {
+                        if let Some(repeat) = visual_repeat {
+                            self.vim.insert_entry_keys = entry_keys.to_vec();
+                            self.vim.insert_visual_repeat = Some(repeat);
+                        }
+                    } else {
+                        self.vim.insert_entry_keys = entry_keys.to_vec();
+                    }
+                }
             }
             VimAction::VisualObject(object) => {
                 visual::vim_extend_to_object(self, object, window, cx);
             }
             VimAction::VisualReplaceChar(ch) => {
                 operate::vim_visual_replace_char(self, ch, window, cx);
+            }
+            VimAction::SurroundAdd { target, pair } => {
+                operate::vim_surround_add(self, target, pair, cx);
+            }
+            VimAction::SurroundDelete(pair) => {
+                operate::vim_surround_delete(self, pair, window, cx);
+            }
+            VimAction::SurroundChange { old, new } => {
+                operate::vim_surround_change(self, old, new, cx);
+            }
+            VimAction::VisualSurround(pair) => {
+                operate::vim_visual_surround(self, pair, cx);
+            }
+            VimAction::SelectSearchMatch { reverse } => {
+                command::vim_select_search_match(self, reverse, cx);
             }
             VimAction::EnterInsert(placement) => {
                 operate::vim_enter_insert(self, placement, count, entry_keys, window, cx);
@@ -974,7 +1070,13 @@ impl Editor {
             VimAction::Increment(delta) => {
                 operate::vim_increment(self, delta, count, cx);
             }
-            VimAction::Paste { after } => operate::vim_paste(self, register, after, count, window, cx),
+            VimAction::Paste { after } => {
+                if visual_paste {
+                    operate::vim_visual_paste(self, register, count, window, cx);
+                } else {
+                    operate::vim_paste(self, register, after, count, window, cx);
+                }
+            }
             VimAction::JoinLines { count: join_count, keep_space } => {
                 operate::vim_join(self, join_count.max(1), keep_space, window, cx);
             }
@@ -1061,11 +1163,17 @@ impl Editor {
         }
 
         // `.` 素材：变更命令记下入口键（插入会话的键在 esc 时补记）。
-        if is_change && !self.vim.replaying && !entry_keys.is_empty() {
-            self.vim.dot = Some(DotRecord {
-                entry_keys: entry_keys.to_vec(),
-                insert_keys: Vec::new(),
-            });
+        if is_change && !self.vim.replaying {
+            if was_visual && visual_repeat.is_none() {
+                // 块状可视暂时没有可重建的形状，宁可清空也不要留下待解析操作符。
+                self.vim.dot = None;
+            } else if !entry_keys.is_empty() {
+                self.vim.dot = Some(DotRecord {
+                    entry_keys: entry_keys.to_vec(),
+                    insert_keys: Vec::new(),
+                    visual: visual_repeat,
+                });
+            }
         }
     }
 
@@ -1103,6 +1211,9 @@ impl Editor {
     /// `.` 与 `3o` 的重放：入口命令 → 插入会话 → 退出插入。
     pub(super) fn vim_replay_record(&mut self, record: &DotRecord, window: &mut Window, cx: &mut Context<Self>) {
         self.vim.replaying = true;
+        if let Some(repeat) = record.visual {
+            self.vim_replay_visual_repeat(repeat, window, cx);
+        }
         for key in &record.entry_keys {
             self.vim_route_key(*key, window, cx);
         }
@@ -1113,6 +1224,111 @@ impl Editor {
             self.vim_route_key(VimKey::Esc, window, cx);
         }
         self.vim.replaying = false;
+    }
+
+    /// 记录当前可视选区的形状，`.` 重放时按同样的字素数/行数重建。
+    fn vim_capture_visual_repeat(&self, cx: &App) -> Option<VisualRepeat> {
+        let kind = match self.vim.mode {
+            VimMode::Visual(kind) => kind,
+            _ => return None,
+        };
+        if kind == VisualKind::Block {
+            return None;
+        }
+        let anchor = self.vim.visual_anchor?;
+        let entities = self.vim_navigation_entities(cx);
+        let focus = self.vim_current_position(&entities, cx)?;
+        let forward = (anchor.block_index, anchor.offset) <= (focus.block_index, focus.offset);
+        let stream = motion::VimDocStream::new(&entities, cx);
+        match kind {
+            VisualKind::Char => {
+                let mut current = anchor;
+                let mut distance = 0usize;
+                while current != focus {
+                    let step = if forward {
+                        stream.next_grapheme(current)
+                    } else {
+                        stream.prev_grapheme(current)
+                    };
+                    let Some(next) = step else {
+                        break;
+                    };
+                    current = next;
+                    distance += 1;
+                    if distance > 1_000_000 {
+                        break;
+                    }
+                }
+                Some(VisualRepeat { kind, forward, distance })
+            }
+            VisualKind::Line => {
+                let (first, last) = if forward { (anchor, focus) } else { (focus, anchor) };
+                let mut current = first;
+                let mut line_count = 1usize;
+                while current != last {
+                    let line = stream.hard_line_range(current.block_index, current.offset);
+                    let text_len = stream.text_for_line(current.block_index).len();
+                    let next = if line.end < text_len {
+                        VimPosition {
+                            block_index: current.block_index,
+                            offset: line.end + 1,
+                        }
+                    } else if current.block_index + 1 < entities.len() {
+                        VimPosition {
+                            block_index: current.block_index + 1,
+                            offset: 0,
+                        }
+                    } else {
+                        break;
+                    };
+                    if (next.block_index, next.offset) > (last.block_index, last.offset) {
+                        break;
+                    }
+                    current = next;
+                    line_count += 1;
+                    if line_count > 1_000_000 {
+                        break;
+                    }
+                }
+                Some(VisualRepeat {
+                    kind,
+                    forward,
+                    distance: line_count.saturating_sub(1),
+                })
+            }
+            VisualKind::Block => None,
+        }
+    }
+
+    fn vim_replay_visual_repeat(
+        &mut self,
+        repeat: VisualRepeat,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        visual::vim_toggle_visual(self, repeat.kind, cx);
+        if repeat.distance == 0 {
+            return;
+        }
+        let motion = match repeat.kind {
+            VisualKind::Char => {
+                if repeat.forward {
+                    Motion::ForwardChars
+                } else {
+                    Motion::BackwardChars
+                }
+            }
+            VisualKind::Line => {
+                if repeat.forward {
+                    Motion::Down
+                } else {
+                    Motion::Up
+                }
+            }
+            VisualKind::Block => return,
+        };
+        let count = repeat.distance.min(u32::MAX as usize) as u32;
+        visual::vim_extend_with_motion(self, motion, count, window, cx);
     }
 
     // ---- 序列解析（普通模式）----
@@ -1141,6 +1357,13 @@ impl Editor {
                     VimKey::Char('c') => Operator::Change,
                     _ => Operator::Yank,
                 };
+                if rest.first() == Some(&VimKey::Char('s')) {
+                    return match head {
+                        VimKey::Char('y') => Self::vim_parse_surround_add(&rest[1..], count),
+                        VimKey::Char('d') => Self::vim_parse_surround_delete(&rest[1..]),
+                        _ => Self::vim_parse_surround_change(&rest[1..]),
+                    };
+                }
                 if rest.is_empty() {
                     return ParseOutcome::NeedMore;
                 }
@@ -1173,7 +1396,45 @@ impl Editor {
                 }
                 return Self::vim_parse_operator_target(operator, rest, count, register);
             }
-            VimKey::Char('g') => return Self::vim_parse_g_sequence(rest, count, register),
+            VimKey::Char('g') => {
+                if rest.first() == Some(&VimKey::Char('c')) {
+                    if rest.get(1) == Some(&VimKey::Char('c')) {
+                        return ParseOutcome::Execute(VimCommand {
+                            count: count.max(1),
+                            register,
+                            action: VimAction::Operate(
+                                Operator::ToggleComment,
+                                OperatorTarget::CurrentLines,
+                            ),
+                        });
+                    }
+                    return Self::vim_parse_operator_target(
+                        Operator::ToggleComment,
+                        &rest[1..],
+                        count,
+                        register,
+                    );
+                }
+                if rest.first() == Some(&VimKey::Char('r')) {
+                    if rest.get(1) == Some(&VimKey::Char('r')) {
+                        return ParseOutcome::Execute(VimCommand {
+                            count: count.max(1),
+                            register,
+                            action: VimAction::Operate(
+                                Operator::ReplaceWithRegister,
+                                OperatorTarget::CurrentLines,
+                            ),
+                        });
+                    }
+                    return Self::vim_parse_operator_target(
+                        Operator::ReplaceWithRegister,
+                        &rest[1..],
+                        count,
+                        register,
+                    );
+                }
+                return Self::vim_parse_g_sequence(rest, count, register);
+            }
             VimKey::Char('z') => return Self::vim_parse_z_sequence(rest),
             VimKey::Char('f') | VimKey::Char('F') | VimKey::Char('t') | VimKey::Char('T') => {
                 let Some(ch) = rest.first().and_then(|key| key.as_char()) else {
@@ -1382,6 +1643,10 @@ impl Editor {
             VimKey::Char('v') => VimAction::ReselectVisual,
             VimKey::Char('e') => VimAction::Move(Motion::WordEndBackward { big: false }),
             VimKey::Char('E') => VimAction::Move(Motion::WordEndBackward { big: true }),
+            VimKey::Char('n') => VimAction::SelectSearchMatch { reverse: false },
+            VimKey::Char('N') => VimAction::SelectSearchMatch { reverse: true },
+            VimKey::Char('*') => VimAction::SearchWord { reverse: false },
+            VimKey::Char('#') => VimAction::SearchWord { reverse: true },
             VimKey::Char('_') => VimAction::Move(Motion::LastNonBlank),
             VimKey::Char('u') | VimKey::Char('U') | VimKey::Char('~') => {
                 let operator = match next {
@@ -1431,6 +1696,8 @@ impl Editor {
         let (tail_count, tail_index) = Self::vim_parse_count(rest, 0);
         let rest = &rest[tail_index..];
         let total = count.max(1).saturating_mul(tail_count.max(1));
+        // total 恒 ≥1；G/gg 要靠「有没有显式计数」区分文末/文首与 {count}G。
+        let explicit_count = count > 0 || tail_count > 0;
         let Some(next) = rest.first().copied() else {
             return ParseOutcome::NeedMore;
         };
@@ -1449,67 +1716,26 @@ impl Editor {
             // i/a 后的对象不认识：比如 `dia` 里的 `a` 不是对象也不是动作 → 无效。
             return ParseOutcome::Invalid;
         }
-        let motion = match next {
-            VimKey::Char('w') => Motion::WordForward { big: false },
-            VimKey::Char('W') => Motion::WordForward { big: true },
-            VimKey::Char('b') => Motion::WordBackward { big: false },
-            VimKey::Char('B') => Motion::WordBackward { big: true },
-            VimKey::Char('e') => Motion::WordEnd { big: false },
-            VimKey::Char('E') => Motion::WordEnd { big: true },
-            VimKey::Char('h') | VimKey::Left => Motion::Left,
-            VimKey::Char('l') | VimKey::Right | VimKey::Char(' ') => Motion::Right,
-            VimKey::Char('j') | VimKey::Down => Motion::Down,
-            VimKey::Char('k') | VimKey::Up => Motion::Up,
-            VimKey::Char('0') | VimKey::Home => Motion::HardLineStart,
-            VimKey::Char('$') | VimKey::End => Motion::HardLineEnd,
-            VimKey::Char('^') => Motion::FirstNonBlank,
-            VimKey::Char('_') => Motion::LastNonBlank,
-            VimKey::Char('{') => Motion::ParagraphBackward,
-            VimKey::Char('}') => Motion::ParagraphForward,
-            VimKey::Char('(') => Motion::SentenceBackward,
-            VimKey::Char(')') => Motion::SentenceForward,
-            VimKey::Char('%') => Motion::MatchPair,
-            VimKey::Char('|') => Motion::ColumnNo(total),
-            VimKey::Char('g') => {
-                return match rest.get(1) {
-                    Some(VimKey::Char('g')) => ParseOutcome::Execute(VimCommand {
-                        count: total,
-                        register,
-                        action: VimAction::Operate(operator, OperatorTarget::CurrentLines),
-                    }),
-                    Some(VimKey::Char('_')) => ParseOutcome::Execute(VimCommand {
+        if next == VimKey::Char('g') {
+            match rest.get(1) {
+                Some(VimKey::Char('n')) | Some(VimKey::Char('N')) => {
+                    return ParseOutcome::Execute(VimCommand {
                         count: 0,
                         register,
                         action: VimAction::Operate(
                             operator,
-                            OperatorTarget::Motion(Motion::LastNonBlank, 1),
-                        ),
-                    }),
-                    Some(_) => ParseOutcome::Invalid,
-                    None => ParseOutcome::NeedMore,
-                };
-            }
-            VimKey::Char('f') | VimKey::Char('F') | VimKey::Char('t') | VimKey::Char('T') => {
-                let Some(ch) = rest.get(1).and_then(|key| key.as_char()) else {
-                    return ParseOutcome::NeedMore;
-                };
-                return ParseOutcome::Execute(VimCommand {
-                    count: 0,
-                    register,
-                    action: VimAction::Operate(
-                        operator,
-                        OperatorTarget::Motion(
-                            Motion::FindChar {
-                                ch,
-                                reverse: matches!(next, VimKey::Char('F') | VimKey::Char('T')),
-                                till: matches!(next, VimKey::Char('t') | VimKey::Char('T')),
+                            OperatorTarget::SearchMatch {
+                                reverse: rest.get(1) == Some(&VimKey::Char('N')),
                             },
-                            total,
                         ),
-                    ),
-                });
+                    });
+                }
+                _ => {}
             }
-            _ => return ParseOutcome::Invalid,
+        }
+        let (motion, _) = match Self::vim_parse_motion_sequence(rest, total, explicit_count) {
+            Ok(parsed) => parsed,
+            Err(outcome) => return outcome,
         };
         ParseOutcome::Execute(VimCommand {
             count: 0,
@@ -1518,8 +1744,155 @@ impl Editor {
         })
     }
 
-    // ---- 序列解析（可视模式）----
+    /// 解析一个动作键序列（`w`、`f{char}`、`gg`、`G` 等），返回动作与消耗
+    /// 的键数。`total` 是已合并的计数；`explicit_count` 区分 `G`/`gg` 与
+    /// `{count}G`/`{count}gg`。
+    fn vim_parse_motion_sequence(
+        keys: &[VimKey],
+        total: u32,
+        explicit_count: bool,
+    ) -> Result<(Motion, usize), ParseOutcome> {
+        let Some(head) = keys.first().copied() else {
+            return Err(ParseOutcome::NeedMore);
+        };
+        let parsed = match head {
+            VimKey::Char('w') => (Motion::WordForward { big: false }, 1),
+            VimKey::Char('W') => (Motion::WordForward { big: true }, 1),
+            VimKey::Char('b') => (Motion::WordBackward { big: false }, 1),
+            VimKey::Char('B') => (Motion::WordBackward { big: true }, 1),
+            VimKey::Char('e') => (Motion::WordEnd { big: false }, 1),
+            VimKey::Char('E') => (Motion::WordEnd { big: true }, 1),
+            VimKey::Char('h') | VimKey::Left => (Motion::Left, 1),
+            VimKey::Char('l') | VimKey::Right | VimKey::Char(' ') => (Motion::Right, 1),
+            VimKey::Char('j') | VimKey::Down => (Motion::Down, 1),
+            VimKey::Char('k') | VimKey::Up => (Motion::Up, 1),
+            VimKey::Char('0') | VimKey::Home => (Motion::HardLineStart, 1),
+            VimKey::Char('$') | VimKey::End => (Motion::HardLineEnd, 1),
+            VimKey::Char('^') => (Motion::FirstNonBlank, 1),
+            VimKey::Char('_') => (Motion::LastNonBlank, 1),
+            VimKey::Char('G') => (
+                if explicit_count {
+                    Motion::GoToLine(total)
+                } else {
+                    Motion::DocEnd
+                },
+                1,
+            ),
+            VimKey::Char('{') => (Motion::ParagraphBackward, 1),
+            VimKey::Char('}') => (Motion::ParagraphForward, 1),
+            VimKey::Char('(') => (Motion::SentenceBackward, 1),
+            VimKey::Char(')') => (Motion::SentenceForward, 1),
+            VimKey::Char('%') => (Motion::MatchPair, 1),
+            VimKey::Char('|') => (Motion::ColumnNo(total), 1),
+            VimKey::Char('g') => {
+                return match keys.get(1) {
+                    Some(VimKey::Char('g')) => Ok((
+                        if explicit_count {
+                            Motion::GoToLine(total)
+                        } else {
+                            Motion::DocStart
+                        },
+                        2,
+                    )),
+                    Some(VimKey::Char('_')) => Ok((Motion::LastNonBlank, 2)),
+                    Some(_) => Err(ParseOutcome::Invalid),
+                    None => Err(ParseOutcome::NeedMore),
+                };
+            }
+            VimKey::Char('f') | VimKey::Char('F')
+            | VimKey::Char('t') | VimKey::Char('T') => {
+                let Some(ch) = keys.get(1).and_then(|key| key.as_char()) else {
+                    return Err(ParseOutcome::NeedMore);
+                };
+                (
+                    Motion::FindChar {
+                        ch,
+                        reverse: matches!(head, VimKey::Char('F') | VimKey::Char('T')),
+                        till: matches!(head, VimKey::Char('t') | VimKey::Char('T')),
+                    },
+                    2,
+                )
+            }
+            _ => return Err(ParseOutcome::Invalid),
+        };
+        Ok(parsed)
+    }
 
+    /// `ys{motion|textobject|s}{delim}`：解析环绕目标与定界符。
+    fn vim_parse_surround_add(keys: &[VimKey], count: u32) -> ParseOutcome {
+        let Some(head) = keys.first().copied() else {
+            return ParseOutcome::NeedMore;
+        };
+        let (target, consumed) = match head {
+            VimKey::Char('s') => (OperatorTarget::CurrentLines, 1),
+            VimKey::Char('i') | VimKey::Char('a') => {
+                let Some(object_key) = keys.get(1).and_then(|key| key.as_char()) else {
+                    return ParseOutcome::NeedMore;
+                };
+                let Some(object) =
+                    TextObject::parse(head == VimKey::Char('i'), Some(object_key))
+                else {
+                    return ParseOutcome::Invalid;
+                };
+                (OperatorTarget::TextObject(object), 2)
+            }
+            _ => {
+                let (motion, consumed) =
+                    match Self::vim_parse_motion_sequence(keys, count.max(1), count > 0) {
+                        Ok(parsed) => parsed,
+                        Err(outcome) => return outcome,
+                    };
+                (OperatorTarget::Motion(motion, count.max(1)), consumed)
+            }
+        };
+        let Some(delimiter) = keys.get(consumed).and_then(|key| key.as_char()) else {
+            return ParseOutcome::NeedMore;
+        };
+        let Some(pair) = SurroundPair::from_delimiter(delimiter) else {
+            return ParseOutcome::Invalid;
+        };
+        ParseOutcome::Execute(VimCommand {
+            count: 0,
+            register: None,
+            action: VimAction::SurroundAdd { target, pair },
+        })
+    }
+
+    fn vim_parse_surround_delete(keys: &[VimKey]) -> ParseOutcome {
+        let Some(delimiter) = keys.first().and_then(|key| key.as_char()) else {
+            return ParseOutcome::NeedMore;
+        };
+        let Some(pair) = SurroundPair::from_delimiter(delimiter) else {
+            return ParseOutcome::Invalid;
+        };
+        ParseOutcome::Execute(VimCommand {
+            count: 0,
+            register: None,
+            action: VimAction::SurroundDelete(pair),
+        })
+    }
+
+    fn vim_parse_surround_change(keys: &[VimKey]) -> ParseOutcome {
+        let Some(old_key) = keys.first().and_then(|key| key.as_char()) else {
+            return ParseOutcome::NeedMore;
+        };
+        let Some(new_key) = keys.get(1).and_then(|key| key.as_char()) else {
+            return ParseOutcome::NeedMore;
+        };
+        let Some(old) = SurroundPair::from_delimiter(old_key) else {
+            return ParseOutcome::Invalid;
+        };
+        let Some(new) = SurroundPair::from_delimiter(new_key) else {
+            return ParseOutcome::Invalid;
+        };
+        ParseOutcome::Execute(VimCommand {
+            count: 0,
+            register: None,
+            action: VimAction::SurroundChange { old, new },
+        })
+    }
+
+    // ---- 序列解析（可视模式）----
     fn vim_parse_visual_sequence(&self, keys: &[VimKey]) -> ParseOutcome {
         let (count, index) = Self::vim_parse_count(keys, 0);
         let (register, index) = Self::vim_parse_register(keys, index);
@@ -1568,8 +1941,17 @@ impl Editor {
             VimKey::Char('c') | VimKey::Char('s') => {
                 VimAction::Operate(Operator::Change, OperatorTarget::Selection)
             }
-            VimKey::Char('C') | VimKey::Char('S') => {
+            VimKey::Char('C') => {
                 VimAction::Operate(Operator::Change, OperatorTarget::CurrentLines)
+            }
+            VimKey::Char('S') => {
+                let Some(delimiter) = rest.first().and_then(|key| key.as_char()) else {
+                    return ParseOutcome::NeedMore;
+                };
+                let Some(pair) = SurroundPair::from_delimiter(delimiter) else {
+                    return ParseOutcome::Invalid;
+                };
+                VimAction::VisualSurround(pair)
             }
             VimKey::Char('u') => VimAction::Operate(Operator::Lowercase, OperatorTarget::Selection),
             VimKey::Char('U') => VimAction::Operate(Operator::Uppercase, OperatorTarget::Selection),
@@ -1582,11 +1964,22 @@ impl Editor {
             }
             VimKey::Char('J') => VimAction::JoinLines { count: 2, keep_space: true },
             VimKey::Char('g') => {
-                return match rest.first() {
-                    Some(VimKey::Char('J')) => ParseOutcome::Execute(VimCommand {
+                let Some(next) = rest.first() else {
+                    return ParseOutcome::NeedMore;
+                };
+                return match next {
+                    VimKey::Char('J') => ParseOutcome::Execute(VimCommand {
                         count,
                         register,
                         action: VimAction::JoinLines { count: 2, keep_space: false },
+                    }),
+                    VimKey::Char('c') => ParseOutcome::Execute(VimCommand {
+                        count,
+                        register,
+                        action: VimAction::Operate(
+                            Operator::ToggleComment,
+                            OperatorTarget::Selection,
+                        ),
                     }),
                     _ => ParseOutcome::Invalid,
                 };

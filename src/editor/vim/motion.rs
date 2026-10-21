@@ -801,7 +801,7 @@ impl Editor {
     /// 上/下一步：块内走视觉行（换行感知），块界走邻块进位。块内移动直接
     /// 复用 `move_cursor_vertically`（换行判据与方向键同源），移动成功读回
     /// 新位置；失败说明到块界，按保存的横坐标进邻块。
-    fn vim_vertical_step(
+    pub(super) fn vim_vertical_step(
         &mut self,
         entities: &[gpui::Entity<Block>],
         current: VimPosition,
@@ -809,13 +809,40 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<VimPosition> {
         let entity = entities.get(current.block_index)?.clone();
-        let moved = entity.update(cx, |block, block_cx| {
-            let preferred_x = block.vertical_anchor_x();
-            block.move_cursor_vertically(if down { 1 } else { -1 }, preferred_x, block_cx)
-        });
+        let is_code_block = entity.read(cx).kind().is_code_block();
+        let moved = if is_code_block {
+            false
+        } else {
+            entity.update(cx, |block, block_cx| {
+                let preferred_x = block.vertical_anchor_x();
+                block.move_cursor_vertically(if down { 1 } else { -1 }, preferred_x, block_cx)
+            })
+        };
         if moved {
             let offset = entity.read(cx).cursor_offset();
             return Some(VimPosition { block_index: current.block_index, offset });
+        }
+        // 代码块与没有文本布局的块按硬行移动：代码块的布局行距会让一次 j
+        // 跨过多个源码行。
+        let text = entity.read(cx).display_text().to_string();
+        let line = VimDocStream::new(entities, cx)
+            .hard_line_range(current.block_index, current.offset);
+        if down {
+            if line.end < text.len() {
+                return Some(VimPosition {
+                    block_index: current.block_index,
+                    offset: line.end + 1,
+                });
+            }
+        } else if line.start > 0 {
+            let offset = text
+                .get(..line.start - 1)
+                .and_then(|before| before.rfind('\n'))
+                .map_or(0, |index| index + 1);
+            return Some(VimPosition {
+                block_index: current.block_index,
+                offset,
+            });
         }
         let next_index = current.block_index.checked_add_signed(if down { 1 } else { -1 })?;
         if next_index >= entities.len() {
@@ -829,7 +856,7 @@ impl Editor {
     }
 
     /// gg/G/{n}G 的落点：目标块 + 块内硬行行首的非空白。
-    fn vim_document_line_landing(
+    pub(super) fn vim_document_line_landing(
         &self,
         motion: Motion,
         entities: &[gpui::Entity<Block>],

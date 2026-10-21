@@ -15,7 +15,7 @@ use crate::editor::Editor;
 
 use super::motion::{next_grapheme_start, prev_grapheme_start, VimDocStream, VimPosition};
 use super::{
-    DotRecord, InsertPlacement, OperatorTarget, VimKey, VimMode,
+    DotRecord, InsertPlacement, OperatorTarget, SurroundPair, VimKey, VimMode,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,6 +28,10 @@ pub(crate) enum Operator {
     Lowercase,
     Uppercase,
     SwapCase,
+    /// gr{motion}/grr：用寄存器内容替换目标区间，被替换文本丢弃。
+    ReplaceWithRegister,
+    /// gc{motion}/gcc：切换代码块行注释。
+    ToggleComment,
 }
 
 /// 文本对象（iw/aw/i"/a" 等）。范围解析见 `vim_text_object_range`。
@@ -143,6 +147,28 @@ impl VimRegisters {
     }
 }
 
+/// 行注释符按代码块语言选取；块注释语言（HTML/CSS 等）暂不参与。
+fn vim_line_comment_token(language: Option<&str>) -> Option<&'static str> {
+    let language = language?.trim().to_ascii_lowercase();
+    match language.as_str() {
+        "rust" | "rs" | "javascript" | "js" | "jsx" | "typescript" | "ts" | "tsx"
+        | "c" | "h" | "cpp" | "c++" | "cc" | "hpp" | "csharp" | "cs" | "java"
+        | "go" | "golang" | "kotlin" | "kt" | "swift" | "scala" | "dart" | "php"
+        | "jsonc" | "objective-c" | "objc" | "zig" | "solidity" | "sol" | "cuda"
+        | "protobuf" | "proto" | "hcl" => Some("//"),
+        "python" | "py" | "ruby" | "rb" | "bash" | "sh" | "shell" | "zsh" | "fish"
+        | "yaml" | "yml" | "toml" | "perl" | "pl" | "r" | "makefile" | "dockerfile"
+        | "ini" | "conf" | "nginx" | "powershell" | "ps1" | "elixir" | "ex" | "exs"
+        | "nim" | "crystal" | "julia" | "awk" | "tcl" | "cmake" | "nix" | "graphql"
+        | "gql" => Some("#"),
+        "sql" | "lua" | "haskell" | "hs" | "elm" | "ada" | "vhdl" => Some("--"),
+        "latex" | "tex" | "matlab" => Some("%"),
+        "mermaid" => Some("%%"),
+        "lisp" | "clojure" | "clj" | "scheme" | "asm" | "assembly" | "nasm" => Some(";"),
+        _ => None,
+    }
+}
+
 /// 操作目标区间（显示坐标；linewise 表示盖住整硬行）。
 #[derive(Clone, Debug)]
 pub(super) struct VimRange {
@@ -176,7 +202,7 @@ impl Editor {
             self.vim_apply_block_operator(operator, register, window, cx);
             return;
         }
-        let entities = self.vim_navigation_entities(cx);
+        let mut entities = self.vim_navigation_entities(cx);
         let Some(cursor) = self.vim_current_position(&entities, cx) else {
             return;
         };
@@ -197,6 +223,11 @@ impl Editor {
             OperatorTarget::TextObject(object) => {
                 self.vim_text_object_range(&entities, cursor, object, cx)
             }
+            OperatorTarget::SearchMatch { reverse } => {
+                let range = self.vim_search_match_vim_range_inner(reverse, cx);
+                entities = self.vim_navigation_entities(cx);
+                range
+            }
         };
         let Some(range) = range else {
             return;
@@ -211,12 +242,13 @@ impl Editor {
                 self.vim_yank_range(&entities, &range, register, cx);
             }
             Operator::Delete => {
-                self.vim_delete_range(&entities, &range, register, true, window, cx);
+                self.vim_delete_range(&entities, &range, register, true, true, window, cx);
                 self.vim_place_cursor_after_delete(&range);
             }
             Operator::Change => {
-                // 修改会话紧接在删除点输入，光标不能像删除那样左移。
-                self.vim_delete_range(&entities, &range, register, false, window, cx);
+                // 修改会话紧接在删除点输入，光标不能像删除那样左移。行级修改不能
+                // 把下一行并进来，否则输入会接在下一行前面。
+                self.vim_delete_range(&entities, &range, register, false, !range.linewise, window, cx);
                 self.vim_enter_insert_inner(InsertPlacement::AtCursor, 0, &[], window, cx);
             }
             Operator::Indent | Operator::Outdent => {
@@ -224,6 +256,12 @@ impl Editor {
             }
             Operator::Lowercase | Operator::Uppercase | Operator::SwapCase => {
                 self.vim_case_range(&entities, &range, operator, cx);
+            }
+            Operator::ReplaceWithRegister => {
+                self.vim_replace_with_register_range(&entities, &range, register, window, cx);
+            }
+            Operator::ToggleComment => {
+                self.vim_toggle_comment_range(&entities, &range, cx);
             }
         }
         let _ = cx;
@@ -253,44 +291,107 @@ impl Editor {
         let mut end = start;
         for _ in 0..count.max(1) {
             let line = stream.hard_line_range(end.block_index, end.offset);
-            let text = stream.text_for_line(end.block_index);
-            if line.end < text.len() {
-                // 块内还有下一硬行。
-                end = VimPosition { block_index: end.block_index, offset: line.end + 1 };
-            } else if end.block_index + 1 < entities.len() {
-                end = VimPosition { block_index: end.block_index + 1, offset: 0 };
-            } else {
-                end = VimPosition { block_index: end.block_index, offset: text.len() };
+            let text_len = stream.text_for_line(end.block_index).len();
+            let next = Self::vim_line_end_boundary(
+                end.block_index,
+                line.end,
+                text_len,
+                entities.len(),
+            );
+            // 末行没有后续行可走：next 停在文末。
+            let at_doc_end =
+                next.block_index == end.block_index && next.offset == text_len && line.end >= text_len;
+            end = next;
+            if at_doc_end {
                 break;
             }
         }
         Some(VimRange { start, end, linewise: true })
     }
 
+    /// 一行之后的落点：块内下一硬行行首，跨块进位，末块停在文本末尾。
+    fn vim_line_end_boundary(
+        block_index: usize,
+        line_end: usize,
+        text_len: usize,
+        block_count: usize,
+    ) -> VimPosition {
+        if line_end < text_len {
+            VimPosition { block_index, offset: line_end + 1 }
+        } else if block_index + 1 < block_count {
+            VimPosition { block_index: block_index + 1, offset: 0 }
+        } else {
+            VimPosition { block_index, offset: text_len }
+        }
+    }
+
+    /// 两个位置所在硬行（含两端）的行级区间，方向无关。
+    fn vim_linewise_range_between(
+        &self,
+        entities: &[Entity<Block>],
+        from: VimPosition,
+        to: VimPosition,
+        cx: &App,
+    ) -> VimRange {
+        let stream = VimDocStream::new(entities, cx);
+        let (first, last) = if (from.block_index, from.offset) <= (to.block_index, to.offset) {
+            (from, to)
+        } else {
+            (to, from)
+        };
+        let first_line = stream.hard_line_range(first.block_index, first.offset);
+        let last_line = stream.hard_line_range(last.block_index, last.offset);
+        let last_text_len = stream.text_for_line(last.block_index).len();
+        VimRange {
+            start: VimPosition { block_index: first.block_index, offset: first_line.start },
+            end: Self::vim_line_end_boundary(
+                last.block_index,
+                last_line.end,
+                last_text_len,
+                entities.len(),
+            ),
+            linewise: true,
+        }
+    }
+
     /// 动作区间：字符级（按 inclusive/exclusive 调整）或行级（j/k）。
     fn vim_motion_range(
-        &self,
+        &mut self,
         entities: &[Entity<Block>],
         cursor: VimPosition,
         operator: Operator,
         motion: super::motion::Motion,
         count: u32,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> Option<VimRange> {
         use super::motion::Motion;
         // cw 特例：只有修改操作符按 ce 处理（vim 的 cw 不吃尾随空白）；
         // dw/yw 仍按 w 的排他区间吃空格。
         let motion = match motion {
             Motion::WordForward { big: false }
-                if operator == Operator::Change
-                    && VimDocStream::new(entities, cx).class_at_public(cursor, false) != 0 =>
+                if matches!(
+                    operator,
+                    Operator::Change | Operator::ReplaceWithRegister
+                ) && VimDocStream::new(entities, cx).class_at_public(cursor, false) != 0 =>
             {
                 Motion::WordEnd { big: false }
             }
             other => other,
         };
         if matches!(motion, Motion::Down | Motion::Up) {
-            return self.vim_lines_range(entities, cursor, count.max(1), cx);
+            let down = motion == Motion::Down;
+            let mut target = cursor;
+            for _ in 0..count.max(1) {
+                let Some(next) = self.vim_vertical_step(entities, target, down, cx) else {
+                    break;
+                };
+                target = next;
+            }
+            return Some(self.vim_linewise_range_between(entities, cursor, target, cx));
+        }
+        if matches!(motion, Motion::DocStart | Motion::DocEnd | Motion::GoToLine(_)) {
+            let target = self.vim_document_line_landing(motion, entities, cx)?;
+            return Some(self.vim_linewise_range_between(entities, cursor, target, cx));
         }
         let kind = motion.kind();
         let stream = VimDocStream::new(entities, cx);
@@ -654,6 +755,246 @@ impl Editor {
         }
     }
 
+    // ---- surround ----
+
+    pub(super) fn vim_surround_add_inner(
+        &mut self,
+        target: OperatorTarget,
+        pair: SurroundPair,
+        cx: &mut Context<Self>,
+    ) {
+        let entities = self.vim_navigation_entities(cx);
+        let Some(cursor) = self.vim_current_position(&entities, cx) else {
+            return;
+        };
+        let range = match target {
+            OperatorTarget::CurrentLines => {
+                let stream = VimDocStream::new(&entities, cx);
+                let line = stream.hard_line_range(cursor.block_index, cursor.offset);
+                Some(VimRange {
+                    start: VimPosition { block_index: cursor.block_index, offset: line.start },
+                    end: VimPosition { block_index: cursor.block_index, offset: line.end },
+                    linewise: false,
+                })
+            }
+            OperatorTarget::TextObject(object) => {
+                self.vim_text_object_range(&entities, cursor, object, cx)
+            }
+            OperatorTarget::Motion(motion, motion_count) => {
+                self.vim_motion_range(&entities, cursor, Operator::Yank, motion, motion_count, cx)
+            }
+            OperatorTarget::Selection | OperatorTarget::SearchMatch { .. } => None,
+        };
+        let Some(range) = range else {
+            return;
+        };
+        self.vim_insert_surround(&entities, &range, pair, cx);
+    }
+
+    fn vim_insert_surround(
+        &mut self,
+        entities: &[Entity<Block>],
+        range: &VimRange,
+        pair: SurroundPair,
+        cx: &mut Context<Self>,
+    ) {
+        let start_block = entities[range.start.block_index].clone();
+        let end_block = entities[range.end.block_index].clone();
+        let start = range.start.offset;
+        let end = range.end.offset;
+        if start_block.entity_id() == end_block.entity_id() {
+            // 同一块只写一次：连续两次编辑会让块的源码基线与缓冲区错位，撤销
+            // 记录会退化成错误的区间。
+            start_block.update(cx, |block, cx| {
+                let text = block.display_text().to_string();
+                let end = end.min(text.len());
+                let start = start.min(end);
+                let surrounded = format!("{}{}{}", pair.open, &text[start..end], pair.close);
+                block.replace_text_in_visible_range(
+                    start..end,
+                    &surrounded,
+                    Some(pair.open.len()..pair.open.len()),
+                    false,
+                    cx,
+                );
+            });
+        } else {
+            // 先插入右界，再插左界：跨块时两个块各自只写一次。
+            end_block.update(cx, |block, cx| {
+                block.replace_text_in_visible_range(
+                    end..end,
+                    pair.close,
+                    Some(pair.close.len()..pair.close.len()),
+                    false,
+                    cx,
+                );
+            });
+            start_block.update(cx, |block, cx| {
+                block.replace_text_in_visible_range(
+                    start..start,
+                    pair.open,
+                    Some(0..0),
+                    false,
+                    cx,
+                );
+            });
+        }
+        self.mark_dirty(cx);
+        let entities_after = self.vim_navigation_entities(cx);
+        if let Some(index) = entities_after
+            .iter()
+            .position(|entity| entity.entity_id() == start_block.entity_id())
+        {
+            self.vim_set_cursor(
+                &entities_after,
+                VimPosition { block_index: index, offset: start + pair.open.len() },
+                cx,
+            );
+        }
+    }
+
+    fn vim_surround_pair_range(
+        &self,
+        entities: &[Entity<Block>],
+        cursor: VimPosition,
+        pair: SurroundPair,
+        cx: &App,
+    ) -> Option<VimRange> {
+        let object = if pair.open_char == pair.close_char {
+            TextObject::Quote(pair.open_char, false)
+        } else {
+            TextObject::Bracket(pair.open_char, false)
+        };
+        self.vim_text_object_range(entities, cursor, object, cx)
+    }
+
+    pub(super) fn vim_surround_delete_inner(
+        &mut self,
+        pair: SurroundPair,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entities = self.vim_navigation_entities(cx);
+        let Some(cursor) = self.vim_current_position(&entities, cx) else {
+            return;
+        };
+        let Some(range) = self.vim_surround_pair_range(&entities, cursor, pair, cx) else {
+            return;
+        };
+        let block = entities[range.start.block_index].clone();
+        let text = block.read(cx).display_text().to_string();
+        let Some(open_end) = next_grapheme_start(&text, range.start.offset) else {
+            return;
+        };
+        let Some(close_start) = prev_grapheme_start(&text, range.end.offset) else {
+            return;
+        };
+        let close_end = range.end.offset.min(text.len());
+        if open_end > close_start || close_end <= close_start {
+            return;
+        }
+        let content = text[open_end..close_start].to_string();
+        block.update(cx, |block, cx| {
+            block.replace_text_in_visible_range(
+                range.start.offset..close_end,
+                &content,
+                Some(0..0),
+                false,
+                cx,
+            );
+        });
+        Self::reset_block_cursor(&block, range.start.offset, cx);
+        self.mark_dirty(cx);
+    }
+
+    pub(super) fn vim_surround_change_inner(
+        &mut self,
+        old: SurroundPair,
+        new: SurroundPair,
+        cx: &mut Context<Self>,
+    ) {
+        let entities = self.vim_navigation_entities(cx);
+        let Some(cursor) = self.vim_current_position(&entities, cx) else {
+            return;
+        };
+        let Some(range) = self.vim_surround_pair_range(&entities, cursor, old, cx) else {
+            return;
+        };
+        let block = entities[range.start.block_index].clone();
+        let text = block.read(cx).display_text().to_string();
+        let Some(open_end) = next_grapheme_start(&text, range.start.offset) else {
+            return;
+        };
+        let Some(close_start) = prev_grapheme_start(&text, range.end.offset) else {
+            return;
+        };
+        let close_end = range.end.offset.min(text.len());
+        if open_end > close_start || close_end <= close_start {
+            return;
+        }
+        block.update(cx, |block, cx| {
+            let replaced = format!("{}{}{}", new.open, &text[open_end..close_start], new.close);
+            block.replace_text_in_visible_range(
+                range.start.offset..close_end,
+                &replaced,
+                Some(new.open.len()..new.open.len()),
+                false,
+                cx,
+            );
+        });
+        Self::reset_block_cursor(&block, range.start.offset + new.open.len(), cx);
+        self.mark_dirty(cx);
+    }
+
+    pub(super) fn vim_visual_surround_inner(
+        &mut self,
+        pair: SurroundPair,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.vim.mode, VimMode::Visual(super::VisualKind::Block)) {
+            return;
+        }
+        let entities = self.vim_navigation_entities(cx);
+        let Some(range) = super::visual::vim_selection_as_range(self, &entities, cx) else {
+            return;
+        };
+        let range = if range.linewise {
+            self.vim_trim_linewise_surround_range(&entities, range, cx)
+        } else {
+            range
+        };
+        super::visual::vim_exit_visual(self, cx);
+        self.vim_insert_surround(&entities, &range, pair, cx);
+    }
+
+    fn vim_trim_linewise_surround_range(
+        &self,
+        entities: &[Entity<Block>],
+        mut range: VimRange,
+        cx: &App,
+    ) -> VimRange {
+        let stream = VimDocStream::new(entities, cx);
+        // 行级区间的终点在末行换行之后；退一格才能定位到最后一行本身。
+        let end_position = if range.end.offset > 0 {
+            VimPosition {
+                block_index: range.end.block_index,
+                offset: range.end.offset - 1,
+            }
+        } else if range.end.block_index > range.start.block_index {
+            let previous = range.end.block_index - 1;
+            VimPosition {
+                block_index: previous,
+                offset: stream.text_for_line(previous).len(),
+            }
+        } else {
+            range.end
+        };
+        let line = stream.hard_line_range(end_position.block_index, end_position.offset);
+        range.end = VimPosition { block_index: end_position.block_index, offset: line.end };
+        range.linewise = false;
+        range
+    }
+
     // ---- 复制 / 删除 / 缩进 / 大小写 ----
 
     pub(super) fn vim_yank_range(
@@ -702,6 +1043,7 @@ impl Editor {
         range: &VimRange,
         register: char,
         clamp_to_previous: bool,
+        merge_seam: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -748,7 +1090,7 @@ impl Editor {
         let entities_after = self.vim_navigation_entities(cx);
         let first_still_there = entities_after.iter().any(|entity| entity.entity_id() == first.entity_id());
         let last_still_there = entities_after.iter().any(|entity| entity.entity_id() == last.entity_id());
-        if first_still_there && last_still_there {
+        if merge_seam && first_still_there && last_still_there {
             self.vim_merge_blocks(&first, &last, cx);
         }
         // 光标回到首块的删除点（结构变了，按下标重找）。
@@ -1106,6 +1448,8 @@ impl Editor {
                     });
                 }
             }
+            Operator::ReplaceWithRegister => {}
+            Operator::ToggleComment => {}
         }
         self.mark_dirty(cx);
     }
@@ -1220,6 +1564,147 @@ impl Editor {
                 .collect();
             block.replace_text_in_visible_range(start..end, &transformed, Some(0..0), false, cx);
         });
+        self.mark_dirty(cx);
+    }
+
+    /// gr{motion}/grr：用寄存器内容替换区间。被替换文本走黑洞寄存器，
+    /// 源寄存器（具名或无名）保持原样。
+    fn vim_replace_with_register_range(
+        &mut self,
+        entities: &[Entity<Block>],
+        range: &VimRange,
+        register: char,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let use_system = crate::config::EditorSettings::vim(cx).use_system_clipboard;
+        let Some(content) = self.vim.registers.read(register, cx, use_system) else {
+            return;
+        };
+        if range.start.block_index == range.end.block_index {
+            let block = entities[range.start.block_index].clone();
+            let text_len = block.read(cx).display_text().len();
+            let start = range.start.offset.min(text_len);
+            let end = range.end.offset.min(text_len);
+            if start > end {
+                return;
+            }
+            let replacement = if content.linewise {
+                content.text.trim_end_matches('\n').to_string()
+            } else {
+                content.text.clone()
+            };
+            block.update(cx, |block, cx| {
+                block.replace_text_in_visible_range(
+                    start..end,
+                    &replacement,
+                    Some(0..0),
+                    false,
+                    cx,
+                );
+            });
+            Self::reset_block_cursor(&block, start, cx);
+            self.mark_dirty(cx);
+            return;
+        }
+        // 跨块：黑洞删除后按内容形式粘贴到删除点，源寄存器不被覆盖。
+        self.vim_delete_range(entities, range, '_', false, true, window, cx);
+        if content.linewise || content.text.contains('\n') {
+            self.vim_paste_linewise(&content, false, window, cx);
+        } else {
+            self.vim_insert_raw_text(&content.text, window, cx);
+        }
+    }
+
+    /// gc{motion}/gcc/可视 gc：切换单个代码块内被覆盖行的行注释。空行跳过；
+    /// 全部已注释则取消，否则统一加注释。
+    fn vim_toggle_comment_range(
+        &mut self,
+        entities: &[Entity<Block>],
+        range: &VimRange,
+        cx: &mut Context<Self>,
+    ) {
+        if range.start.block_index != range.end.block_index {
+            return;
+        }
+        let block = entities[range.start.block_index].clone();
+        let (kind, text) = {
+            let block = block.read(cx);
+            (block.kind(), block.display_text().to_string())
+        };
+        let BlockKind::CodeBlock { language } = kind else {
+            return;
+        };
+        let Some(token) = vim_line_comment_token(language.as_deref()) else {
+            return;
+        };
+        let mut line_ranges = Vec::new();
+        let mut line_start = 0usize;
+        for (index, ch) in text.char_indices() {
+            if ch == '\n' {
+                line_ranges.push(line_start..index);
+                line_start = index + 1;
+            }
+        }
+        line_ranges.push(line_start..text.len());
+        let start_offset = range.start.offset.min(text.len());
+        let end_offset = range.end.offset.saturating_sub(1).min(text.len());
+        let first = text
+            .get(..start_offset)
+            .map_or(0, |before| before.matches('\n').count())
+            .min(line_ranges.len().saturating_sub(1));
+        let last = text
+            .get(..end_offset)
+            .map_or(0, |before| before.matches('\n').count())
+            .min(line_ranges.len().saturating_sub(1));
+        if first > last {
+            return;
+        }
+        let non_blank: Vec<usize> = (first..=last)
+            .filter(|index| {
+                text.get(line_ranges[*index].clone())
+                    .is_some_and(|line| !line.trim().is_empty())
+            })
+            .collect();
+        if non_blank.is_empty() {
+            return;
+        }
+        let all_commented = non_blank.iter().all(|index| {
+            text.get(line_ranges[*index].clone())
+                .is_some_and(|line| line.trim_start().starts_with(token))
+        });
+        let mut lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+        for &index in &non_blank {
+            let line = &lines[index];
+            let indent_len = line.len() - line.trim_start().len();
+            let (indent, content) = line.split_at(indent_len);
+            if all_commented {
+                let rest = content.strip_prefix(token).unwrap_or(content);
+                let rest = rest.strip_prefix(' ').unwrap_or(rest);
+                lines[index] = format!("{indent}{rest}");
+            } else {
+                lines[index] = format!("{indent}{token} {content}");
+            }
+        }
+        let new_text = lines.join("\n");
+        if new_text == text {
+            return;
+        }
+        let cursor_line = non_blank[0];
+        let cursor = line_ranges[cursor_line].start
+            + lines[cursor_line]
+                .len()
+                .saturating_sub(lines[cursor_line].trim_start().len());
+        block.update(cx, |block, cx| {
+            block.replace_text_in_visible_range(
+                0..text.len(),
+                &new_text,
+                Some(cursor..cursor),
+                false,
+                cx,
+            );
+        });
+        Self::reset_block_cursor(&block, cursor, cx);
         self.mark_dirty(cx);
     }
 
@@ -1395,6 +1880,37 @@ impl Editor {
             let offset = block.read(cx).cursor_offset();
             let at = if after { next_grapheme_start(block.read(cx).display_text(), offset).unwrap_or(offset) } else { offset };
             Self::reset_block_cursor(&block, at, cx);
+            self.vim_insert_raw_text(&content.text, window, cx);
+        }
+    }
+
+    /// 可视模式 p/P：寄存器内容替换当前选区。先读寄存器再删选区，普通 `"p`
+    /// 的删除会覆盖无名寄存器，粘贴内容必须提前取。
+    pub(super) fn vim_visual_paste_inner(
+        &mut self,
+        register: Option<char>,
+        count: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entities = self.vim_navigation_entities(cx);
+        let Some(range) = super::visual::vim_selection_as_range(self, &entities, cx) else {
+            return;
+        };
+        let register = register.unwrap_or('"');
+        let use_system = crate::config::EditorSettings::vim(cx).use_system_clipboard;
+        let Some(content) = self.vim.registers.read(register, cx, use_system) else {
+            return;
+        };
+        let content = RegisterContent {
+            text: content.text.repeat(count.max(1) as usize),
+            linewise: content.linewise,
+        };
+        super::visual::vim_exit_visual(self, cx);
+        self.vim_delete_range(&entities, &range, register, false, true, window, cx);
+        if content.linewise || content.text.contains('\n') {
+            self.vim_paste_linewise(&content, false, window, cx);
+        } else {
             self.vim_insert_raw_text(&content.text, window, cx);
         }
     }
@@ -1675,6 +2191,7 @@ impl Editor {
                 }
                 self.vim.insert_typed.clear();
                 self.vim.insert_entry_keys = entry_keys.to_vec();
+                self.vim.insert_visual_repeat = None;
                 self.vim.insert_repeat_count = 1;
                 self.vim_enter_mode(VimMode::Insert, cx);
                 return;
@@ -1757,6 +2274,7 @@ impl Editor {
         }
         self.vim.insert_typed.clear();
         self.vim.insert_entry_keys = entry_keys.to_vec();
+        self.vim.insert_visual_repeat = None;
         self.vim.insert_repeat_count = count;
         self.vim_enter_mode(VimMode::Insert, cx);
     }
@@ -1815,10 +2333,12 @@ impl Editor {
                     Some((self.buffer.identity(), entity.entity_id(), cursor.offset));
             }
         }
+        let insert_visual_repeat = self.vim.insert_visual_repeat.take();
         if !self.vim.replaying && !self.vim.insert_entry_keys.is_empty() {
             self.vim.dot = Some(DotRecord {
                 entry_keys: self.vim.insert_entry_keys.clone(),
                 insert_keys: self.vim.insert_typed.clone(),
+                visual: insert_visual_repeat,
             });
         }
         // 3o / 3O：再补 count-1 次。
@@ -1829,6 +2349,7 @@ impl Editor {
             let record = DotRecord {
                 entry_keys,
                 insert_keys: self.vim.insert_typed.clone(),
+                visual: None,
             };
             for _ in 1..repeat {
                 self.vim_replay_record(&record, window, cx);
@@ -1936,6 +2457,41 @@ impl Editor {
 
 // ---- 模块门面（vim.rs 执行器调用）----
 
+pub(super) fn vim_surround_add(
+    editor: &mut Editor,
+    target: OperatorTarget,
+    pair: SurroundPair,
+    cx: &mut Context<Editor>,
+) {
+    editor.vim_surround_add_inner(target, pair, cx);
+}
+
+pub(super) fn vim_surround_delete(
+    editor: &mut Editor,
+    pair: SurroundPair,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    editor.vim_surround_delete_inner(pair, window, cx);
+}
+
+pub(super) fn vim_surround_change(
+    editor: &mut Editor,
+    old: SurroundPair,
+    new: SurroundPair,
+    cx: &mut Context<Editor>,
+) {
+    editor.vim_surround_change_inner(old, new, cx);
+}
+
+pub(super) fn vim_visual_surround(
+    editor: &mut Editor,
+    pair: SurroundPair,
+    cx: &mut Context<Editor>,
+) {
+    editor.vim_visual_surround_inner(pair, cx);
+}
+
 pub(super) fn vim_apply_operator(
     editor: &mut Editor,
     operator: Operator,
@@ -1991,6 +2547,16 @@ pub(super) fn vim_paste(
     cx: &mut Context<Editor>,
 ) {
     editor.vim_paste_inner(register, after, count, window, cx);
+}
+
+pub(super) fn vim_visual_paste(
+    editor: &mut Editor,
+    register: Option<char>,
+    count: u32,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    editor.vim_visual_paste_inner(register, count, window, cx);
 }
 
 pub(super) fn vim_join(

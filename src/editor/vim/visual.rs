@@ -110,11 +110,23 @@ impl Editor {
                     (focus, anchor)
                 };
                 let stream = VimDocStream::new(entities, cx);
-                // 可视选区含焦点所在字素（独占端 +1 字素）。
+                // 可视选区含焦点所在字素（独占端 +1 字素）。焦点落在块末字素时
+                // next_grapheme 返回 None，独占端要取块尾，否则末字被漏掉。
                 let end_inclusive = if end == anchor && end == focus {
                     end
                 } else {
-                    stream.next_grapheme(end).unwrap_or(end)
+                    let text_len = stream.text_for_line(end.block_index).len();
+                    if end.offset >= text_len {
+                        end
+                    } else {
+                        stream
+                            .next_grapheme(end)
+                            .filter(|next| next.block_index == end.block_index)
+                            .unwrap_or(VimPosition {
+                                block_index: end.block_index,
+                                offset: text_len,
+                            })
+                    }
                 };
                 Some(VimRange { start, end: end_inclusive, linewise: false })
             }

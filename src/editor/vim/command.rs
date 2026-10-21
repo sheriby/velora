@@ -12,7 +12,8 @@ use gpui_kit::component::{ActiveTheme as _, input::Input};
 
 use crate::editor::Editor;
 
-use super::VimSearchState;
+use super::motion::{prev_grapheme_start, VimPosition};
+use super::{VimMode, VimSearchState, VisualKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CmdlineKind {
@@ -114,7 +115,7 @@ impl Editor {
         self.find_next_document_match(reverse, cx);
     }
 
-    fn vim_apply_search_query(&mut self, query: &str, cx: &mut Context<Self>) {
+    pub(super) fn vim_apply_search_query(&mut self, query: &str, cx: &mut Context<Self>) {
         if self.workspace.search_query != query {
             self.workspace.search_query = query.to_string();
             self.workspace.search_scope =
@@ -197,6 +198,107 @@ impl Editor {
         // 以活动区间为准（首次为空 → 第一处），再前进一格即跳过当前词。
         self.find_next_document_match(reverse, cx);
         let _ = window;
+    }
+
+    /// gn/gN 的命中区间：当前命中优先，否则按方向找下一处。命中表按当前
+    /// 缓冲区版本重算，编辑后不会沿用旧的活动区间。
+    pub(super) fn vim_search_match_range_inner(
+        &mut self,
+        reverse: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<std::ops::Range<usize>> {
+        let search = self.vim.last_search.clone()?;
+        self.vim_apply_search_query(&search.query, cx);
+        let hits = self.document_matches(cx)?;
+        if hits.is_empty() {
+            return None;
+        }
+        let cursor = self.capture_source_selection_snapshot(cx).range.start;
+        let current = hits
+            .iter()
+            .enumerate()
+            .find(|(_, hit)| hit.range.start <= cursor && cursor < hit.range.end);
+        let (index, range) = if let Some((index, hit)) = current {
+            (index, hit.range.clone())
+        } else {
+            let index = if reverse {
+                hits.iter()
+                    .rposition(|hit| hit.range.end <= cursor)
+                    .unwrap_or(hits.len() - 1)
+            } else {
+                hits.iter()
+                    .position(|hit| hit.range.start >= cursor)
+                    .unwrap_or(0)
+            };
+            (index, hits[index].range.clone())
+        };
+        self.workspace.document_active_index = Some(index);
+        self.workspace.document_active_range = Some(range.clone());
+        self.jump_to_document_search_range(range.clone(), cx);
+        Some(range)
+    }
+
+    /// 搜索命中的 vim 区间。应用查找落点会把终点少算一字素，这里按块的
+    /// 源码映射把命中字节区间换算成显示偏移，不读落点选区。
+    pub(super) fn vim_search_match_vim_range_inner(
+        &mut self,
+        reverse: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<super::operate::VimRange> {
+        let buffer_range = self.vim_search_match_range_inner(reverse, cx)?;
+        let entities = self.vim_navigation_entities(cx);
+        let active_id = self.active_entity_id?;
+        let index = entities
+            .iter()
+            .position(|entity| entity.entity_id() == active_id)?;
+        let mapping = self.source_mapping_for_entity(active_id, cx)?;
+        if buffer_range.start < mapping.full_source_range.start
+            || buffer_range.end > mapping.full_source_range.end
+        {
+            return None;
+        }
+        let base = mapping.full_source_range.start;
+        let start = mapping
+            .source_to_content
+            .get(buffer_range.start - base)
+            .copied()?;
+        let end = mapping
+            .source_to_content
+            .get(buffer_range.end - base)
+            .copied()?;
+        if start >= end {
+            return None;
+        }
+        Some(super::operate::VimRange {
+            start: VimPosition { block_index: index, offset: start },
+            end: VimPosition { block_index: index, offset: end },
+            linewise: false,
+        })
+    }
+
+    /// gn/gN：把当前/下一处搜索命中变成字符可视选区。
+    pub(super) fn vim_select_search_match_inner(
+        &mut self,
+        reverse: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(range) = self.vim_search_match_vim_range_inner(reverse, cx) else {
+            return;
+        };
+        let entities = self.vim_navigation_entities(cx);
+        let Some(block) = entities.get(range.start.block_index) else {
+            return;
+        };
+        let text = block.read(cx).display_text().to_string();
+        let focus = prev_grapheme_start(&text, range.end.offset).unwrap_or(range.start.offset);
+        self.vim.visual_anchor = Some(range.start);
+        self.vim_enter_mode(VimMode::Visual(VisualKind::Char), cx);
+        self.vim_set_cursor(
+            &entities,
+            VimPosition { block_index: range.start.block_index, offset: focus },
+            cx,
+        );
+        self.vim_refresh_visual_selection(cx);
     }
 
     pub(super) fn vim_clear_search_highlight_inner(&mut self, cx: &mut Context<Self>) {
@@ -524,6 +626,14 @@ pub(super) fn vim_search_next(
     cx: &mut Context<Editor>,
 ) {
     editor.vim_search_next_inner(reverse, cx);
+}
+
+pub(super) fn vim_select_search_match(
+    editor: &mut Editor,
+    reverse: bool,
+    cx: &mut Context<Editor>,
+) {
+    editor.vim_select_search_match_inner(reverse, cx);
 }
 
 pub(super) fn vim_save_and_close(
