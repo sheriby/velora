@@ -169,6 +169,9 @@ pub(crate) struct VimState {
     /// 普通/可视模式下未归约的按键序列。
     pub(super) pending: Vec<VimKey>,
     pub(super) visual_anchor: Option<VimPosition>,
+    /// 可视模式的焦点（选区排他端点之前的那一格）。块光标的 `cursor_offset`
+    /// 是选区焦点，可视渲染会把它写成排他端点；两层口径分开存。
+    pub(super) visual_focus: Option<VimPosition>,
     /// 块状可视的锚点列（硬行内字素序号，口径见 visual.rs）。
     pub(super) visual_block_anchor_column: Option<usize>,
     pub(super) last_visual: Option<(VimPosition, VimPosition, VisualKind)>,
@@ -218,6 +221,7 @@ impl Default for VimState {
             mode: VimMode::Insert,
             pending: Vec::new(),
             visual_anchor: None,
+            visual_focus: None,
             visual_block_anchor_column: None,
             last_visual: None,
             registers: operate::VimRegisters::default(),
@@ -760,6 +764,19 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        // 录宏时 q 先于记录与序列机判停：q 是停止键，不属于宏内容。
+        if self.vim.recording.is_some()
+            && key == VimKey::Char('q')
+            && self.vim.pending.is_empty()
+        {
+            self.vim_execute(
+                VimCommand { count: 0, register: None, action: VimAction::StopRecording },
+                &[],
+                window,
+                cx,
+            );
+            return true;
+        }
         if self.vim.recording.is_some() && !self.vim.replaying {
             if let Some((_, keys)) = &mut self.vim.recording {
                 keys.push(key);
@@ -785,20 +802,6 @@ impl Editor {
                 }
                 MappingMatch::None => {}
             }
-        }
-
-        // 录宏时 q 先于序列机判停（录制中 q 就是停止键）。
-        if self.vim.recording.is_some()
-            && key == VimKey::Char('q')
-            && self.vim.pending.is_empty()
-        {
-            self.vim_execute(
-                VimCommand { count: 0, register: None, action: VimAction::StopRecording },
-                &[],
-                window,
-                cx,
-            );
-            return true;
         }
 
         self.vim.pending.push(key);
@@ -923,6 +926,13 @@ impl Editor {
                 | VimAction::JoinLines { .. }
                 | VimAction::EnterInsert(_)
         );
+        // 撤销分组在编辑器层同步建立：块级 PrepareUndo 是排队事件，vim 直接改
+        // 文本时事件还没到，撤销栈里就一条记录也没有。
+        let capture_undo = is_change
+            && !matches!(action, VimAction::EnterInsert(_) | VimAction::EnterReplaceMode);
+        if capture_undo {
+            self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+        }
         match action {
             VimAction::Move(motion) => {
                 let repeat = count.max(1);
@@ -1026,6 +1036,13 @@ impl Editor {
             if back_to_insert {
                 self.vim_enter_mode(VimMode::Insert, cx);
             }
+        }
+
+        // 修改操作符把插入会话并进同一组，等 Esc 收尾时再落账。
+        if capture_undo
+            && !matches!(action, VimAction::Operate(Operator::Change, _))
+        {
+            self.finalize_pending_undo_capture(cx);
         }
 
         // `.` 素材：变更命令记下入口键（插入会话的键在 esc 时补记）。
@@ -1197,16 +1214,18 @@ impl Editor {
                 VimAction::ToggleRecording(register_name)
             }
             VimKey::Char('@') => {
-                let Some(register_name) = rest.first().and_then(|key| key.as_register_name())
-                else {
-                    return ParseOutcome::NeedMore;
-                };
-                if register_name == '@' {
+                if rest.first() == Some(&VimKey::Char('@')) {
                     VimAction::ReplayLastMacro
-                } else if register_name.is_ascii_alphanumeric() {
+                } else if let Some(register_name) =
+                    rest.first().and_then(|key| key.as_register_name())
+                {
+                    if register_name.is_ascii_alphanumeric() {
                     VimAction::ReplayMacro(register_name)
+                    } else {
+                        return ParseOutcome::Invalid;
+                    }
                 } else {
-                    return ParseOutcome::Invalid;
+                    return ParseOutcome::NeedMore;
                 }
             }
             VimKey::Char('i') => VimAction::EnterInsert(InsertPlacement::AtCursor),

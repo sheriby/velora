@@ -12,7 +12,7 @@ use crate::components::Block;
 use crate::editor::Editor;
 
 use super::{
-    FindChar, ScreenCursorKind, ScrollKind, ViewportAlign,
+    FindChar, ScreenCursorKind, ScrollKind, ViewportAlign, VimMode,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -511,6 +511,11 @@ impl Editor {
         entities: &[gpui::Entity<Block>],
         cx: &App,
     ) -> Option<VimPosition> {
+        if matches!(self.vim.mode, VimMode::Visual(_))
+            && let Some(focus) = self.vim.visual_focus
+        {
+            return Some(focus);
+        }
         let active_id = self.active_entity_id?;
         let index = entities
             .iter()
@@ -529,6 +534,9 @@ impl Editor {
         let Some(entity) = entities.get(position.block_index) else {
             return;
         };
+        if matches!(self.vim.mode, VimMode::Visual(_)) {
+            self.vim.visual_focus = Some(position);
+        }
         self.clear_cross_block_selection(cx);
         if Some(entity.entity_id()) == self.active_entity_id {
             entity.update(cx, |block, cx| {

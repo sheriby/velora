@@ -194,6 +194,11 @@ impl Editor {
         let Some(range) = range else {
             return;
         };
+        // 可视模式的操作符执行完回到普通模式；先收选区，删除/修改的落点才不被
+        // 可视焦点覆盖。
+        if matches!(self.vim.mode, VimMode::Visual(_)) {
+            super::visual::vim_exit_visual(self, cx);
+        }
         match operator {
             Operator::Yank => {
                 self.vim_yank_range(&entities, &range, register, cx);
@@ -652,7 +657,9 @@ impl Editor {
             text.push_str(&display[..range.end.offset.min(display.len())]);
         }
         let content = if range.linewise {
-            RegisterContent { text: format!("{text}\n"), linewise: true }
+            // 跨块区间已含块间换行；只剩最后一行的终止换行要补。
+            let text = if text.ends_with('\n') { text } else { format!("{text}\n") };
+            RegisterContent { text, linewise: true }
         } else {
             RegisterContent { text, linewise: false }
         };
@@ -747,7 +754,9 @@ impl Editor {
             text.push_str(&last.display_text()[..range.end.offset.min(last.display_text().len())]);
         }
         let content = if range.linewise {
-            RegisterContent { text: format!("{text}\n"), linewise: true }
+            // 跨块区间已含块间换行；只剩最后一行的终止换行要补。
+            let text = if text.ends_with('\n') { text } else { format!("{text}\n") };
+            RegisterContent { text, linewise: true }
         } else {
             RegisterContent { text, linewise: false }
         };
@@ -773,7 +782,6 @@ impl Editor {
             return;
         }
         block.update(cx, |block, cx| {
-            block.prepare_undo_capture(block.text_edit_undo_kind(), cx);
             block.replace_text_in_visible_range(start..end, "", Some(0..0), false, cx);
         });
         self.mark_dirty(cx);
@@ -919,7 +927,6 @@ impl Editor {
                     }
                 })
                 .collect();
-            block.prepare_undo_capture(block.text_edit_undo_kind(), cx);
             block.replace_text_in_visible_range(start..end, &transformed, Some(0..0), false, cx);
         });
         self.mark_dirty(cx);
@@ -1117,7 +1124,10 @@ impl Editor {
             .split('\n')
             .map(|line| line.to_string())
             .collect();
-        let lines = if content.linewise && lines.last().is_some_and(|line| line.is_empty()) {
+        // 系统剪贴板不保存行级标记：文本以换行结尾即按行级处理，行尾空段是
+        // 分隔符不是内容。
+        let trailing_newline = content.text.ends_with('\n');
+        let lines = if trailing_newline && lines.last().is_some_and(|line| line.is_empty()) {
             lines[..lines.len() - 1].to_vec()
         } else {
             lines
@@ -1488,6 +1498,7 @@ impl Editor {
         }
         self.vim.insert_typed.clear();
         self.vim.insert_entry_keys.clear();
+        self.finalize_pending_undo_capture(cx);
     }
 
     pub(super) fn vim_cursor_left_on_escape(&mut self, cx: &mut Context<Self>) {

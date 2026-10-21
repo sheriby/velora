@@ -33,6 +33,7 @@ impl Editor {
                 let entities = self.vim_navigation_entities(cx);
                 if let Some(cursor) = self.vim_current_position(&entities, cx) {
                     self.vim.visual_anchor = Some(cursor);
+                    self.vim.visual_focus = Some(cursor);
                     self.vim.visual_block_anchor_column =
                         Some(self.vim_grapheme_column(&entities, cursor, cx));
                 }
@@ -45,16 +46,22 @@ impl Editor {
     /// 退出可视：收起选区，光标停在当前焦点。
     pub(super) fn vim_exit_visual_inner(&mut self, cx: &mut Context<Self>) {
         let entities = self.vim_navigation_entities(cx);
-        if let Some(cursor) = self.vim_current_position(&entities, cx) {
-            if let Some(anchor) = self.vim.visual_anchor {
-                self.vim.last_visual =
-                    Some((anchor, cursor, self.vim_visual_kind()));
-            }
+        let landed = self.vim_current_position(&entities, cx);
+        if let Some(cursor) = landed
+            && let Some(anchor) = self.vim.visual_anchor
+        {
+            self.vim.last_visual = Some((anchor, cursor, self.vim_visual_kind()));
         }
         self.vim.visual_anchor = None;
+        self.vim.visual_focus = None;
         self.vim.visual_block_anchor_column = None;
         self.clear_cross_block_selection(cx);
         self.vim_enter_mode(VimMode::Normal, cx);
+        // 收起选区后光标落在可视焦点上（块光标先前停在排他端点）。
+        let entities = self.vim_navigation_entities(cx);
+        if let Some(cursor) = landed {
+            self.vim_set_cursor(&entities, cursor, cx);
+        }
     }
 
     fn vim_visual_kind(&self) -> VisualKind {
@@ -119,10 +126,19 @@ impl Editor {
                     (focus, anchor)
                 };
                 let start_line = stream.hard_line_range(start.block_index, start.offset);
+                // 行级区间含行尾换行：末行之后还有行就落到下一行行首。
+                let end_line = stream.hard_line_range(end.block_index, end.offset);
                 let end_text = stream.text_for_line(end.block_index);
+                let (end_block, end_offset) = if end_line.end < end_text.len() {
+                    (end.block_index, end_line.end + 1)
+                } else if end.block_index + 1 < entities.len() {
+                    (end.block_index + 1, 0)
+                } else {
+                    (end.block_index, end_text.len())
+                };
                 Some(VimRange {
                     start: VimPosition { block_index: start.block_index, offset: start_line.start },
-                    end: VimPosition { block_index: end.block_index, offset: end_text.len() },
+                    end: VimPosition { block_index: end_block, offset: end_offset },
                     linewise: true,
                 })
             }
