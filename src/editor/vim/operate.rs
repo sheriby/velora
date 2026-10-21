@@ -3,14 +3,15 @@
 //!
 //! 写路径一律复用应用既有入口：块内改写走 `replace_text_in_visible_range`
 //! （带撤销捕获），跨块合并复刻 `RequestMergeFromNext` 的结构协议，整块
-//! 删除经空块退格事件走 `RequestDelete`，换行/插行走块自己的 `on_newline`。
+//! 删除直接发 `RequestDelete`（行级删除的块边界见
+//! `vim_delete_linewise_across_blocks`），换行/插行走块自己的 `on_newline`。
 //! 行级复制按显示文本拼（块边界即 '\n'），不读缓冲区映射。
 
 use std::collections::VecDeque;
 
 use gpui::{App, Context, Entity, EntityInputHandler as _, Window};
 
-use crate::components::{Block, BlockKind, BlockRecord, Newline, UndoCaptureKind};
+use crate::components::{Block, BlockEvent, BlockKind, BlockRecord, Newline, UndoCaptureKind};
 use crate::editor::Editor;
 
 use super::motion::{next_grapheme_start, prev_grapheme_start, VimDocStream, VimPosition};
@@ -1189,9 +1190,23 @@ impl Editor {
                 window,
                 cx,
             );
+            if range.linewise && merge_seam {
+                self.vim_settle_emptied_block(&entities[range.start.block_index], cx);
+            }
             return;
         }
-        // 跨块：首块裁尾、末块裁头、中间整块删除，随后两两合并。
+        if range.linewise {
+            self.vim_delete_linewise_across_blocks(
+                entities,
+                range,
+                clamp_to_previous,
+                merge_seam,
+                window,
+                cx,
+            );
+            return;
+        }
+        // 字符级跨块：首块裁尾、中间整块删除、末块裁头，随后两两合并。
         let first = entities[range.start.block_index].clone();
         let last = entities[range.end.block_index].clone();
         self.vim_delete_within_block(
@@ -1204,7 +1219,7 @@ impl Editor {
         );
         for index in range.start.block_index + 1..range.end.block_index {
             let middle = entities[index].clone();
-            self.vim_delete_whole_block(middle, window, cx);
+            self.vim_delete_whole_block(middle, cx);
         }
         let last_len = last.read(cx).display_text().len();
         if last_len > 0 || range.end.offset > 0 {
@@ -1235,6 +1250,123 @@ impl Editor {
                 VimPosition { block_index: index, offset: range.start.offset },
                 cx,
             );
+        }
+    }
+
+    /// 行级跨块删除。
+    ///
+    /// 块与块之间没有共享的行：区间终点落在末块行首时，末块一行都不该动；
+    /// 区间整个吃掉的块走块的结构删除，而不是「把后一块并进当前块」——
+    /// 并块只搬文本，后一块的块种类（标题、列表、引用）会被当前块吞掉。
+    fn vim_delete_linewise_across_blocks(
+        &mut self,
+        entities: &[Entity<Block>],
+        range: &VimRange,
+        clamp_to_previous: bool,
+        delete_mode: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let first = entities[range.start.block_index].clone();
+        let last = entities[range.end.block_index].clone();
+        let first_len = first.read(cx).display_text().len();
+        let last_len = last.read(cx).display_text().len();
+        // 区间终点在末块行首 = 末块整个不在区间里。
+        let end_touches_last = range.end.offset > 0;
+        let end_keeps_suffix = end_touches_last && range.end.offset < last_len;
+        let start_keeps_prefix = range.start.offset > 0;
+        // 块后面还有块接上：被删行带走的那个换行也在块文本里，留下尾巴会在
+        // 原文里多出一个空行。
+        let trim_join_newline = start_keeps_prefix && !end_touches_last;
+
+        if start_keeps_prefix {
+            let first_delete_start = if trim_join_newline {
+                range.start.offset - 1
+            } else {
+                range.start.offset
+            };
+            self.vim_delete_within_block(
+                first.clone(),
+                first_delete_start,
+                first_len,
+                clamp_to_previous,
+                window,
+                cx,
+            );
+        }
+        if end_touches_last {
+            self.vim_delete_within_block(
+                last.clone(),
+                0,
+                range.end.offset.min(last_len),
+                clamp_to_previous,
+                window,
+                cx,
+            );
+        }
+
+        // 首块整个在区间里：后面还有块活下来就收掉它；没有就清空留着——
+        // `c` 要在空行里接着输入，`dG` 到文末也要留一行空行接光标。
+        let nothing_after_range = end_touches_last && !end_keeps_suffix;
+        if !start_keeps_prefix {
+            if delete_mode && !nothing_after_range {
+                self.vim_delete_whole_block(first.clone(), cx);
+            } else {
+                self.vim_delete_within_block(first.clone(), 0, first_len, clamp_to_previous, window, cx);
+                if delete_mode {
+                    self.vim_settle_emptied_block(&first, cx);
+                }
+            }
+        }
+
+        let last_is_consumed = end_touches_last && !end_keeps_suffix;
+        let middle_end = if last_is_consumed {
+            range.end.block_index
+        } else {
+            range.end.block_index - 1
+        };
+        for index in range.start.block_index + 1..=middle_end {
+            self.vim_delete_whole_block(entities[index].clone(), cx);
+        }
+
+        if delete_mode && start_keeps_prefix && end_keeps_suffix {
+            // 两个端点块的余料在文档里是连续的行，按 `J` 的口径并成一块。
+            self.vim_merge_blocks(&first, &last, cx);
+        }
+
+        // 删除：区间之后还有块时光标落到下一行行首，删到文末则留在首块。
+        // 修改：插入点始终是首块（清空或裁剪后的行），不能跟着后面的块走。
+        let entities_after = self.vim_navigation_entities(cx);
+        let first_index = entities_after
+            .iter()
+            .position(|entity| entity.entity_id() == first.entity_id());
+        let last_index = entities_after
+            .iter()
+            .position(|entity| entity.entity_id() == last.entity_id());
+        let position = if delete_mode && !end_touches_last {
+            last_index.map(|index| VimPosition { block_index: index, offset: 0 })
+        } else {
+            first_index
+                .map(|index| VimPosition {
+                    block_index: index,
+                    offset: if start_keeps_prefix { range.start.offset } else { 0 },
+                })
+                .or_else(|| last_index.map(|index| VimPosition { block_index: index, offset: 0 }))
+        };
+        if let Some(position) = position {
+            self.vim_set_cursor(&entities_after, position, cx);
+        }
+    }
+
+    /// 行级删除把块清空后，非段落块要落成段落：空标题会序列化成 `### `。
+    fn vim_settle_emptied_block(&mut self, block: &Entity<Block>, cx: &mut Context<Self>) {
+        let emptied_non_paragraph = {
+            let block = block.read(cx);
+            block.display_text().is_empty() && block.kind() != BlockKind::Paragraph
+        };
+        if emptied_non_paragraph {
+            block.update(cx, |block, cx| block.convert_to_paragraph(cx));
+            self.mark_dirty(cx);
         }
     }
 
@@ -1305,25 +1437,12 @@ impl Editor {
         self.mark_dirty(cx);
     }
 
-    /// 整块删除：清空后走块自己的退格事件（空块退格 = 结构删除）。
-    fn vim_delete_whole_block(
-        &mut self,
-        block: Entity<Block>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let length = block.read(cx).visible_len();
-        if length > 0 {
-            block.update(cx, |block, cx| {
-                block.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
-                block.replace_text_in_visible_range(0..length, "", Some(0..0), false, cx);
-            });
-            self.mark_dirty(cx);
-        }
-        Self::reset_block_cursor(&block, 0, cx);
-        block.update(cx, |block, cx| {
-            block.on_delete_back(&crate::components::DeleteBack, window, cx);
-        });
+    /// 整块删除：走块的结构删除协议（子块提升、写回、撤销各归它一处）。
+    ///
+    /// 不再「清空文本再按退格」：空的非段落块（标题/引用/列表项）走那条路
+    /// 会被退格规则就地转成段落，块没被收掉，还在文档里留一个空行。
+    fn vim_delete_whole_block(&mut self, block: Entity<Block>, cx: &mut Context<Self>) {
+        self.on_block_event(block, &BlockEvent::RequestDelete, cx);
     }
 
     /// 复刻 RequestMergeFromNext 的结构协议：把 second 并入 first。

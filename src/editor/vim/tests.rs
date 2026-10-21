@@ -353,6 +353,54 @@ async fn count_dd_removes_several_blocks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn dd_on_the_last_line_keeps_the_next_block_intact(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(
+        cx,
+        "line one\nline two\nline three\n\n### heading\n\ntext a",
+    );
+    cx.simulate_keystrokes("j j d d");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "line one\nline two\n\n### heading\n\ntext a",
+        "删末行只该删那一行：标题块不能并进段落"
+    );
+    assert_eq!(cursor_block(&editor, &cx), 1, "删除后光标落到下一行（标题块）");
+}
+
+#[gpui::test]
+async fn dd_removes_the_whole_heading_block_and_keeps_the_next_kind(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "### heading\n\ntext a");
+    cx.simulate_keystrokes("d d");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "text a",
+        "删整块时后一块的块种类要跟着它自己走"
+    );
+}
+
+#[gpui::test]
+async fn linewise_delete_through_a_heading_leaves_no_empty_block(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "para\n\n### heading\n\ntext a");
+    cx.simulate_keystrokes("d j");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "text a",
+        "整块删除走结构删除，不该留下被转成段落的空块"
+    );
+}
+
+#[gpui::test]
+async fn dd_on_the_last_heading_leaves_an_empty_paragraph(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "para\n\n### heading");
+    cx.simulate_keystrokes("j d d");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "para\n\n",
+        "删空的标题要落成空段落，不能留下 `### `"
+    );
+}
+
+#[gpui::test]
 async fn cc_clears_the_line_and_enters_insert(cx: &mut TestAppContext) {
     let (editor, cx) = vim_editor(cx, "alpha");
     cx.simulate_keystrokes("c c");
