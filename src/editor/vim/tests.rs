@@ -679,3 +679,168 @@ async fn undo_and_redo_restore_text(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("ctrl-r");
     assert_eq!(document_text(&editor, &cx), "bc", "ctrl-r 应重做删除");
 }
+
+#[gpui::test]
+async fn replace_mode_overtypes_without_shifting(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abcdef");
+    cx.simulate_keystrokes("R");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Replace);
+    cx.simulate_input("XY");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "XYcdef");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}
+
+#[gpui::test]
+async fn replace_mode_backspace_restores_the_original_character(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abc");
+    cx.simulate_keystrokes("R");
+    cx.simulate_input("X");
+    assert_eq!(document_text(&editor, &cx), "Xbc");
+    cx.simulate_keystrokes("backspace");
+    assert_eq!(document_text(&editor, &cx), "abc", "退格还原原字符");
+    cx.simulate_keystrokes("escape");
+}
+
+#[gpui::test]
+async fn replace_mode_stops_at_the_end_of_the_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "ab");
+    cx.simulate_keystrokes("R");
+    cx.simulate_input("XYZ");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "XY", "替换不越过行尾");
+}
+
+#[gpui::test]
+async fn search_finds_and_n_repeats_forward(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two three two");
+    cx.simulate_keystrokes("/");
+    cx.simulate_input("two");
+    cx.simulate_keystrokes("enter");
+    let first = editor.read_with(&*cx, |editor, cx| {
+        editor.capture_source_selection_snapshot(cx).range.start
+    });
+    assert_eq!(first, 4, "首个命中应落在第一个 two");
+    cx.simulate_keystrokes("n");
+    let second = editor.read_with(&*cx, |editor, cx| {
+        editor.capture_source_selection_snapshot(cx).range.start
+    });
+    assert_eq!(second, 14, "n 应跳到下一个 two");
+}
+
+#[gpui::test]
+async fn capital_n_repeats_search_backward(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two three two");
+    cx.simulate_keystrokes("/");
+    cx.simulate_input("two");
+    cx.simulate_keystrokes("enter n N");
+    let position = editor.read_with(&*cx, |editor, cx| {
+        editor.capture_source_selection_snapshot(cx).range.start
+    });
+    assert_eq!(position, 4, "N 应反向回到第一个 two");
+}
+
+#[gpui::test]
+async fn star_searches_the_word_under_the_cursor(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two three two");
+    cx.simulate_keystrokes("w *");
+    let position = editor.read_with(&*cx, |editor, cx| {
+        editor.capture_source_selection_snapshot(cx).range.start
+    });
+    assert_eq!(position, 14, "* 应搜索光标下的词并跳到下一个命中");
+}
+
+#[gpui::test]
+async fn substitute_replaces_on_the_current_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two three two");
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("s/two/TWO/");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    assert_eq!(document_text(&editor, &cx), "one TWO three two");
+}
+
+#[gpui::test]
+async fn percent_substitute_replaces_every_match(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two three two");
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("%s/two/TWO/g");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    assert_eq!(document_text(&editor, &cx), "one TWO three TWO");
+}
+
+#[gpui::test]
+async fn nohl_clears_the_search_highlight_flag(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two three two");
+    cx.simulate_keystrokes("/");
+    cx.simulate_input("two");
+    cx.simulate_keystrokes("enter");
+    assert!(editor.read_with(&*cx, |editor, _| editor.vim.hlsearch));
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("noh");
+    cx.simulate_keystrokes("enter");
+    assert!(!editor.read_with(&*cx, |editor, _| editor.vim.hlsearch));
+}
+
+#[gpui::test]
+async fn normal_mode_mapping_can_enter_visual(cx: &mut TestAppContext) {
+    let preferences = VimPreferences {
+        enable: true,
+        keymaps: vec![VimKeymapEntry {
+            mode: VimKeymapMode::Normal,
+            keys: "gh".into(),
+            action: VimKeymapAction::Visual,
+        }],
+        ..Default::default()
+    };
+    let (editor, cx) = vim_editor_with(cx, "alpha", preferences);
+    cx.simulate_keystrokes("g h");
+    assert!(matches!(
+        current_mode(&editor, &cx),
+        VimMode::Visual(VisualKind::Char)
+    ));
+    assert_eq!(document_text(&editor, &cx), "alpha", "映射键不能落进正文");
+}
+
+#[gpui::test]
+async fn visual_mode_mapping_can_escape(cx: &mut TestAppContext) {
+    let preferences = VimPreferences {
+        enable: true,
+        keymaps: vec![VimKeymapEntry {
+            mode: VimKeymapMode::Visual,
+            keys: "Q".into(),
+            action: VimKeymapAction::Esc,
+        }],
+        ..Default::default()
+    };
+    let (editor, cx) = vim_editor_with(cx, "alpha", preferences);
+    cx.simulate_keystrokes("v");
+    assert!(matches!(current_mode(&editor, &cx), VimMode::Visual(_)));
+    cx.simulate_keystrokes("Q");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}
+
+#[gpui::test]
+async fn insert_mapping_times_out_and_types_the_pending_key(cx: &mut TestAppContext) {
+    let preferences = VimPreferences {
+        enable: true,
+        keymaps: vec![VimKeymapEntry {
+            mode: VimKeymapMode::Insert,
+            keys: "jk".into(),
+            action: VimKeymapAction::Esc,
+        }],
+        ..Default::default()
+    };
+    let (editor, cx) = vim_editor_with(cx, "alpha", preferences);
+    cx.simulate_keystrokes("i");
+    cx.simulate_input("j");
+    cx.executor().advance_clock(std::time::Duration::from_millis(400));
+    cx.run_until_parked();
+    assert_eq!(current_mode(&editor, &cx), VimMode::Insert);
+    assert_eq!(
+        document_text(&editor, &cx),
+        "jalpha",
+        "超时后缓冲键应作为普通文本落下"
+    );
+}

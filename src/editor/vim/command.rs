@@ -171,10 +171,14 @@ impl Editor {
             })
             .collect();
         self.vim_execute_search(&query, reverse, cx);
+        // `/` 的首次命中就是第一处；`*`/`#` 要从光标所在词之后算起。命中表导航
+        // 以活动区间为准（首次为空 → 第一处），再前进一格即跳过当前词。
+        self.find_next_document_match(reverse, cx);
         let _ = window;
     }
 
     pub(super) fn vim_clear_search_highlight_inner(&mut self, cx: &mut Context<Self>) {
+        self.vim.hlsearch = false;
         self.workspace.document_active_range = None;
         self.workspace.document_active_index = None;
         self.sync_document_search_highlights(cx);
@@ -324,7 +328,15 @@ impl Editor {
                     .min(self.buffer.byte_len());
                 start..end
             }
-            None => snapshot.range,
+            None => {
+                // 无范围 = 当前行（不含行尾换行），不是光标处那个空选区。
+                let offset = snapshot.range.start.min(self.buffer.byte_len());
+                let line = self.buffer.line_of(offset);
+                let line_range = self.buffer.line_range(line);
+                let line_text = self.buffer.slice(line_range.clone());
+                let length = line_text.trim_end_matches(['\n', '\r']).len();
+                line_range.start..line_range.start + length
+            }
         };
         if buffer_range.is_empty() && range.is_none() {
             return;
