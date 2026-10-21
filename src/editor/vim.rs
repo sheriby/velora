@@ -1542,7 +1542,7 @@ impl Editor {
                     VimAction::ToggleVisual(VisualKind::Line)
                 }
             }
-            VimKey::Ctrl('q') => {
+            VimKey::Ctrl('q') | VimKey::Ctrl('v') => {
                 if kind == VisualKind::Block {
                     VimAction::ExitVisual
                 } else {

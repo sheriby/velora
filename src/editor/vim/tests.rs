@@ -1143,3 +1143,22 @@ async fn count_delete_stops_at_the_end_of_the_line(cx: &mut TestAppContext) {
         "行尾的 3x 只删当前字素，不越过换行"
     );
 }
+
+#[gpui::test]
+async fn ctrl_v_switches_visual_kinds_and_exits(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes("v");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Visual(VisualKind::Char));
+    cx.simulate_keystrokes("ctrl-v");
+    assert_eq!(
+        current_mode(&editor, &cx),
+        VimMode::Visual(VisualKind::Block),
+        "字符可视里 ctrl-v 应切到块状可视"
+    );
+    cx.simulate_keystrokes("ctrl-v");
+    assert_eq!(
+        current_mode(&editor, &cx),
+        VimMode::Normal,
+        "块状可视里再按 ctrl-v 应退出可视"
+    );
+}
