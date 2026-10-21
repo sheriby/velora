@@ -1142,6 +1142,18 @@ impl Editor {
         register: char,
         cx: &mut Context<Self>,
     ) {
+        if range.linewise
+            && let Some(source) = self.vim_linewise_source_text(entities, range, cx)
+        {
+            let content = RegisterContent {
+                text: if source.ends_with('\n') { source } else { format!("{source}\n") },
+                linewise: true,
+            };
+            let use_system = crate::config::EditorSettings::vim(cx).use_system_clipboard;
+            self.vim.registers.write(register, content, true, cx, use_system);
+            self.vim_set_cursor(entities, range.start, cx);
+            return;
+        }
         let mut text = String::new();
         if range.start.block_index == range.end.block_index {
             let block = entities[range.start.block_index].read(cx);
@@ -1376,6 +1388,48 @@ impl Editor {
         }
     }
 
+    /// 行级复制取的是文件里的那几个字节：块种类（`#` 标题、`-` 列表）与行内记号
+    /// 只存在于源码，按可见文本复制再粘贴就把它们洗掉。
+    ///
+    /// 区间盖住整块（一块或连续几块）就按块的源码区间取；软换行段落里的「一行」
+    /// 按 markdown 偏移切那一段源码。起点不在硬行行首时不是行级区间，交回可见
+    /// 文本那条路。
+    fn vim_linewise_source_text(
+        &self,
+        entities: &[Entity<Block>],
+        range: &VimRange,
+        cx: &App,
+    ) -> Option<String> {
+        let end_block = entities.get(range.end.block_index)?.read(cx);
+        let last_index = if range.end.offset == 0 && range.end.block_index > range.start.block_index
+        {
+            range.end.block_index - 1
+        } else if range.end.offset >= end_block.visible_len() {
+            range.end.block_index
+        } else {
+            if range.start.block_index != range.end.block_index || range.start.offset != 0 {
+                return None;
+            }
+            let markdown_range =
+                end_block.current_range_to_markdown_range(range.start.offset..range.end.offset);
+            let markdown = end_block.record.title.serialize_markdown();
+            let range = crate::components::markdown::inline::clamp_range_to_char_boundaries(
+                &markdown,
+                markdown_range,
+            );
+            return (!range.is_empty()).then(|| markdown[range].to_string());
+        };
+        if range.start.offset != 0 || range.start.block_index > last_index {
+            return None;
+        }
+        let mut chunks = Vec::new();
+        for entity in &entities[range.start.block_index..=last_index] {
+            let span = self.block_source_range(entity.entity_id(), cx)?;
+            chunks.push(self.buffer.slice(span).to_string());
+        }
+        Some(chunks.join("\n\n"))
+    }
+
     fn vim_yank_quiet(
         &mut self,
         entities: &[Entity<Block>],
@@ -1383,6 +1437,17 @@ impl Editor {
         register: char,
         cx: &mut Context<Self>,
     ) {
+        if range.linewise
+            && let Some(source) = self.vim_linewise_source_text(entities, range, cx)
+        {
+            let content = RegisterContent {
+                text: if source.ends_with('\n') { source } else { format!("{source}\n") },
+                linewise: true,
+            };
+            let use_system = crate::config::EditorSettings::vim(cx).use_system_clipboard;
+            self.vim.registers.write(register, content, false, cx, use_system);
+            return;
+        }
         let mut text = String::new();
         if range.start.block_index == range.end.block_index {
             let block = entities[range.start.block_index].read(cx);
@@ -2221,10 +2286,13 @@ impl Editor {
         };
         let insert_at = location.index + usize::from(after);
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
-        let blocks: Vec<Entity<Block>> = lines
-            .iter()
-            .map(|line| Self::new_block(cx, BlockRecord::paragraph(line.clone())))
-            .collect();
+        // 寄存器里那份文本按 Markdown 重新认块：软换行的连续行仍是一段，
+        // 标题/列表的记号也不会被洗成段落。逐行开段落会把一次 `p` 变成一串
+        // 新段落，中间还多出空行。
+        let mut blocks = Self::build_blocks_from_lines(cx, &lines);
+        if blocks.is_empty() {
+            blocks.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
+        }
         let first = blocks.first().cloned();
         self.document.insert_blocks_at(location.parent, insert_at, blocks, cx);
         if let Some(first) = first {
@@ -2232,6 +2300,7 @@ impl Editor {
             self.focus_block(first.entity_id());
         }
         self.sync_vim_block_carets(cx);
+        self.rebuild_table_runtimes(cx);
         if self.write_back_structural_change(&active, None, cx) {
             self.mark_dirty_written_back(cx);
         } else {

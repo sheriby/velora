@@ -2329,3 +2329,63 @@ async fn normal_mode_dd_clears_the_focused_table_cell_and_undoes(cx: &mut TestAp
     cx.simulate_keystrokes("u");
     assert_eq!(document_text(&editor, &cx), source, "u 要撤销格内删除");
 }
+
+#[gpui::test]
+async fn linewise_yank_paste_keeps_block_kinds(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "### 标题\n\n正文");
+    cx.simulate_keystrokes("y y p");
+    let (kinds, texts) = editor.read_with(cx, |editor, cx| {
+        let blocks = editor.document.visible_blocks();
+        (
+            blocks
+                .iter()
+                .map(|entry| entry.entity.read(cx).kind())
+                .collect::<Vec<_>>(),
+            blocks
+                .iter()
+                .map(|entry| entry.entity.read(cx).display_text().to_string())
+                .collect::<Vec<String>>(),
+        )
+    });
+    assert_eq!(
+        kinds,
+        vec![
+            crate::components::BlockKind::Heading { level: 3 },
+            crate::components::BlockKind::Heading { level: 3 },
+            crate::components::BlockKind::Paragraph,
+        ],
+        "行级复制粘贴要保住标题级别：{texts:?}"
+    );
+}
+
+#[gpui::test]
+async fn linewise_yank_paste_keeps_inline_markers_of_one_hard_line(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx) = vim_editor(cx, "第一行 `code`\n第二行\n\ntail");
+    cx.simulate_keystrokes("y y p");
+    let texts = visible_texts(&editor, &cx);
+    assert_eq!(texts.len(), 3, "yy 只复制光标所在那一硬行：{texts:?}");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "第一行 `code`\n第二行\n\n第一行 `code`\n\ntail",
+        "行级复制要带行内记号，粘贴出来的仍是一段"
+    );
+}
+
+#[gpui::test]
+async fn visual_line_yank_paste_duplicates_a_soft_wrapped_paragraph(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "第一行 `code`\n第二行\n\ntail");
+    cx.simulate_keystrokes("V j y p");
+    let texts = visible_texts(&editor, &cx);
+    assert_eq!(
+        texts.len(),
+        3,
+        "选中整段的软换行后，粘贴出来仍该是一块：{texts:?}"
+    );
+    assert_eq!(
+        document_text(&editor, &cx),
+        "第一行 `code`\n第二行\n\n第一行 `code`\n第二行\n\ntail",
+        "整段行级复制要保住软换行与行内记号"
+    );
+}
