@@ -2,8 +2,8 @@
         AppPreferences, DeletePolicy, EditorSettings, ExportThemePreference,
         ExternalChangePolicy, FontPreferences, ImagePasteBehavior, PreferencesNav,
         SidebarOpenPreference, SidebarPanelPreference, StartupOpenPreference,
-        StatusBarPreferences, TreeSortPreference, VimPreferences, WindowOpenPosition,
-        WritingWidthPreference,
+        StatusBarPreferences, TreeSortPreference, VimKeymapAction, VimKeymapEntry,
+        VimKeymapMode, VimPreferences, WindowOpenPosition, WritingWidthPreference,
         load_or_create_app_preferences_with_dirs_and_locales, open_preferences_window_with_size,
         open_preferences_window_with_state,
         read_app_preferences_with_dirs, save_app_preferences_with_dirs,
@@ -2918,3 +2918,105 @@ fn large_ui_navigation_can_scroll_to_the_last_page(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+    #[test]
+    fn vim_section_parses_keymaps_and_clamps_timeout() {
+        let value: toml::Value = toml::from_str(
+            r#"
+                [vim]
+                enable = true
+                timeout_ms = 10
+                use_system_clipboard = false
+
+                [[vim.keymap]]
+                mode = "insert"
+                keys = "jj"
+                action = "esc"
+
+                [[vim.keymap]]
+                mode = "normal"
+                keys = "gh"
+                action = "visual_line"
+
+                [[vim.keymap]]
+                mode = "bogus"
+                keys = "x"
+                action = "esc"
+
+                [[vim.keymap]]
+                mode = "insert"
+                keys = "j!"
+                action = "esc"
+            "#,
+        )
+        .unwrap();
+        let (preferences, _) = super::load_preferences_from_toml_value(&value, "zh-CN");
+        assert!(preferences.vim.enable);
+        assert_eq!(preferences.vim.timeout_ms, 300, "越界超时回落到默认 300ms");
+        assert!(!preferences.vim.use_system_clipboard);
+        assert_eq!(
+            preferences.vim.keymaps,
+            vec![
+                VimKeymapEntry {
+                    mode: VimKeymapMode::Insert,
+                    keys: "jj".into(),
+                    action: VimKeymapAction::Esc,
+                },
+                VimKeymapEntry {
+                    mode: VimKeymapMode::Normal,
+                    keys: "gh".into(),
+                    action: VimKeymapAction::VisualLine,
+                },
+            ],
+            "未知模式与非字母数字序列应被丢弃"
+        );
+    }
+
+    #[test]
+    fn vim_keymaps_round_trip_through_config_file() {
+        let root = std::env::temp_dir().join(format!(
+            "velora-preferences-vim-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create config root");
+        let dirs = VeloraConfigDirs::from_root(&root);
+        let vim = VimPreferences {
+            enable: true,
+            timeout_ms: 250,
+            use_system_clipboard: false,
+            keymaps: vec![VimKeymapEntry {
+                mode: VimKeymapMode::Insert,
+                keys: "jj".into(),
+                action: VimKeymapAction::Esc,
+            }],
+        };
+        let preferences = AppPreferences {
+            vim: vim.clone(),
+            ..AppPreferences::default()
+        };
+        save_app_preferences_with_dirs(&preferences, &dirs).expect("save preferences");
+        let loaded = read_app_preferences_with_dirs(&dirs).expect("read preferences");
+        assert_eq!(loaded.vim, vim);
+
+        let text = std::fs::read_to_string(dirs.app_config_file()).expect("config.toml exists");
+        let value: toml::Value = toml::from_str(&text).expect("config parses");
+        let keymap = value
+            .get("vim")
+            .and_then(|vim| vim.get("keymap"))
+            .and_then(toml::Value::as_array)
+            .expect("keymap array written");
+        assert_eq!(keymap.len(), 1);
+        assert_eq!(
+            keymap[0].get("keys").and_then(toml::Value::as_str),
+            Some("jj")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preferences_without_vim_section_keep_vim_disabled() {
+        let value: toml::Value = toml::from_str("[editor]\nsmart_punctuation = true").unwrap();
+        let (preferences, _) = super::load_preferences_from_toml_value(&value, "zh-CN");
+        assert_eq!(preferences.vim, VimPreferences::default());
+        assert!(!preferences.vim.enable);
+    }
