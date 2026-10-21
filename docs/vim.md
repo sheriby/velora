@@ -26,6 +26,11 @@ use_system_clipboard = true
 mode = "insert"
 keys = "jj"
 action = "esc"
+
+[[vim.keymap]]
+mode = "normal"
+keys = "<leader>s"
+action = "command:save"
 ```
 
 | 键 | 默认值 | 说明 |
@@ -40,11 +45,11 @@ action = "esc"
 | 字段 | 取值 | 说明 |
 | --- | --- | --- |
 | `mode` | `normal` / `insert` / `visual` | 映射生效的模式 |
-| `keys` | 1–4 个 ASCII 字母或数字 | 依次按下的键序列 |
-| `action` | `esc` / `insert` / `append` / `visual` / `visual_line` | 触发后执行的动作 |
+| `keys` | 1–8 个可打印 ASCII 字符 | 依次按下的键序列；`<space>` / `<leader>` 都表示空格（leader 默认是空格） |
+| `action` | 内置动作或 `command:<id>` | 内置动作：`esc` / `insert` / `append` / `visual` / `visual_line`；`command:<id>` 执行命令注册表里的应用命令，id 与命令面板一致，例如 `command:save`、`command:find_in_document`、`command:toggle_sidebar` |
 
-非法条目（键序列超长、含非字母数字字符、动作未知）在读取配置时忽略并打印一行
-提示，其余条目照常生效。
+非法条目（序列为空、超过 8 个键、含不可打印字符、模式或动作未知、命令 id
+不存在）在读取配置时忽略并打印一行提示，其余条目照常生效。
 
 ## 支持的操作
 

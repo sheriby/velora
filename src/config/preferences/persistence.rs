@@ -1,5 +1,34 @@
 use super::*;
 
+const MAX_VIM_KEYMAP_KEYS: usize = 8;
+
+/// vim 映射序列归一：`<space>` / `<leader>` 都归一成空格（默认 leader 为空格），
+/// 其余字符必须是可打印 ASCII。
+fn normalize_vim_keys(keys: &str) -> Option<String> {
+    let mut normalized = String::new();
+    let mut rest = keys;
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix("<space>") {
+            normalized.push(' ');
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("<leader>") {
+            normalized.push(' ');
+            rest = after;
+        } else {
+            let ch = rest.chars().next()?;
+            if ch != ' ' && !ch.is_ascii_graphic() {
+                return None;
+            }
+            normalized.push(ch);
+            rest = &rest[ch.len_utf8()..];
+        }
+        if normalized.chars().count() > MAX_VIM_KEYMAP_KEYS {
+            return None;
+        }
+    }
+    (!normalized.is_empty()).then_some(normalized)
+}
+
 #[derive(Serialize)]
 pub(crate) struct PreferencesFile {
     file_history: HistoryPolicy,
@@ -49,14 +78,14 @@ impl From<&VimPreferences> for VimPreferencesFile {
                     }
                     .into(),
                     keys: entry.keys.clone(),
-                    action: match entry.action {
-                        VimKeymapAction::Esc => "esc",
-                        VimKeymapAction::Insert => "insert",
-                        VimKeymapAction::Append => "append",
-                        VimKeymapAction::Visual => "visual",
-                        VimKeymapAction::VisualLine => "visual_line",
-                    }
-                    .into(),
+                    action: match &entry.action {
+                        VimKeymapAction::Esc => "esc".into(),
+                        VimKeymapAction::Insert => "insert".into(),
+                        VimKeymapAction::Append => "append".into(),
+                        VimKeymapAction::Visual => "visual".into(),
+                        VimKeymapAction::VisualLine => "visual_line".into(),
+                        VimKeymapAction::Command(id) => format!("command:{id}"),
+                    },
                 })
                 .collect(),
         }
@@ -597,17 +626,24 @@ pub(crate) fn app_preferences_from_toml_value(
                             .get("action")
                             .and_then(toml::Value::as_str)
                             .and_then(VimKeymapAction::from_config_str)?;
-                        // 序列只收纯 ASCII 字母数字：vim 的拦截层按「字符键」匹配，
-                        // 控制字符与标点在解析期就挡掉，运行期不用再防。
-                        if keys.is_empty() || keys.len() > 4 || !keys.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+                        if let VimKeymapAction::Command(id) = &action
+                            && crate::commands::command_by_id(id).is_none()
+                        {
                             eprintln!(
-                                "config.toml 里 vim 键映射 {keys:?} 不是 1..=4 个 ASCII 字母数字，已忽略"
+                                "config.toml 里 vim 键映射引用了未知命令 {id:?}，已忽略"
                             );
                             return None;
                         }
+                        // 序列为 1..=8 个可打印 ASCII；<space>/<leader> 归一成空格。
+                        let Some(keys) = normalize_vim_keys(keys) else {
+                            eprintln!(
+                                "config.toml 里 vim 键映射 {keys:?} 不是 1..=8 个可打印 ASCII 字符，已忽略"
+                            );
+                            return None;
+                        };
                         Some(VimKeymapEntry {
                             mode,
-                            keys: keys.to_string(),
+                            keys,
                             action,
                         })
                     })

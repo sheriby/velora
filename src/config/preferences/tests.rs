@@ -2945,8 +2945,18 @@ fn large_ui_navigation_can_scroll_to_the_last_page(cx: &mut TestAppContext) {
 
                 [[vim.keymap]]
                 mode = "insert"
-                keys = "j!"
+                keys = "j\t"
                 action = "esc"
+
+                [[vim.keymap]]
+                mode = "normal"
+                keys = "<leader>s"
+                action = "command:save"
+
+                [[vim.keymap]]
+                mode = "normal"
+                keys = "<leader>z"
+                action = "command:no_such_command"
             "#,
         )
         .unwrap();
@@ -2967,8 +2977,13 @@ fn large_ui_navigation_can_scroll_to_the_last_page(cx: &mut TestAppContext) {
                     keys: "gh".into(),
                     action: VimKeymapAction::VisualLine,
                 },
+                VimKeymapEntry {
+                    mode: VimKeymapMode::Normal,
+                    keys: " s".into(),
+                    action: VimKeymapAction::Command("save".into()),
+                },
             ],
-            "未知模式与非字母数字序列应被丢弃"
+            "未知模式、控制字符与未知命令应被丢弃"
         );
     }
 
@@ -2984,11 +2999,18 @@ fn large_ui_navigation_can_scroll_to_the_last_page(cx: &mut TestAppContext) {
             enable: true,
             timeout_ms: 250,
             use_system_clipboard: false,
-            keymaps: vec![VimKeymapEntry {
-                mode: VimKeymapMode::Insert,
-                keys: "jj".into(),
-                action: VimKeymapAction::Esc,
-            }],
+            keymaps: vec![
+                VimKeymapEntry {
+                    mode: VimKeymapMode::Insert,
+                    keys: "jj".into(),
+                    action: VimKeymapAction::Esc,
+                },
+                VimKeymapEntry {
+                    mode: VimKeymapMode::Normal,
+                    keys: " s".into(),
+                    action: VimKeymapAction::Command("save".into()),
+                },
+            ],
         };
         let preferences = AppPreferences {
             vim: vim.clone(),
@@ -3005,10 +3027,18 @@ fn large_ui_navigation_can_scroll_to_the_last_page(cx: &mut TestAppContext) {
             .and_then(|vim| vim.get("keymap"))
             .and_then(toml::Value::as_array)
             .expect("keymap array written");
-        assert_eq!(keymap.len(), 1);
+        assert_eq!(keymap.len(), 2);
         assert_eq!(
             keymap[0].get("keys").and_then(toml::Value::as_str),
             Some("jj")
+        );
+        assert_eq!(
+            keymap[1].get("keys").and_then(toml::Value::as_str),
+            Some(" s")
+        );
+        assert_eq!(
+            keymap[1].get("action").and_then(toml::Value::as_str),
+            Some("command:save")
         );
         let _ = std::fs::remove_dir_all(root);
     }

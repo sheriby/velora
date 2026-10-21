@@ -465,14 +465,16 @@ impl VimKeymapMode {
     }
 }
 
-/// vim 键映射可触发的内置动作。词汇表只有这一处，配置解析与执行侧都对着它。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// vim 键映射可触发的动作。内置动作之外，`command:<id>` 可执行命令注册表里
+/// 的应用命令（id 与命令面板一致）。
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum VimKeymapAction {
     Esc,
     Insert,
     Append,
     Visual,
     VisualLine,
+    Command(String),
 }
 
 impl VimKeymapAction {
@@ -483,13 +485,17 @@ impl VimKeymapAction {
             "append" => Some(Self::Append),
             "visual" => Some(Self::Visual),
             "visual_line" => Some(Self::VisualLine),
-            _ => None,
+            _ => value
+                .strip_prefix("command:")
+                .filter(|id| !id.is_empty())
+                .map(|id| Self::Command(id.to_string())),
         }
     }
 }
 
-/// `[[vim.keymap]]` 一条：在 `mode` 模式下依次敲下 `keys`（纯字母数字，如
-/// `jj`）触发 `action`。多键序列在首键敲下后按 `timeout_ms` 等待后续键。
+/// `[[vim.keymap]]` 一条：在 `mode` 模式下依次敲下 `keys` 触发 `action`。
+/// 序列为 1–8 个可打印 ASCII 字符，支持 `<space>` / `<leader>`（均为空格）；
+/// 多键序列在首键敲下后按 `timeout_ms` 等待后续键。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VimKeymapEntry {
     pub(crate) mode: VimKeymapMode,

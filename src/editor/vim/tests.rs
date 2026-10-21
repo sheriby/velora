@@ -1656,6 +1656,28 @@ async fn gn_without_a_previous_search_is_a_noop(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn command_mapping_runs_the_registered_command(cx: &mut TestAppContext) {
+    let preferences = VimPreferences {
+        enable: true,
+        keymaps: vec![VimKeymapEntry {
+            mode: VimKeymapMode::Normal,
+            keys: " d".into(),
+            action: VimKeymapAction::Command("toggle_vim_mode".into()),
+        }],
+        ..Default::default()
+    };
+    let (editor, cx) = vim_editor_with(cx, "alpha", preferences);
+    assert!(editor.read_with(&*cx, |editor, _| editor.vim_enabled));
+    cx.simulate_keystrokes("space d");
+    redraw(cx);
+    cx.run_until_parked();
+    assert!(
+        !editor.read_with(&*cx, |editor, _| editor.vim_enabled),
+        "映射应执行命令注册表里的 toggle_vim_mode"
+    );
+}
+
+#[gpui::test]
 async fn toggling_vim_at_runtime_switches_modes_and_passthrough(cx: &mut TestAppContext) {
     let (editor, cx) = vim_editor(cx, "alpha");
     assert_eq!(current_mode(&editor, &cx), VimMode::Normal);

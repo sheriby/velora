@@ -924,8 +924,8 @@ impl Editor {
         cx: &App,
     ) -> MappingMatch {
         let preferences = crate::config::EditorSettings::vim(cx);
-        let mut best: Option<(usize, VimKeymapAction)> = None;
-        for entry in &preferences.keymaps {
+        let mut best: Option<(usize, usize)> = None;
+        for (index, entry) in preferences.keymaps.iter().enumerate() {
             if entry.mode != mode {
                 continue;
             }
@@ -936,12 +936,14 @@ impl Editor {
             if mapped[..sequence.len()] == sequence[..] {
                 match best {
                     Some((length, _)) if length >= mapped.len() => {}
-                    _ => best = Some((mapped.len(), entry.action)),
+                    _ => best = Some((mapped.len(), index)),
                 }
             }
         }
         match best {
-            Some((length, action)) if length == sequence.len() => MappingMatch::Fire(action),
+            Some((length, index)) if length == sequence.len() => {
+                MappingMatch::Fire(preferences.keymaps[index].action.clone())
+            }
             Some(_) => MappingMatch::Pending,
             None => MappingMatch::None,
         }
@@ -959,6 +961,10 @@ impl Editor {
             VimKeymapAction::Append => VimAction::EnterInsert(InsertPlacement::AfterCursor),
             VimKeymapAction::Visual => VimAction::ToggleVisual(VisualKind::Char),
             VimKeymapAction::VisualLine => VimAction::ToggleVisual(VisualKind::Line),
+            VimKeymapAction::Command(id) => {
+                self.vim_execute_app_command(&id, window, cx);
+                return;
+            }
         };
         self.vim_execute(
             VimCommand { count: 0, register: None, action: vim_action },
@@ -966,6 +972,35 @@ impl Editor {
             window,
             cx,
         );
+    }
+
+    /// 映射到命令注册表的应用命令。派发会更新同一个编辑器实体，必须延后到
+    /// 当前按键处理结束之后，避免重入 update。
+    fn vim_execute_app_command(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(command) = crate::commands::command_by_id(id) else {
+            return;
+        };
+        let id = id.to_string();
+        let action = command.boxed_action();
+        let target = cx.entity().downgrade();
+        let window_handle = window.window_handle();
+        cx.defer(move |cx| {
+            if let Err(error) = window_handle.update(cx, |_view, window, cx| {
+                crate::app_menu::dispatch_menu_action_for_editor(
+                    action.as_ref(),
+                    &target,
+                    window,
+                    cx,
+                );
+            }) {
+                eprintln!("vim 映射命令 {id} 派发失败：{error}");
+            }
+        });
     }
 
     // ---- 执行器 ----

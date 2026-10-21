@@ -251,6 +251,10 @@ pub(crate) fn commands() -> &'static [CommandSpec] {
     COMMANDS
 }
 
+pub(crate) fn command_by_id(id: &str) -> Option<&'static CommandSpec> {
+    COMMANDS.iter().find(|command| command.id == id)
+}
+
 /// 某个菜单下的命令。
 pub(crate) fn commands_for(menu: CommandMenu) -> impl Iterator<Item = &'static CommandSpec> {
     commands().iter().filter(move |spec| spec.menu == menu)
