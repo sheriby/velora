@@ -138,3 +138,5 @@ action = "command:save"
 
 `:w`、`:q`、`:q!`、`:wq`、`:x`、`:N`（跳到第 N 行）、`:noh`，以及替换命令
 `:[range]s/pattern/replacement/[g]`，范围支持 `%`、行号、`.`、`$` 与 `N,M`。
+冒号行也接受命令注册表里的命令 id（与命令面板一致），例如 `:save`、
+`:find_in_document`、`:toggle_sidebar`。

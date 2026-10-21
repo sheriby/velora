@@ -356,6 +356,10 @@ impl Editor {
             "q" | "quit" => self.vim_close_current_tab(false, window, cx),
             "q!" | "quit!" => self.vim_close_current_tab(true, window, cx),
             "nohl" | "noh" | "nohlsearch" => self.vim_clear_search_highlight_inner(cx),
+            // 冒号行也接受命令注册表里的 id，与命令面板共享同一份命令。
+            body if crate::commands::command_by_id(body).is_some() => {
+                self.vim_execute_app_command(body, window, cx);
+            }
             body if body.starts_with('s') => {
                 self.vim_execute_substitute(range, &body[1..], window, cx);
             }

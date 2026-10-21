@@ -1656,6 +1656,20 @@ async fn gn_without_a_previous_search_is_a_noop(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn ex_command_runs_a_registered_command(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("toggle_vim_mode");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    cx.run_until_parked();
+    assert!(
+        !editor.read_with(&*cx, |editor, _| editor.vim_enabled),
+        "冒号行应执行命令注册表里的 toggle_vim_mode"
+    );
+}
+
+#[gpui::test]
 async fn command_mapping_runs_the_registered_command(cx: &mut TestAppContext) {
     let preferences = VimPreferences {
         enable: true,

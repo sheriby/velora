@@ -976,13 +976,12 @@ impl Editor {
 
     /// 映射到命令注册表的应用命令。派发会更新同一个编辑器实体，必须延后到
     /// 当前按键处理结束之后，避免重入 update。
-    fn vim_execute_app_command(
+    pub(super) fn vim_execute_app_command(
         &mut self,
         id: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let Some(command) = crate::commands::command_by_id(id) else {
+    ) {        let Some(command) = crate::commands::command_by_id(id) else {
             return;
         };
         let id = id.to_string();
