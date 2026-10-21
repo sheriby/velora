@@ -218,6 +218,8 @@ pub struct I18nStrings {
     pub preferences_system_font: String,
     /// Image preferences navigation label.
     pub preferences_nav_image: String,
+    /// AI preferences navigation label.
+    pub preferences_nav_ai: String,
     /// Shortcut preferences navigation label.
     pub preferences_nav_shortcuts: String,
     /// Startup option field label.
@@ -500,6 +502,8 @@ pub struct I18nStrings {
     pub preferences_delete_policy_permanent: String,
     pub preferences_smart_punctuation: String,
     pub preferences_hide_markdown_markers: String,
+    /// General page: show the floating toolbar on selection.
+    pub preferences_show_selection_toolbar: String,
     pub status_bar_long_block_source: String,
     /// Document context menu: copy the selection as plain visible text.
     pub context_menu_copy_as_plain_text: String,

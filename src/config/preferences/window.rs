@@ -61,6 +61,7 @@ pub(crate) struct PreferencesWindow {
     pub(super) window_open_position: WindowOpenPosition,
     pub(super) smart_punctuation: bool,
     pub(super) hide_markdown_markers: bool,
+    pub(super) show_selection_toolbar: bool,
     pub(super) vim_enabled: bool,
     pub(super) zoom_percent: i64,
     pub(super) default_window_width: i64,
@@ -77,6 +78,7 @@ pub(crate) struct PreferencesWindow {
     pub(super) saved_window_open_position: WindowOpenPosition,
     pub(super) saved_smart_punctuation: bool,
     saved_hide_markdown_markers: bool,
+    saved_show_selection_toolbar: bool,
     pub(super) saved_vim_enabled: bool,
     pub(super) saved_zoom_percent: i64,
     pub(super) saved_default_window_width: i64,
@@ -127,6 +129,7 @@ impl PreferencesWindow {
         let smart_punctuation = preferences.smart_punctuation;
         let vim_enabled = preferences.vim.enable;
         let hide_markdown_markers = preferences.hide_markdown_markers;
+        let show_selection_toolbar = preferences.show_selection_toolbar;
         let zoom_percent = preferences.zoom_percent;
         let default_window_width = preferences.default_window_width;
         let default_window_height = preferences.default_window_height;
@@ -170,6 +173,7 @@ impl PreferencesWindow {
             window_open_position,
             smart_punctuation,
             hide_markdown_markers,
+            show_selection_toolbar,
             vim_enabled,
             zoom_percent,
             default_window_width,
@@ -185,6 +189,7 @@ impl PreferencesWindow {
             saved_smart_punctuation: smart_punctuation,
             saved_vim_enabled: vim_enabled,
             saved_hide_markdown_markers: hide_markdown_markers,
+            saved_show_selection_toolbar: show_selection_toolbar,
             saved_zoom_percent: zoom_percent,
             saved_default_window_width: default_window_width,
             saved_default_window_height: default_window_height,
@@ -254,6 +259,7 @@ impl PreferencesWindow {
             || self.smart_punctuation != self.saved_smart_punctuation
             || self.vim_enabled != self.saved_vim_enabled
             || self.hide_markdown_markers != self.saved_hide_markdown_markers
+            || self.show_selection_toolbar != self.saved_show_selection_toolbar
             || self.zoom_percent != self.saved_zoom_percent
             || self.default_window_width != self.saved_default_window_width
             || self.default_window_height != self.saved_default_window_height
@@ -360,6 +366,7 @@ impl PreferencesWindow {
             self.window_open_position,
             self.smart_punctuation,
             self.hide_markdown_markers,
+            self.show_selection_toolbar,
             self.autosave,
             self.zoom_percent,
             self.default_window_width,
@@ -435,6 +442,7 @@ impl PreferencesWindow {
             });
         }
         EditorSettings::set_hide_markdown_markers_in_memory(cx, preferences.hide_markdown_markers);
+        EditorSettings::set_show_selection_toolbar_in_memory(cx, preferences.show_selection_toolbar);
         install_keybindings(cx, &preferences.keybindings);
         crate::app_menu::install_menus(cx);
         cx.update_global::<EditorSettings, _>(|settings, _cx| {
@@ -479,6 +487,7 @@ impl PreferencesWindow {
         self.saved_smart_punctuation = self.smart_punctuation;
         self.saved_vim_enabled = self.vim_enabled;
         self.saved_hide_markdown_markers = self.hide_markdown_markers;
+        self.saved_show_selection_toolbar = self.show_selection_toolbar;
         self.saved_zoom_percent = self.zoom_percent;
         self.saved_default_window_width = self.default_window_width;
         self.saved_default_window_height = self.default_window_height;

@@ -142,7 +142,7 @@ cargo test
 | 分节 | 键 | 控制 |
 | --- | --- | --- |
 | `[window]` | `default_window_width`、`default_window_height`、`open_position`、`remember_bounds`、`zoom_percent` | 默认尺寸、居中还是记住位置打开、窗口记忆、界面缩放 |
-| `[editor]` | `tree_sort`、`autosave`、`autosave_debounce_ms`、`new_file_template`、`smart_punctuation`、`external_change_policy`、`delete_policy`、`workspace_sidebar_width` | 文件树排序、自动保存开关（关掉只停写文件，恢复快照与外部改动检测照跑）、自动保存间隔、新建文件模板（`{date}` 会展开）、智能标点、外部变更处理、移入废纸篓还是永久删除、侧栏宽度 |
+| `[editor]` | `tree_sort`、`autosave`、`autosave_debounce_ms`、`new_file_template`、`smart_punctuation`、`show_selection_toolbar`、`external_change_policy`、`delete_policy`、`workspace_sidebar_width` | 文件树排序、自动保存开关（关掉只停写文件，恢复快照与外部改动检测照跑）、自动保存间隔、新建文件模板（`{date}` 会展开）、智能标点、选中时显示工具栏（默认开）、外部变更处理、移入废纸篓还是永久删除、侧栏宽度 |
 | `[file_history]` | `interval_minutes`、`max_entries`、`retention_days` | 自动快照最少间隔（默认 5 分钟）、每文件数量上限（默认 30 条）、保留天数（默认 7 天）；手动保存和恢复前检查点不受间隔限制，所有版本共同受数量与天数上限约束 |
 | `[export]` | `theme` | 导出 HTML、PDF 与 PNG 时使用 `current` / `light` / `dark` |
 | `[updates]` | `check_on_startup`、`include_prereleases` | 启动时检查更新；包含预发布版本 |

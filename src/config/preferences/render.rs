@@ -40,7 +40,7 @@ impl Render for PreferencesWindow {
                 PreferencesNav::File => strings.preferences_nav_file.clone(),
                 PreferencesNav::Theme => strings.preferences_nav_theme.clone(),
                 PreferencesNav::Image => strings.preferences_nav_image.clone(),
-                PreferencesNav::Ai => "AI".into(),
+                PreferencesNav::Ai => strings.preferences_nav_ai.clone(),
                 PreferencesNav::Shortcuts => strings.preferences_nav_shortcuts.clone(),
                 PreferencesNav::StatusBar => strings.preferences_nav_status_bar.clone(),
                 PreferencesNav::Window => strings.preferences_nav_window.clone(),
@@ -70,7 +70,7 @@ impl Render for PreferencesWindow {
                 ),
                 (
                     "preferences-nav-ai",
-                    "AI".into(),
+                    strings.preferences_nav_ai.clone(),
                     IconName::Sparkles,
                     self.nav == PreferencesNav::Ai,
                     Self::set_nav_ai,

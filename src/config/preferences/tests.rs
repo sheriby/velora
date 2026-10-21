@@ -1077,6 +1077,7 @@
             show_table_headers: false,
             smart_punctuation: true,
             hide_markdown_markers: true,
+            show_selection_toolbar: false,
             external_change_policy: ExternalChangePolicy::Manual,
             delete_policy: DeletePolicy::Permanent,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
@@ -1115,6 +1116,7 @@
         assert_eq!(loaded, preferences);
         assert!(loaded.smart_punctuation);
         assert!(loaded.hide_markdown_markers);
+        assert!(!loaded.show_selection_toolbar, "关掉的选中工具栏要存得住");
         assert_eq!(loaded.external_change_policy, ExternalChangePolicy::Manual);
         assert_eq!(loaded.delete_policy, DeletePolicy::Permanent);
         let text =
@@ -1219,6 +1221,7 @@
             updates: super::UpdatePreferences::default(),            startup_open: StartupOpenPreference::NewFile,
             smart_punctuation: false,
             hide_markdown_markers: false,
+            show_selection_toolbar: true,
             external_change_policy: ExternalChangePolicy::Auto,
             delete_policy: DeletePolicy::Trash,
             default_language_id: "zh-CN".into(),
@@ -1268,7 +1271,8 @@
             WindowOpenPosition::Center,
             true,
             true,
-            // 两个相邻的 bool 各给一个非默认方向，位置写反就会被下面两行抓住。
+            // 相邻的三个 bool 各给一个非默认方向，位置写反就会被下面几行抓住。
+            false,
             false,
             110,
             1280,
@@ -1287,6 +1291,7 @@
         assert!(!saved.autosave);
         assert!(saved.smart_punctuation);
         assert!(saved.hide_markdown_markers);
+        assert!(!saved.show_selection_toolbar, "窗口保存要写入选中工具栏那一格");
         assert!(saved.remember_window_bounds);
         assert_eq!(saved.zoom_percent, 110);
         assert_eq!(saved.default_window_width, 1280);
@@ -1791,6 +1796,7 @@ fn window_size_bounds_are_shared_by_read_and_save() {
         loaded.window_open_position,
         loaded.smart_punctuation,
         loaded.hide_markdown_markers,
+        loaded.show_selection_toolbar,
         loaded.autosave,
         loaded.zoom_percent,
         loaded.default_window_width,
@@ -1941,7 +1947,7 @@ async fn installing_settings_reads_the_config_file_once(cx: &mut gpui::TestAppCo
         save_app_preferences_with_dirs(&seeded, &dirs).expect("seed config");
         let on_disk = read_app_preferences_with_dirs(&dirs).expect("read seeded config");
 
-        // 偏好页交回来的那份：五个开关是它管得到的，按钮它压根没有控件。
+        // 偏好页交回来的那份：开关是它管得到的，按钮它压根没有控件。
         let saved = save_preferences_from_window_with_dirs(
             on_disk.startup_open,
             &on_disk.default_theme_id,
@@ -1963,6 +1969,7 @@ async fn installing_settings_reads_the_config_file_once(cx: &mut gpui::TestAppCo
             on_disk.window_open_position,
             on_disk.smart_punctuation,
             on_disk.hide_markdown_markers,
+            on_disk.show_selection_toolbar,
             on_disk.autosave,
             on_disk.zoom_percent as i64,
             1080,
@@ -2073,6 +2080,73 @@ fn hidden_markdown_markers_default_off_and_round_trip() {
             .and_then(toml::Value::as_bool),
         Some(false)
     );
+}
+
+#[test]
+fn selection_toolbar_defaults_on_and_round_trips_off() {
+    let value: toml::Value = toml::from_str("[editor]\nshow_selection_toolbar = false").unwrap();
+    let (preferences, _) = super::load_preferences_from_toml_value(&value, "zh-CN");
+    assert!(!preferences.show_selection_toolbar, "关掉的设置要读得出来");
+    let saved = toml::Value::try_from(super::PreferencesFile::from(&preferences)).unwrap();
+    assert_eq!(
+        saved
+            .get("editor")
+            .and_then(|editor| editor.get("show_selection_toolbar"))
+            .and_then(toml::Value::as_bool),
+        Some(false)
+    );
+    let defaults =
+        toml::Value::try_from(super::PreferencesFile::from(&AppPreferences::default())).unwrap();
+    assert_eq!(
+        defaults
+            .get("editor")
+            .and_then(|editor| editor.get("show_selection_toolbar"))
+            .and_then(toml::Value::as_bool),
+        Some(true),
+        "选中工具栏默认开"
+    );
+    let missing = super::load_preferences_from_toml_value(
+        &toml::Value::try_from(toml::toml! { [editor] }).unwrap(),
+        "zh-CN",
+    )
+    .0;
+    assert!(missing.show_selection_toolbar, "配置里没有这一项时按默认开");
+}
+
+#[gpui::test]
+async fn selection_toolbar_preferences_save_and_apply(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-selection-toolbar-{}", uuid::Uuid::new_v4()));
+    let _guard = crate::config::override_test_config_root(&root);
+    init_preferences_test_app(cx);
+    let handle = cx.update(|cx| {
+        open_preferences_window_with_state(
+            cx,
+            AppPreferences::default(),
+            default_theme_options(),
+            "Preferences".into(),
+        )
+    });
+    cx.run_until_parked();
+    handle
+        .update(cx, |preferences, window, cx| {
+            assert!(preferences.show_selection_toolbar, "通用页默认该是开");
+            preferences.show_selection_toolbar = false;
+            assert!(preferences.has_unsaved_changes());
+            preferences.save(&gpui::ClickEvent::default(), window, cx);
+            assert!(preferences.save_error.is_none());
+            assert!(!preferences.has_unsaved_changes());
+            assert!(!EditorSettings::show_selection_toolbar(cx), "保存后立即生效");
+        })
+        .unwrap();
+    let saved = read_app_preferences_with_dirs(&VeloraConfigDirs::from_root(&root)).unwrap();
+    assert!(!saved.show_selection_toolbar);
+    let reopened = cx.update(|cx| {
+        open_preferences_window_with_state(cx, saved, default_theme_options(), "Preferences".into())
+    });
+    reopened
+        .update(cx, |preferences, _, _| assert!(!preferences.show_selection_toolbar))
+        .unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).expect("清理配置"));
 }
 
 #[gpui::test]

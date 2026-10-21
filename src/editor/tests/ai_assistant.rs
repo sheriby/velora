@@ -1,5 +1,7 @@
 use super::common::*;
-use crate::editor::context_menu::DocumentMenuRow;
+use crate::editor::context_menu::{
+    document_submenu_label, DocumentMenuCommand, DocumentMenuRow, DocumentSubmenu,
+};
 
 fn init_ai_test_app(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -44,21 +46,59 @@ fn ai_selection_toolbar_lists_quick_actions_before_starting_a_task(cx: &mut Test
 }
 
 #[gpui::test]
-fn ai_context_menu_has_one_ai_entry_with_or_without_a_selection(cx: &mut TestAppContext) {
+fn ai_context_menu_lists_quick_commands_with_or_without_a_selection(
+    cx: &mut TestAppContext,
+) {
     init_ai_test_app(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha one".into(), None));
     let block = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
     editor.update(cx, |editor, _| editor.focus_block(block.entity_id()));
     for range in [0..5, 0..0] {
+        let with_selection = !range.is_empty();
         block.update(cx, |block, _| block.selected_range = range);
         editor.read_with(cx, |editor, cx| {
-            let entries: Vec<_> = editor.document_menu_rows(cx).into_iter().filter_map(|row| match row {
-                DocumentMenuRow::Item { command: crate::editor::context_menu::DocumentMenuCommand::Ai(command), name, .. } => Some((command,name)),
-                _ => None,
-            }).collect();
-            assert_eq!(entries, vec![(crate::ai::AiCommand::Ask, "ai-ask")], "右键菜单只保留一个 AI 对话入口");
+            let submenu = editor
+                .document_menu_rows(cx)
+                .into_iter()
+                .filter_map(|row| match row {
+                    DocumentMenuRow::Submenu { id, name } => Some((id, name)),
+                    _ => None,
+                })
+                .find(|(id, _)| *id == DocumentSubmenu::Ai)
+                .expect("右键菜单必须有 AI 那一档");
+            assert_eq!(submenu.1, "ai", "AI 入口的行名");
+            let rows = editor.document_submenu_rows(DocumentSubmenu::Ai, cx);
+            let names = rows
+                .iter()
+                .map(|row| match row {
+                    DocumentMenuRow::Item { name, .. } => *name,
+                    _ => "",
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                names,
+                vec!["ai-summarize", "ai-explain", "ai-translate", "ai-polish", "ai-expand"],
+                "AI 二级面板要列出可选中直接发起的快捷指令"
+            );
+            for row in &rows {
+                let DocumentMenuRow::Item { command, enabled, .. } = row else { continue };
+                let DocumentMenuCommand::Ai(command) = command else {
+                    continue;
+                };
+                assert_eq!(
+                    *enabled,
+                    with_selection || !command.requires_selection(),
+                    "{command:?} 的置灰判据与选区不符"
+                );
+            }
             for strings in [crate::i18n::I18nStrings::en_us(), crate::i18n::I18nStrings::zh_cn()] {
-                assert_eq!(crate::editor::context_menu::document_menu_label(crate::editor::context_menu::DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask), &strings), "AI");
+                assert_eq!(
+                    document_submenu_label(
+                        DocumentSubmenu::Ai,
+                        &strings
+                    ),
+                    "AI"
+                );
             }
         });
     }

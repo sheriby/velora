@@ -43,6 +43,7 @@ pub(crate) fn document_submenu_label(
         DocumentSubmenu::Format => strings.context_menu_format.clone(),
         DocumentSubmenu::Paragraph => strings.context_menu_paragraph.clone(),
         DocumentSubmenu::Insert => strings.context_menu_insert.clone(),
+        DocumentSubmenu::Ai => "AI".into(),
     }
 }
 
@@ -50,7 +51,6 @@ pub(crate) fn document_submenu_label(
 /// 二级面板里的行不给图标：那一档排的是「一级标题」「有序列表」这种条目名，图标只会把每行拉宽。
 pub(crate) fn document_menu_command_icon(command: DocumentMenuCommand) -> Option<&'static str> {
     match command {
-        DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask) => Some("icon/editor/ai.svg"),
         DocumentMenuCommand::Ai(_) => None,
         DocumentMenuCommand::Undo => Some("icon/editor/undo.svg"),
         DocumentMenuCommand::Redo => Some("icon/editor/redo.svg"),
@@ -82,21 +82,24 @@ pub(crate) fn document_menu_command_icon(command: DocumentMenuCommand) -> Option
     }
 }
 
-/// 三个二级菜单入口的行首图标。「段落」那一颗与选中工具栏共用同一份图形。
+/// 二级菜单入口的行首图标。「段落」那一颗与选中工具栏共用同一份图形。
 pub(crate) fn document_submenu_icon(submenu: DocumentSubmenu) -> Option<&'static str> {
     match submenu {
         DocumentSubmenu::Format => Some("icon/editor/format.svg"),
         DocumentSubmenu::Paragraph => Some("icon/editor/paragraph.svg"),
         DocumentSubmenu::Insert => Some("icon/editor/insert.svg"),
+        DocumentSubmenu::Ai => Some("icon/editor/ai.svg"),
     }
 }
 
-/// 二级菜单的三个入口。
+/// 二级菜单的入口。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DocumentSubmenu {
     Format,
     Paragraph,
     Insert,
+    /// 「AI」那一档：选中文字后可直接发起的快捷指令，与选中工具栏的 AI 下拉同源。
+    Ai,
 }
 
 /// 菜单一行指向的动作。
@@ -321,16 +324,16 @@ impl Editor {
         }
     }
 
-    /// 主菜单的行序：顶部图标条 → 复制为 → 格式 / 段落 / 插入 → 视图。
+    /// 主菜单的行序：顶部图标条 → 复制为 → 格式 / 段落 / 插入 → 视图 → AI。
     pub(crate) fn document_menu_rows(&self, cx: &App) -> Vec<DocumentMenuRow> {
         let mut rows = self.document_menu_rows_without_ai(cx);
         if !crate::ai::settings::AiFeature::enabled(cx) {
             return rows;
         }
-        let command = DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask);
         rows.push(DocumentMenuRow::Separator);
-        rows.push(DocumentMenuRow::Item {
-            command, name: command.row_name(), enabled: !self.code_document,
+        rows.push(DocumentMenuRow::Submenu {
+            id: DocumentSubmenu::Ai,
+            name: "ai",
         });
         rows
     }
@@ -534,6 +537,20 @@ impl Editor {
                     ),
                 ]
             }
+            // AI 那一档与选中工具栏的 AI 下拉是同一份行数据（`AiCommand::ALL`）；
+            // 需要选区的指令在没有选区时灰着，点了不会静默什么都不做。
+            DocumentSubmenu::Ai => crate::ai::AiCommand::ALL
+                .into_iter()
+                .map(|action| {
+                    let command = DocumentMenuCommand::Ai(action);
+                    DocumentMenuRow::Item {
+                        enabled: !self.code_document
+                            && (!action.requires_selection() || selectable),
+                        name: command.row_name(),
+                        command,
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -748,7 +765,6 @@ pub(crate) fn document_menu_label(
     strings: &crate::i18n::I18nStrings,
 ) -> String {
     match command {
-        DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask) => "AI".into(),
         DocumentMenuCommand::Ai(command) => command.label(strings),
         DocumentMenuCommand::Undo => strings.context_menu_undo.clone(),
         DocumentMenuCommand::Redo => strings.context_menu_redo.clone(),
@@ -811,7 +827,6 @@ pub(crate) fn document_menu_shortcut(
     cx: &App,
 ) -> Option<SharedString> {
     let shortcut = match command {
-        DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask) => ShortcutCommand::OpenAiAssistant,
         DocumentMenuCommand::Ai(_) => return None,
         DocumentMenuCommand::Undo => ShortcutCommand::Undo,
         DocumentMenuCommand::Redo => ShortcutCommand::Redo,

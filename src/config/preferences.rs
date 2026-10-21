@@ -539,6 +539,8 @@ pub(crate) struct AppPreferences {
     /// Typographic quote/dash substitution while typing (default off).
     pub(crate) smart_punctuation: bool,
     pub(crate) hide_markdown_markers: bool,
+    /// 选中文字时是否浮出那一排工具栏（默认开）。
+    pub(crate) show_selection_toolbar: bool,
     /// 外部变更策略（roadmap H2）。
     pub(crate) external_change_policy: ExternalChangePolicy,
     /// 删除策略（roadmap H2）。
@@ -590,6 +592,7 @@ impl Default for AppPreferences {
             show_table_headers: true,
             smart_punctuation: false,
             hide_markdown_markers: false,
+            show_selection_toolbar: true,
             external_change_policy: ExternalChangePolicy::Auto,
             delete_policy: DeletePolicy::Trash,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
@@ -654,6 +657,7 @@ pub struct EditorSettings {
     show_table_headers: bool,
     smart_punctuation: bool,
     hide_markdown_markers: bool,
+    show_selection_toolbar: bool,
     external_change_policy: ExternalChangePolicy,
     delete_policy: DeletePolicy,
     status_bar_settings: StatusBarSettings,
@@ -808,12 +812,17 @@ impl EditorSettings {
             .map(|settings| settings.hide_markdown_markers)
             .or_else(|| stored.as_ref().map(|preferences| preferences.hide_markdown_markers))
             .unwrap_or(false);
+        let show_selection_toolbar = cx.try_global::<Self>()
+            .map(|settings| settings.show_selection_toolbar)
+            .or_else(|| stored.as_ref().map(|preferences| preferences.show_selection_toolbar))
+            .unwrap_or(true);
         cx.set_global(Self {
             file_history,
             updates,
             show_table_headers,
             smart_punctuation,
             hide_markdown_markers,
+            show_selection_toolbar,
             external_change_policy,
             delete_policy,
             fonts,
@@ -939,6 +948,19 @@ impl EditorSettings {
             Self::init(cx, true);
         }
         cx.update_global::<Self, _>(|settings, _| settings.hide_markdown_markers = hide);
+    }
+
+    pub(crate) fn show_selection_toolbar(cx: &App) -> bool {
+        cx.try_global::<Self>()
+            .map(|settings| settings.show_selection_toolbar)
+            .unwrap_or(true)
+    }
+
+    pub(crate) fn set_show_selection_toolbar_in_memory(cx: &mut App, show: bool) {
+        if cx.try_global::<Self>().is_none() {
+            Self::init(cx, true);
+        }
+        cx.update_global::<Self, _>(|settings, _| settings.show_selection_toolbar = show);
     }
 
     pub(crate) fn fonts(cx: &App) -> FontPreferences {

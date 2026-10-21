@@ -555,6 +555,29 @@ async fn the_toolbar_yields_to_the_context_menu_and_to_source_mode(cx: &mut Test
     );
 }
 
+/// 通用页那一格关掉之后，有选区也不该浮出工具栏；再打开就恢复。
+#[gpui::test]
+async fn the_toolbar_follows_the_selection_toolbar_preference(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+    select_head_of_first_block(&editor, cx);
+    assert!(toolbar_bounds(cx).is_some(), "默认开着时该浮出工具栏");
+
+    cx.update(|_, cx| {
+        crate::config::EditorSettings::set_show_selection_toolbar_in_memory(cx, false)
+    });
+    redraw(cx);
+    assert!(toolbar_is_hidden(cx), "偏好关掉后不该再浮出工具栏");
+
+    cx.update(|_, cx| {
+        crate::config::EditorSettings::set_show_selection_toolbar_in_memory(cx, true)
+    });
+    redraw(cx);
+    assert!(toolbar_bounds(cx).is_some(), "重新打开该恢复工具栏");
+}
+
 /// 命令面板与 ⌘P 也是浮层：开着它们时工具栏要让位。这两层是画在正文区里、
 /// 工具栏画在窗口根上（后者更靠后，也就盖在前者之上），不收掉就会浮在面板之上。
 #[gpui::test]

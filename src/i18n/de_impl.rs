@@ -301,6 +301,9 @@ impl I18nStringsDe {
             preferences_nav_image: self
                 .preferences_nav_image
                 .unwrap_or(defaults.preferences_nav_image),
+            preferences_nav_ai: self
+                .preferences_nav_ai
+                .unwrap_or(defaults.preferences_nav_ai),
             preferences_nav_shortcuts: self
                 .preferences_nav_shortcuts
                 .unwrap_or(defaults.preferences_nav_shortcuts),
@@ -792,6 +795,9 @@ impl I18nStringsDe {
             preferences_hide_markdown_markers: self
                 .preferences_hide_markdown_markers
                 .unwrap_or(defaults.preferences_hide_markdown_markers),
+            preferences_show_selection_toolbar: self
+                .preferences_show_selection_toolbar
+                .unwrap_or(defaults.preferences_show_selection_toolbar),
             preferences_smart_punctuation: self
                 .preferences_smart_punctuation
                 .unwrap_or(defaults.preferences_smart_punctuation),

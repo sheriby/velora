@@ -866,6 +866,7 @@ impl Editor {
             DocumentSubmenu::Format => "editor-context-menu-format",
             DocumentSubmenu::Paragraph => "editor-context-menu-paragraph",
             DocumentSubmenu::Insert => "editor-context-menu-insert",
+            DocumentSubmenu::Ai => "editor-context-menu-ai",
         };
         div()
             .id(panel_id)

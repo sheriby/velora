@@ -140,6 +140,9 @@ impl Editor {
     /// 「别的浮层」这一条不看层级只看状态：工具栏画在窗口根上，比画在正文区里的
     /// 面板与快速打开更靠后，收不掉就会浮在它们之上。
     fn selection_toolbar_anchor(&self, cx: &App) -> Option<Bounds<Pixels>> {
+        if !crate::config::EditorSettings::show_selection_toolbar(cx) {
+            return None;
+        }
         if self.ai_surface_visible.get()
             || self.view_mode != ViewMode::Rendered
             || !self.writes_through_the_buffer()
@@ -302,17 +305,7 @@ impl Editor {
                     "editor-toolbar-heading-menu",
                 ),
                 SelectionToolbarMenu::Ai => (
-                    crate::ai::AiCommand::ALL
-                        .into_iter()
-                        .map(|action| {
-                            let command = DocumentMenuCommand::Ai(action);
-                            DocumentMenuRow::Item {
-                                command,
-                                name: command.row_name(),
-                                enabled: !self.code_document,
-                            }
-                        })
-                        .collect(),
+                    self.document_submenu_rows(DocumentSubmenu::Ai, cx),
                     "editor-toolbar-ai-menu",
                 ),
             };

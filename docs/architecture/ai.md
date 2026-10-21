@@ -4,7 +4,7 @@
 
 ## 入口与窗口归属
 
-`AiCommand` 定义内置任务及选区要求。选区工具栏、正文右键、命令面板、菜单和快捷键汇到 `Editor:open_ai_assistant`。默认快捷键是 `⌘J`／`Ctrl+J`；常用任务可单独配置快捷键。
+`AiCommand` 定义内置任务及选区要求。选区工具栏、正文右键、命令面板、菜单和快捷键汇到 `Editor:open_ai_assistant`。快捷指令那一列只有 `DocumentSubmenu::Ai` 一处行数据（`context_menu/document_menu.rs`，按 `AiCommand::ALL` 排，置灰看 `requires_selection`），正文右键的二级面板与选中工具栏的 AI 下拉都取它。默认快捷键是 `⌘J`／`Ctrl+J`；常用任务可单独配置快捷键。
 
 「视图 → AI 侧边栏」与命令面板、可配置快捷键共享 `Editor:on_toggle_ai_sidebar`，开合已有任务保留输入、模型历史和提议；无任务时才新建。分屏由叶节点延后交给窗口宿主，初始布局随目标快照一同传递，避免延迟创建时先修改旧任务的布局。`⌘J`／`Ctrl+J` 仍每次发起独立浮动对话。
 

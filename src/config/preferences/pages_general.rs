@@ -294,6 +294,13 @@ impl PreferencesWindow {
             cx,
             |this, value| this.hide_markdown_markers = value,
         );
+        let selection_toolbar = Self::boolean_field(
+            "preferences-show-selection-toolbar",
+            strings.preferences_show_selection_toolbar.clone(),
+            self.show_selection_toolbar,
+            cx,
+            |this, value| this.show_selection_toolbar = value,
+        );
         let vim_mode = Self::boolean_field(
             "preferences-vim-mode",
             strings.preferences_vim_mode.clone(),
@@ -398,6 +405,10 @@ impl PreferencesWindow {
                         Self::preference_row(
                             strings.preferences_hide_markdown_markers.clone(),
                             markers,
+                        ),
+                        Self::preference_row(
+                            strings.preferences_show_selection_toolbar.clone(),
+                            selection_toolbar,
                         ),
                         Self::preference_row(strings.preferences_vim_mode.clone(), vim_mode),
                     ],
