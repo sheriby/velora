@@ -1032,7 +1032,7 @@ impl Editor {
         );
         // 可视粘贴的入口键（p/P）在普通模式下无法重放；视觉重放素材单独记录。
         let visual_paste = matches!(action, VimAction::Paste { .. })
-            && matches!(self.vim.mode, VimMode::Visual(VisualKind::Char | VisualKind::Line));
+            && matches!(self.vim.mode, VimMode::Visual(_));
         let was_visual = matches!(self.vim.mode, VimMode::Visual(_));
         let visual_repeat = if was_visual {
             self.vim_capture_visual_repeat(cx)

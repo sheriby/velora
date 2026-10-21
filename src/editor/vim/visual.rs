@@ -190,25 +190,43 @@ impl Editor {
         // 块选含焦点所在的那一列，区间右端是排他的。
         let column_end = anchor_column.max(focus_column) + 1;
         let stream = VimDocStream::new(entities, cx);
-        let (first, last) = if anchor.block_index <= focus.block_index {
-            (anchor, focus)
-        } else {
-            (focus, anchor)
-        };
+        let (start_position, end_position) =
+            if (anchor.block_index, anchor.offset) <= (focus.block_index, focus.offset) {
+                (anchor, focus)
+            } else {
+                (focus, anchor)
+            };
+        let first = start_position.block_index;
+        let last = end_position.block_index;
         let mut ranges = Vec::new();
-        for block_index in first.block_index..=last.block_index {
+        for block_index in first..=last {
             let text = stream.text_for_line(block_index);
-            let mut offset = 0usize;
-            let mut line_start = 0usize;
-            while offset <= text.len() {
-                let line_end = text[offset..]
-                    .find('\n')
-                    .map(|index| offset + index)
+            let mut line_starts = vec![0usize];
+            for (index, ch) in text.char_indices() {
+                if ch == '\n' {
+                    line_starts.push(index + 1);
+                }
+            }
+            let line_of = |offset: usize| {
+                text.get(..offset.min(text.len()))
+                    .map_or(0, |before| before.matches('\n').count())
+            };
+            let start_line = if block_index == first {
+                line_of(start_position.offset)
+            } else {
+                0
+            };
+            let end_line = if block_index == last {
+                line_of(end_position.offset)
+            } else {
+                line_starts.len().saturating_sub(1)
+            };
+            for line_index in start_line..=end_line.min(line_starts.len().saturating_sub(1)) {
+                let line_start = line_starts[line_index];
+                let line_end = line_starts
+                    .get(line_index + 1)
+                    .map(|next| next.saturating_sub(1))
                     .unwrap_or(text.len());
-                let within_rows = !(block_index == first.block_index && line_end < first.offset
-                    && line_start < first.offset
-                    && offset > 0);
-                let _ = within_rows;
                 // 列 → 字节偏移。
                 let mut col_offset = line_start;
                 let mut column = 0usize;
@@ -226,11 +244,6 @@ impl Editor {
                 if col_end_offset > col_offset {
                     ranges.push((block_index, col_offset..col_end_offset));
                 }
-                if line_end >= text.len() {
-                    break;
-                }
-                offset = line_end + 1;
-                line_start = offset;
             }
         }
         if ranges.is_empty() { None } else { Some(ranges) }

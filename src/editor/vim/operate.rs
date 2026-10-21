@@ -952,6 +952,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if matches!(self.vim.mode, VimMode::Visual(super::VisualKind::Block)) {
+            self.vim_visual_block_surround(pair, cx);
             return;
         }
         let entities = self.vim_navigation_entities(cx);
@@ -965,6 +966,136 @@ impl Editor {
         };
         super::visual::vim_exit_visual(self, cx);
         self.vim_insert_surround(&entities, &range, pair, cx);
+    }
+
+    /// 块状可视的逐行区间按块分组，保持行号用于选择寄存器对应行。
+    fn vim_block_ranges_by_entity(
+        &self,
+        entities: &[Entity<Block>],
+        cx: &App,
+    ) -> Option<Vec<(usize, Vec<(usize, std::ops::Range<usize>)>)>> {
+        let ranges = self.vim_block_visual_ranges(entities, cx)?;
+        let mut grouped: Vec<(usize, Vec<(usize, std::ops::Range<usize>)>)> = Vec::new();
+        for (line_index, (block_index, range)) in ranges.into_iter().enumerate() {
+            if let Some((last_block, lines)) = grouped.last_mut()
+                && *last_block == block_index
+            {
+                lines.push((line_index, range));
+                continue;
+            }
+            grouped.push((block_index, vec![(line_index, range)]));
+        }
+        Some(grouped)
+    }
+
+    /// 块状可视 p：逐行用寄存器对应行替换矩形选区；寄存器行不足时重复最后一行。
+    fn vim_visual_block_paste(&mut self, register: Option<char>, cx: &mut Context<Self>) {
+        let entities = self.vim_navigation_entities(cx);
+        let Some(grouped) = self.vim_block_ranges_by_entity(&entities, cx) else {
+            return;
+        };
+        let Some((first_block, first_range)) = grouped
+            .first()
+            .and_then(|(block_index, lines)| lines.first().map(|(_, range)| (*block_index, range.start)))
+        else {
+            return;
+        };
+        let register = register.unwrap_or('"');
+        let use_system = crate::config::EditorSettings::vim(cx).use_system_clipboard;
+        let Some(content) = self.vim.registers.read(register, cx, use_system) else {
+            return;
+        };
+        let mut content_lines: Vec<&str> = content.text.split('\n').collect();
+        if content.linewise && content_lines.last().is_some_and(|line| line.is_empty()) {
+            content_lines.pop();
+        }
+        if content_lines.is_empty() {
+            return;
+        }
+        super::visual::vim_exit_visual(self, cx);
+        for (block_index, ranges) in &grouped {
+            let block = entities[*block_index].clone();
+            let text = block.read(cx).display_text().to_string();
+            let mut new_text = text.clone();
+            for (line_index, range) in ranges.iter().rev() {
+                let replacement = content_lines[(*line_index).min(content_lines.len() - 1)];
+                let end = range.end.min(new_text.len());
+                let start = range.start.min(end);
+                new_text.replace_range(start..end, replacement);
+            }
+            block.update(cx, |block, cx| {
+                block.replace_text_in_visible_range(
+                    0..text.len(),
+                    &new_text,
+                    Some(0..0),
+                    false,
+                    cx,
+                );
+            });
+        }
+        self.mark_dirty(cx);
+        let entities_after = self.vim_navigation_entities(cx);
+        if let Some(index) = entities_after
+            .iter()
+            .position(|entry| entry.entity_id() == entities[first_block].entity_id())
+        {
+            self.vim_set_cursor(
+                &entities_after,
+                VimPosition { block_index: index, offset: first_range },
+                cx,
+            );
+        }
+    }
+
+    /// 块状可视 S：逐行给矩形选区加定界符。
+    fn vim_visual_block_surround(&mut self, pair: SurroundPair, cx: &mut Context<Self>) {
+        let entities = self.vim_navigation_entities(cx);
+        let Some(grouped) = self.vim_block_ranges_by_entity(&entities, cx) else {
+            return;
+        };
+        let Some((first_block, first_range)) = grouped
+            .first()
+            .and_then(|(block_index, lines)| lines.first().map(|(_, range)| (*block_index, range.start)))
+        else {
+            return;
+        };
+        super::visual::vim_exit_visual(self, cx);
+        for (block_index, ranges) in &grouped {
+            let block = entities[*block_index].clone();
+            let text = block.read(cx).display_text().to_string();
+            let mut new_text = text.clone();
+            for (_, range) in ranges.iter().rev() {
+                let end = range.end.min(new_text.len());
+                let start = range.start.min(end);
+                let surrounded =
+                    format!("{}{}{}", pair.open, &new_text[start..end], pair.close);
+                new_text.replace_range(start..end, &surrounded);
+            }
+            block.update(cx, |block, cx| {
+                block.replace_text_in_visible_range(
+                    0..text.len(),
+                    &new_text,
+                    Some(0..0),
+                    false,
+                    cx,
+                );
+            });
+        }
+        self.mark_dirty(cx);
+        let entities_after = self.vim_navigation_entities(cx);
+        if let Some(index) = entities_after
+            .iter()
+            .position(|entry| entry.entity_id() == entities[first_block].entity_id())
+        {
+            self.vim_set_cursor(
+                &entities_after,
+                VimPosition {
+                    block_index: index,
+                    offset: first_range + pair.open.len(),
+                },
+                cx,
+            );
+        }
     }
 
     fn vim_trim_linewise_surround_range(
@@ -1893,6 +2024,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if matches!(self.vim.mode, VimMode::Visual(super::VisualKind::Block)) {
+            self.vim_visual_block_paste(register, cx);
+            return;
+        }
         let entities = self.vim_navigation_entities(cx);
         let Some(range) = super::visual::vim_selection_as_range(self, &entities, cx) else {
             return;

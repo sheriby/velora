@@ -947,7 +947,7 @@ async fn block_visual_delete_removes_the_selected_column(cx: &mut TestAppContext
         current_mode(&editor, &cx),
         VimMode::Visual(VisualKind::Block)
     ));
-    cx.simulate_keystrokes("d");
+    cx.simulate_keystrokes("j d");
     assert_eq!(visible_texts(&editor, &cx), vec!["b\nd"]);
     assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
 }
@@ -955,7 +955,7 @@ async fn block_visual_delete_removes_the_selected_column(cx: &mut TestAppContext
 #[gpui::test]
 async fn block_visual_insert_replicates_typed_text_on_every_line(cx: &mut TestAppContext) {
     let (editor, cx) = vim_editor(cx, "```\nab\ncd\n```");
-    cx.simulate_keystrokes("ctrl-q I");
+    cx.simulate_keystrokes("ctrl-q j I");
     assert_eq!(current_mode(&editor, &cx), VimMode::Insert);
     cx.simulate_input("X");
     cx.simulate_keystrokes("escape");
@@ -1409,6 +1409,30 @@ async fn ds_without_a_surrounding_pair_keeps_the_text(cx: &mut TestAppContext) {
     let (editor, cx) = vim_editor(cx, "alpha beta");
     cx.simulate_keystrokes("d s \"");
     assert_eq!(document_text(&editor, &cx), "alpha beta");
+}
+
+#[gpui::test]
+async fn block_visual_p_pastes_into_each_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```rust\nab\ncd\nef\n```");
+    cx.simulate_keystrokes("y l");
+    cx.simulate_keystrokes("ctrl-v j l p");
+    assert_eq!(visible_texts(&editor, &cx), vec!["a\na\nef"]);
+}
+
+#[gpui::test]
+async fn block_visual_s_wraps_each_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```rust\nab\ncd\nef\n```");
+    cx.simulate_keystrokes("ctrl-v j l S \"");
+    assert_eq!(visible_texts(&editor, &cx), vec!["\"ab\"\n\"cd\"\nef"]);
+}
+
+#[gpui::test]
+async fn block_visual_p_undo_restores_the_lines(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```rust\nab\ncd\nef\n```");
+    cx.simulate_keystrokes("y l");
+    cx.simulate_keystrokes("ctrl-v j l p");
+    cx.simulate_keystrokes("u");
+    assert_eq!(visible_texts(&editor, &cx), vec!["ab\ncd\nef"]);
 }
 
 #[gpui::test]
