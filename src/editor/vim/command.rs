@@ -77,7 +77,29 @@ impl Editor {
                 self.vim_execute_search(&query, reverse, cx);
             }
             CmdlineKind::Command | CmdlineKind::VisualCommand => {
-                self.vim_execute_command(&raw, window, cx);
+                // 可视 `:` 的范围按 vim 的 `<`/`>` 行界扩展；命令执行前
+                // 先收选区，避免执行器把选区当成普通移动的起点。
+                let visual_range = if matches!(state.kind, CmdlineKind::VisualCommand) {
+                    let range = self.capture_source_selection_snapshot(cx).range;
+                    // `'<`/`'>` 按两端所在的缓冲行取范围：终点落在下一行行首
+                    // 时也算下一行，与 vim 的可视行界一致。
+                    let last = self.buffer.byte_len().saturating_sub(1);
+                    let lines = if range.is_empty() {
+                        None
+                    } else {
+                        Some((
+                            self.buffer.line_of(range.start),
+                            self.buffer.line_of(range.end.min(last)),
+                        ))
+                    };
+                    if matches!(self.vim.mode, super::VimMode::Visual(_)) {
+                        super::visual::vim_exit_visual(self, cx);
+                    }
+                    lines
+                } else {
+                    None
+                };
+                self.vim_execute_command(&raw, visual_range, window, cx);
             }
         }
     }
@@ -187,7 +209,13 @@ impl Editor {
 
     // ---- `:` 命令 ----
 
-    fn vim_execute_command(&mut self, raw: &str, window: &mut Window, cx: &mut Context<Self>) {
+    fn vim_execute_command(
+        &mut self,
+        raw: &str,
+        visual_range: Option<(usize, usize)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut line = raw.trim().to_string();
         if line.starts_with(':') {
             line.remove(0);
@@ -212,8 +240,9 @@ impl Editor {
             );
             return;
         }
-        // 拆范围与命令体。
+        // 拆范围与命令体；手写范围优先，`'<,'>` 回落到可视选区所在行。
         let (range, body) = Self::vim_split_cmdline_range(&line);
+        let range = range.or(visual_range);
         let body = body.trim();
         let command = body.split_whitespace().next().unwrap_or("");
         match command {

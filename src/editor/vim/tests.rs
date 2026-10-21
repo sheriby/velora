@@ -1186,3 +1186,35 @@ async fn capital_u_is_not_bound_to_redo(cx: &mut TestAppContext) {
         "U 不是重做键，不应恢复已撤销的删除"
     );
 }
+
+#[gpui::test]
+async fn visual_cmdline_substitute_applies_to_the_selected_lines(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two three two");
+    cx.simulate_keystrokes("v l l");
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("s/two/TWO/g");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    assert_eq!(
+        document_text(&editor, &cx),
+        "one TWO three TWO",
+        "可视选区按行扩展，替换覆盖整行"
+    );
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}
+
+#[gpui::test]
+async fn visual_cmdline_substitute_covers_all_selected_lines(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two\n\nthree two");
+    cx.simulate_keystrokes("v j");
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("s/two/TWO/g");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    assert_eq!(
+        document_text(&editor, &cx),
+        "one TWO\n\nthree TWO",
+        "跨块可视选区应覆盖两端所在的行"
+    );
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}
