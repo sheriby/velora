@@ -642,7 +642,7 @@ impl Editor {
             // 普通/可视模式：缓冲键按无映射路径重发。
             _ => {
                 for key in pending {
-                    self.vim_modal_key_inner(key, window, cx);
+                    self.vim_modal_resolve_key(key, window, cx);
                 }
             }
         }
@@ -808,6 +808,12 @@ impl Editor {
             }
         }
 
+        self.vim_modal_resolve_key(key, window, cx)
+    }
+
+    /// 只走序列机，不再试用户映射。映射前缀超时后重发缓冲键必须走这里，
+    /// 否则单键又会命中同一条映射的前缀，再次挂起等待。
+    fn vim_modal_resolve_key(&mut self, key: VimKey, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.vim.pending.push(key);
         // 护栏：最长的合法序列（"a12d3fo）也远到不了 10 键。
         if self.vim.pending.len() > 10 {

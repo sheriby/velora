@@ -1218,3 +1218,27 @@ async fn visual_cmdline_substitute_covers_all_selected_lines(cx: &mut TestAppCon
     );
     assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
 }
+
+#[gpui::test]
+async fn normal_mapping_timeout_flushes_the_pending_motion(cx: &mut TestAppContext) {
+    let preferences = VimPreferences {
+        enable: true,
+        keymaps: vec![VimKeymapEntry {
+            mode: VimKeymapMode::Normal,
+            keys: "jk".into(),
+            action: VimKeymapAction::Insert,
+        }],
+        ..Default::default()
+    };
+    let (editor, cx) = vim_editor_with(cx, "alpha\n\nbeta", preferences);
+    cx.simulate_keystrokes("j");
+    cx.executor().advance_clock(std::time::Duration::from_millis(400));
+    cx.run_until_parked();
+    redraw(cx);
+    assert_eq!(
+        cursor_block(&editor, &cx),
+        1,
+        "映射前缀单键超时后应作为普通 j 下移"
+    );
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}
