@@ -25,6 +25,7 @@ More screenshots: [Workspace and tabs](assets/screenshots/workspace.png) · [Spl
 - **Images** — paste or drag one in and it is copied into the document's assets folder with a relative link; 100% maps to 95% of the visible text column by default and images never overflow it; right-click offers 25% / 50% / 75% / 100% scaling that keeps the aspect ratio, and the chosen ratio is written back to the source as `{width=NN%}`.
 - **Editing conveniences** — lists continue on `Enter`; typing a paired character wraps the selection; pasting a URL over a selection creates a link; HTML copied from a browser or Word is converted to Markdown on paste.
 - **Smart punctuation** (off by default, one switch in Settings) — context-aware curly quotes and `--` → em dash.
+- **Vim mode** (off by default, one switch in Settings) — modal editing modeled on Zed: Normal, Insert, Replace and character/line/block Visual modes with operators and text objects, registers, macros, marks, search, the `:` command line and dot-repeat; map sequences such as `jj` to Esc in `config.toml`. See the [Vim mode guide](docs/vim.md).
 - **VS Code–style find & replace** — powered by ripgrep's engine, in-process: case, whole-word, regex (multi-line patterns included) and fuzzy matching; every match is highlighted while the panel is open, and the result list, highlighting, jumping and replace-all read the same match table.
 - **Syntax highlighting** — Rust, JavaScript/TypeScript, C/C++, C#, Go, Java, PHP, Python, Ruby, HTML/CSS, JSON, YAML, TOML and Bash; other text files open and edit as plain text.
 
@@ -143,6 +144,7 @@ The main `config.toml` sections:
 | `[editor]` | `tree_sort`, `autosave`, `autosave_debounce_ms`, `new_file_template`, `smart_punctuation`, `external_change_policy`, `delete_policy`, `workspace_sidebar_width`, `proxy_url` | File-tree sort, autosave on/off, autosave interval, new-file template (`{date}` expands), smart punctuation, external-change handling, Trash vs. permanent delete, sidebar width, network proxy for AI endpoints and update checks |
 | `[export]` | `theme` | `current` / `light` / `dark` for exported HTML, PDF and PNG |
 | `[updates]` | `check_on_startup`, `include_prereleases` | Check for updates at startup; include prerelease versions |
+| `[vim]` | `enable`, `timeout_ms`, `use_system_clipboard`, `[[vim.keymap]]` | Vim mode toggle, multi-key mapping timeout, system clipboard sync and custom mappings; see the [Vim mode guide](docs/vim.md) |
 
 `proxy_url` accepts `http://`, `https://` and `socks5://` addresses (for example `http://127.0.0.1:7890`). When set, AI requests, update checks and remote image downloads go through it; when empty, Velora keeps the system settings and `HTTPS_PROXY` / `HTTP_PROXY` environment variables untouched. It is also editable in the preferences window (AI page).
 

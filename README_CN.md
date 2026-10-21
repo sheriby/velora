@@ -25,6 +25,7 @@ Velora 是基于 Rust 与 GPUI 构建的原生 Markdown 编辑器：无 Electron
 - **图片**——粘贴或拖入即自动复制到文档资源目录并插入相对路径；默认 100% 对应正文可视容器宽度的 95%，图片始终限制在容器内；右键选择 25%、50%、75%、100% 的缩放比例，保持宽高比；比例以 `{width=NN%}` 写回源码，保存后保留。
 - **编辑顺手事**——列表回车自动续写；选中输入配对符号自动环绕；选中文本粘贴 URL 生成链接；从浏览器或 Word 复制的内容粘贴时自动转 Markdown。
 - **智能标点**（默认关闭，设置中一键开启）——按上下文输出弯引号，`--` 转破折号。
+- **Vim 模式**（默认关闭，设置中一键开启）——参考 Zed 实现的模态编辑：普通、插入、替换与字符/行/块状可视模式，支持操作符与文本对象、寄存器、宏、标记、搜索、`:` 命令行与点重复；可在 `config.toml` 中把 `jj` 一类序列映射为 Esc。详见 [Vim 模式](docs/vim.md)。
 - **VS Code 风格查找替换**——匹配交给 ripgrep 的引擎（进程内调用）：大小写、全词、正则与模糊，正则可跨行；面板打开时正文实时高亮全部匹配，结果列表、高亮、跳转与全部替换读同一张命中表。
 - **语法高亮**——Rust、JavaScript/TypeScript、C/C++、C#、Go、Java、PHP、Python、Ruby、HTML/CSS、JSON、YAML、TOML 与 Bash；其他文本文件按纯文本打开编辑。
 
@@ -146,6 +147,7 @@ cargo test
 | `[file_history]` | `interval_minutes`、`max_entries`、`retention_days` | 自动快照最少间隔（默认 5 分钟）、每文件数量上限（默认 30 条）、保留天数（默认 7 天）；手动保存和恢复前检查点不受间隔限制，所有版本共同受数量与天数上限约束 |
 | `[export]` | `theme` | 导出 HTML、PDF 与 PNG 时使用 `current` / `light` / `dark` |
 | `[updates]` | `check_on_startup`、`include_prereleases` | 启动时检查更新；包含预发布版本 |
+| `[vim]` | `enable`、`timeout_ms`、`use_system_clipboard`、`[[vim.keymap]]` | Vim 模式开关、多键映射超时、系统剪贴板同步与自定义映射；见 [Vim 模式](docs/vim.md) |
 
 ## 🙏 致谢
 
