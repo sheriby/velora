@@ -180,3 +180,169 @@ async fn jj_mapping_escapes_insert_mode_without_typing(cx: &mut TestAppContext) 
     assert_eq!(current_mode(&editor, &cx), VimMode::Normal, "jj 应退出插入模式");
     assert_eq!(document_text(&editor, &cx), "alpha", "映射键不能落进正文");
 }
+
+fn visible_texts(editor: &Entity<Editor>, cx: &VisualTestContext) -> Vec<String> {
+    editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|entry| entry.entity.read(cx).display_text().to_string())
+            .collect()
+    })
+}
+
+fn caret_in_block(editor: &Entity<Editor>, cx: &VisualTestContext, index: usize) -> usize {
+    editor.read_with(cx, |editor, cx| {
+        editor.document.visible_blocks()[index]
+            .entity
+            .read(cx)
+            .cursor_offset()
+    })
+}
+
+fn cursor_block(editor: &Entity<Editor>, cx: &VisualTestContext) -> usize {
+    editor.read_with(cx, |editor, cx| {
+        let active = editor.active_entity_id.expect("焦点块");
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .position(|entry| entry.entity.entity_id() == active)
+            .expect("活动块在可见列表里")
+    })
+}
+
+#[gpui::test]
+async fn w_b_e_move_between_words(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two three");
+    cx.simulate_keystrokes("w");
+    assert_eq!(first_block_caret(&editor, &cx), 4, "w 应落在下一个词首");
+    cx.simulate_keystrokes("w");
+    assert_eq!(first_block_caret(&editor, &cx), 8);
+    cx.simulate_keystrokes("b");
+    assert_eq!(first_block_caret(&editor, &cx), 4, "b 应回到词首");
+    cx.simulate_keystrokes("e");
+    assert_eq!(first_block_caret(&editor, &cx), 6, "e 应停在词尾");
+}
+
+#[gpui::test]
+async fn zero_and_dollar_jump_to_line_edges(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two three");
+    cx.simulate_keystrokes("$");
+    assert_eq!(first_block_caret(&editor, &cx), 12, "$ 应停在行尾");
+    cx.simulate_keystrokes("0");
+    assert_eq!(first_block_caret(&editor, &cx), 0, "0 应回到行首");
+}
+
+#[gpui::test]
+async fn j_and_k_move_across_blocks(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo\n\nthree");
+    assert_eq!(cursor_block(&editor, &cx), 0);
+    cx.simulate_keystrokes("j");
+    assert_eq!(cursor_block(&editor, &cx), 1, "j 应下移一段");
+    cx.simulate_keystrokes("j");
+    assert_eq!(cursor_block(&editor, &cx), 2);
+    cx.simulate_keystrokes("k");
+    assert_eq!(cursor_block(&editor, &cx), 1, "k 应上移一段");
+}
+
+#[gpui::test]
+async fn gg_and_capital_g_reach_document_edges(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo\n\nthree");
+    cx.simulate_keystrokes("G");
+    assert_eq!(cursor_block(&editor, &cx), 2, "G 应到文末");
+    cx.simulate_keystrokes("g g");
+    assert_eq!(cursor_block(&editor, &cx), 0, "gg 应回文首");
+}
+
+#[gpui::test]
+async fn f_t_semicolon_and_comma_find_characters(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abcabc");
+    cx.simulate_keystrokes("f c");
+    assert_eq!(first_block_caret(&editor, &cx), 2, "fc 应停在 c 上");
+    cx.simulate_keystrokes(";");
+    assert_eq!(first_block_caret(&editor, &cx), 5, "; 应重复查找");
+    cx.simulate_keystrokes(",");
+    assert_eq!(first_block_caret(&editor, &cx), 2, ", 应反向重复");
+    cx.simulate_keystrokes("t a");
+    assert_eq!(
+        first_block_caret(&editor, &cx),
+        2,
+        "ta 应停在下一个 a 前一格"
+    );
+}
+
+#[gpui::test]
+async fn percent_jumps_between_matching_pairs(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "(abc)");
+    cx.simulate_keystrokes("%");
+    assert_eq!(first_block_caret(&editor, &cx), 4, "% 应跳到配对括号");
+}
+
+#[gpui::test]
+async fn pipe_moves_to_a_column(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abcdef");
+    cx.simulate_keystrokes("4 |");
+    assert_eq!(first_block_caret(&editor, &cx), 3, "4| 应到第 4 列（0 基 3）");
+}
+
+#[gpui::test]
+async fn capital_i_and_a_insert_at_line_edges(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes("A");
+    cx.simulate_input(" end");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "alpha end");
+    cx.simulate_keystrokes("I");
+    cx.simulate_input("start ");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "start alpha end");
+}
+
+#[gpui::test]
+async fn o_opens_a_new_block_below(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one");
+    cx.simulate_keystrokes("o");
+    cx.simulate_input("two");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(visible_texts(&editor, &cx), vec!["one", "two"]);
+    assert_eq!(cursor_block(&editor, &cx), 1, "o 后光标在新段");
+}
+
+#[gpui::test]
+async fn enter_in_insert_mode_splits_the_block(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two");
+    cx.simulate_keystrokes("A");
+    cx.simulate_input(" more");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("next");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(visible_texts(&editor, &cx), vec!["one two more", "next"]);
+}
+
+#[gpui::test]
+async fn ctrl_w_deletes_the_previous_word_in_insert_mode(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    cx.simulate_keystrokes("A");
+    cx.simulate_keystrokes("ctrl-w");
+    assert_eq!(document_text(&editor, &cx), "alpha ", "ctrl-w 应删掉一个词");
+}
+
+#[gpui::test]
+async fn ctrl_u_deletes_to_line_start_in_insert_mode(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    cx.simulate_keystrokes("A");
+    cx.simulate_keystrokes("ctrl-u");
+    assert_eq!(document_text(&editor, &cx), "", "ctrl-u 应删到行首");
+}
+
+#[gpui::test]
+async fn ctrl_o_runs_one_normal_command_then_returns_to_insert(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two");
+    cx.simulate_keystrokes("i");
+    cx.simulate_keystrokes("ctrl-o");
+    cx.simulate_keystrokes("w");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Insert, "ctrl-o 后应回到插入");
+    assert_eq!(first_block_caret(&editor, &cx), 4, "w 应已把光标移到下一个词");
+}

@@ -532,8 +532,9 @@ impl Editor {
                 true
             }
             VimKey::Ctrl('o') => {
-                self.vim.insert_one_shot_normal = true;
+                // 先切模式再立标记：vim_enter_mode 会清掉单次命令标记。
                 self.vim_enter_mode(VimMode::Normal, cx);
+                self.vim.insert_one_shot_normal = true;
                 true
             }
             VimKey::Ctrl('r') => {
@@ -1014,17 +1015,12 @@ impl Editor {
         }
 
         // ctrl-o：单条普通命令执行完回插入；命令自己切了模式则以命令为准。
-        if self.vim.insert_one_shot_normal && self.vim.mode == VimMode::Normal {
+        if self.vim.insert_one_shot_normal {
+            let back_to_insert = self.vim.mode == VimMode::Normal;
             self.vim.insert_one_shot_normal = false;
-            self.vim_enter_mode(VimMode::Insert, cx);
-        } else if !matches!(
-            action,
-            VimAction::EnterInsert(_)
-                | VimAction::ToggleVisual(_)
-                | VimAction::EnterReplaceMode
-                | VimAction::OpenCmdline(_)
-        ) {
-            self.vim.insert_one_shot_normal = false;
+            if back_to_insert {
+                self.vim_enter_mode(VimMode::Insert, cx);
+            }
         }
 
         // `.` 素材：变更命令记下入口键（插入会话的键在 esc 时补记）。
