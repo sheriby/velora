@@ -484,6 +484,15 @@ mod probe {
 /// 光标处的括号匹配：光标前一个字符优先（贴着括号），其次光标处字符；
 /// 返回 (开括号偏移, 闭括号偏移)。扫描限深且带步数上限（`MAX_BRACKET_SCAN`），
 /// 防止超长行上每次按键全行扫描。
+/// vim 块状光标取主题选区色，并向正文色靠拢，保证在明暗主题上都能看见；
+/// 画在文字下方，字形保持原色。
+pub(crate) fn vim_block_cursor_color(selection: Hsla, text: Hsla, opacity: f32) -> Hsla {
+    let mut color = selection;
+    color.l = (selection.l + (text.l - selection.l) * 0.35).clamp(0.0, 1.0);
+    color.a *= opacity;
+    color
+}
+
 pub(crate) fn matching_bracket_pair(text: &str, cursor: usize) -> Option<(usize, usize)> {
     const MAX_BRACKET_SCAN: usize = 8192;
     const PAIRS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];

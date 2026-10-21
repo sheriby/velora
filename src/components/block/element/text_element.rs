@@ -33,6 +33,8 @@ pub struct PrepaintState {
     /// (源行下标, 是否展开)：paint 时按行顶画指示符。
     long_line_markers: Vec<(usize, bool)>,
     cursor: Option<PaintQuad>,
+    /// vim 块状光标：画在文字下方，字形保持原色。
+    vim_block_cursor: bool,
     /// 当前行高亮（光标所在视觉行全宽，最底层）。
     current_line: Vec<PaintQuad>,
     /// 括号匹配高亮（成对两个字符的小底色）。
@@ -599,7 +601,16 @@ impl Element for BlockTextElement {
                                     }
                                 }
                             }
-                            fill(bounds, cursor_color)
+                            let color = if input.vim_block_caret && !self.is_placeholder {
+                                super::vim_block_cursor_color(
+                                    theme.colors.selection,
+                                    theme.colors.text_default,
+                                    cursor_opacity,
+                                )
+                            } else {
+                                cursor_color
+                            };
+                            fill(bounds, color)
                         }),
                     )
                 } else {
@@ -720,6 +731,7 @@ impl Element for BlockTextElement {
             source_line_number_gutter_width,
             long_line_markers,
             cursor: cursor_quad,
+            vim_block_cursor: input.vim_block_caret && !self.is_placeholder,
             current_line: current_line_quads,
             bracket_highlights: bracket_quads,
             selection: selection_quads,
@@ -793,6 +805,14 @@ impl Element for BlockTextElement {
 
         for bracket in prepaint.bracket_highlights.drain(..) {
             window.paint_quad(bracket);
+        }
+
+        if focus_handle.is_focused(window)
+            && !self.input.read(cx).is_read_only()
+            && prepaint.vim_block_cursor
+            && let Some(cursor) = prepaint.cursor.take()
+        {
+            window.paint_quad(cursor);
         }
 
         let line_height = prepaint.line_height;
@@ -871,6 +891,7 @@ impl Element for BlockTextElement {
 
         if focus_handle.is_focused(window)
             && !self.input.read(cx).is_read_only()
+            && !prepaint.vim_block_cursor
             && let Some(cursor) = prepaint.cursor.take()
         {
             window.paint_quad(cursor);

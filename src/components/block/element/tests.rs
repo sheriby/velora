@@ -1,6 +1,6 @@
     use super::{
         link_at_position, source_line_number_gutter_width, source_line_number_tops,
-        source_text_bounds, wrapped_line_height,
+        source_text_bounds, vim_block_cursor_color, wrapped_line_height,
     };
     use crate::components::{
         Block, BlockKind, BlockRecord, CodeHighlightClass, InlineTextTree, TableCellPosition,
@@ -10,6 +10,26 @@
         AppContext, Bounds, Hsla, Modifiers, MouseButton, MouseDownEvent, SharedString,
         TestAppContext, TextAlign, FontSizedTextRun as TextRun, VisualTestContext, font, point, px, rgba, size,
     };
+
+    #[test]
+    fn vim_block_cursor_contrasts_with_the_text_color() {
+        let selection = Hsla::from(rgba(0xdcecd6ff));
+        let text = Hsla::from(rgba(0x000000ff));
+        let color = vim_block_cursor_color(selection, text, 0.5);
+        assert!(
+            color.l < selection.l,
+            "浅色主题上块要更深，否则看不出光标"
+        );
+        assert!((color.a - 0.5).abs() < 1e-6);
+
+        let dark_selection = Hsla::from(rgba(0x2d4868ff));
+        let light_text = Hsla::from(rgba(0xffffffff));
+        let dark_color = vim_block_cursor_color(dark_selection, light_text, 0.5);
+        assert!(
+            dark_color.l > dark_selection.l,
+            "深色主题上块要更亮，否则看不出光标"
+        );
+    }
 
     #[test]
     fn prose_wrapping_preserves_punctuation_and_graphemes() {
