@@ -6,7 +6,6 @@ use gpui_kit::component::{
     breadcrumb::{Breadcrumb, BreadcrumbItem},
     button::{Button, ButtonVariants},
     status_bar::StatusBar,
-    tooltip::Tooltip,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -18,20 +17,16 @@ use crate::i18n::I18nStrings;
 use crate::theme::Theme;
 
 impl Editor {
-    /// vim 的模式名保持英文词汇；图标按模式区分，标签用常规字重。
-    fn vim_mode_icon_and_label(&self) -> (&'static str, &'static str) {
+    /// vim 的模式名保持英文词汇；纯文本显示，不随界面语言翻译。
+    fn vim_mode_label(&self) -> &'static str {
         use super::vim::{VimMode, VisualKind};
         match self.vim.mode {
-            VimMode::Insert => ("icon/editor/vim-insert.svg", "Insert"),
-            VimMode::Replace => ("icon/editor/vim-replace.svg", "Replace"),
-            VimMode::Visual(VisualKind::Char) => ("icon/editor/vim-visual.svg", "Visual"),
-            VimMode::Visual(VisualKind::Line) => {
-                ("icon/editor/vim-visual.svg", "Visual Line")
-            }
-            VimMode::Visual(VisualKind::Block) => {
-                ("icon/editor/vim-visual.svg", "Visual Block")
-            }
-            VimMode::Normal => ("icon/editor/vim-normal.svg", "Normal"),
+            VimMode::Insert => "Insert",
+            VimMode::Replace => "Replace",
+            VimMode::Visual(VisualKind::Char) => "Visual",
+            VimMode::Visual(VisualKind::Line) => "Visual Line",
+            VimMode::Visual(VisualKind::Block) => "Visual Block",
+            VimMode::Normal => "Normal",
         }
     }
 
@@ -124,31 +119,13 @@ impl Editor {
 
         // vim 模式指示：开着一律显示当前模式（vim 使用者靠它确认落点）。
         if self.vim_enabled {
-            let (icon, label) = self.vim_mode_icon_and_label();
             right_items.push(
                 div()
                     .id("status-bar-vim-mode")
                     .debug_selector(|| "status-bar-vim-mode".into())
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap_1()
-                    .tooltip({
-                        let label = label.to_string();
-                        move |window, cx| Tooltip::new(label.clone()).build(window, cx)
-                    })
-                    .child(
-                        Icon::empty()
-                            .path(icon)
-                            .text_color(c.status_bar_text_dim),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(d.status_bar_text_size))
-                            .font_weight(gpui::FontWeight::NORMAL)
-                            .text_color(c.status_bar_text_dim)
-                            .child(label),
-                    )
+                    .text_size(px(d.status_bar_text_size))
+                    .text_color(c.status_bar_text_dim)
+                    .child(self.vim_mode_label())
                     .into_any_element(),
             );
         }

@@ -331,7 +331,7 @@ impl I18nStrings {
             vim_mode_visual_line: "可视行".into(),
             vim_mode_visual_block: "可视块".into(),
             vim_mode_replace: "替换".into(),
-            preferences_vim_mode: "Vim 模式编辑（Normal/Insert 等模态键位）".into(),
+            preferences_vim_mode: "Vim 模式".into(),
             command_toggle_typewriter_mode: "切换打字机模式".into(),
             command_toggle_sidebar: "切换侧边栏".into(),
             // 「选择全文」：一次按下就选整篇，与上面那条「全选」的两段循环是两回事。
@@ -931,7 +931,7 @@ impl I18nStrings {
             vim_mode_visual_line: "V-LINE".into(),
             vim_mode_visual_block: "V-BLOCK".into(),
             vim_mode_replace: "REPLACE".into(),
-            preferences_vim_mode: "Vim modal editing (Normal/Insert keybindings)".into(),
+            preferences_vim_mode: "Vim Mode".into(),
             command_toggle_typewriter_mode: "Toggle Typewriter Mode".into(),
             command_toggle_sidebar: "Toggle Sidebar".into(),
             command_select_document: "Select All Text".into(),

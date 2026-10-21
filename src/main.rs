@@ -299,18 +299,6 @@ impl AssetSource for VeloraAssets {
             "icon/editor/insert.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/editor/insert.svg"
             )))),
-            "icon/editor/vim-normal.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icon/editor/vim-normal.svg"
-            )))),
-            "icon/editor/vim-insert.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icon/editor/vim-insert.svg"
-            )))),
-            "icon/editor/vim-visual.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icon/editor/vim-visual.svg"
-            )))),
-            "icon/editor/vim-replace.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icon/editor/vim-replace.svg"
-            )))),
             "icon/editor/undo.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/editor/undo.svg"
             )))),
