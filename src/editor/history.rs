@@ -722,6 +722,8 @@ impl Editor {
                 self.table_cells.clear();
             }
         }
+        // 撤销/切视图重建出的块同样是新实体，按当前模式重套 vim 的输入开关。
+        self.sync_vim_block_carets(cx);
     }
 
     fn history_row_signature(&self, id: EntityId, block: &Block) -> String {

@@ -151,6 +151,9 @@ pub struct Block {
     /// vim 模式的块状光标开关（普通/可视/替换模式为真）。由 Editor 在模式
     /// 切换时写进可见块；渲染层只读它决定光标画块还是画竖条。
     pub(crate) vim_block_caret: bool,
+    /// vim 普通/可视/替换模式不接受系统文本输入：否则 macOS 会把可打印字符
+    /// 送进输入法通道，按键拦截器拿不到字母。插入模式与关闭 vim 时为真。
+    pub(crate) vim_accepts_text_input: bool,
     /// Content-local byte ranges highlighted as document search matches
     /// (roadmap B2). Owned by the editor's search panel state.
     pub(crate) search_highlight_ranges: Vec<Range<usize>>,
@@ -338,6 +341,7 @@ impl Block {
             code_language_is_selecting: false,
             selected_range: 0..0,
             vim_block_caret: false,
+            vim_accepts_text_input: true,
             search_highlight_ranges: Vec::new(),
             search_active_range: None,
             folded: false,

@@ -1769,6 +1769,54 @@ async fn ctrl_v_inserts_the_next_key_literally(cx: &mut TestAppContext) {
     assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
 }
 
+fn block_text_input_enabled(
+    editor: &Entity<Editor>,
+    cx: &VisualTestContext,
+    index: usize,
+) -> bool {
+    editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .get(index)
+            .map(|entry| entry.entity.read(cx).vim_accepts_text_input)
+            .unwrap_or(true)
+    })
+}
+
+#[gpui::test]
+async fn vim_modes_toggle_block_text_input(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    assert!(
+        !block_text_input_enabled(&editor, &cx, 0),
+        "普通模式必须关闭系统文本输入"
+    );
+    cx.simulate_keystrokes("i");
+    assert!(
+        block_text_input_enabled(&editor, &cx, 0),
+        "插入模式必须恢复文本输入"
+    );
+    cx.simulate_keystrokes("escape");
+    assert!(
+        !block_text_input_enabled(&editor, &cx, 0),
+        "回到普通模式后必须再次关闭文本输入"
+    );
+}
+
+#[gpui::test]
+async fn new_document_blocks_disable_text_input_in_normal_mode(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    editor.update_in(cx, |editor, window, cx| {
+        editor.new_workspace_document(window, cx)
+    });
+    redraw(cx);
+    redraw(cx);
+    assert!(
+        !block_text_input_enabled(&editor, &cx, 0),
+        "新建文档的块在普通模式下不能接受系统文本输入"
+    );
+}
+
 #[gpui::test]
 async fn normal_mode_swallows_typing_in_a_new_document_tab(cx: &mut TestAppContext) {
     let (editor, cx) = vim_editor(cx, "alpha");

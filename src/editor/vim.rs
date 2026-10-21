@@ -510,18 +510,21 @@ impl Editor {
         cx.notify();
     }
 
-    /// 把当前模式的光标形状（块/竖条）广播到可见块。
+    /// 把当前模式的光标形状（块/竖条）与文本输入开关广播到可见块。
     pub(super) fn sync_vim_block_carets(&mut self, cx: &mut Context<Self>) {
-        if !self.vim_enabled {
-            return;
-        }
-        let block_caret = self.vim.mode.uses_block_caret();
+        let block_caret = self.vim_enabled && self.vim.mode.uses_block_caret();
+        let accepts_text = !self.vim_enabled || self.vim.mode == VimMode::Insert;
         let visible = self.document.visible_blocks().to_vec();
         for entry in &visible {
             let entity = &entry.entity;
-            if entity.read(cx).vim_block_caret != block_caret {
+            let (caret, accepts) = {
+                let block = entity.read(cx);
+                (block.vim_block_caret, block.vim_accepts_text_input)
+            };
+            if caret != block_caret || accepts != accepts_text {
                 entity.update(cx, |block, cx| {
                     block.vim_block_caret = block_caret;
+                    block.vim_accepts_text_input = accepts_text;
                     cx.notify();
                 });
             }

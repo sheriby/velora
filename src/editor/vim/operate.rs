@@ -2093,6 +2093,7 @@ impl Editor {
             Self::reset_block_cursor(&first, 0, cx);
             self.focus_block(first.entity_id());
         }
+        self.sync_vim_block_carets(cx);
         if self.write_back_structural_change(&active, None, cx) {
             self.mark_dirty_written_back(cx);
         } else {

@@ -32,13 +32,16 @@ impl EntityInputHandler for Block {
         Some(self.display_text()[range].to_string())
     }
 
+    fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+        self.vim_accepts_text_input
+    }
+
     fn selected_text_range(
         &mut self,
         _ignore_disabled_input: bool,
         _window: &mut Window,
         _cx: &mut Context<Self>,
-    ) -> Option<UTF16Selection> {
-        if self.is_read_only() && !_ignore_disabled_input {
+    ) -> Option<UTF16Selection> {        if self.is_read_only() && !_ignore_disabled_input {
             return None;
         }
         if self.code_language_focus_handle.is_focused(_window) {
