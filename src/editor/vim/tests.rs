@@ -2487,3 +2487,52 @@ async fn single_block_vim_edits_write_back_without_reserializing(cx: &mut TestAp
         document_text(&editor, &cx)
     );
 }
+
+#[gpui::test]
+async fn block_visual_indent_touches_every_selected_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```\nab\ncd\n```");
+    cx.simulate_keystrokes("ctrl-q j >");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["    ab\n    cd"],
+        "块状缩进要给每条被选硬行都加一级"
+    );
+}
+
+#[gpui::test]
+async fn block_visual_outdent_removes_one_indent_level(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```\n    ab\n    cd\n```");
+    cx.simulate_keystrokes("0 ctrl-q j <");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["ab\ncd"],
+        "块状出缩进要真删掉缩进，不能是空操作"
+    );
+}
+
+#[gpui::test]
+async fn block_visual_indent_keeps_the_unnamed_register(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo");
+    cx.simulate_keystrokes("y y");
+    cx.simulate_keystrokes("ctrl-q j >");
+    cx.simulate_keystrokes("G");
+    cx.simulate_keystrokes("p");
+    let texts = visible_texts(&editor, &cx);
+    assert!(
+        texts.iter().any(|text| text.contains("one")),
+        "缩进不该覆盖无名寄存器：{texts:?}"
+    );
+}
+
+#[gpui::test]
+async fn block_visual_yank_does_not_mark_the_document_dirty(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```\nab\ncd\n```");
+    cx.simulate_keystrokes("ctrl-q j y");
+    assert_eq!(visible_texts(&editor, &cx), vec!["ab\ncd"]);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            !editor.document_dirty,
+            "块状复制只动寄存器，不该把文档标脏"
+        );
+    });
+}

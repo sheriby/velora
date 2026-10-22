@@ -1691,24 +1691,6 @@ impl Editor {
             return;
         };
         let register = register.unwrap_or('"');
-        let mut text = String::new();
-        for (line_index, (block_index, range)) in ranges.iter().enumerate() {
-            if line_index > 0 {
-                text.push('\n');
-            }
-            let block = entities[*block_index].read(cx);
-            let display = block.display_text();
-            let end = range.end.min(display.len());
-            text.push_str(&display[range.start.min(end)..end]);
-        }
-        let use_system = crate::config::EditorSettings::vim(cx).use_system_clipboard;
-        self.vim.registers.write(
-            register,
-            RegisterContent { text, linewise: false },
-            true,
-            cx,
-            use_system,
-        );
         let first = ranges.first().cloned();
         let insert_targets: Vec<(gpui::EntityId, std::ops::Range<usize>)> = ranges
             .iter()
@@ -1717,6 +1699,29 @@ impl Editor {
             })
             .collect();
         super::visual::vim_exit_visual(self, cx);
+        match operator {
+            Operator::Delete | Operator::Change | Operator::Yank => {
+                let mut text = String::new();
+                for (line_index, (block_index, range)) in ranges.iter().enumerate() {
+                    if line_index > 0 {
+                        text.push('\n');
+                    }
+                    let block = entities[*block_index].read(cx);
+                    let display = block.display_text();
+                    let end = range.end.min(display.len());
+                    text.push_str(&display[range.start.min(end)..end]);
+                }
+                let use_system = crate::config::EditorSettings::vim(cx).use_system_clipboard;
+                self.vim.registers.write(
+                    register,
+                    RegisterContent { text, linewise: false },
+                    true,
+                    cx,
+                    use_system,
+                );
+            }
+            _ => {}
+        }
         match operator {
             Operator::Delete | Operator::Change => {
                 // 同一块内的多个区间从后往前删，前面的偏移才不漂。
@@ -1753,12 +1758,41 @@ impl Editor {
                 }
             }
             Operator::Indent | Operator::Outdent => {
+                // 块状的 `>`/`<` 作用在整条硬行上：Vim 增删的是行首的缩进级，
+                // 与选中的列无关，所以先由区间起点回退到行首。
+                let mut edits: Vec<(usize, std::ops::Range<usize>, String)> = Vec::new();
                 for (block_index, range) in ranges.iter() {
-                    let block = entities[*block_index].clone();
+                    let display = entities[*block_index].read(cx).display_text().to_string();
+                    let start = range.start.min(display.len());
+                    let line_start = display[..start]
+                        .rfind(['\n', '\r'])
+                        .map(|index| index + 1)
+                        .unwrap_or(0);
+                    let (edit_range, replacement): (std::ops::Range<usize>, String) =
+                        if operator == Operator::Indent {
+                            (line_start..line_start, "    ".to_owned())
+                        } else {
+                            let rest = &display[line_start..];
+                            let remove = if rest.starts_with('\t') {
+                                1
+                            } else {
+                                rest.chars()
+                                    .take_while(|character| *character == ' ')
+                                    .count()
+                                    .min(4)
+                            };
+                            let end = (line_start + remove).min(display.len());
+                            (line_start..end, String::new())
+                        };
+                    edits.push((*block_index, edit_range, replacement));
+                }
+                // 同一块从后往前落笔，前一条目的偏移不会被后一次插入带偏。
+                for (block_index, range, replacement) in edits.into_iter().rev() {
+                    let block = entities[block_index].clone();
                     block.update(cx, |block, cx| {
                         block.replace_text_in_visible_range(
-                            range.start..range.start,
-                            if operator == Operator::Indent { "    " } else { "" },
+                            range,
+                            &replacement,
                             Some(0..0),
                             false,
                             cx,
@@ -1806,7 +1840,23 @@ impl Editor {
             Operator::ReplaceWithRegister => {}
             Operator::ToggleComment => {}
         }
-        self.mark_dirty(cx);
+        // 复制只动寄存器：把文档标脏会让标题出现未保存点并触发自动保存。
+        if matches!(
+            operator,
+            Operator::Delete
+                | Operator::Change
+                | Operator::Indent
+                | Operator::Outdent
+                | Operator::Lowercase
+                | Operator::Uppercase
+                | Operator::SwapCase
+        ) {
+            let touched: Vec<Entity<Block>> = ranges
+                .iter()
+                .map(|(block_index, _)| entities[*block_index].clone())
+                .collect();
+            self.vim_mark_blocks_dirty(&touched, cx);
+        }
     }
 
     /// >>/<<：缩进按块算（列表层级/段首四空格），复用块自己的缩进动作。
