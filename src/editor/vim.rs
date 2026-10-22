@@ -259,6 +259,8 @@ pub(crate) struct VimState {
     pub(super) pending_cmdline: Option<command::CmdlineKind>,
     /// 宏/`.` 重放进行中（防自递归与重复记录）。
     pub(super) replaying: bool,
+    /// 正在重放的宏寄存器，按调用顺序入栈；同名再入即 Vim 的 E223。
+    pub(super) macro_stack: Vec<char>,
 }
 
 impl Default for VimState {
@@ -298,6 +300,7 @@ impl Default for VimState {
             cmdline: None,
             pending_cmdline: None,
             replaying: false,
+            macro_stack: Vec::new(),
         }
     }
 }
@@ -1297,10 +1300,14 @@ impl Editor {
         let Some(keys) = self.vim.macro_registers.get(&register_name).cloned() else {
             return;
         };
+        if self.vim.macro_stack.contains(&register_name) {
+            return;
+        }
         self.vim.last_macro_register = Some(register_name);
         let times = count.max(1);
         let mut guard_counter = 0usize;
         self.vim.replaying = true;
+        self.vim.macro_stack.push(register_name);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             for _ in 0..times {
                 for key in &keys {
@@ -1313,6 +1320,7 @@ impl Editor {
             }
         }));
         self.vim.replaying = false;
+        self.vim.macro_stack.retain(|entry| *entry != register_name);
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
         }

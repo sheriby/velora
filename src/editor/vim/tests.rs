@@ -2536,3 +2536,27 @@ async fn block_visual_yank_does_not_mark_the_document_dirty(cx: &mut TestAppCont
         );
     });
 }
+
+#[gpui::test]
+async fn recursive_macro_is_refused_instead_of_overflowing_the_stack(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abcdef");
+    editor.update(cx, |editor, _cx| {
+        editor
+            .vim
+            .macro_registers
+            .insert('a', vec![VimKey::Char('@'), VimKey::Char('a')]);
+    });
+    cx.simulate_keystrokes("@ a");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "abcdef",
+        "自引用宏应像 E223 一样直接被拒，正文不该被递归改动"
+    );
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.vim.macro_stack.is_empty(),
+            "重放结束后宏栈必须清空"
+        );
+    });
+}
