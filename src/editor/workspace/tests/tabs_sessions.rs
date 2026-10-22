@@ -1450,13 +1450,10 @@ fn disk_text(path: &std::path::Path) -> String {
     crate::editor::encoding::decode_document_bytes(fs::read(path).expect("read the document"))
 }
 
-/// 标签快照丢了文件形状（`WorkspaceDocumentTab` 只存 LF 文本，不存字节与
-/// `FileShape`——就是 tabs.rs / session_watcher.rs 里那两行「独立工作项，见 FIXPLAN B2」），
-/// 自动保存于是把后台那一页的 UTF-16 洗成 UTF-8：BOM 没了、正文按错的编码重解一遍，
-/// 用户的原文在磁盘上被换掉。这正是编码修复要堵的那类数据丢失，只是换了个入口。
-///
-/// 修法不需要给每个标签再存一份整篇字节：盘上的形状还在原文件里，落盘前按它重新
-/// 编码就行，编码器仍然只有 `FileShape::encode` 一个。
+/// 后台标签只有快照文本、没有缓冲区可拿落盘字节（`bytes` 为 `None`）；早期实现
+/// 因此把 UTF-16 洗成 UTF-8：BOM 没了、正文按错的编码重解一遍，用户的原文在磁盘
+/// 上被换掉。落盘前按盘上那份文件的形状重新编码，编码器仍然只有
+/// `FileShape::encode` 一个。
 #[gpui::test]
 async fn autosaving_a_background_dirty_tab_keeps_its_encoding_shape(cx: &mut TestAppContext) {
     cx.update(|cx| {

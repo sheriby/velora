@@ -1268,7 +1268,7 @@ fn whole_document_passes(
 /// 归因探针：10 MiB 文档一次按键的钱花在哪。跑法：
 /// `cargo test probe_attribute_ten_mib -- --ignored --nocapture`。
 #[gpui::test]
-#[ignore]
+#[ignore = "诊断探针：手动跑，看 10 MiB 文档一次按键的耗时归因"]
 async fn probe_attribute_ten_mib_keystroke(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1326,7 +1326,7 @@ async fn probe_attribute_ten_mib_keystroke(cx: &mut TestAppContext) {
 /// 归因探针（markdown 那份）：与 `ten_mib_typing_does_not_scan_the_whole_document`
 /// 同一份文档、同一个入口，只是多按几次键并打出所有整篇遍数，方便 `sample` 挂上去。
 #[gpui::test]
-#[ignore]
+#[ignore = "诊断探针：手动跑，配合 sample 看每键的整篇遍数"]
 async fn probe_attribute_ten_mib_markdown_keystroke(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1544,7 +1544,7 @@ async fn row_plan_rebuild_reads_only_the_headings_not_every_block(cx: &mut TestA
 /// 197–272ms，剩下的大纲同步 ~88ms 是「每键仍走一遍 10.6 万根块 + 5.3 万条标题克隆」。
 /// 跑法：`cargo test probe_attribute_ten_mib_markdown_with_outline -- --ignored --nocapture`。
 #[gpui::test]
-#[ignore]
+#[ignore = "诊断探针：手动跑，看大纲打开时每键的耗时切片"]
 async fn probe_attribute_ten_mib_markdown_with_outline_open(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

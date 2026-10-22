@@ -306,7 +306,7 @@ impl I18nStrings {
             workspace_replace_current_button: "替换当前工作区".into(),
             workspace_open_new_window_button: "打开新窗口".into(),
             workspace_preview_unavailable_message: "无法使用文本编辑器预览该文件".into(),
-            encoding_not_supported: "该文件使用了暂不支持的编码（如 UTF-16），请先转换为 UTF-8"
+            encoding_not_supported: "该文件的编码无法无损写回（可能是二进制或已损坏），请先用其他工具处理"
                 .into(),
             welcome_tagline: "为长文写作打造的 Markdown 编辑器".into(),
             welcome_new_document: "新建文档".into(),
@@ -908,7 +908,7 @@ impl I18nStrings {
             workspace_preview_unavailable_message:
                 "This file can't be previewed in the text editor".into(),
             encoding_not_supported:
-                "This file uses an encoding we don't support yet (like UTF-16). Convert it to UTF-8 first."
+                "This file's encoding can't be written back losslessly (it may be binary or damaged). Process it with another tool first."
                     .into(),
             welcome_tagline: "A Markdown editor built for long-form writing".into(),
             welcome_new_document: "New Document".into(),
