@@ -73,6 +73,12 @@ pub(crate) struct SavedSession {
     pub bindings: std::collections::BTreeMap<String, PathBuf>,
     #[serde(default)]
     pub references: Vec<String>,
+    #[serde(default)]
+    pub draft: String,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -105,6 +111,9 @@ impl SavedSession {
             endpoint_id: String::new(),
             bindings: Default::default(),
             references: Vec::new(),
+            draft: String::new(),
+            input_tokens: 0,
+            output_tokens: 0,
         }
     }
     pub fn save_at(&self, path: &Path) -> Result<()> {

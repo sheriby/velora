@@ -914,9 +914,10 @@ impl Editor {
                                     .prompt_profile
                                     .as_ref()
                                     .map_or(AiCommand::Ask, |profile| profile.command);
+                                let draft = session.saved.draft.clone();
                                 session
                                     .input
-                                    .update(cx, |input, cx| input.set_value("", window, cx));
+                                    .update(cx, |input, cx| input.set_value(draft, window, cx));
                                 session.mode = PanelMode::Task;
                                 session.error = None;
                                 session.stream_index = None;
@@ -1207,6 +1208,12 @@ impl Editor {
                     InputEvent::Change | InputEvent::Focus | InputEvent::Blur
                 )
             {
+                if matches!(event, InputEvent::Change) {
+                    let draft = input.read(cx).value().to_owned();
+                    if let Some(session) = editor.ai_session.as_mut() {
+                        session.saved.draft = draft.to_string();
+                    }
+                }
                 cx.notify();
             }
         });
@@ -1627,6 +1634,7 @@ impl Editor {
             session
                 .input
                 .update(cx, |input, cx| input.set_value("", window, cx));
+            session.saved.draft.clear();
             self.refresh_ai_conversation(cx);
             cx.notify();
             return;
@@ -1751,6 +1759,7 @@ impl Editor {
         session
             .input
             .update(cx, |input, cx| input.set_value("", window, cx));
+        session.saved.draft.clear();
         session.saved.workspace.cursor_target = (|| {
             Some(crate::ai::workspace::CursorTarget {
                 document_id: editor_context
@@ -2028,6 +2037,8 @@ impl Editor {
                         .clone();
                     match result {
                         Ok(output) => {
+                            session.saved.input_tokens = output.input_tokens;
+                            session.saved.output_tokens = output.output_tokens;
                             session.truncated = output
                                 .error
                                 .as_deref()
@@ -2070,6 +2081,36 @@ impl Editor {
         }
         cx.notify();
         finished
+    }
+
+    pub(super) fn cycle_ai_endpoint(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.ai_session.as_mut() else {
+            return;
+        };
+        if session.saved.running || session.settings.endpoints.len() < 2 {
+            return;
+        }
+        let current = session
+            .settings
+            .endpoints
+            .iter()
+            .position(|endpoint| endpoint.id == session.saved.endpoint_id)
+            .or_else(|| {
+                session
+                    .settings
+                    .active_endpoint()
+                    .and_then(|active| {
+                        session
+                            .settings
+                            .endpoints
+                            .iter()
+                            .position(|endpoint| endpoint.id == active.id)
+                    })
+            })
+            .unwrap_or(0);
+        let next = (current + 1) % session.settings.endpoints.len();
+        session.saved.endpoint_id = session.settings.endpoints[next].id.clone();
+        cx.notify();
     }
 
     pub(super) fn stop_ai_task(&mut self, cx: &mut Context<Self>) {

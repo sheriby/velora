@@ -2,6 +2,24 @@ use super::*;
 use crate::ai::DocumentSnapshot;
 
 #[test]
+fn ai_session_round_trips_draft_and_token_usage() {
+    let workspace = AiWorkspace::new(None, Vec::new()).unwrap();
+    let mut session = SavedSession::new(workspace);
+    session.draft = "未发送的草稿".into();
+    session.input_tokens = 12;
+    session.output_tokens = 34;
+    let root = std::env::temp_dir().join(format!("velora-ai-draft-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("session.json");
+    session.save_at(&path).unwrap();
+    let restored = SavedSession::load_at(&path, None).unwrap();
+    assert_eq!(restored.draft, "未发送的草稿");
+    assert_eq!(restored.input_tokens, 12);
+    assert_eq!(restored.output_tokens, 34);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn ai_session_fails_in_flight_tools_when_a_run_stops() {
     let workspace = AiWorkspace::new(None, Vec::new()).unwrap();
     let mut session = SavedSession::new(workspace);

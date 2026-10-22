@@ -743,6 +743,7 @@ pub struct I18nStrings {
     pub ai_action_explain: String,
     pub ai_panel_send: String,
     pub ai_panel_settings: String,
+    pub ai_panel_model: String,
     pub ai_panel_accept_all: String,
     pub ai_panel_accept_file: String,
     pub ai_panel_reject: String,

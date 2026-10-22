@@ -478,11 +478,43 @@ impl Editor {
         let input_id = session.input.entity_id();
         let session_id = session.saved.id.clone();
         let has_input = !session.input.read(cx).value().trim().is_empty();
+        let endpoint_label = session
+            .settings
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.id == session.saved.endpoint_id)
+            .or_else(|| session.settings.active_endpoint())
+            .map(|endpoint| endpoint.name.clone())
+            .unwrap_or_else(|| strings.ai_panel_settings.clone());
+        let token_label = (session.saved.input_tokens > 0 || session.saved.output_tokens > 0).then(|| {
+            format!(
+                "↑ {} / ↓ {}",
+                session.saved.input_tokens, session.saved.output_tokens
+            )
+        });
         let controls = div()
             .w_full()
             .flex()
             .items_center()
-            .justify_between()
+            .gap(px(6.0))
+            .child(self.ai_button(
+                "ai-endpoint-select",
+                true,
+                cx,
+                |button, _cx| {
+                    button
+                        .label(endpoint_label.clone())
+                        .accessibility_label(strings.ai_panel_model.clone())
+                        .tooltip(strings.ai_panel_model.clone())
+                        .disabled(session.saved.running || session.settings.endpoints.len() < 2)
+                        .text_xs()
+                },
+                move |editor, _, cx| editor.cycle_ai_endpoint(cx),
+            ))
+            .when_some(token_label, |controls, label| {
+                controls.child(div().text_xs().text_color(theme.colors.dialog_muted).child(label))
+            })
+            .child(div().flex_1())
             .child(self.ai_button(
                 "ai-context",
                 true,

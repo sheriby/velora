@@ -1129,6 +1129,7 @@ impl I18nStringsDe {
             ai_action_explain: self.ai_action_explain.unwrap_or(defaults.ai_action_explain),
             ai_panel_send: self.ai_panel_send.unwrap_or(defaults.ai_panel_send),
             ai_panel_settings: self.ai_panel_settings.unwrap_or(defaults.ai_panel_settings),
+            ai_panel_model: self.ai_panel_model.unwrap_or(defaults.ai_panel_model),
             ai_panel_accept_all: self.ai_panel_accept_all.unwrap_or(defaults.ai_panel_accept_all),
             ai_panel_accept_file: self.ai_panel_accept_file.unwrap_or(defaults.ai_panel_accept_file),
             ai_panel_reject: self.ai_panel_reject.unwrap_or(defaults.ai_panel_reject),

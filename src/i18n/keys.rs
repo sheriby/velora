@@ -488,6 +488,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_action_explain",
     "ai_panel_send",
     "ai_panel_settings",
+    "ai_panel_model",
     "ai_panel_accept_all",
     "ai_panel_accept_file",
     "ai_panel_reject",

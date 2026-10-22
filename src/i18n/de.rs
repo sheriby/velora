@@ -491,6 +491,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) ai_action_explain: Option<String>,
     pub(crate) ai_panel_send: Option<String>,
     pub(crate) ai_panel_settings: Option<String>,
+    pub(crate) ai_panel_model: Option<String>,
     pub(crate) ai_panel_accept_all: Option<String>,
     pub(crate) ai_panel_accept_file: Option<String>,
     pub(crate) ai_panel_reject: Option<String>,
