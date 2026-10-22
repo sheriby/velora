@@ -2389,3 +2389,77 @@ async fn visual_line_yank_paste_duplicates_a_soft_wrapped_paragraph(cx: &mut Tes
         "整段行级复制要保住软换行与行内记号"
     );
 }
+
+// ---- 语言输入框、浮层优先与写回路径 ----
+
+#[gpui::test]
+async fn normal_mode_yields_keys_to_the_code_language_field(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler as _;
+    let (editor, cx) = vim_editor(cx, "```rust\nab\ncd\n```");
+    let code = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.focus_block(code.entity_id());
+        code.update(cx, |block, block_cx| {
+            block.code_language_focus_handle.focus(window, block_cx);
+        });
+    });
+    redraw(cx);
+
+    editor.update_in(cx, |_editor, window, cx| {
+        // 重绘会把窗口焦点收回块本身，再点一次语言框才等价于真机上的点击。
+        code.update(cx, |block, block_cx| {
+            block.code_language_focus_handle.focus(window, block_cx);
+        });
+    });
+    let keystroke = gpui::Keystroke::parse("u").expect("keystroke");
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(
+            !editor.vim_key_down(&keystroke, window, cx),
+            "焦点在语言框时 vim 不能把可打印键当命令"
+        );
+        assert!(
+            code.update(cx, |block, block_cx| block
+                .accepts_text_input(window, block_cx)),
+            "语言框聚焦时系统文本输入必须仍然开启，否则打不进语言名"
+        );
+    });
+    cx.simulate_keystrokes("u");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["ab\ncd"],
+        "语言框里的输入不该落进代码正文"
+    );
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}
+
+#[gpui::test]
+async fn escape_closes_an_open_completion_before_vim(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "$$\n\\al\n$$\n");
+    let math = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.focus_block(math.entity_id());
+        math.update(cx, |block, block_cx| {
+            block.focus_handle.focus(window, block_cx);
+            let end = block.display_text().find("\\al").expect("\\al 在块里") + "\\al".len();
+            block.move_to(end, block_cx);
+        });
+        editor.update_latex_completion_for_block(&math, cx);
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.latex_completion_is_open(), "夹具应先弹出公式补全");
+    });
+
+    cx.simulate_keystrokes("escape");
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            !editor.latex_completion_is_open(),
+            "Esc 应先收起补全浮层，而不是被 vim 吞掉"
+        );
+    });
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}

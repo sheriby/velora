@@ -449,7 +449,15 @@ impl Editor {
         if keystroke.modifiers.platform || keystroke.modifiers.alt {
             return false;
         }
-        if self.vim_focused_block(window, cx).is_none() {
+        let Some(block) = self.vim_focused_block(window, cx) else {
+            return false;
+        };
+        let focused_block = block.read(cx);
+        let language_focused = focused_block.code_language_focus_handle.is_focused(window)
+            || focused_block
+                .code_language_focus_handle
+                .contains_focused(window, cx);
+        if language_focused {
             return false;
         }
         let Some(key) = VimKey::from_keystroke(keystroke) else {

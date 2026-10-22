@@ -32,8 +32,12 @@ impl EntityInputHandler for Block {
         Some(self.display_text()[range].to_string())
     }
 
-    fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+    fn accepts_text_input(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // 语言输入框不是 Vim 的正文编辑目标；聚焦时文本输入必须继续走
+        // EntityInputHandler，否则普通模式的可打印键会落回块正文。
         self.vim_accepts_text_input
+            || self.code_language_focus_handle.is_focused(window)
+            || self.code_language_focus_handle.contains_focused(window, cx)
     }
 
     fn selected_text_range(
