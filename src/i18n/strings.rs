@@ -723,6 +723,7 @@ pub struct I18nStrings {
     pub ai_feature_disabled: String,
     pub ai_error_timeout: String,
     pub ai_error_stopped: String,
+    pub ai_error_length: String,
     pub ai_error_budget: String,
     pub ai_error_model_failed: String,
     pub ai_error_tool_arguments: String,
@@ -806,6 +807,7 @@ pub struct I18nStrings {
     pub ai_custom_placeholder: String,
     /// AI 面板:重试按钮。
     pub ai_panel_retry: String,
+    pub ai_panel_continue: String,
     /// AI 面板:停止按钮。
     pub ai_panel_stop: String,
     /// AI 面板:生成中状态。

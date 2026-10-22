@@ -1107,6 +1107,7 @@ impl I18nStringsDe {
             ai_feature_disabled: self.ai_feature_disabled.unwrap_or(defaults.ai_feature_disabled),
             ai_error_timeout: self.ai_error_timeout.unwrap_or(defaults.ai_error_timeout),
             ai_error_stopped: self.ai_error_stopped.unwrap_or(defaults.ai_error_stopped),
+            ai_error_length: self.ai_error_length.unwrap_or(defaults.ai_error_length),
             ai_error_budget: self.ai_error_budget.unwrap_or(defaults.ai_error_budget),
             ai_error_model_failed: self.ai_error_model_failed.unwrap_or(defaults.ai_error_model_failed),
             ai_error_tool_arguments: self.ai_error_tool_arguments.unwrap_or(defaults.ai_error_tool_arguments),
@@ -1196,6 +1197,9 @@ impl I18nStringsDe {
             ai_panel_retry: self
                 .ai_panel_retry
                 .unwrap_or(defaults.ai_panel_retry),
+            ai_panel_continue: self
+                .ai_panel_continue
+                .unwrap_or(defaults.ai_panel_continue),
             ai_panel_stop: self
                 .ai_panel_stop
                 .unwrap_or(defaults.ai_panel_stop),

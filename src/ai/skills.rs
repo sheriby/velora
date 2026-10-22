@@ -75,6 +75,39 @@ impl SkillCatalog {
         Ok(std::fs::read_to_string(path)?)
     }
 
+    pub fn active_skill_references(
+        &self,
+        disabled: &[String],
+        prompt: &str,
+    ) -> std::result::Result<Vec<String>, String> {
+        let mut active = Vec::new();
+        for token in prompt.split_whitespace() {
+            let Some(id) = token
+                .trim_matches(|character: char| {
+                    matches!(character, '，' | '。' | '；' | ';' | ',' | '.' | '!' | '？' | '?')
+                })
+                .strip_prefix('/')
+            else {
+                continue;
+            };
+            // 只把 `/scope:name` 形态的 token 当任务说明引用，普通路径与斜杠
+            // 短语不应被拦截。
+            if !id.contains(':') {
+                continue;
+            }
+            if !self.entries.iter().any(|entry| entry.id == id) {
+                return Err(format!("未知的任务说明：{id}"));
+            }
+            if disabled.iter().any(|entry| entry == id) {
+                return Err(format!("任务说明已禁用：{id}"));
+            }
+            if !active.iter().any(|existing| existing == id) {
+                active.push(id.to_owned());
+            }
+        }
+        Ok(active)
+    }
+
     pub fn prompt_catalog(&self) -> String {
         let mut entries = self.entries.iter().collect::<Vec<_>>();
         entries.sort_by(|left, right| left.id.cmp(&right.id));

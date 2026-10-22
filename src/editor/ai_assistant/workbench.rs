@@ -333,6 +333,33 @@ impl Editor {
                 |editor, window, cx| editor.retry_ai_task(window, cx),
             ));
         }
+        if session.truncated {
+            panel = panel.child(self.ai_button(
+                "ai-continue",
+                false,
+                cx,
+                |button, _cx| {
+                    button
+                        .label(strings.ai_panel_continue.clone())
+                        .disabled(session.saved.running)
+                },
+                |editor, window, cx| {
+                    if let Some(session) = editor.ai_session.as_mut() {
+                        let current = session.input.read(cx).value();
+                        let draft = if current.trim().is_empty() {
+                            "继续".to_owned()
+                        } else {
+                            format!("{current}\n\n继续")
+                        };
+                        session.input.update(cx, |input, cx| {
+                            input.set_value(draft, window, cx);
+                            input.focus(window, cx);
+                        });
+                    }
+                    editor.send_ai_task(window, cx);
+                },
+            ));
+        }
         // 快捷指令完成后同样提供追问输入；运行中的停止按钮在输入框里。
         panel = panel.child(self.render_ai_composer(theme, window, cx));
         let owner = cx.entity().downgrade();
@@ -697,8 +724,41 @@ impl Editor {
                         .disabled(!(!session.saved.running))
                 },
                 |editor, window, cx| editor.retry_ai_task(window, cx),
-            ))
-            .child(div().flex_1());
+            ));
+        if session.truncated {
+            actions = actions.child(self.ai_button(
+                "ai-sidebar-continue",
+                false,
+                cx,
+                |button, cx| {
+                    button
+                        .icon(IconName::ChevronRight)
+                        .accessibility_label(
+                            cx.global::<crate::i18n::I18nManager>()
+                                .strings()
+                                .ai_panel_continue
+                                .clone(),
+                        )
+                        .disabled(session.saved.running)
+                },
+                |editor, window, cx| {
+                    if let Some(session) = editor.ai_session.as_mut() {
+                        let current = session.input.read(cx).value();
+                        let draft = if current.trim().is_empty() {
+                            "继续".to_owned()
+                        } else {
+                            format!("{current}\n\n继续")
+                        };
+                        session.input.update(cx, |input, cx| {
+                            input.set_value(draft, window, cx);
+                            input.focus(window, cx);
+                        });
+                    }
+                    editor.send_ai_task(window, cx);
+                },
+            ));
+        }
+        actions = actions.child(div().flex_1());
         if session.saved.workspace.changes.proposals.len() > 1 {
             actions = actions.child(self.ai_button(
                 "ai-accept-all",

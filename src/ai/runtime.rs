@@ -312,6 +312,16 @@ pub(crate) async fn run_with_provider(
                 AgentEvent::MessageEnd {
                     message:
                         AgentMessage::Llm(Message::Assistant {
+                            stop_reason: StopReason::Length,
+                            ..
+                        }),
+                } => {
+                    // 截断是可见状态，不能只把半句话当成完整回答。
+                    output.error = Some(super::error_codes::LENGTH.into());
+                }
+                AgentEvent::MessageEnd {
+                    message:
+                        AgentMessage::Llm(Message::Assistant {
                             stop_reason: StopReason::Error | StopReason::Refusal,
                             error_message,
                             ..

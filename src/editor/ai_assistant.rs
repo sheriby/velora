@@ -72,6 +72,7 @@ pub(super) struct AiSession {
     command: AiCommand,
     origin: Point<Pixels>,
     error: Option<String>,
+    truncated: bool,
     activity: String,
     generation: u64,
     control: RunControl,
@@ -1268,6 +1269,7 @@ impl Editor {
             origin,
             settings_read_error,
             error,
+            truncated: false,
             activity: String::new(),
             generation: 0,
             control: RunControl::default(),
@@ -1416,7 +1418,7 @@ impl Editor {
         {
             return;
         }
-        let editor_context = self.ai_editor_context(cx);
+        let mut editor_context = self.ai_editor_context(cx);
         if self.ai_session.as_ref().is_some_and(|session| {
             !(session.expanded && session.saved.kind == SessionKind::Conversation)
                 && (session.document != self.ai_review_navigation_origin(cx)
@@ -1554,6 +1556,20 @@ impl Editor {
             cx.notify();
             return;
         }
+        let active_skills = match session.skills.active_skill_references(
+            &session.settings.disabled_skills,
+            &raw_instruction,
+        ) {
+            Ok(skills) => skills,
+            Err(error) => {
+                session.error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        if !active_skills.is_empty() && let Some(context) = editor_context.as_object_mut() {
+            context.insert("active_skills".into(), serde_json::json!(active_skills));
+        }
         if session.saved.running {
             match session.control.steering.lock() {
                 Ok(mut queue) => queue.push(crate::ai::context::task_prompt(
@@ -1633,10 +1649,8 @@ impl Editor {
                 return;
             }
         };
-        let skills = session
-            .skills
-            .enabled(&session.settings.disabled_skills)
-            .prompt_catalog();
+        let enabled_skills = session.skills.enabled(&session.settings.disabled_skills);
+        let skills = enabled_skills.prompt_catalog();
         // 首次发送后固定系统与快捷指令；设置变化不能改写多轮请求的已发送前缀。
         let profile = session.saved.prompt_profile.get_or_insert_with(|| {
             crate::ai::instructions::PromptProfile::capture(
@@ -1647,6 +1661,19 @@ impl Editor {
             )
         });
         let mut editor_context = editor_context;
+        let active_skills = match enabled_skills
+            .active_skill_references(&session.settings.disabled_skills, &raw_instruction)
+        {
+            Ok(skills) => skills,
+            Err(error) => {
+                session.error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        if !active_skills.is_empty() && let Some(context) = editor_context.as_object_mut() {
+            context.insert("active_skills".into(), serde_json::json!(active_skills));
+        }
         if let Some(context) = editor_context.as_object_mut() {
             if let Some(scope) = &session.saved.workspace.selection_scope {
                 context.insert(
@@ -1681,6 +1708,7 @@ impl Editor {
         session.saved.running = true;
         session.saved.interrupted = false;
         session.error = None;
+        session.truncated = false;
         session.stream_index = None;
         session.saved.messages.push(ChatMessage {
             role: "user".into(),
@@ -1967,6 +1995,10 @@ impl Editor {
                         .clone();
                     match result {
                         Ok(output) => {
+                            session.truncated = output
+                                .error
+                                .as_deref()
+                                == Some(crate::ai::error_codes::LENGTH);
                             session.saved.history = output.history;
                             session.error = output
                                 .error

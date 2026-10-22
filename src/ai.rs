@@ -91,6 +91,7 @@ pub(crate) fn error_text(error: &str, strings: &crate::i18n::I18nStrings) -> Str
     match error {
         error_codes::TIMEOUT => strings.ai_error_timeout.clone(),
         error_codes::STOPPED => strings.ai_error_stopped.clone(),
+        error_codes::LENGTH => strings.ai_error_length.clone(),
         error_codes::BUDGET => strings.ai_error_budget.clone(),
         _ => error.to_string(),
     }
@@ -101,6 +102,7 @@ pub(crate) mod error_codes {
     pub const TIMEOUT: &str = "velora-ai:timeout";
     pub const STOPPED: &str = "velora-ai:stopped";
     pub const BUDGET: &str = "velora-ai:budget";
+    pub const LENGTH: &str = "velora-ai:length";
     pub fn model_failed(detail: Option<String>) -> String {
         format!("velora-ai:model-failed:{}", detail.unwrap_or_default())
     }

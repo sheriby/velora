@@ -501,6 +501,7 @@ impl I18nStrings {
         strings.ai_feature_disabled = "AI 尚未启用".into();
         strings.ai_error_timeout = "任务超时，已保留完成的内容，可以继续讨论".into();
         strings.ai_error_stopped = "任务已停止".into();
+        strings.ai_error_length = "回答因长度上限被截断，可以继续生成".into();
         strings.ai_error_budget = "任务已达到执行预算，可以继续讨论".into();
         strings.ai_error_model_failed = "模型未能完成请求".into();
         strings.ai_error_tool_arguments = "模型生成的工具参数不完整，工具没有执行（常见原因是输出被截断）。原始内容：".into();
@@ -580,6 +581,7 @@ impl I18nStrings {
         strings.ai_action_summarize = "摘要".into();
         strings.ai_custom_placeholder = "询问或描述修改…".into();
         strings.ai_panel_retry = "重试".into();
+        strings.ai_panel_continue = "继续生成".into();
         strings.ai_panel_stop = "停止".into();
         strings.ai_panel_running = "生成中…".into();
         strings.ai_tool_trace = "工具调用".into();
@@ -1093,6 +1095,7 @@ impl I18nStrings {
             ai_feature_disabled: "AI is disabled".into(),
             ai_error_timeout: "Task timed out. The completed content is kept; you can continue the discussion.".into(),
             ai_error_stopped: "Task stopped".into(),
+            ai_error_length: "The response was truncated by the output limit; you can continue generation.".into(),
             ai_error_budget: "Task reached its execution budget; you can continue the discussion.".into(),
             ai_error_model_failed: "The model could not complete the request".into(),
             ai_error_tool_arguments: "The model produced incomplete tool arguments, so the tool did not run (the output was probably truncated). Raw arguments: ".into(),
@@ -1172,6 +1175,7 @@ impl I18nStrings {
             ai_action_summarize: "Summarize".into(),
             ai_custom_placeholder: "Ask or describe a change…".into(),
             ai_panel_retry: "Retry".into(),
+            ai_panel_continue: "Continue".into(),
             ai_panel_stop: "Stop".into(),
             ai_panel_running: "Generating…".into(),
             ai_tool_trace: "Tool calls".into(),

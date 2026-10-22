@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn ai_skills_validate_explicit_slash_references() {
+    let catalog = SkillCatalog {
+        entries: vec![SkillEntry {
+            id: "user:review".into(),
+            name: "review".into(),
+            description: "校对".into(),
+            directory: PathBuf::new(),
+        }],
+        warnings: Vec::new(),
+    };
+    assert_eq!(
+        catalog
+            .active_skill_references(&[], "/user:review 检查 notes.md")
+            .unwrap(),
+        vec!["user:review".to_string()]
+    );
+    assert!(
+        catalog
+            .active_skill_references(&["user:review".into()], "/user:review")
+            .is_err()
+    );
+    assert!(
+        catalog
+            .active_skill_references(&[], "/user:missing")
+            .is_err()
+    );
+    assert!(catalog.active_skill_references(&[], "/notes.md").unwrap().is_empty());
+}
+
+#[test]
 fn ai_skills_preserve_scope_and_read_references_only_when_requested() {
     let root = std::env::temp_dir().join(format!("velora-ai-skills-{}", uuid::Uuid::new_v4()));
     for scope in ["user", "workspace"] {
