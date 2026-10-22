@@ -1179,6 +1179,9 @@ impl I18nStringsDe {
             ai_panel_add_context: self.ai_panel_add_context.unwrap_or(defaults.ai_panel_add_context),
             ai_panel_accept_edit: self.ai_panel_accept_edit.unwrap_or(defaults.ai_panel_accept_edit),
             ai_panel_files_scope: self.ai_panel_files_scope.unwrap_or(defaults.ai_panel_files_scope),
+            ai_panel_send_preview: self
+                .ai_panel_send_preview
+                .unwrap_or(defaults.ai_panel_send_preview),
             ai_activity_read: self.ai_activity_read.unwrap_or(defaults.ai_activity_read),
             ai_activity_search: self.ai_activity_search.unwrap_or(defaults.ai_activity_search),
             ai_activity_outline: self.ai_activity_outline.unwrap_or(defaults.ai_activity_outline),

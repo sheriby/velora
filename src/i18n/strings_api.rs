@@ -571,6 +571,7 @@ impl I18nStrings {
         strings.ai_panel_add_context = "添加资料".into();
         strings.ai_panel_accept_edit = "接受此处".into();
         strings.ai_panel_files_scope = "只查阅所选资料与当前文档".into();
+        strings.ai_panel_send_preview = "本轮可能发送的内容".into();
         strings.ai_activity_read = "读取文档".into();
         strings.ai_activity_search = "检索资料".into();
         strings.ai_activity_outline = "查看大纲".into();
@@ -1167,6 +1168,7 @@ impl I18nStrings {
             ai_panel_add_context: "Add context".into(),
             ai_panel_accept_edit: "Accept change".into(),
             ai_panel_files_scope: "Use selected sources and the current document".into(),
+            ai_panel_send_preview: "What this request may send".into(),
             ai_activity_read: "Reading documents".into(),
             ai_activity_search: "Searching notes".into(),
             ai_activity_outline: "Reading outline".into(),

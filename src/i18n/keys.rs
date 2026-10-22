@@ -538,6 +538,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_panel_add_context",
     "ai_panel_accept_edit",
     "ai_panel_files_scope",
+    "ai_panel_send_preview",
     "ai_activity_read",
     "ai_activity_search",
     "ai_activity_outline",

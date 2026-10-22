@@ -1,6 +1,7 @@
 use super::*;
 use gpui::prelude::FluentBuilder as _;
 use gpui_kit::component::form::{Field, Form};
+use gpui_kit::component::group_box::GroupBox;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::{ActiveTheme as _, command::{Command, CommandGroup, CommandItem}, spinner::Spinner};
@@ -991,6 +992,56 @@ impl Editor {
                                     )),
                             ),
                     ),
+                );
+                let endpoint = session
+                    .settings
+                    .endpoints
+                    .iter()
+                    .find(|endpoint| endpoint.id == session.saved.endpoint_id)
+                    .or_else(|| session.settings.active_endpoint());
+                let skill_count = session
+                    .skills
+                    .enabled(&session.settings.disabled_skills)
+                    .entries
+                    .len();
+                content = content.child(
+                    GroupBox::new()
+                        .id("ai-send-preview")
+                        .title(strings.ai_panel_send_preview.clone())
+                        .m_1()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .text_xs()
+                                .child(format!(
+                                    "{}：{}",
+                                    strings.ai_panel_sources,
+                                    if session.saved.references.is_empty() {
+                                        strings.ai_panel_files_scope.clone()
+                                    } else {
+                                        session.saved.references.join(", ")
+                                    }
+                                ))
+                                .child(format!(
+                                    "{}：{}",
+                                    strings.ai_panel_skills, skill_count
+                                ))
+                                .child(format!(
+                                    "{}：{}",
+                                    strings.ai_panel_context_budget,
+                                    endpoint.map_or_else(
+                                        || "-".to_owned(),
+                                        |value| value.context_tokens.to_string()
+                                    )
+                                ))
+                                .child(format!(
+                                    "{}：{}",
+                                    strings.ai_panel_exclusions,
+                                    session.settings.excluded_paths.join(", ")
+                                )),
+                        ),
                 );
                 let query = session
                     .context_input

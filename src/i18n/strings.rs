@@ -793,6 +793,7 @@ pub struct I18nStrings {
     pub ai_panel_add_context: String,
     pub ai_panel_accept_edit: String,
     pub ai_panel_files_scope: String,
+    pub ai_panel_send_preview: String,
     pub ai_activity_read: String,
     pub ai_activity_search: String,
     pub ai_activity_outline: String,
