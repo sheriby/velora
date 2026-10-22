@@ -403,19 +403,7 @@ impl Editor {
         let id = session.saved.id.clone();
         let mut workspace = session.saved.workspace.clone();
         workspace.scope.clear();
-        let load = cx.background_spawn(async move {
-            let listing = workspace.call("list_documents", &serde_json::json!({}))?;
-            Ok::<_, anyhow::Error>(
-                listing
-                    .get("documents")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(serde_json::Value::as_str)
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>(),
-            )
-        });
+        let load = cx.background_spawn(async move { workspace.enumerate_document_ids() });
         cx.spawn(async move |owner, cx| {
             let result = load.await;
             if let Err(error) = owner.update(cx, |editor, cx| {

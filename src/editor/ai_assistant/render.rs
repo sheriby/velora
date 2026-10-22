@@ -992,12 +992,26 @@ impl Editor {
                             ),
                     ),
                 );
+                let query = session
+                    .context_input
+                    .read(cx)
+                    .value()
+                    .trim()
+                    .trim_start_matches('@')
+                    .trim_matches('"')
+                    .to_lowercase();
+                let matched_candidates = session
+                    .context_candidates
+                    .iter()
+                    .filter(|path| query.is_empty() || path.to_lowercase().contains(&query))
+                    .take(if query.is_empty() { 100 } else { 300 })
+                    .collect::<Vec<_>>();
                 let paths = session
                     .saved
                     .references
                     .iter()
-                    .filter(|path| !session.context_candidates.contains(path))
-                    .chain(session.context_candidates.iter());
+                    .filter(|path| !matched_candidates.iter().any(|candidate| *candidate == *path))
+                    .chain(matched_candidates.iter().copied());
                 let mut sources = div().flex().flex_col().gap_1();
                 for path in paths {
                     let selected = session.saved.references.contains(path);

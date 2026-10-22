@@ -176,6 +176,16 @@ impl AiWorkspace {
         self.files = None;
     }
 
+    pub fn enumerate_document_ids(&mut self) -> Result<Vec<String>> {
+        // 资料面板需要完整可搜名单，不能沿用工具结果的 100 条分页；
+        // 5000 条是界面可用上限，超出时仍可手输路径。
+        let mut files = self.files()?;
+        files.sort();
+        files.dedup();
+        files.truncate(5000);
+        Ok(files)
+    }
+
     pub fn set_scope(&mut self, references: &[String], primary: &str) -> Result<()> {
         let mut scope = Vec::new();
         for reference in references {
