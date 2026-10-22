@@ -36,8 +36,8 @@ pub(in crate::editor) struct MessageTranscript {
     tool_calls: Vec<ToolCallRecord>,
     running: bool,
     show_thinking: bool,
-    chain_open: bool,
-    thinking_open: bool,
+    chain_open: std::collections::BTreeSet<usize>,
+    thinking_open: std::collections::BTreeSet<usize>,
     scroll: Entity<MessageScrollerState>,
     highlight_theme: Arc<crate::theme::Theme>,
     code_highlighter: Arc<rich::CodeHighlighter>,
@@ -68,8 +68,8 @@ impl MessageTranscript {
             tool_calls: Vec::new(),
             running: saved.running,
             show_thinking,
-            chain_open: false,
-            thinking_open: false,
+            chain_open: Default::default(),
+            thinking_open: Default::default(),
             scroll: cx.new(|cx| MessageScrollerState::new(0, cx)),
             code_highlighter: rich::code_highlighter(theme.clone()),
             highlight_theme: theme,
@@ -229,11 +229,11 @@ impl MessageTranscript {
         let chain =
             (!user && !records.is_empty()).then(|| {
                 let theme = self.highlight_theme.clone();
-                self.render_tool_chain(&theme, &records, auto_open, cx)
+                self.render_tool_chain(&theme, &records, auto_open, index, cx)
             });
         let thinking_block = (!user && self.show_thinking && !thinking.is_empty()).then(|| {
             let theme = self.highlight_theme.clone();
-            self.render_thinking_block(&theme, &thinking, auto_open, cx)
+            self.render_thinking_block(&theme, &thinking, auto_open, index, cx)
         });
         let mut column = div().w_full().flex().flex_col();
         if let Some(thinking_block) = thinking_block {
@@ -269,11 +269,12 @@ impl MessageTranscript {
         theme: &crate::theme::Theme,
         records: &[ToolCallRecord],
         auto_open: bool,
+        index: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let open = self.chain_open || auto_open;
+        let open = self.chain_open.contains(&index) || auto_open;
         let header = div()
-            .id("ai-tool-chain")
+            .id(SharedString::from(format!("ai-tool-chain:{index}")))
             .debug_selector(|| "ai-tool-chain".into())
             .flex()
             .items_center()
@@ -282,8 +283,10 @@ impl MessageTranscript {
             .text_size(px(11.0))
             .text_color(theme.colors.dialog_muted)
             .cursor(CursorStyle::PointingHand)
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.chain_open = !this.chain_open;
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                if !this.chain_open.remove(&index) {
+                    this.chain_open.insert(index);
+                }
                 cx.notify();
             }))
             .child(
@@ -373,11 +376,12 @@ impl MessageTranscript {
         theme: &crate::theme::Theme,
         thinking: &str,
         auto_open: bool,
+        index: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let open = self.thinking_open || auto_open;
+        let open = self.thinking_open.contains(&index) || auto_open;
         let header = div()
-            .id("ai-thinking")
+            .id(SharedString::from(format!("ai-thinking:{index}")))
             .debug_selector(|| "ai-thinking".into())
             .flex()
             .items_center()
@@ -386,8 +390,10 @@ impl MessageTranscript {
             .text_size(px(11.0))
             .text_color(theme.colors.dialog_muted)
             .cursor(CursorStyle::PointingHand)
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.thinking_open = !this.thinking_open;
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                if !this.thinking_open.remove(&index) {
+                    this.thinking_open.insert(index);
+                }
                 cx.notify();
             }))
             .child(

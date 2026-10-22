@@ -3843,6 +3843,49 @@ fn ai_collection_readonly_instructions_disable_writes_and_keep_copying(cx: &mut 
 }
 
 #[gpui::test]
+fn ai_custom_instruction_can_be_added_to_draft(cx: &mut TestAppContext) {
+    use gpui::AppContext as _;
+    use gpui_kit::test::TestWindowExt as _;
+    initialize(cx);
+    let handle = cx.update(|cx| {
+        crate::ui::open_window(Default::default(), cx, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, "原文".into(), None))
+        })
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    handle
+        .update(&mut visual, |editor, window, cx| {
+            editor.open_ai_assistant(AiCommand::Ask, window, cx);
+            let session = editor.ai_session.as_mut().unwrap();
+            session.mode = PanelMode::Instruction;
+            session.settings.instructions = vec![crate::ai::settings::CustomInstruction {
+                name: "归纳".into(),
+                prompt: "保留事实，归纳要点".into(),
+            }];
+            session
+                .input
+                .update(cx, |input, cx| input.set_value("先检查术语", window, cx));
+            cx.notify();
+        })
+        .unwrap();
+    draw(&mut visual);
+    draw(&mut visual);
+    visual.update(|window, cx| window.click("ai-template-use:归纳", cx));
+    handle
+        .read_with(&visual, |editor, cx| {
+            let session = editor.ai_session.as_ref().unwrap();
+            assert!(matches!(session.mode, PanelMode::Task), "使用后应回到任务面板");
+            assert_eq!(
+                session.input.read(cx).value(),
+                "先检查术语\n\n保留事实，归纳要点"
+            );
+        })
+        .unwrap();
+    visual.update(|window, _| window.remove_window());
+}
+
+#[gpui::test]
 fn ai_collection_keyboard_keeps_later_skills_visible(cx: &mut TestAppContext) {
     use gpui::AppContext as _;
     use gpui_kit::test::TestWindowExt as _;

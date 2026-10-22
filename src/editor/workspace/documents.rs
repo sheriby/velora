@@ -17,8 +17,11 @@ impl Editor {
     }
 
     pub(in crate::editor) fn ai_cached_document_paths(&self) -> Vec<(PathBuf, uuid::Uuid)> {
-        self.workspace.open_documents.iter().filter(|tab| crate::file_url::is_markdown_document(&tab.path) || super::untitled_document_id(&tab.path).is_some())
-            .map(|tab| (tab.path.clone(), tab.recovery_id)).collect()
+        self.workspace
+            .open_documents
+            .iter()
+            .map(|tab| (tab.path.clone(), tab.recovery_id))
+            .collect()
     }
 
     fn ai_cached_document_for_id(

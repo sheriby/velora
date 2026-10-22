@@ -772,6 +772,11 @@ impl Editor {
                     } else {
                         ("ai-template-edit-duplicate", index).into()
                     };
+                    let use_id: ElementId = if unique_name {
+                        SharedString::from(format!("ai-template-use:{}", instruction.name)).into()
+                    } else {
+                        ("ai-template-use-duplicate", index).into()
+                    };
                     let delete_id: ElementId = if unique_name {
                         SharedString::from(format!("ai-template-delete:{}", instruction.name)).into()
                     } else {
@@ -783,6 +788,8 @@ impl Editor {
                         ("ai-template-actions-duplicate", index).into()
                     };
                     let deleted = instruction.clone();
+                    let used = instruction.clone();
+                    let use_label = instruction_label.clone();
                     content = content.child(
                         crate::ui::scroll_focus_region(region_id, &session.scroll, window, cx)
                             .p_1()
@@ -818,6 +825,35 @@ impl Editor {
                                         session.instruction_body.update(cx, |field, cx| {
                                             field.set_value(instruction.prompt.clone(), window, cx)
                                         });
+                                    }
+                                    cx.notify();
+                                },
+                            ))
+                            .child(self.ai_button(
+                                use_id,
+                                false,
+                                cx,
+                                |button, _cx| {
+                                    button
+                                        .icon(IconName::Plus)
+                                        .accessibility_label(format!(
+                                            "{} · {}",
+                                            strings.ai_panel_use_skill, use_label
+                                        ))
+                                },
+                                move |editor, window, cx| {
+                                    if let Some(session) = editor.ai_session.as_mut() {
+                                        let current = session.input.read(cx).value();
+                                        let draft = if current.trim().is_empty() {
+                                            used.prompt.clone()
+                                        } else {
+                                            format!("{current}\n\n{}", used.prompt)
+                                        };
+                                        session.input.update(cx, |input, cx| {
+                                            input.set_value(draft, window, cx);
+                                            input.focus(window, cx);
+                                        });
+                                        session.mode = PanelMode::Task;
                                     }
                                     cx.notify();
                                 },

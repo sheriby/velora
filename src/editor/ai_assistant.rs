@@ -209,7 +209,16 @@ impl Editor {
         const AI_TASK_SESSION_LIMIT: usize = 6;
         self.ai_task_sessions.push(previous);
         while self.ai_task_sessions.len() > AI_TASK_SESSION_LIMIT {
-            self.ai_task_sessions.remove(0);
+            // 运行中的任务不能因暂存上限被丢弃：Drop 会取消它的 task。
+            // 全在运行时宁可暂时超出上限。
+            let Some(index) = self
+                .ai_task_sessions
+                .iter()
+                .position(|session| !session.saved.running)
+            else {
+                break;
+            };
+            self.ai_task_sessions.remove(index);
         }
     }
 
@@ -572,15 +581,14 @@ impl Editor {
             .into_iter()
             .find(|group| {
                 let editor = group.read(cx);
-                !editor.code_document
-                    && (ai_document_id(
-                        editor.file_path.as_deref(),
-                        root.as_deref(),
-                        editor.recovery_id,
-                    ) == record.path
-                        || bound
-                            .as_ref()
-                            .is_some_and(|path| editor.active_document_path() == Some(path)))
+                ai_document_id(
+                    editor.file_path.as_deref(),
+                    root.as_deref(),
+                    editor.recovery_id,
+                ) == record.path
+                    || bound
+                        .as_ref()
+                        .is_some_and(|path| editor.active_document_path() == Some(path))
             })
             .or_else(|| self.active_split_editor());
         if let Some(session) = self.ai_session.as_mut() {
@@ -1056,9 +1064,6 @@ impl Editor {
             });
             return;
         }
-        if self.code_document {
-            return;
-        }
         if command.requires_selection() && !self.has_text_selection(cx) {
             self.show_message_modal("AI", cx.global::<crate::i18n::I18nManager>().strings().ai_error_no_selection.clone(), cx);
             return;
@@ -1343,7 +1348,7 @@ impl Editor {
             for (path, recovery) in editor.ai_cached_document_paths() {
                 documents.insert(ai_document_id(Some(&path), root, recovery));
             }
-            if editor.split_workspace.is_none() && !editor.code_document {
+            if editor.split_workspace.is_none() {
                 documents.insert(ai_document_id(
                     editor.file_path.as_deref(),
                     root,
@@ -1364,7 +1369,6 @@ impl Editor {
         let bound = session.saved.bindings.get(id).map(PathBuf::as_path);
         let current = |editor: &Editor| {
             (editor.split_workspace.is_none()
-                && !editor.code_document
                 && (ai_document_id(editor.file_path.as_deref(), root, editor.recovery_id) == id
                     || bound.is_some_and(|path| {
                         editor

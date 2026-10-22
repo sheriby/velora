@@ -180,7 +180,9 @@ impl Editor {
     ) -> Entity<Editor> {
         let host = self.window_handle;
         cx.new(|cx| {
-            let mut editor = Editor::from_markdown(cx, text, path);
+            // 代码/配置文件必须按源码视图审阅；统一走 from_markdown 会把
+            // `#`、`*`、反引号解释成 Markdown，正文与逐条改动都会错位。
+            let mut editor = Editor::from_file_source(cx, text, path);
             editor.reading_mode.set(true);
             editor.ai_result_preview = true;
             editor.window_handle = host;
