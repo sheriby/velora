@@ -534,14 +534,83 @@ impl Editor {
                 } else {
                     SessionKind::QuickCommand
                 };
-                if let Some((path, title, _)) = session
+                if let Some((path, title, _, pinned)) = session
                     .history_files
                     .iter()
-                    .filter(|(_, _, entry)| *entry == kind)
+                    .filter(|(_, _, entry, _)| *entry == kind)
                     .nth(index.row)
                 {
-                    let path = path.clone();
+                    let pinned = *pinned;
+                    let pin_path = path.clone();
+                    let rename_path = path.clone();
+                    let rename_title = title.clone();
+                    let export_path = path.clone();
+                    let delete_path = path.clone();
+                    let delete_title = title;
                     let list_id = session.history_list.entity_id();
+                    header = header.child(self.ai_button(
+                        "ai-history-pin",
+                        false,
+                        cx,
+                        |button, _| {
+                            button
+                                .icon(if pinned { IconName::Star } else { IconName::Pin })
+                                .accessibility_label(strings.ai_panel_pin.clone())
+                                .tooltip(strings.ai_panel_pin.clone())
+                        },
+                        move |editor, window, cx| {
+                            if editor.ai_session.as_ref().is_some_and(|session| {
+                                session.mode == PanelMode::History
+                                    && session.history_list.entity_id() == list_id
+                            }) {
+                                editor.toggle_ai_history_pin(pin_path.clone(), pinned, window, cx);
+                            }
+                        },
+                    ));
+                    header = header.child(self.ai_button(
+                        "ai-history-rename",
+                        false,
+                        cx,
+                        |button, _| {
+                            button
+                                .icon(IconName::Pencil)
+                                .accessibility_label(strings.ai_history_rename.clone())
+                                .tooltip(strings.ai_history_rename.clone())
+                        },
+                        move |editor, window, cx| {
+                            if editor.ai_session.as_ref().is_some_and(|session| {
+                                session.mode == PanelMode::History
+                                    && session.history_list.entity_id() == list_id
+                            }) {
+                                editor.rename_ai_history(
+                                    rename_path.clone(),
+                                    rename_title.clone(),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        },
+                    ));
+                    header = header.child(self.ai_button(
+                        "ai-history-export",
+                        false,
+                        cx,
+                        |button, _| {
+                            button
+                                .icon(IconName::Download)
+                                .accessibility_label(strings.ai_history_export.clone())
+                                .tooltip(strings.ai_history_export.clone())
+                        },
+                        move |editor, window, cx| {
+                            if editor.ai_session.as_ref().is_some_and(|session| {
+                                session.mode == PanelMode::History
+                                    && session.history_list.entity_id() == list_id
+                            }) {
+                                editor.export_ai_history(export_path.clone(), window, cx);
+                            }
+                        },
+                    ));
+                    let delete_list_id = session.history_list.entity_id();
                     header = header.child(self.ai_button(
                         "ai-history-delete",
                         false,
@@ -550,7 +619,7 @@ impl Editor {
                             button
                                 .icon(IconName::Trash)
                                 .accessibility_label(format!(
-                                    "{} · {title}",
+                                    "{} · {delete_title}",
                                     strings.ai_panel_delete_conversation
                                 ))
                                 .tooltip(strings.ai_panel_delete_conversation.clone())
@@ -558,9 +627,9 @@ impl Editor {
                         move |editor, window, cx| {
                             if editor.ai_session.as_ref().is_some_and(|session| {
                                 session.mode == PanelMode::History
-                                    && session.history_list.entity_id() == list_id
+                                    && session.history_list.entity_id() == delete_list_id
                             }) {
-                                editor.delete_ai_history(path.clone(), window, cx);
+                                editor.delete_ai_history(delete_path.clone(), window, cx);
                             }
                         },
                     ));
@@ -1147,8 +1216,11 @@ impl Editor {
             session
                 .history_files
                 .iter()
-                .filter(|(_, _, entry)| *entry == kind)
-                .map(|(path, title, _)| (path.clone(), title.clone()))
+                .filter(|(_, _, entry, _)| *entry == kind)
+                .map(|(path, title, _, pinned)| {
+                    let prefix = if *pinned { "★ " } else { "" };
+                    (path.clone(), format!("{prefix}{title}"))
+                })
                 .collect::<Vec<_>>()
         });
         let list_id = session.history_list.entity_id();
@@ -1158,8 +1230,8 @@ impl Editor {
         let empty = strings.ai_history_empty.clone();
         let loading = session.history_loading;
         let mut list = Command::new(&session.history_list)
-            .searchable(false)
-            .filterable(false)
+            .searchable(true)
+            .filterable(true)
             .bordered(false)
             .max_h((px(height) - cx.theme().font_size * 4.0).max(px(0.0)));
         for (entries, label) in groups.iter().zip([
@@ -1221,11 +1293,58 @@ impl Editor {
                     eprintln!("打开 AI 历史失败：{error}");
                 }
             });
+        let rename_label = strings.ai_history_rename.clone();
+        let cancel_label = strings.preferences_cancel.clone();
+        let save_label = strings.ai_panel_save.clone();
+        let rename = session
+            .history_rename
+            .as_ref()
+            .map(|(_, input)| {
+                let input = input.clone();
+                div()
+                    .id("ai-history-rename-panel")
+                    .debug_selector(|| "ai-history-rename-panel".into())
+                    .w_full()
+                    .p_1()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(Input::new(&input).aria_label(rename_label.clone()))
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap_1()
+                            .child(self.ai_button(
+                                "ai-history-rename-cancel",
+                                true,
+                                cx,
+                                |button, _| button.label(cancel_label.clone()),
+                                |editor, _, cx| {
+                                    if let Some(session) = editor.ai_session.as_mut() {
+                                        session.history_rename = None;
+                                    }
+                                    cx.notify();
+                                },
+                            ))
+                            .child(self.ai_button(
+                                "ai-history-rename-save",
+                                true,
+                                cx,
+                                |button, _| button.label(save_label.clone()).primary(),
+                                |editor, _, cx| editor.save_ai_history_rename(cx),
+                            )),
+                    )
+                    .into_any_element()
+            });
         div()
             .id("ai-history-list")
             .debug_selector(|| "ai-history-list".into())
             .w_full()
             .min_h_0()
+            .flex()
+            .flex_col()
+            .when_some(rename, |body, rename| body.child(rename))
             .child(list)
             .on_prepaint(move |_, window, cx| {
                 if let Err(error) = owner.update(cx, |editor, cx| {

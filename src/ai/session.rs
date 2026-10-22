@@ -79,6 +79,10 @@ pub(crate) struct SavedSession {
     pub input_tokens: u64,
     #[serde(default)]
     pub output_tokens: u64,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -114,6 +118,8 @@ impl SavedSession {
             draft: String::new(),
             input_tokens: 0,
             output_tokens: 0,
+            title: None,
+            pinned: false,
         }
     }
     pub fn save_at(&self, path: &Path) -> Result<()> {

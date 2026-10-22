@@ -534,6 +534,8 @@ impl I18nStrings {
         strings.ai_panel_history = "历史任务".into();
         strings.ai_history_empty = "暂无历史记录".into();
         strings.ai_history_conversations = "对话".into();
+        strings.ai_history_rename = "重命名对话".into();
+        strings.ai_history_export = "导出为 Markdown".into();
         strings.ai_history_quick_commands = "快捷指令".into();
         strings.ai_panel_new_chat = "新任务".into();
         strings.ai_panel_copy = "复制".into();
@@ -566,6 +568,7 @@ impl I18nStrings {
         strings.ai_panel_ask = "用 AI 处理…".into();
         strings.ai_panel_back = "返回".into();
         strings.ai_panel_delete_conversation = "删除对话".into();
+        strings.ai_panel_pin = "置顶对话".into();
         strings.ai_panel_delete_instruction = "删除指令".into();
         strings.ai_panel_more = "更多 AI…".into();
         strings.ai_panel_add_context = "添加资料".into();
@@ -1131,6 +1134,8 @@ impl I18nStrings {
             ai_panel_history: "History".into(),
             ai_history_empty: "No history yet".into(),
             ai_history_conversations: "Conversations".into(),
+            ai_history_rename: "Rename conversation".into(),
+            ai_history_export: "Export as Markdown".into(),
             ai_history_quick_commands: "Quick commands".into(),
             ai_panel_new_chat: "New task".into(),
             ai_panel_copy: "Copy".into(),
@@ -1163,6 +1168,7 @@ impl I18nStrings {
             ai_panel_ask: "Work with AI…".into(),
             ai_panel_back: "Back".into(),
             ai_panel_delete_conversation: "Delete conversation".into(),
+            ai_panel_pin: "Pin conversation".into(),
             ai_panel_delete_instruction: "Delete instruction".into(),
             ai_panel_more: "More AI…".into(),
             ai_panel_add_context: "Add context".into(),

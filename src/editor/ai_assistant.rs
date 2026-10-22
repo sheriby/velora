@@ -90,7 +90,8 @@ pub(super) struct AiSession {
     review_navigation: Option<uuid::Uuid>,
     source_list: Entity<gpui_kit::component::list::ListState<source_list::SourceList>>,
     source_focus_pending: bool,
-    history_files: Vec<(PathBuf, String, SessionKind)>,
+    history_files: Vec<(PathBuf, String, SessionKind, bool)>,
+    history_rename: Option<(PathBuf, Entity<InputState>)>,
     history_list: Entity<gpui_kit::component::command::CommandState>,
     history_loading: bool,
     history_focus_pending: bool,
@@ -723,6 +724,144 @@ impl Editor {
         .detach();
     }
 
+    fn rename_ai_history(
+        &mut self,
+        path: PathBuf,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.ai_session.as_mut() else {
+            return;
+        };
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(&title));
+        session.history_rename = Some((path, input));
+        cx.notify();
+    }
+
+    fn save_ai_history_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.ai_session.as_mut() else {
+            return;
+        };
+        let Some((path, input)) = session.history_rename.take() else {
+            return;
+        };
+        let title = input.read(cx).value().trim().to_string();
+        if title.is_empty() {
+            return;
+        }
+        let root = session.saved.workspace.root.clone();
+        let background = cx.background_spawn(async move {
+            let mut saved = SavedSession::load_at(&path, root.as_deref())?;
+            saved.title = Some(title);
+            saved.sequence = saved.sequence.wrapping_add(1);
+            saved.save_at(&path)?;
+            Ok::<_, anyhow::Error>(())
+        });
+        cx.spawn(async move |owner, cx| {
+            let result = background.await;
+            if let Err(error) = owner.update(cx, |editor, cx| match result {
+                Ok(()) => editor.show_ai_history(cx),
+                Err(error) => {
+                    if let Some(session) = editor.ai_session.as_mut() {
+                        session.error = Some(error.to_string());
+                    }
+                    cx.notify();
+                }
+            }) {
+                eprintln!("重命名 AI 历史失败：{error}");
+            }
+        })
+        .detach();
+    }
+
+    fn toggle_ai_history_pin(
+        &mut self,
+        path: PathBuf,
+        pinned: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.ai_session.as_ref() else {
+            return;
+        };
+        let root = session.saved.workspace.root.clone();
+        let background = cx.background_spawn(async move {
+            let mut saved = SavedSession::load_at(&path, root.as_deref())?;
+            saved.pinned = !pinned;
+            saved.sequence = saved.sequence.wrapping_add(1);
+            saved.save_at(&path)?;
+            Ok::<_, anyhow::Error>(())
+        });
+        cx.spawn(async move |owner, cx| {
+            let result = background.await;
+            if let Err(error) = owner.update(cx, |editor, cx| match result {
+                Ok(()) => editor.show_ai_history(cx),
+                Err(error) => {
+                    if let Some(session) = editor.ai_session.as_mut() {
+                        session.error = Some(error.to_string());
+                    }
+                    cx.notify();
+                }
+            }) {
+                eprintln!("置顶 AI 历史失败：{error}");
+            }
+        })
+        .detach();
+    }
+
+    fn export_ai_history(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.ai_session.as_ref() else {
+            return;
+        };
+        let root = session.saved.workspace.root.clone();
+        let load = cx.background_spawn(async move { SavedSession::load_at(&path, root.as_deref()) });
+        cx.spawn_in(window, async move |owner, cx| {
+            let loaded = load.await;
+            if let Err(error) =
+                owner.update_in(cx, |editor, window, cx| match loaded {
+                    Ok(saved) => {
+                        let title = saved.title.clone().unwrap_or_else(|| saved.id.clone());
+                        let mut markdown = format!("# {title}\n");
+                        for message in &saved.messages {
+                            let role = if message.role == "user" { "用户" } else { "AI" };
+                            markdown.push_str(&format!("\n## {role}\n\n{}\n", message.text));
+                            if !message.thinking.is_empty() {
+                                markdown.push_str(&format!("\n> 思考：{}\n", message.thinking));
+                            }
+                        }
+                        editor.open_ai_export_document(markdown, title, window, cx);
+                    }
+                    Err(error) => {
+                        if let Some(session) = editor.ai_session.as_mut() {
+                            session.error = Some(error.to_string());
+                        }
+                        cx.notify();
+                    }
+                })
+            {
+                eprintln!("导出 AI 历史失败：{error}");
+            }
+        })
+        .detach();
+    }
+
+    fn open_ai_export_document(
+        &mut self,
+        markdown: String,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.new_workspace_document(window, cx);
+        self.replace_document_from_markdown(markdown, None, cx);
+        self.document_dirty = true;
+        self.recovery_source_path = Some(PathBuf::from(format!("{title}.md")));
+        self.register_untitled_document(cx);
+        self.persist_session(cx);
+        cx.notify();
+    }
+
     fn new_ai_task(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let expanded = self
             .ai_session
@@ -757,11 +896,20 @@ impl Editor {
                 };
                 let title = session
                     .saved
-                    .messages
-                    .iter()
-                    .find(|message| message.role == "user")
-                    .map(|message| message.text.chars().take(60).collect::<String>())
-                    .unwrap_or_else(|| session.input.read(cx).value().chars().take(60).collect());
+                    .title
+                    .clone()
+                    .filter(|title| !title.trim().is_empty())
+                    .or_else(|| {
+                        session
+                            .saved
+                            .messages
+                            .iter()
+                            .find(|message| message.role == "user")
+                            .map(|message| message.text.chars().take(60).collect::<String>())
+                    })
+                    .unwrap_or_else(|| {
+                        session.input.read(cx).value().chars().take(60).collect()
+                    });
                 Some((
                     path,
                     if title.is_empty() {
@@ -770,6 +918,7 @@ impl Editor {
                         title
                     },
                     session.saved.kind,
+                    session.saved.pinned,
                 ))
             })
             .collect::<Vec<_>>();
@@ -792,20 +941,27 @@ impl Editor {
                         .ok(),
                 )
             });
-            files.retain(|path| !retained.iter().any(|(retained, _, _)| retained == path));
+            files.retain(|path| !retained.iter().any(|(retained, _, _, _)| retained == path));
             files.truncate(20);
             let mut summaries = retained;
             for path in files {
-                let (title, kind) = match SavedSession::load_at(&path, root.as_deref()) {
+                let (title, kind, pinned) = match SavedSession::load_at(&path, root.as_deref()) {
                     Ok(saved) => (
                         saved
-                            .messages
-                            .iter()
-                            .find(|message| message.role == "user")
-                            .map(|message| message.text.chars().take(60).collect::<String>())
+                            .title
+                            .clone()
+                            .filter(|title| !title.trim().is_empty())
+                            .or_else(|| {
+                                saved
+                                    .messages
+                                    .iter()
+                                    .find(|message| message.role == "user")
+                                    .map(|message| message.text.chars().take(60).collect::<String>())
+                            })
                             .filter(|title| !title.is_empty())
                             .unwrap_or_else(|| saved.id.clone()),
                         saved.kind,
+                        saved.pinned,
                     ),
                     Err(error) => (
                         format!(
@@ -813,10 +969,21 @@ impl Editor {
                             path.file_stem().unwrap_or_default().to_string_lossy()
                         ),
                         SessionKind::Conversation,
+                        false,
                     ),
                 };
-                summaries.push((path, title, kind));
+                summaries.push((path, title, kind, pinned));
             }
+            summaries.sort_by_key(|(path, _, _, pinned)| {
+                (
+                    !pinned,
+                    std::cmp::Reverse(
+                        path.metadata()
+                            .and_then(|metadata| metadata.modified())
+                            .ok(),
+                    ),
+                )
+            });
             Ok::<_, anyhow::Error>(summaries)
         });
         cx.spawn(async move |owner, cx| {
@@ -1286,6 +1453,7 @@ impl Editor {
             source_list,
             source_focus_pending: true,
             history_files: Vec::new(),
+            history_rename: None,
             history_list: cx.new(|cx| gpui_kit::component::command::CommandState::new(window, cx)),
             history_loading: false,
             history_focus_pending: false,

@@ -5635,7 +5635,7 @@ fn ai_history_groups_native_rows_and_keeps_deletion_separate_from_restore(cx: &m
                 .unwrap()
                 .history_files
                 .iter()
-                .find(|(_, _, kind)| *kind == SessionKind::Conversation)
+                .find(|(_, _, kind, _)| *kind == SessionKind::Conversation)
                 .unwrap()
                 .0
                 .clone()
@@ -6238,7 +6238,7 @@ fn ai_sidebar_history_restores_a_conversation_and_keeps_the_composer(cx: &mut Te
                 .unwrap()
                 .history_files
                 .iter()
-                .any(|(entry, title, _)| entry == &path && title.contains("上周的讨论")),
+                .any(|(entry, title, _, _)| entry == &path && title.contains("上周的讨论")),
             "历史列表必须包含已保存的对话：{:?}",
             editor.ai_session.as_ref().unwrap().history_files
         );
