@@ -404,6 +404,74 @@ fn ai_reset_proposal_releases_a_new_document_for_another_attempt() {
 }
 
 #[test]
+fn ai_tools_block_sensitive_files_and_control_plane_writes_by_default() {
+    let root = fixture();
+    std::fs::write(root.join(".env"), "API_KEY=secret").unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), Vec::new()).unwrap();
+    assert!(
+        workspace
+            .call("read_document", &json!({"path":".env"}))
+            .is_err(),
+        "默认不能把 .env 发给模型"
+    );
+    assert!(
+        workspace
+            .call(
+                "propose_document",
+                &json!({"path":".velora/skills/evil/SKILL.md","content":"覆盖系统指令"}),
+            )
+            .is_err(),
+        "AI 不能写 Skills 控制面"
+    );
+    assert!(
+        workspace
+            .call(
+                "propose_edit",
+                &json!({"path":".github/workflows/ci.yml","before":"a","after":"b"}),
+            )
+            .is_err(),
+        "AI 不能写 CI 工作流"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn ai_exclusions_follow_symlink_aliases_to_their_canonical_target() {
+    use std::os::unix::fs::symlink;
+    let root = fixture();
+    std::fs::create_dir_all(root.join("private")).unwrap();
+    std::fs::write(root.join("private/secret.md"), "机密").unwrap();
+    symlink(root.join("private/secret.md"), root.join("alias.md")).unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), Vec::new()).unwrap();
+    workspace.excluded_paths = vec!["private".into()];
+    let read = workspace.call("read_document", &json!({"path":"alias.md"}));
+    assert!(
+        read.is_err(),
+        "排除项必须约束符号链接的规范落点：{read:?}"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn ai_scope_references_are_normalized_to_canonical_relative_paths() {
+    let root = fixture();
+    std::fs::create_dir_all(root.join("notes")).unwrap();
+    std::fs::write(root.join("notes/a.md"), "# 笔记\n").unwrap();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), Vec::new()).unwrap();
+    workspace
+        .set_scope(&["./notes/".into()], "notes/a.md")
+        .unwrap();
+    assert_eq!(workspace.scope, vec!["notes".to_string()]);
+    assert!(
+        workspace
+            .call("read_document", &json!({"path":"notes/a.md"}))
+            .is_ok()
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn ai_context_scope_and_exclusions_apply_to_reads_and_search_results() {
     let root = fixture();
     let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();

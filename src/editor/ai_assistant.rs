@@ -2134,8 +2134,16 @@ impl Editor {
             return;
         }
         let id = session.saved.id.clone();
+        let baseline = session.settings.clone();
         session.settings_saving = true;
         let save = cx.background_spawn(async move {
+            // 面板持有的是打开时的设置快照；偏好页或别的窗口可能已经写过。
+            // 整文件覆盖前先比磁盘，避免把别人的修改静默回滚。
+            if let Ok(disk) = AiSettings::load()
+                && disk != baseline
+            {
+                anyhow::bail!("AI 设置已在其他窗口更新，请重新打开助手后再保存");
+            }
             settings.save_at(&crate::ai::settings::settings_path()?)?;
             Ok::<_, anyhow::Error>(settings)
         });

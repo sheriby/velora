@@ -126,9 +126,24 @@ pub(crate) struct AiWorkspace {
 
 impl AiWorkspace {
     pub fn is_excluded(&self, id: &str) -> bool {
-        self.excluded_paths
-            .iter()
-            .any(|excluded| path_matches(id, excluded))
+        if is_sensitive_path(id) {
+            return true;
+        }
+        self.excluded_paths.iter().any(|excluded| {
+            if path_matches(id, excluded) {
+                return true;
+            }
+            // 排除项可能是绝对路径、大小写不同或经过符号链接；按规范落点
+            // 再比一次，避免 alias.md 之类的写法绕过 private/ 的排除。
+            let Some(root) = self.root.as_ref() else {
+                return false;
+            };
+            root.join(excluded)
+                .canonicalize()
+                .ok()
+                .and_then(|resolved| resolved.strip_prefix(root).ok().map(Path::to_path_buf))
+                .is_some_and(|relative| path_matches(id, &relative.to_string_lossy()))
+        })
     }
 
     pub fn tool_allowed(&self, name: &str) -> bool {
@@ -166,8 +181,9 @@ impl AiWorkspace {
                 scope.push(reference.clone());
                 continue;
             }
-            let path = Path::new(reference);
-            validate_relative(reference)?;
+            let normalized_reference = normalize_relative(reference);
+            let path = Path::new(&normalized_reference);
+            validate_relative(&normalized_reference)?;
             let root = self
                 .root
                 .as_ref()
@@ -181,11 +197,17 @@ impl AiWorkspace {
             {
                 bail!("指定资料不在工作区内或不是文本文档：{reference}");
             }
-            if !scope.contains(reference) {
-                scope.push(reference.clone());
+            // 资料范围与文档 id 都按规范相对路径比较；否则 macOS/Windows 的
+            // 大小写、./ 前缀和符号链接会让同一个文件对不上。
+            let normalized = resolved
+                .strip_prefix(root)
+                .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| reference.clone());
+            if !scope.contains(&normalized) {
+                scope.push(normalized);
             }
         }
-        if !scope.is_empty() && !scope.iter().any(|id| id == primary) {
+        if !scope.is_empty() && !scope.iter().any(|id| path_matches(primary, id)) {
             scope.push(primary.to_owned());
         }
         self.scope = scope;
@@ -571,6 +593,9 @@ impl AiWorkspace {
             }
             "propose_insert_at_cursor" => {
                 let cursor = self.cursor_target.clone().context("请先在文档中放置光标")?;
+                if is_protected_write_path(&cursor.document_id) {
+                    bail!("AI 不能写入 Skills、Git 或 CI 控制面文件");
+                }
                 let document = self.snapshot(&cursor.document_id)?;
                 if crate::editor::persistence::file_content_version(&document.source)
                     != cursor.version
@@ -603,6 +628,9 @@ impl AiWorkspace {
             }
             "propose_edit" => {
                 let path = field(arguments, "path")?;
+                if is_protected_write_path(path) {
+                    bail!("AI 不能写入 Skills、Git 或 CI 控制面文件");
+                }
                 if self
                     .selection_scope
                     .as_ref()
@@ -630,6 +658,9 @@ impl AiWorkspace {
                 let path = field(arguments, "path")?;
                 if self.is_excluded(path) {
                     bail!("此路径已从 AI 资料中排除");
+                }
+                if is_protected_write_path(path) {
+                    bail!("AI 不能写入 Skills、Git 或 CI 控制面文件");
                 }
                 let destination = self.resolve(path, false)?;
                 // symlink_metadata 连悬空链接也算存在：接受端 rename 不穿透符号
@@ -691,6 +722,25 @@ impl AiWorkspace {
         };
         if !verified.starts_with(root) {
             bail!("目标不在当前工作区内");
+        }
+        if existing && let Ok(relative) = verified.strip_prefix(root) {
+            let canonical = relative.to_string_lossy().replace('\\', "/");
+            if !path_eq(&normalize_relative(id), &canonical) {
+                // 别名/符号链接落点必须重新套用排除项与资料范围，否则
+                // alias.md -> private/secret.md 会绕过原 id 的判定。
+                if self.is_excluded(&canonical) {
+                    bail!("此文档已从 AI 资料中排除");
+                }
+                if !self.scope.is_empty()
+                    && !self
+                        .scope
+                        .iter()
+                        .any(|scope| path_matches(&canonical, scope))
+                    && !self.new_documents.contains(&canonical)
+                {
+                    bail!("此文档不在当前指定的资料范围内");
+                }
+            }
         }
         if !existing && !destination.exists() && !verified.is_dir() {
             bail!("新文档的父路径不是目录");
@@ -812,12 +862,63 @@ fn field<'a>(arguments: &'a Value, name: &str) -> Result<&'a str> {
         .with_context(|| format!("缺少参数：{name}"))
 }
 
+fn normalize_relative(value: &str) -> String {
+    let mut normalized = value.trim().replace('\\', "/");
+    while normalized.starts_with("./") {
+        normalized.drain(..2);
+    }
+    while normalized.contains("//") {
+        normalized = normalized.replace("//", "/");
+    }
+    normalized.trim_end_matches('/').to_owned()
+}
+
+fn path_eq(left: &str, right: &str) -> bool {
+    if cfg!(any(target_os = "macos", windows)) {
+        left.eq_ignore_ascii_case(right)
+    } else {
+        left == right
+    }
+}
+
 fn path_matches(path: &str, prefix: &str) -> bool {
-    let prefix = prefix.trim_end_matches('/');
-    path == prefix
-        || path
-            .strip_prefix(prefix)
-            .is_some_and(|suffix| suffix.starts_with('/'))
+    let path = normalize_relative(path);
+    let prefix = normalize_relative(prefix);
+    if path_eq(&path, &prefix) {
+        return true;
+    }
+    path.get(..prefix.len())
+        .is_some_and(|head| path_eq(head, &prefix))
+        && path.as_bytes().get(prefix.len()) == Some(&b'/')
+}
+
+fn is_sensitive_path(id: &str) -> bool {
+    let normalized = normalize_relative(id).to_lowercase();
+    let name = normalized.rsplit('/').next().unwrap_or(&normalized);
+    name == ".env"
+        || name.starts_with(".env.")
+        || name.ends_with(".pem")
+        || name.ends_with(".key")
+        || name.ends_with(".p12")
+        || name.ends_with(".pfx")
+        || name == "id_rsa"
+        || name == "id_ed25519"
+        || name == "credentials"
+        || name.starts_with("credentials.")
+        || normalized.starts_with(".ssh/")
+        || normalized.starts_with(".aws/")
+        || normalized.starts_with(".gnupg/")
+        || normalized.contains("/.ssh/")
+        || normalized.contains("/.aws/")
+        || normalized.contains("/.gnupg/")
+}
+
+fn is_protected_write_path(id: &str) -> bool {
+    let normalized = normalize_relative(id).to_lowercase();
+    normalized == ".velora"
+        || normalized.starts_with(".velora/")
+        || normalized.starts_with(".git/")
+        || normalized.starts_with(".github/workflows/")
 }
 
 fn validate_relative(id: &str) -> Result<()> {
