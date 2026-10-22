@@ -77,8 +77,15 @@ fn ai_context_menu_lists_quick_commands_with_or_without_a_selection(
                 .collect::<Vec<_>>();
             assert_eq!(
                 names,
-                vec!["ai-summarize", "ai-explain", "ai-translate", "ai-polish", "ai-expand"],
-                "AI 二级面板要列出可选中直接发起的快捷指令"
+                vec![
+                    "ai-summarize",
+                    "ai-explain",
+                    "ai-translate",
+                    "ai-polish",
+                    "ai-expand",
+                    "ai-ask"
+                ],
+                "AI 二级面板要列出快捷指令与自由对话入口"
             );
             for row in &rows {
                 let DocumentMenuRow::Item { command, enabled, .. } = row else { continue };

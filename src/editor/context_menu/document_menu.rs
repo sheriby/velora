@@ -539,18 +539,26 @@ impl Editor {
             }
             // AI 那一档与选中工具栏的 AI 下拉是同一份行数据（`AiCommand::ALL`）；
             // 需要选区的指令在没有选区时灰着，点了不会静默什么都不做。
-            DocumentSubmenu::Ai => crate::ai::AiCommand::ALL
-                .into_iter()
-                .map(|action| {
-                    let command = DocumentMenuCommand::Ai(action);
-                    DocumentMenuRow::Item {
-                        enabled: !self.code_document
-                            && (!action.requires_selection() || selectable),
-                        name: command.row_name(),
-                        command,
-                    }
-                })
-                .collect(),
+            DocumentSubmenu::Ai => {
+                let mut rows = crate::ai::AiCommand::ALL
+                    .into_iter()
+                    .map(|action| {
+                        let command = DocumentMenuCommand::Ai(action);
+                        DocumentMenuRow::Item {
+                            enabled: !action.requires_selection() || selectable,
+                            name: command.row_name(),
+                            command,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let command = DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask);
+                rows.push(DocumentMenuRow::Item {
+                    enabled: true,
+                    name: command.row_name(),
+                    command,
+                });
+                rows
+            }
         }
     }
 
