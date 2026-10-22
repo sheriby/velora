@@ -3901,6 +3901,49 @@ fn ai_custom_instruction_can_be_added_to_draft(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn ai_can_edit_the_last_user_message_before_sending_again(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.saved.messages = vec![
+            crate::ai::session::ChatMessage {
+                role: "user".into(),
+                text: "第一条".into(),
+                thinking: "".into(),
+            },
+            crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: "回答".into(),
+                thinking: "".into(),
+            },
+            crate::ai::session::ChatMessage {
+                role: "user".into(),
+                text: "第二条要修改".into(),
+                thinking: "".into(),
+            },
+        ];
+        session.saved.history = vec![
+            serde_json::json!({"role":"user","content":"第一条"}),
+            serde_json::json!({"role":"assistant","content":"回答"}),
+            serde_json::json!({"role":"user","content":"第二条要修改"}),
+        ];
+        cx.notify();
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.edit_last_ai_message(window, cx)
+    });
+    editor.read_with(cx, |editor, cx| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(session.input.read(cx).value(), "第二条要修改");
+        assert_eq!(session.saved.messages.len(), 2);
+        assert_eq!(session.saved.history.len(), 2);
+    });
+}
+
+#[gpui::test]
 fn ai_collection_keyboard_keeps_later_skills_visible(cx: &mut TestAppContext) {
     use gpui::AppContext as _;
     use gpui_kit::test::TestWindowExt as _;

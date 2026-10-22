@@ -1210,6 +1210,9 @@ impl I18nStringsDe {
             ai_panel_continue: self
                 .ai_panel_continue
                 .unwrap_or(defaults.ai_panel_continue),
+            ai_panel_edit_last: self
+                .ai_panel_edit_last
+                .unwrap_or(defaults.ai_panel_edit_last),
             ai_panel_stop: self
                 .ai_panel_stop
                 .unwrap_or(defaults.ai_panel_stop),

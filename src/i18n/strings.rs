@@ -814,6 +814,7 @@ pub struct I18nStrings {
     /// AI 面板:重试按钮。
     pub ai_panel_retry: String,
     pub ai_panel_continue: String,
+    pub ai_panel_edit_last: String,
     /// AI 面板:停止按钮。
     pub ai_panel_stop: String,
     /// AI 面板:生成中状态。

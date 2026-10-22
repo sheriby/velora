@@ -2269,6 +2269,44 @@ impl Editor {
         cx.notify();
     }
 
+    pub(super) fn edit_last_ai_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.ai_session.as_mut() else {
+            return;
+        };
+        if session.saved.running {
+            return;
+        }
+        let Some(prompt) = session
+            .saved
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == "user")
+            .map(|message| message.text.to_string())
+        else {
+            return;
+        };
+        if session.saved.kind == SessionKind::QuickCommand {
+            session.saved.history.clear();
+            session.saved.messages.clear();
+            session.saved.workspace.discard_proposals();
+        } else {
+            session.saved.rollback_failed_conversation_round();
+        }
+        session.saved.draft = prompt.clone();
+        session.error = None;
+        session.truncated = false;
+        session.stream_index = None;
+        session.conversation = None;
+        session.review = None;
+        session.review_dirty = true;
+        session
+            .input
+            .update(cx, |input, cx| input.set_value(prompt, window, cx));
+        self.refresh_ai_conversation(cx);
+        cx.notify();
+    }
+
     pub(super) fn stop_ai_task(&mut self, cx: &mut Context<Self>) {
         if let Some(session) = self.ai_session.as_mut() {
             session.control.cancel.cancel();

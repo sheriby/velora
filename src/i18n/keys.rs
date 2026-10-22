@@ -555,6 +555,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_custom_placeholder",
     "ai_panel_retry",
     "ai_panel_continue",
+    "ai_panel_edit_last",
     "ai_panel_stop",
     "ai_panel_running",
     "ai_tool_trace",
