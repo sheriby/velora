@@ -118,6 +118,8 @@ pub(crate) struct AiWorkspace {
     files: Option<Vec<String>>,
     #[serde(skip)]
     stamps: BTreeMap<String, (Option<std::time::SystemTime>, u64)>,
+    #[serde(skip)]
+    line_indexes: BTreeMap<String, LineIndex>,
     /// 运行时注入的取消令牌：超时/停止后正在执行的同步工具（全库搜索、
     /// 大文件读盘）靠它在循环边界提前退出，否则 Finished 会被拖到工具跑完。
     #[serde(skip)]
@@ -240,6 +242,7 @@ impl AiWorkspace {
             skills: Default::default(),
             files: None,
             stamps: BTreeMap::new(),
+            line_indexes: BTreeMap::new(),
             cancel: None,
             refresh: SnapshotBridge::default(),
             live_documents,
@@ -538,18 +541,27 @@ impl AiWorkspace {
                     .and_then(Value::as_u64)
                     .unwrap_or(120)
                     .clamp(1, 300) as usize;
-                let total = source.lines().count();
+                if !self
+                    .line_indexes
+                    .get(path)
+                    .is_some_and(|index| index.matches(source))
+                {
+                    self.line_indexes
+                        .insert(path.to_owned(), LineIndex::build(source));
+                }
+                // 分页读取不能每页重扫全文：行起点缓存一次后，页读取只处理
+                // 本页字节；内容指针/长度变化时才重建。
+                let index = self
+                    .line_indexes
+                    .get(path)
+                    .cloned()
+                    .expect("line index was just inserted");
+                let total = index.total_lines();
                 let offset = arguments
                     .get("start_offset")
                     .and_then(Value::as_u64)
                     .map(|offset| offset as usize)
-                    .unwrap_or_else(|| {
-                        source
-                            .split_inclusive('\n')
-                            .take(start - 1)
-                            .map(str::len)
-                            .sum()
-                    });
+                    .unwrap_or_else(|| index.line_start(start));
                 let offset = source.floor_char_boundary(offset.min(source.len()));
                 let tail = source.get(offset..).context("文档读取位置无效")?;
                 let line_bytes: usize = tail.split_inclusive('\n').take(limit).map(str::len).sum();
@@ -559,15 +571,8 @@ impl AiWorkspace {
                         .min(source.len()),
                 );
                 let content = source.get(offset..end).context("文档读取区间无效")?;
-                let actual_start = source
-                    .get(..offset)
-                    .unwrap_or_default()
-                    .bytes()
-                    .filter(|byte| *byte == b'\n')
-                    .count()
-                    + 1;
-                let next_line =
-                    actual_start + content.bytes().filter(|byte| *byte == b'\n').count();
+                let actual_start = index.line_for_offset(offset) + 1;
+                let next_line = index.line_for_offset(end) + 1;
                 let record = SourceRecord {
                     path: path.to_owned(),
                     line: actual_start,
@@ -860,6 +865,49 @@ fn field<'a>(arguments: &'a Value, name: &str) -> Result<&'a str> {
         .get(name)
         .and_then(Value::as_str)
         .with_context(|| format!("缺少参数：{name}"))
+}
+
+#[derive(Clone, Debug)]
+struct LineIndex {
+    pointer: usize,
+    length: usize,
+    starts: Vec<usize>,
+}
+
+impl LineIndex {
+    fn build(source: &str) -> Self {
+        let mut starts = vec![0];
+        starts.extend(
+            source
+                .bytes()
+                .enumerate()
+                .filter_map(|(offset, byte)| (byte == b'\n').then_some(offset + 1)),
+        );
+        Self {
+            pointer: source.as_ptr() as usize,
+            length: source.len(),
+            starts,
+        }
+    }
+
+    fn matches(&self, source: &str) -> bool {
+        self.pointer == source.as_ptr() as usize && self.length == source.len()
+    }
+
+    fn line_for_offset(&self, offset: usize) -> usize {
+        match self.starts.binary_search(&offset) {
+            Ok(line) => line,
+            Err(line) => line.saturating_sub(1),
+        }
+    }
+
+    fn line_start(&self, line: usize) -> usize {
+        self.starts.get(line.saturating_sub(1)).copied().unwrap_or(0)
+    }
+
+    fn total_lines(&self) -> usize {
+        self.starts.len().saturating_sub(1).max(1)
+    }
 }
 
 fn normalize_relative(value: &str) -> String {

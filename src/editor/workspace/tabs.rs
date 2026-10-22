@@ -489,6 +489,20 @@ impl Editor {
             .map(|tab| (tab.markdown.clone(), tab.dirty))
     }
 
+    pub(crate) fn cached_tab_is_dirty_for_path(&self, path: &Path, _: &App) -> bool {
+        // 冲突检查只需要 dirty 位，不能为了比较路径把每个标签全文克隆一遍。
+        let target = crate::file_url::canonical_path(path);
+        self.file_path
+            .as_deref()
+            .is_some_and(|current| crate::file_url::canonical_path(current) == target)
+            && self.document_dirty
+            || self
+                .workspace
+                .open_documents
+                .iter()
+                .any(|tab| crate::file_url::canonical_path(&tab.path) == target && tab.dirty)
+    }
+
     /// Current workspace root, if set.
     pub(crate) fn workspace_root_path(&self) -> Option<&Path> {
         self.workspace.root.as_deref()

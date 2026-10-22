@@ -441,15 +441,7 @@ impl Editor {
                         .as_ref()
                         .is_some_and(|current| same_path(current, path))
                         && editor.document_dirty)
-                        || editor
-                            .ai_cached_document_sources()
-                            .iter()
-                            .any(|(candidate, _)| {
-                                same_path(candidate, path)
-                                    && editor
-                                        .cached_tab_content_for_path(candidate, cx)
-                                        .is_some_and(|(_, dirty)| dirty)
-                            })
+                        || editor.cached_tab_is_dirty_for_path(path, cx)
                 };
                 dirty(editor)
                     || editor
