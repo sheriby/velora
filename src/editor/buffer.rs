@@ -11,7 +11,9 @@ mod tests;
 
 mod file_shape;
 
-pub(crate) use file_shape::{starts_with_utf16_bom, FileShape};
+pub(crate) use file_shape::{is_text_prefix, FileShape};
+#[cfg(test)]
+pub(crate) use file_shape::starts_with_utf16_bom;
 
 use std::ops::Range;
 use std::sync::Arc;

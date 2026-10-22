@@ -63,6 +63,31 @@ pub(crate) fn starts_with_utf16_bom(head: &[u8]) -> bool {
     head.starts_with(UTF16_LE_BOM) || head.starts_with(UTF16_BE_BOM)
 }
 
+/// 一段字节前缀（可能截断在字符中间）像不像可编辑文档。
+///
+/// 「这个文件值不值得预览」必须和读盘漏斗用同一份判据，否则 GB18030 会搜得到
+/// 却打不开。读取窗口只有 8 KiB，末尾可能切在多字节字符中间：去掉最多 3 个字节
+/// 再判，截断本身不算「不是文本」。UTF-16 BOM 一律放行，让读盘漏斗给出编码
+/// 拒绝的理由，而不是把真编码的文件说成无法预览。
+pub(crate) fn is_text_prefix(head: &[u8]) -> bool {
+    if starts_with_utf16_bom(head) {
+        return true;
+    }
+    if head.is_empty() {
+        return true;
+    }
+    // 含 NUL 的字节流不是文本。要在截断容错之前判：否则末尾的 NUL 会随着
+    // 去掉的 1..=3 个字节一起消失，二进制的短前缀被当成干净的文本。
+    if head.contains(&0) {
+        return false;
+    }
+    // 截断只能发生在末尾：去掉 1..=3 个字节就能把被切开的字符整个让出去。
+    // 不让 trim 把前缀削成空串——那会把任何 3 字节以内的坏字节判成空文件。
+    (0..=3)
+        .filter(|trim| *trim < head.len())
+        .any(|trim| FileShape::detect(&head[..head.len() - trim]).is_lossless())
+}
+
 impl FileShape {
     /// 从磁盘原始字节判定形状。
     pub(crate) fn detect(raw: &[u8]) -> Self {

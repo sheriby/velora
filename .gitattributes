@@ -1,2 +1,3 @@
 fixtures/markdown-baseline.md whitespace=-blank-at-eol
+fixtures/encodings/** -text
 vendor/gpui/src/platform/mac/shaders.metal whitespace=-space-before-tab

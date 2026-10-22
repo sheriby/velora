@@ -205,3 +205,55 @@ fn utf16_encode_is_the_mirror_of_utf16_decode() {
         }
     }
 }
+
+/// 仓库里的真实夹具：承诺支持的每个编码都必须解码成 `canonical.md`、按同形状
+/// 重编码逐字节回去，并且能通过打开侧的文本嗅探。
+#[test]
+fn committed_encoding_fixtures_decode_and_reencode_byte_for_byte() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/encodings");
+    let canonical = std::fs::read_to_string(dir.join("canonical.md")).expect("读基准文本");
+    let cases = [
+        ("canonical.md", TextEncoding::Utf8, false),
+        ("utf8-bom.md", TextEncoding::Utf8, true),
+        ("utf16le-bom.md", TextEncoding::Utf16Le, true),
+        ("utf16be-bom.md", TextEncoding::Utf16Be, true),
+        ("gbk.md", TextEncoding::Gb18030, false),
+    ];
+    for (name, encoding, bom) in cases {
+        let raw = std::fs::read(dir.join(name))
+            .unwrap_or_else(|error| panic!("读夹具 {name} 失败：{error}"));
+        let (shape, text) = FileShape::detect_and_decode(&raw);
+        assert_eq!(
+            shape,
+            FileShape {
+                encoding,
+                bom,
+                line_ending: LineEnding::LF,
+            },
+            "{name} 的形状判错了"
+        );
+        assert_eq!(text, canonical, "{name} 解码出来的不是基准文本");
+        assert_eq!(shape.encode(&text), raw, "{name} 重编码改了字节");
+        assert!(is_text_prefix(&raw), "{name} 必须能通过打开侧的文本嗅探");
+    }
+}
+
+/// 打开侧只读 8 KiB 前缀，截断在字符中间不算二进制；真正的坏字节仍要拒绝。
+#[test]
+fn text_prefix_tolerates_a_cut_character_but_not_binary() {
+    let gbk = encoding_rs::GB18030.encode("中文笔记").0;
+    assert!(is_text_prefix(&gbk));
+    for cut in 1..=3 {
+        assert!(
+            is_text_prefix(&gbk[..gbk.len() - cut]),
+            "截断 {cut} 字节的 GB18030 前缀仍是文本"
+        );
+    }
+    assert!(is_text_prefix(b""));
+    assert!(is_text_prefix(&[0xFF, 0xFE]), "UTF-16 BOM 放行，让读盘漏斗给出拒绝理由");
+    assert!(
+        !is_text_prefix(&[0xE5, 0x20, 0x20]),
+        "合法 UTF-8 与 GB18030 都不是的短字节不该放行"
+    );
+    assert!(!is_text_prefix(&[b'a', 0, b'b']), "含 NUL 的字节不是文本");
+}

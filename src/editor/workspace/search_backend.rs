@@ -555,9 +555,11 @@ pub(crate) fn find_document_match_from(
 }
 
 /// Heuristic text detection (same shape as Git's `is_text`): read up to the
-/// first 8 KiB and treat the file as text when it decodes as UTF-8 (lossy
-/// covers Latin-1-ish legacy files) and contains no NUL byte — the signature
-/// of binary formats.
+/// first 8 KiB and accept it when the read funnel's own sniff judges the
+/// prefix losslessly editable — UTF-8, BOM-bearing UTF-16 and GB18030 all
+/// qualify, with no NUL byte. A window cut inside a multi-byte character is
+/// still a text prefix. Bytes the loader would refuse (binary formats, broken
+/// UTF-16, NUL-bearing streams) stay refused here.
 pub(crate) fn is_likely_text_file(path: &Path) -> bool {
     use std::io::Read;
     let mut file = match std::fs::File::open(path) {
@@ -578,23 +580,7 @@ pub(crate) fn is_likely_text_file(path: &Path) -> bool {
             Err(_) => return false,
         }
     }
-    let head = &head[..read];
-    // UTF-16 是真编码，不是二进制：判定形状那张表在这里也只准用一次。
-    if crate::editor::buffer::starts_with_utf16_bom(head) {
-        return true;
-    }
-    if head.contains(&0) {
-        return false;
-    }
-    match std::str::from_utf8(head) {
-        Ok(_) => true,
-        // A read window that ends inside a multi-byte character is still a text
-        // prefix: `error_len() == None` means the only problem is that the
-        // window cut the last character (an 8 KiB window over CJK text hits
-        // this constantly). Treating it as binary hid whole documents behind
-        // the "can't preview" notice.
-        Err(error) => error.error_len().is_none(),
-    }
+    crate::editor::buffer::is_text_prefix(&head[..read])
 }
 
 pub(crate) fn is_code_file(path: &Path) -> bool {

@@ -363,23 +363,19 @@ async fn workspace_scope_lists_one_row_per_line_and_document_scope_lists_every_h
 }
 
 #[test]
-fn defect_the_text_sniff_still_refuses_a_gb18030_file() {
-    // 本笔只统一了**搜索侧**的解码口径。打开侧还有一道闸：`is_likely_text_file`
-    // 只看头 8 KiB 能不能按 UTF-8 解释，所以 GB18030 文件在工作区标签里仍然显示
-    // 「无法使用文本编辑器预览该文件」——搜得到正文，却打不开来看。
-    // `encoding.rs` 的模块说明写着 GB18030 笔记「可以正常打开编辑」，这道闸与它
-    // 矛盾，是登记在册的缺陷（方案文档 §1.2 #5 的补充）。这条用例钉的是**现状**，
-    // 谁修好了打开侧，它会红，届时把它改写成「修复后的期望」。
+fn the_text_sniff_accepts_a_gb18030_file() {
+    // 打开侧与读盘漏斗必须用同一份判据：以前只有 UTF-8 能过这道闸，GB18030
+    // 文件在工作区标签里被当成二进制——搜得到正文，却打不开来看。
     let root = std::env::temp_dir().join(format!("velora-sniff-gb-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create dir");
     let path = root.join("gb.md");
     fs::write(&path, gb18030("# 会议记录\n\n中文正文与 English\n")).expect("write");
 
     assert!(
-        !is_likely_text_file(&path),
-        "现状：8 KiB 窗口内有非法 UTF-8 就判成二进制，GB18030 文件打不开"
+        is_likely_text_file(&path),
+        "GB18030/GBK 文件必须能按文本打开"
     );
-    // 但同一份字节按文档解码路径是干净的文本——两道闸的口径差就在这里。
+    // 同一份字节按文档解码路径是干净的文本——两道闸的口径必须一致。
     assert_eq!(
         decode_document_bytes(fs::read(&path).expect("read")),
         "# 会议记录\n\n中文正文与 English\n"
@@ -645,6 +641,49 @@ fn a_walk_reports_how_many_entries_it_could_not_read() {
     let (files, skipped) = collect_workspace_files_on_disk_reporting_skips(&missing);
     assert!(files.is_empty(), "不存在的根扫不出文件");
     assert!(skipped > 0, "读不了的根没被计数上报");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// GBK/GB18030 文件走完整的“工作区打开”入口：嗅探、解码、标签与缓冲区都要
+/// 认这份文本；未编辑时保存必须原字节写回，不能借打开这一趟把它洗成 UTF-8。
+#[gpui::test]
+async fn opening_a_gb18030_file_through_the_workspace_shows_its_text(cx: &mut TestAppContext) {
+    init(cx);
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/encodings");
+    let canonical = fs::read_to_string(fixtures.join("canonical.md")).expect("读基准文本");
+    let raw = fs::read(fixtures.join("gbk.md")).expect("读 GBK 夹具");
+    let root = std::env::temp_dir().join(format!("velora-gbk-open-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create dir");
+    let path = root.join("会议记录.md");
+    fs::write(&path, &raw).expect("write");
+
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(path.clone(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, cx| {
+        assert!(
+            editor.unsupported_preview_path.is_none(),
+            "GBK/GB18030 文件必须能按文本打开"
+        );
+        assert_eq!(editor.file_path.as_ref(), Some(&path));
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            canonical.trim_end_matches('\n'),
+            "打开后显示的不是原文"
+        );
+        assert_eq!(
+            editor.document_bytes_for_save(),
+            raw,
+            "未编辑保存必须原字节写回，不能把 GBK 洗成 UTF-8"
+        );
+    });
 
     let _ = fs::remove_dir_all(root);
 }
