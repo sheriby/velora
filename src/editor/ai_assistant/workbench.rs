@@ -57,6 +57,19 @@ impl Editor {
                             .text_size(px(11.0))
                             .text_color(theme.colors.dialog_muted)
                             .child(caption),
+                    )
+                    .when(
+                        session.saved.workspace.read_only || self.is_read_only(),
+                        |header| {
+                            header.child(
+                                div()
+                                    .id("ai-readonly-hint")
+                                    .debug_selector(|| "ai-readonly-hint".into())
+                                    .text_size(px(11.0))
+                                    .text_color(theme.colors.callout_warning_border)
+                                    .child(strings.ai_error_read_only_accept.clone()),
+                            )
+                        },
                     ),
             )
             .when(
