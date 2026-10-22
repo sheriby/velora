@@ -375,6 +375,35 @@ fn ai_tools_refresh_live_buffers_and_distinguish_stale_proposals() {
 }
 
 #[test]
+fn ai_reset_proposal_releases_a_new_document_for_another_attempt() {
+    let root = fixture();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), Vec::new()).unwrap();
+    let first = workspace
+        .call(
+            "propose_document",
+            &json!({"path":"notes/new.md","content":"第一版"}),
+        )
+        .expect("首次新建应成功");
+    assert_eq!(first["status"], "pending_review");
+    workspace
+        .call("reset_proposal", &json!({"path":"notes/new.md"}))
+        .expect("重置新文档提议应成功");
+    let again = workspace.call(
+        "propose_document",
+        &json!({"path":"notes/new.md","content":"第二版"}),
+    );
+    assert!(
+        again.is_ok(),
+        "重置后应能再次提议同一新文档：{again:?}"
+    );
+    assert_eq!(
+        &*workspace.changes.proposals["notes/new.md"].proposed,
+        "第二版"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn ai_context_scope_and_exclusions_apply_to_reads_and_search_results() {
     let root = fixture();
     let mut workspace = AiWorkspace::new(Some(root.clone()), vec![]).unwrap();
@@ -912,10 +941,31 @@ fn found_documents(workspace: &mut AiWorkspace, arguments: serde_json::Value) ->
         .collect()
 }
 
+#[test]
+fn ai_find_documents_pages_large_results() {
+    let root = fixture();
+    let mut workspace = AiWorkspace::new(Some(root.clone()), Vec::new()).unwrap();
+    let first = workspace
+        .call("find_documents", &json!({"pattern":"*.md","limit":1}))
+        .unwrap();
+    assert_eq!(first["total"], 2);
+    assert_eq!(first["documents"].as_array().unwrap().len(), 1);
+    assert_eq!(first["limited"], true);
+    assert_eq!(first["next_offset"], 1);
+    let second = workspace
+        .call(
+            "find_documents",
+            &json!({"pattern":"*.md","limit":1,"offset":1}),
+        )
+        .unwrap();
+    assert_eq!(second["documents"].as_array().unwrap().len(), 1);
+    assert_eq!(second["limited"], false);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// find_documents 的递归写法是 `**`；返回的必须是工作区相对路径，
 /// 非文本文档（图片）根本不进名单。
-#[test]
-fn ai_find_documents_matches_glob_patterns_and_returns_relative_paths() {
+#[test]fn ai_find_documents_matches_glob_patterns_and_returns_relative_paths() {
     let root = fixture();
     std::fs::create_dir_all(root.join("docs/nested")).unwrap();
     std::fs::write(root.join("docs/guide.md"), "# 指南\n").unwrap();

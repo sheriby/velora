@@ -15,8 +15,23 @@ fn ai_context_mentions_support_quoted_paths_and_do_not_capture_email_addresses()
 }
 
 #[test]
-fn ai_context_templates_expand_values_once_and_keep_unknown_variables() {
-    assert_eq!(
+fn ai_task_prompt_closes_the_user_request_block() {
+    let prompt = super::task_prompt(
+        "解释这一处",
+        &serde_json::json!({"workspace_name":"notes"}),
+        None,
+        &[],
+        true,
+        None,
+    );
+    assert!(
+        prompt.ends_with("</user_request>"),
+        "任务块必须闭合：{prompt}"
+    );
+}
+
+#[test]
+fn ai_context_templates_expand_values_once_and_keep_unknown_variables() {    assert_eq!(
         super::expand_instruction(
             "校对 {{selection}}；来自 {{document}}，资料 {{references}}，{{unknown}}",
             "{{document}}",
@@ -60,7 +75,10 @@ fn ai_prompt_cache_keeps_workspace_prefix_stable_across_instructions_tab_order_a
         left_prefix.contains("\"workspace_name\":\"notes\""),
         "冻结前缀里的资料必须是工作区名称，工具参数才能用相对路径：{left_prefix}"
     );
-    assert!(left.ends_with("解释这一处"), "本次指令放在易变信息之后");
+    assert!(
+        left.ends_with("解释这一处\n</user_request>"),
+        "本次指令放在易变信息之后并闭合任务块"
+    );
 }
 
 #[test]
@@ -82,7 +100,9 @@ fn ai_prompt_cache_sends_the_frozen_target_only_at_the_start_of_a_task() {
         !next.contains("最初的选区原文"),
         "续聊通过历史保留原始目标，不重复注入旧选区"
     );
-    assert!(next.contains("byte_offset") && next.ends_with("语气自然一些"));
+    assert!(
+        next.contains("byte_offset") && next.ends_with("语气自然一些\n</user_request>")
+    );
 }
 
 #[test]

@@ -120,5 +120,6 @@ pub(crate) fn task_prompt(
     }
     prompt.push_str("<user_request>\n");
     prompt.push_str(task);
+    prompt.push_str("\n</user_request>");
     prompt
 }

@@ -153,6 +153,12 @@ impl AiWorkspace {
         self.pending_reads.clear();
     }
 
+    /// 新请求重新扫一次工作区文件名单；缓存只服务单轮工具调用，不能跨轮
+    /// 把新建/另存的文件永久排除在 list/find/search 之外。
+    pub fn invalidate_file_index(&mut self) {
+        self.files = None;
+    }
+
     pub fn set_scope(&mut self, references: &[String], primary: &str) -> Result<()> {
         let mut scope = Vec::new();
         for reference in references {
@@ -250,6 +256,15 @@ impl AiWorkspace {
                 self.changes.invalid.remove(path);
                 self.changes.dependencies.remove(path);
                 self.pending_reads.remove(path);
+                // 新建文档的提议被重置后，这个 id 还没有任何磁盘落点；留着
+                // documents/new_documents 会让下一次 propose_document 误判“已存在”。
+                if self.new_documents.remove(path) {
+                    self.documents.remove(path);
+                    self.source_records.retain(|record| record.path != path);
+                    if let Some(files) = self.files.as_mut() {
+                        files.retain(|file| file != path);
+                    }
+                }
                 Ok(json!({"path":path,"status":"ready_to_revise","written":false}))
             }
             "read_skill" => {
@@ -316,9 +331,23 @@ impl AiWorkspace {
                     })
                     .collect();
 
+                // 与 list_documents 共用分页口径：工具结果会整体进入模型上下文，
+                // 大工作区下 `**/*` 不能一次把所有路径灌进去。
+                let total = matching.len();
+                let offset = arguments.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let limit = arguments
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(200)
+                    .clamp(1, 500) as usize;
+                let documents: Vec<_> = matching.into_iter().skip(offset).take(limit).collect();
+                let next_offset = offset.saturating_add(documents.len());
                 Ok(json!({
-                    "documents": matching,
-                    "total": matching.len()
+                    "documents": documents,
+                    "total": total,
+                    "offset": offset,
+                    "next_offset": next_offset,
+                    "limited": next_offset < total,
                 }))
             }
             "search_documents" => {
@@ -462,13 +491,20 @@ impl AiWorkspace {
                     // 大纲判据与侧栏同一份（outline_headings）：front matter 里的伪
                     // setext 标题、引用块内的标题都不进大纲，另起解析器会在这些
                     // 写法上与用户所见漂移。
-                    let headings = crate::editor::workspace::document_outline(source)
+                    let mut headings = crate::editor::workspace::document_outline(source)
                         .into_iter()
                         .map(|heading| {
                             json!({"title":heading.label,"line":heading.line + 1,"level":heading.level})
                         })
                         .collect::<Vec<_>>();
-                    return Ok(json!({"path":path,"headings":headings}));
+                    let total = headings.len();
+                    headings.truncate(500);
+                    return Ok(json!({
+                        "path":path,
+                        "headings":headings,
+                        "total":total,
+                        "truncated":total > 500,
+                    }));
                 }
                 let start = arguments
                     .get("start_line")
@@ -816,8 +852,8 @@ pub(crate) fn tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
         ),
         (
             "find_documents",
-            "按文件名模式查找工作区文本文档。支持 glob 模式：* 匹配任意字符（不含 /），** 匹配任意路径段，? 匹配单个字符。返回的 path 是相对路径。",
-            json!({"type":"object","required":["pattern"],"properties":{"pattern":{"type":"string","description":"Glob 模式，如 **/*.md 或 test/*.txt"},"folder":{"type":"string","description":"可选的起始目录，模式在此目录下匹配"}}}),
+            "按文件名模式查找工作区文本文档。支持 glob 模式：* 匹配任意字符（不含 /），** 匹配任意路径段，? 匹配单个字符。返回的 path 是相对路径；结果分页，用 offset 继续。",
+            json!({"type":"object","required":["pattern"],"properties":{"pattern":{"type":"string","description":"Glob 模式，如 **/*.md 或 test/*.txt"},"folder":{"type":"string","description":"可选的起始目录，模式在此目录下匹配"},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":500}}}),
         ),
         (
             "search_documents",

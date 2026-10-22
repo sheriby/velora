@@ -191,12 +191,13 @@ pub(crate) async fn run_with_provider(
     let mut config = yoagent::agent_loop::AgentLoopConfig::new(provider, request.model.id.clone());
     let mut context_config = yoagent::context::ContextConfig::default();
     // 0 或极小的窗口会让压缩立即触发；给一个非零下限，配置异常时不至于
-    // 每轮都被压缩打断。
+    // 每轮都被压缩打断。上限必须给补全预算留出空间：4096 窗口配 1024 补全时，
+    // 再抬到 4096 会让提示 + 补全直接超窗。
     context_config.max_context_tokens = request
         .model
         .context_window
         .saturating_sub(request.model.max_tokens)
-        .max(4096) as usize;
+        .max(1024) as usize;
     config.max_tokens = Some(request.model.max_tokens);
     config.model_config = Some(request.model);
     config.api_key = request.api_key;
@@ -283,13 +284,17 @@ pub(crate) async fn run_with_provider(
                     // 锁忙时跳过本轮检查点要留痕：进度持久化的缺失事后无法排查。
                     match workspace.try_lock() {
                         Ok(snapshot) => {
+                            let mut checkpoint = snapshot.clone();
+                            // 运行令牌只属于本次请求；检查点会写回界面会话，
+                            // 留着会让停止后的资料面板误判任务仍在取消态。
+                            checkpoint.cancel = None;
                             match observed_history
                                 .iter()
                                 .map(serde_json::to_value)
                                 .collect::<Result<Vec<_>, _>>()
                             {
                                 Ok(history) => emit(RunEvent::Checkpoint {
-                                    workspace: Box::new(snapshot.clone()),
+                                    workspace: Box::new(checkpoint),
                                     history,
                                 }),
                                 Err(error) => {

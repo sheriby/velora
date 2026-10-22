@@ -216,10 +216,28 @@ impl SavedSession {
         // 失败轮之后的工具轨迹同样属于被回滚的那一轮，留着会和重试后的记录重复。
         self.tool_calls
             .retain(|record| record.message_index < last_user);
+        // 模型历史里的失败轮也必须一并去掉：runtime 在非超时路径把当前轮已经
+        // 写进 history，只回滚界面消息会让重试把同一句要求再发一次。
+        if let Some(last_history_user) = self
+            .history
+            .iter()
+            .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+        {
+            self.history.truncate(last_history_user);
+        }
     }
 
-    pub fn directory(workspace: Option<&Path>) -> Result<PathBuf> {
-        use sha2::{Digest, Sha256};
+    /// 停止/失败收尾：在途工具不会再有 ToolCallEnd，继续显示 Running 会让
+    /// 轨迹永久转圈。
+    pub fn fail_in_flight_tools(&mut self) {
+        for record in &mut self.tool_calls {
+            if record.status == ToolCallStatus::Running {
+                record.status = ToolCallStatus::Failed;
+            }
+        }
+    }
+
+    pub fn directory(workspace: Option<&Path>) -> Result<PathBuf> {        use sha2::{Digest, Sha256};
         let key = workspace
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_else(|| "untitled".into());

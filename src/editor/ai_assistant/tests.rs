@@ -3197,6 +3197,11 @@ fn ai_retry_rolls_back_the_failed_conversation_round_before_sending_again() {
             thinking: "".into()
         },
     ];
+    saved.history = vec![
+        serde_json::json!({"role":"user","content":[{"type":"text","text":"旧问题"}]}),
+        serde_json::json!({"role":"assistant","content":[{"type":"text","text":"旧回答"}]}),
+        serde_json::json!({"role":"user","content":[{"type":"text","text":"失败轮的指令"}]}),
+    ];
     saved.rollback_failed_conversation_round();
     assert_eq!(
         saved
@@ -3207,6 +3212,12 @@ fn ai_retry_rolls_back_the_failed_conversation_round_before_sending_again() {
         vec!["旧问题".to_string(), "旧回答".to_string()],
         "重试前应回滚失败轮的用户消息与空回复，发送后再追加一次"
     );
+    assert_eq!(
+        saved.history.len(),
+        2,
+        "模型历史也必须回滚失败轮，否则重试会重复发送同一条用户消息"
+    );
+    assert_eq!(saved.history[1]["role"], "assistant");
 }
 
 #[gpui::test]

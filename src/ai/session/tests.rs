@@ -2,6 +2,33 @@ use super::*;
 use crate::ai::DocumentSnapshot;
 
 #[test]
+fn ai_session_fails_in_flight_tools_when_a_run_stops() {
+    let workspace = AiWorkspace::new(None, Vec::new()).unwrap();
+    let mut session = SavedSession::new(workspace);
+    session.tool_calls = vec![
+        ToolCallRecord {
+            message_index: 0,
+            id: "running".into(),
+            name: "read_document".into(),
+            arguments: String::new(),
+            status: ToolCallStatus::Running,
+            result: String::new(),
+        },
+        ToolCallRecord {
+            message_index: 0,
+            id: "done".into(),
+            name: "get_outline".into(),
+            arguments: String::new(),
+            status: ToolCallStatus::Succeeded,
+            result: String::new(),
+        },
+    ];
+    session.fail_in_flight_tools();
+    assert_eq!(session.tool_calls[0].status, ToolCallStatus::Failed);
+    assert_eq!(session.tool_calls[1].status, ToolCallStatus::Succeeded);
+}
+
+#[test]
 fn ai_session_restores_pending_changes_and_marks_running_tasks_interrupted() {
     let root = std::env::temp_dir().join(format!("velora-ai-session-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();

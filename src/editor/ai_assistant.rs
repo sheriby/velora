@@ -1503,6 +1503,28 @@ impl Editor {
             .as_ref()
             .map(|target| target.selection.as_str())
             .unwrap_or_default();
+        // 只从用户实际输入里提取 @ 引用：选区/资料正文里的 @ 不能变成新资料。
+        let mut references = session.saved.references.clone();
+        match crate::ai::context::explicit_references(&raw_instruction) {
+            Ok(paths) => {
+                for path in paths {
+                    if !references.contains(&path) {
+                        references.push(path);
+                    }
+                }
+            }
+            Err(error) => {
+                session.error = Some(error.to_string());
+                cx.notify();
+                return;
+            }
+        }
+        if let Err(error) = session.saved.workspace.set_scope(&references, target_id) {
+            session.error = Some(error.to_string());
+            cx.notify();
+            return;
+        }
+        session.saved.references = references;
         let instruction = crate::ai::context::expand_instruction(
             &raw_instruction,
             selection,
@@ -1607,33 +1629,6 @@ impl Editor {
                 return;
             }
         };
-        let mut references = session.saved.references.clone();
-        match crate::ai::context::explicit_references(&instruction) {
-            Ok(paths) => {
-                for path in paths {
-                    if !references.contains(&path) {
-                        references.push(path);
-                    }
-                }
-            }
-            Err(error) => {
-                session.error = Some(error.to_string());
-                cx.notify();
-                return;
-            }
-        }
-        let primary = session
-            .saved
-            .target
-            .as_ref()
-            .map(|target| target.document_id.as_str())
-            .unwrap_or_default();
-        if let Err(error) = session.saved.workspace.set_scope(&references, primary) {
-            session.error = Some(error.to_string());
-            cx.notify();
-            return;
-        }
-        session.saved.references = references;
         let skills = session
             .skills
             .enabled(&session.settings.disabled_skills)
@@ -1706,6 +1701,7 @@ impl Editor {
             })
         })();
         let mut workspace = session.saved.workspace.clone();
+        workspace.invalidate_file_index();
         workspace.skills = session.skills.enabled(&session.settings.disabled_skills);
         workspace.excluded_paths = session.settings.excluded_paths.clone();
         let control = session.control.clone();
@@ -1974,6 +1970,10 @@ impl Editor {
                         }
                         Err(error) => session.error = Some(error),
                     }
+                    if session.error.is_some() {
+                        session.saved.fail_in_flight_tools();
+                        session.activity.clear();
+                    }
                     finished = true;
                 }
                 WorkerEvent::Refresh { .. } => {}
@@ -2008,6 +2008,8 @@ impl Editor {
             session.control.cancel.cancel();
             session.saved.interrupted |= session.saved.running;
             session.saved.running = false;
+            session.saved.fail_in_flight_tools();
+            session.activity.clear();
             session.generation = session.generation.wrapping_add(1);
             session.task = None;
         }
