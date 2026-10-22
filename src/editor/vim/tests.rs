@@ -2560,3 +2560,53 @@ async fn recursive_macro_is_refused_instead_of_overflowing_the_stack(cx: &mut Te
         );
     });
 }
+
+// ---- 反向动作的操作符区间 ----
+
+#[gpui::test]
+async fn d_b_deletes_from_the_word_start_up_to_the_cursor(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    cx.simulate_keystrokes("w l d b");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "alpha eta",
+        "db 要删掉光标左侧到词首的那一个字素"
+    );
+}
+
+#[gpui::test]
+async fn d_zero_deletes_to_the_line_start(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abcdef");
+    cx.simulate_keystrokes("l l l d 0");
+    assert_eq!(document_text(&editor, &cx), "def", "d0 要删到行首");
+}
+
+#[gpui::test]
+async fn d_capital_f_deletes_from_the_found_char(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abcdef");
+    cx.simulate_keystrokes("l l l d F a");
+    assert_eq!(document_text(&editor, &cx), "def", "dFa 要删掉 a 到光标之前");
+}
+
+#[gpui::test]
+async fn y_b_yanks_the_characters_left_of_the_cursor(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    cx.simulate_keystrokes("w l y b");
+    cx.simulate_keystrokes("0 p");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "ablpha beta",
+        "yb 复制的是光标左侧的词首片段，不是空串"
+    );
+}
+
+#[gpui::test]
+async fn c_zero_changes_up_to_the_line_start(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abcdef");
+    cx.simulate_keystrokes("l l l c 0");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Insert);
+    cx.simulate_input("X");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(document_text(&editor, &cx), "Xdef", "c0 要删到行首再输入");
+}
+

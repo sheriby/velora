@@ -451,13 +451,6 @@ impl Editor {
                         target = stream.prev_grapheme(target)?;
                     }
                 }
-                if !forward {
-                    return Some(VimRange {
-                        start: target,
-                        end: cursor,
-                        linewise: false,
-                    });
-                }
             }
             Motion::HardLineStart | Motion::FirstNonBlank => {
                 let line = stream.hard_line_range(cursor.block_index, cursor.offset);
@@ -472,6 +465,12 @@ impl Editor {
                 // 词/查找/段落/句子：按移动函数算目标。
                 target = self.vim_resolve_motion_target(entities, cursor, motion, count, cx)?;
             }
+        }
+        // 方向归一只在这一处：目标落在光标左侧（db/d0/d^/dF/d{/d% 的反向情形）时，
+        // 区间是 [target, cursor)，包含类动作要保留的那个字素就是 target 本身，
+        // 不再向右越一格；否则才是 [cursor, end)。倒着构造的区间会被删成空。
+        if (target.block_index, target.offset) < (cursor.block_index, cursor.offset) {
+            return Some(VimRange { start: target, end: cursor, linewise: false });
         }
         let end = if kind == super::motion::MotionKind::Inclusive {
             // 行尾停在最后一个字素上，流式 next_grapheme 会把它当块边界返回 None；
