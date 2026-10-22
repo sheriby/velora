@@ -2350,6 +2350,9 @@ impl Editor {
         } else {
             self.refresh_ai_conversation(cx);
         }
+        if checkpoint {
+            self.sync_ai_review_document(cx);
+        }
         if checkpoint || finished {
             self.persist_ai_session(cx);
         }
