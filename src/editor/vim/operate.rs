@@ -185,6 +185,35 @@ impl Editor {
         self.focusable_entity_by_id(id)
     }
 
+    fn vim_mark_blocks_dirty(
+        &mut self,
+        blocks: &[gpui::Entity<Block>],
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let mut written = true;
+        for block in blocks {
+            written &= self.write_back_block_source(block, cx);
+        }
+        if written {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.mark_dirty(cx);
+        }
+    }
+
+    /// 单块编辑完成后按区间写回；块已不在树里或结构变化时退回整篇投影。
+    fn vim_mark_single_block_dirty(
+        &mut self,
+        block: &gpui::Entity<Block>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.write_back_block_source(block, cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.mark_dirty(cx);
+        }
+    }
+
     // ---- 操作符主入口 ----
 
     pub(super) fn vim_apply_operator_inner(
@@ -846,7 +875,7 @@ impl Editor {
                 );
             });
         }
-        self.mark_dirty(cx);
+        self.vim_mark_blocks_dirty(&[start_block.clone(), end_block.clone()], cx);
         let entities_after = self.vim_navigation_entities(cx);
         if let Some(index) = entities_after
             .iter()
@@ -911,7 +940,7 @@ impl Editor {
             );
         });
         Self::reset_block_cursor(&block, range.start.offset, cx);
-        self.mark_dirty(cx);
+        self.vim_mark_single_block_dirty(&block, cx);
     }
 
     pub(super) fn vim_surround_change_inner(
@@ -950,7 +979,7 @@ impl Editor {
             );
         });
         Self::reset_block_cursor(&block, range.start.offset + new.open.len(), cx);
-        self.mark_dirty(cx);
+        self.vim_mark_single_block_dirty(&block, cx);
     }
 
     pub(super) fn vim_visual_surround_inner(
@@ -1020,6 +1049,7 @@ impl Editor {
             return;
         }
         super::visual::vim_exit_visual(self, cx);
+        let mut touched = Vec::new();
         for (block_index, ranges) in &grouped {
             let block = entities[*block_index].clone();
             let text = block.read(cx).display_text().to_string();
@@ -1039,8 +1069,9 @@ impl Editor {
                     cx,
                 );
             });
+            touched.push(block);
         }
-        self.mark_dirty(cx);
+        self.vim_mark_blocks_dirty(&touched, cx);
         let entities_after = self.vim_navigation_entities(cx);
         if let Some(index) = entities_after
             .iter()
@@ -1067,6 +1098,7 @@ impl Editor {
             return;
         };
         super::visual::vim_exit_visual(self, cx);
+        let mut touched = Vec::new();
         for (block_index, ranges) in &grouped {
             let block = entities[*block_index].clone();
             let text = block.read(cx).display_text().to_string();
@@ -1087,8 +1119,9 @@ impl Editor {
                     cx,
                 );
             });
+            touched.push(block);
         }
-        self.mark_dirty(cx);
+        self.vim_mark_blocks_dirty(&touched, cx);
         let entities_after = self.vim_navigation_entities(cx);
         if let Some(index) = entities_after
             .iter()
@@ -1384,7 +1417,7 @@ impl Editor {
         };
         if emptied_non_paragraph {
             block.update(cx, |block, cx| block.convert_to_paragraph(cx));
-            self.mark_dirty(cx);
+            self.vim_mark_single_block_dirty(block, cx);
         }
     }
 
@@ -1506,7 +1539,7 @@ impl Editor {
             landing = prev_grapheme_start(&text, landing).unwrap_or(0);
         }
         Self::reset_block_cursor(&block, landing, cx);
-        self.mark_dirty(cx);
+        self.vim_mark_single_block_dirty(&block, cx);
     }
 
     /// 整块删除：走块的结构删除协议（子块提升、写回、撤销各归它一处）。
@@ -1616,7 +1649,7 @@ impl Editor {
             );
         });
         Self::reset_block_cursor(&block, sign + replacement.len() - 1, cx);
-        self.mark_dirty(cx);
+        self.vim_mark_single_block_dirty(&block, cx);
     }
 
     /// `~`：交换光标处连续 `count` 个字素的大小写；光标停在最后一个被交换的字素上。
@@ -1886,7 +1919,7 @@ impl Editor {
                 .collect();
             block.replace_text_in_visible_range(start..end, &transformed, Some(0..0), false, cx);
         });
-        self.mark_dirty(cx);
+        self.vim_mark_single_block_dirty(&block, cx);
     }
 
     /// gr{motion}/grr：用寄存器内容替换区间。被替换文本走黑洞寄存器，
@@ -1926,7 +1959,7 @@ impl Editor {
                 );
             });
             Self::reset_block_cursor(&block, start, cx);
-            self.mark_dirty(cx);
+            self.vim_mark_single_block_dirty(&block, cx);
             return;
         }
         // 跨块：黑洞删除后按内容形式粘贴到删除点，源寄存器不被覆盖。
@@ -2027,7 +2060,7 @@ impl Editor {
             );
         });
         Self::reset_block_cursor(&block, cursor, cx);
-        self.mark_dirty(cx);
+        self.vim_mark_single_block_dirty(&block, cx);
     }
 
     // ---- r / R ----
@@ -2062,7 +2095,7 @@ impl Editor {
                 cx,
             );
         });
-        self.mark_dirty(cx);
+        self.vim_mark_single_block_dirty(&block, cx);
         let _ = window;
     }
 
@@ -2095,7 +2128,7 @@ impl Editor {
             block.prepare_undo_capture(block.text_edit_undo_kind(), cx);
             block.replace_text_in_visible_range(start..end, &replaced, Some(0..0), false, cx);
         });
-        self.mark_dirty(cx);
+        self.vim_mark_single_block_dirty(&block, cx);
         self.vim_enter_mode(VimMode::Normal, cx);
         let _ = window;
     }
@@ -2129,7 +2162,7 @@ impl Editor {
                 cx,
             );
         });
-        self.mark_dirty(cx);
+        self.vim_mark_single_block_dirty(&block, cx);
         self.vim.replace_originals.push((offset, original));
         let _ = window;
     }
@@ -2354,7 +2387,7 @@ impl Editor {
                         cx,
                     );
                 });
-                self.mark_dirty(cx);
+                self.vim_mark_single_block_dirty(&block, cx);
             } else {
                 // 块尾：与下一块合并（复刻 RequestMergeFromNext 的结构协议）。
                 if cursor.block_index + 1 >= entities.len() {
@@ -2650,6 +2683,7 @@ impl Editor {
                 // 已插入的字数，才能落回原来的行。
                 let mut shifts: std::collections::HashMap<gpui::EntityId, usize> =
                     std::collections::HashMap::new();
+                let mut touched = Vec::new();
                 for (index, (entity_id, range)) in targets.iter().enumerate() {
                     if index == 0 {
                         *shifts.entry(*entity_id).or_default() += typed.len();
@@ -2669,10 +2703,13 @@ impl Editor {
                         });
                         // 复制完把该行的块状选区收掉，逐行光标停在插入文字之后。
                         Self::reset_block_cursor(&block, at + typed.len(), cx);
+                        touched.push(block);
                     }
                     shifts.insert(*entity_id, shift + typed.len());
                 }
-                self.mark_dirty(cx);
+                if !touched.is_empty() {
+                    self.vim_mark_blocks_dirty(&touched, cx);
+                }
             }
         }
         // 记录 `.` 素材与 gi 位置。

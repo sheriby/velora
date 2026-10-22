@@ -2463,3 +2463,27 @@ async fn escape_closes_an_open_completion_before_vim(cx: &mut TestAppContext) {
     });
     assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
 }
+
+#[gpui::test]
+async fn single_block_vim_edits_write_back_without_reserializing(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(
+        cx,
+        "alpha beta\n\nsecond paragraph here\n\nthird paragraph here\n\nfourth line",
+    );
+    let before = editor.read_with(&*cx, |editor, _| editor.source_serializations.get());
+    cx.simulate_keystrokes("x");
+    cx.simulate_keystrokes("w x");
+    cx.simulate_keystrokes("0 r z");
+    cx.simulate_keystrokes("l ~");
+    let after = editor.read_with(&*cx, |editor, _| editor.source_serializations.get());
+    assert_eq!(
+        after - before,
+        0,
+        "单块内的 vim 编辑要按区间写回，不能每次按键整篇序列化"
+    );
+    assert!(
+        document_text(&editor, &cx).starts_with("zPha eta"),
+        "改动本身要真的落到正文：{:?}",
+        document_text(&editor, &cx)
+    );
+}
