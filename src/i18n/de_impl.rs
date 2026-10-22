@@ -1121,6 +1121,9 @@ impl I18nStringsDe {
             ai_error_owner_closed: self.ai_error_owner_closed.unwrap_or(defaults.ai_error_owner_closed),
             ai_error_settings_readonly: self.ai_error_settings_readonly.unwrap_or(defaults.ai_error_settings_readonly),
             preferences_ai_conflict: self.preferences_ai_conflict.unwrap_or(defaults.preferences_ai_conflict),
+            preferences_ai_insecure_http: self
+                .preferences_ai_insecure_http
+                .unwrap_or(defaults.preferences_ai_insecure_http),
             ai_panel_translate_default: self.ai_panel_translate_default.unwrap_or(defaults.ai_panel_translate_default),
             ai_action_expand: self.ai_action_expand.unwrap_or(defaults.ai_action_expand),
             ai_action_explain: self.ai_action_explain.unwrap_or(defaults.ai_action_explain),

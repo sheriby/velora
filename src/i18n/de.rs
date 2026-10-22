@@ -485,6 +485,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) ai_error_owner_closed: Option<String>,
     pub(crate) ai_error_settings_readonly: Option<String>,
     pub(crate) preferences_ai_conflict: Option<String>,
+    pub(crate) preferences_ai_insecure_http: Option<String>,
     pub(crate) ai_panel_translate_default: Option<String>,
     pub(crate) ai_action_expand: Option<String>,
     pub(crate) ai_action_explain: Option<String>,

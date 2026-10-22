@@ -482,6 +482,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_error_owner_closed",
     "ai_error_settings_readonly",
     "preferences_ai_conflict",
+    "preferences_ai_insecure_http",
     "ai_panel_translate_default",
     "ai_action_expand",
     "ai_action_explain",

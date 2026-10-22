@@ -1,6 +1,22 @@
 use super::{AppPreferences, PreferencesWindow, RunControl};
 use gpui::TestAppContext;
 
+#[test]
+fn ai_http_warning_only_accepts_loopback_services() {
+    assert!(!PreferencesWindow::ai_address_is_insecure_http(
+        "http://127.0.0.1:11434/v1"
+    ));
+    assert!(!PreferencesWindow::ai_address_is_insecure_http(
+        "http://localhost:11434/v1"
+    ));
+    assert!(!PreferencesWindow::ai_address_is_insecure_http(
+        "https://api.example.com/v1"
+    ));
+    assert!(PreferencesWindow::ai_address_is_insecure_http(
+        "http://api.example.com/v1"
+    ));
+}
+
 #[gpui::test]
 fn changing_a_connection_clears_the_previous_test_status(cx: &mut TestAppContext) {
     cx.update(|cx| {

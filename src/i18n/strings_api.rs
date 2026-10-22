@@ -515,6 +515,7 @@ impl I18nStrings {
         strings.ai_error_owner_closed = "此修改对应的文档已关闭或不在当前窗口，请重新打开后再接受".into();
         strings.ai_error_settings_readonly = "AI 配置读取失败，已阻止修改写入，请先修复配置文件".into();
         strings.preferences_ai_conflict = "AI 配置已被其他窗口修改，请关闭本页后重新打开再保存".into();
+        strings.preferences_ai_insecure_http = "该地址使用明文 HTTP 且不是本机服务，API Key 会在网络上暴露".into();
         strings.ai_panel_translate_default = "简体中文".into();
         strings.ai_action_expand = "扩写".into();
         strings.ai_action_explain = "解释".into();
@@ -1109,6 +1110,7 @@ impl I18nStrings {
             ai_error_owner_closed: "The document for this change is closed or not in this window; reopen it before accepting".into(),
             ai_error_settings_readonly: "AI settings could not be read; saving changes is blocked until the config file is fixed".into(),
             preferences_ai_conflict: "AI settings were changed in another window; close and reopen this page to save".into(),
+            preferences_ai_insecure_http: "This address uses plaintext HTTP and is not a loopback service; the API key is exposed on the network".into(),
             ai_panel_translate_default: "English".into(),
             ai_action_expand: "Expand".into(),
             ai_action_explain: "Explain".into(),

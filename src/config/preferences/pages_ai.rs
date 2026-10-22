@@ -7,7 +7,7 @@ use gpui_kit::component::input::{
 };
 
 use gpui_kit::component::{
-    Disableable, Sizable,
+    ActiveTheme as _, Disableable, Sizable,
     button::{Button, ButtonVariants},
     form::{Field, Form},
     group_box::{GroupBox, GroupBoxVariants},
@@ -135,6 +135,27 @@ impl PreferencesWindow {
             }),
         );
         field
+    }
+
+    fn ai_address_is_insecure_http(address: &str) -> bool {
+        let Ok(url) = url::Url::parse(address.trim()) else {
+            return false;
+        };
+        if url.scheme() != "http" {
+            return false;
+        }
+        let Some(host) = url.host_str() else {
+            return true;
+        };
+        host != "localhost"
+            && !host.ends_with(".localhost")
+            && !host
+                .parse::<std::net::Ipv4Addr>()
+                .is_ok_and(|address| address.is_loopback())
+            && !host
+                .trim_matches(['[', ']'])
+                .parse::<std::net::Ipv6Addr>()
+                .is_ok_and(|address| address.is_loopback())
     }
 
     pub(crate) fn set_nav_ai(
@@ -651,6 +672,16 @@ impl PreferencesWindow {
                 );
             }
             content = content.child(Form::vertical().children(fields));
+            if Self::ai_address_is_insecure_http(&draft.address.read(cx).value()) {
+                content = content.child(
+                    div()
+                        .id("preferences-ai-insecure-http")
+                        .debug_selector(|| "preferences-ai-insecure-http".into())
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(strings.preferences_ai_insecure_http.clone()),
+                );
+            }
             content = content.child(
                 div()
                     .flex()

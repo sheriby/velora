@@ -737,6 +737,7 @@ pub struct I18nStrings {
     pub ai_error_owner_closed: String,
     pub ai_error_settings_readonly: String,
     pub preferences_ai_conflict: String,
+    pub preferences_ai_insecure_http: String,
     pub ai_panel_translate_default: String,
     pub ai_action_expand: String,
     pub ai_action_explain: String,
