@@ -514,6 +514,11 @@ impl Editor {
             .or_else(|| session.settings.active_endpoint())
             .map(|endpoint| endpoint.name.clone())
             .unwrap_or_else(|| strings.ai_panel_settings.clone());
+        let active_skill_ids = session
+            .skills
+            .enabled(&session.settings.disabled_skills)
+            .active_skill_references(&session.settings.disabled_skills, &session.input.read(cx).value())
+            .unwrap_or_default();
         let token_label = (session.saved.input_tokens > 0 || session.saved.output_tokens > 0).then(|| {
             format!(
                 "↑ {} / ↓ {}",
@@ -539,6 +544,20 @@ impl Editor {
                 },
                 move |editor, _, cx| editor.cycle_ai_endpoint(cx),
             ))
+            .when(!active_skill_ids.is_empty(), |controls| {
+                controls.child(
+                    div()
+                        .id("ai-active-skills")
+                        .debug_selector(|| "ai-active-skills".into())
+                        .text_xs()
+                        .text_color(theme.colors.dialog_muted)
+                        .child(format!(
+                            "{}：{}",
+                            strings.ai_panel_skills,
+                            active_skill_ids.join(", ")
+                        )),
+                )
+            })
             .when_some(token_label, |controls, label| {
                 controls.child(div().text_xs().text_color(theme.colors.dialog_muted).child(label))
             })
