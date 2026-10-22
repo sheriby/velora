@@ -50,6 +50,27 @@ impl SourceList {
             .or_else(|| (!self.records.is_empty()).then_some(0))
             .map(IndexPath::new)
     }
+    fn display_path(&self, id: &str, cx: &App) -> String {
+        if id.starts_with("untitled:") {
+            return "Untitled".to_owned();
+        }
+        if id.starts_with("external:") {
+            let label = self
+                .owner
+                .read_with(cx, |editor, _| {
+                    editor
+                        .ai_session
+                        .as_ref()
+                        .and_then(|session| session.saved.bindings.get(id))
+                        .and_then(|path| path.file_name())
+                        .map(|name| name.to_string_lossy().into_owned())
+                })
+                .ok()
+                .flatten();
+            return label.unwrap_or_else(|| "外部文档".to_owned());
+        }
+        id.to_owned()
+    }
 }
 
 impl ListDelegate for SourceList {
@@ -75,14 +96,7 @@ impl ListDelegate for SourceList {
         cx: &mut Context<ListState<Self>>,
     ) -> Option<ListItem> {
         let record = self.records.get(index.row)?;
-        let path = if record.path.starts_with("untitled:") {
-            "Untitled"
-        } else {
-            record
-                .path
-                .strip_prefix("external:")
-                .unwrap_or(&record.path)
-        };
+        let path = self.display_path(&record.path, cx);
         let line = cx
             .global::<I18nManager>()
             .strings()

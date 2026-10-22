@@ -30,8 +30,10 @@ impl Editor {
         root: Option<&Path>,
         bound: Option<&Path>,
     ) -> Option<&WorkspaceDocumentTab> {
+        let bound_recovery = bound.and_then(super::untitled_document_id);
         self.workspace.open_documents.iter().find(|tab| {
             bound == Some(tab.path.as_path())
+                || bound_recovery.is_some_and(|recovery| tab.recovery_id == recovery)
                 || super::super::ai_assistant::ai_document_id(
                     Some(&tab.path),
                     root,

@@ -135,7 +135,6 @@ impl Editor {
                 && let Some(group) = groups.iter().find(|group| {
                     let editor = group.read(cx);
                     editor.split_workspace.is_none()
-                        && !editor.code_document
                         && super::super::ai_assistant::ai_document_id(
                             editor.file_path.as_deref(),
                             saved.workspace.root.as_deref(),
@@ -146,8 +145,9 @@ impl Editor {
                 // untitled:/external: 不落磁盘相对路径，指向窗口里打开的
                 // 编辑器组：找到持有它的组直接写缓冲区。已关闭时走不到这里，
                 // 由下方相对路径分支的可行动报错兜底。
-                if let Some(path) = id.strip_prefix("external:") {
-                    self.ai_verify_other_windows(Path::new(path), window, cx)?;
+                let path = group.read(cx).file_path.clone();
+                if let Some(path) = &path {
+                    self.ai_verify_other_windows(path, window, cx)?;
                 }
                 let group = group.clone();
                 group.read_with(cx, |editor, _| -> Result<()> {

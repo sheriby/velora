@@ -3220,6 +3220,21 @@ fn ai_retry_rolls_back_the_failed_conversation_round_before_sending_again() {
     assert_eq!(saved.history[1]["role"], "assistant");
 }
 
+#[test]
+fn ai_document_id_for_external_files_does_not_expose_absolute_paths() {
+    let root = std::env::temp_dir().join(format!("velora-ai-external-id-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("outside.md");
+    std::fs::write(&path, "外部原文").unwrap();
+    let id = super::ai_document_id(Some(&path), None, uuid::Uuid::new_v4());
+    assert!(id.starts_with("external:"), "{id}");
+    assert!(
+        !id.contains(root.to_string_lossy().as_ref()),
+        "外部文档 id 不应携带本机绝对路径：{id}"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[gpui::test]
 fn ai_accepting_a_proposal_for_a_non_active_external_pane_updates_that_pane(cx: &mut TestAppContext) {
     initialize(cx);

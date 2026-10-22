@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use gpui::*;
+use sha2::Digest as _;
 
 use super::Editor;
 use crate::ai::runtime::{RunControl, RunEvent, RunOutput, RunRequest};
@@ -563,12 +564,12 @@ impl Editor {
         let session_id = session.saved.id.clone();
         let root = session.saved.workspace.root.clone();
         let bound = session.saved.bindings.get(&record.path).cloned();
+        let bound_recovery = bound
+            .as_ref()
+            .and_then(|path| crate::editor::workspace::untitled_document_id(path.as_path()));
         let groups = self.split_groups();
-        let destination = bound
-            .clone()
-            .or_else(|| {
-                self.ai_cached_source_path_for_id(&record.path, root.as_deref(), bound.as_deref())
-            })
+        let destination = self
+            .ai_cached_source_path_for_id(&record.path, root.as_deref(), bound.as_deref())
             .or_else(|| {
                 groups.iter().find_map(|group| {
                     group.read(cx).ai_cached_source_path_for_id(
@@ -577,7 +578,8 @@ impl Editor {
                         bound.as_deref(),
                     )
                 })
-            });
+            })
+            .or_else(|| bound.clone());
         let target = groups
             .into_iter()
             .find(|group| {
@@ -590,6 +592,9 @@ impl Editor {
                     || bound
                         .as_ref()
                         .is_some_and(|path| editor.active_document_path() == Some(path))
+                    || bound_recovery.is_some_and(|recovery| {
+                        editor.recovery_id == recovery || editor.has_recovery_document(recovery, cx)
+                    })
             })
             .or_else(|| self.active_split_editor());
         if let Some(session) = self.ai_session.as_mut() {
@@ -1460,7 +1465,7 @@ impl Editor {
             .as_ref()
             .map(|session| self.ai_window_live_ids(session.saved.workspace.root.as_deref(), cx))
             .unwrap_or_default();
-        let known = self
+        let known_ids = self
             .ai_session
             .as_ref()
             .map(|session| {
@@ -1474,14 +1479,42 @@ impl Editor {
                     .collect::<std::collections::BTreeSet<_>>()
             })
             .unwrap_or_default();
-        let refreshed: Vec<_> = known
-            .into_iter()
-            .filter_map(|id| self.ai_current_snapshot(&id, cx))
+        let refreshed: Vec<_> = known_ids
+            .iter()
+            .filter_map(|id| self.ai_current_snapshot(id, cx))
             .collect();
+        let bindings_to_add: Vec<(String, PathBuf)> = self
+            .ai_session
+            .as_ref()
+            .filter(|session| !session.saved.running)
+            .map(|session| {
+                let root = session.saved.workspace.root.clone();
+                let groups = self.split_groups();
+                known_ids
+                    .iter()
+                    .filter(|id| !session.saved.bindings.contains_key(*id))
+                    .filter_map(|id| {
+                        let path = self
+                            .ai_cached_source_path_for_id(id, root.as_deref(), None)
+                            .or_else(|| {
+                                groups.iter().find_map(|group| {
+                                    group.read(cx).ai_cached_source_path_for_id(
+                                        id,
+                                        root.as_deref(),
+                                        None,
+                                    )
+                                })
+                            })?;
+                        Some((id.clone(), path))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let Some(session) = self.ai_session.as_mut() else {
             return;
         };
         if !session.saved.running {
+            session.saved.bindings.extend(bindings_to_add);
             session.saved.workspace.live_documents = live_ids;
             for snapshot in refreshed {
                 session
@@ -2267,10 +2300,12 @@ pub(in crate::editor) fn ai_document_id(
             return relative;
         }
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        return format!(
-            "external:{}",
-            canonical.to_string_lossy().replace('\\', "/")
-        );
+        let token = sha2::Sha256::digest(canonical.to_string_lossy().as_bytes())
+            .iter()
+            .take(8)
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        return format!("external:{token}");
     }
     format!("untitled:{recovery}")
 }
