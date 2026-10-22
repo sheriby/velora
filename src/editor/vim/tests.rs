@@ -2610,3 +2610,32 @@ async fn c_zero_changes_up_to_the_line_start(cx: &mut TestAppContext) {
     assert_eq!(document_text(&editor, &cx), "Xdef", "c0 要删到行首再输入");
 }
 
+// ---- 块末/行末的单字素操作 ----
+
+#[gpui::test]
+async fn r_at_the_last_grapheme_replaces_it(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abc");
+    cx.simulate_keystrokes("$ r z");
+    assert_eq!(document_text(&editor, &cx), "abz", "块末的 r 要真的换掉那个字素");
+}
+
+#[gpui::test]
+async fn tilde_at_the_last_grapheme_swaps_case(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abC");
+    cx.simulate_keystrokes("$ ~");
+    assert_eq!(document_text(&editor, &cx), "abc", "块末的 ~ 要真的换大小写");
+}
+
+#[gpui::test]
+async fn counted_replace_does_not_cross_the_hard_line_end(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```\nab\ncd\n```");
+    cx.simulate_keystrokes("l");
+    cx.simulate_keystrokes("2 r z");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["az\ncd"],
+        "行末只剩一个字素时，2r 只换那一个，不越到下一行"
+    );
+}
+
+

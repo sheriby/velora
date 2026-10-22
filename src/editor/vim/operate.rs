@@ -1659,12 +1659,7 @@ impl Editor {
     ) {
         let entities = self.vim_navigation_entities(cx);
         let Some(cursor) = self.vim_current_position(&entities, cx) else { return };
-        let stream = VimDocStream::new(&entities, cx);
-        let mut target = cursor;
-        for _ in 0..count.max(1) {
-            let Some(next) = stream.next_grapheme(target) else { break };
-            target = next;
-        }
+        let target = self.vim_line_grapheme_end(&entities, cursor, count, cx);
         let range = VimRange { start: cursor, end: target, linewise: false };
         self.vim_case_range(&entities, &range, Operator::SwapCase, cx);
         let block = entities[cursor.block_index].clone();
@@ -2124,16 +2119,19 @@ impl Editor {
         let Some(block) = self.vim_active_block() else { return };
         let entities = self.vim_navigation_entities(cx);
         let Some(cursor) = self.vim_current_position(&entities, cx) else { return };
-        let stream = VimDocStream::new(&entities, cx);
-        let mut end = cursor;
-        for _ in 0..count.max(1) {
-            let Some(next) = stream.next_grapheme(end) else { return };
-            if next.block_index != cursor.block_index {
-                return;
-            }
-            end = next;
+        let end = self.vim_line_grapheme_end(&entities, cursor, count, cx);
+        if end.offset <= cursor.offset {
+            return;
         }
-        let replaced = ch.to_string().repeat(count.max(1) as usize);
+        // 计数越过行尾时只替换真正够得到的字素，不能让重复次数多于被换掉的字数。
+        let display = entities[cursor.block_index].read(cx).display_text().to_string();
+        let mut spanned = 0usize;
+        let mut walk = cursor.offset;
+        while walk < end.offset {
+            walk = next_grapheme_start(&display, walk).unwrap_or(display.len());
+            spanned += 1;
+        }
+        let replaced = ch.to_string().repeat(spanned.max(1));
         block.update(cx, |block, cx| {
             block.prepare_undo_capture(block.text_edit_undo_kind(), cx);
             block.replace_text_in_visible_range(
@@ -2146,6 +2144,34 @@ impl Editor {
         });
         self.vim_mark_single_block_dirty(&block, cx);
         let _ = window;
+    }
+
+    /// 从光标起 `count` 个字素的排他终点，硬止步于当前硬行行尾。
+    ///
+    /// 块末没有下一个字素时（末块返回 None，非末块返回下一块起点），落在
+    /// 行尾上，`r`/`~` 才能作用到每块最后一个字素；计数越过行尾就停在行尾，
+    /// 与 Vim 一样不跨行改动。
+    fn vim_line_grapheme_end(
+        &self,
+        entities: &[Entity<Block>],
+        cursor: VimPosition,
+        count: u32,
+        cx: &App,
+    ) -> VimPosition {
+        let stream = VimDocStream::new(entities, cx);
+        let line_end = stream.hard_line_range(cursor.block_index, cursor.offset).end;
+        let clamp = VimPosition { block_index: cursor.block_index, offset: line_end };
+        let mut target = cursor;
+        for _ in 0..count.max(1) {
+            let Some(next) = stream.next_grapheme(target) else {
+                return clamp;
+            };
+            if next.block_index != cursor.block_index || next.offset > line_end {
+                return clamp;
+            }
+            target = next;
+        }
+        target
     }
 
     pub(super) fn vim_visual_replace_char_inner(
