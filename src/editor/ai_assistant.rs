@@ -91,6 +91,7 @@ pub(super) struct AiSession {
     source_list: Entity<gpui_kit::component::list::ListState<source_list::SourceList>>,
     source_focus_pending: bool,
     history_files: Vec<(PathBuf, String, SessionKind, bool)>,
+    history_total_bytes: u64,
     history_rename: Option<(PathBuf, Entity<InputState>)>,
     history_list: Entity<gpui_kit::component::command::CommandState>,
     history_loading: bool,
@@ -862,6 +863,55 @@ impl Editor {
         cx.notify();
     }
 
+    fn cleanup_ai_history(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.ai_session.as_ref() else {
+            return;
+        };
+        let root = session.saved.workspace.root.clone();
+        let background = cx.background_spawn(async move {
+            let directory = SavedSession::directory(root.as_deref())?;
+            let mut files = std::fs::read_dir(&directory)?
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<std::io::Result<Vec<_>>>()?;
+            files.retain(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "json")
+            });
+            files.sort_by_key(|path| {
+                std::cmp::Reverse(
+                    path.metadata()
+                        .and_then(|metadata| metadata.modified())
+                        .ok(),
+                )
+            });
+            let mut removed = 0_usize;
+            for (index, path) in files.into_iter().enumerate() {
+                let saved = SavedSession::load_at(&path, root.as_deref()).ok();
+                let keep = saved.as_ref().is_some_and(|saved| saved.pinned) || index < 50;
+                if !keep {
+                    SavedSession::delete_at(&path)?;
+                    removed += 1;
+                }
+            }
+            Ok::<_, anyhow::Error>(removed)
+        });
+        cx.spawn(async move |owner, cx| {
+            let result = background.await;
+            if let Err(error) = owner.update(cx, |editor, cx| match result {
+                Ok(_) => editor.show_ai_history(cx),
+                Err(error) => {
+                    if let Some(session) = editor.ai_session.as_mut() {
+                        session.error = Some(error.to_string());
+                    }
+                    cx.notify();
+                }
+            }) {
+                eprintln!("清理 AI 历史失败：{error}");
+            }
+        })
+        .detach();
+    }
+
     fn new_ai_task(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let expanded = self
             .ai_session
@@ -925,7 +975,7 @@ impl Editor {
         let load = cx.background_spawn(async move {
             let directory = SavedSession::directory(root.as_deref())?;
             if !directory.exists() {
-                return Ok(retained);
+                return Ok((retained, 0_u64));
             }
             let mut files = std::fs::read_dir(directory)?
                 .map(|entry| entry.map(|entry| entry.path()))
@@ -934,6 +984,11 @@ impl Editor {
                 path.extension()
                     .is_some_and(|extension| extension == "json")
             });
+            let total_bytes = files
+                .iter()
+                .filter_map(|path| path.metadata().ok())
+                .map(|metadata| metadata.len())
+                .sum();
             files.sort_by_key(|path| {
                 std::cmp::Reverse(
                     path.metadata()
@@ -984,7 +1039,7 @@ impl Editor {
                     ),
                 )
             });
-            Ok::<_, anyhow::Error>(summaries)
+            Ok::<_, anyhow::Error>((summaries, total_bytes))
         });
         cx.spawn(async move |owner, cx| {
             let result = load.await;
@@ -993,7 +1048,10 @@ impl Editor {
                     session.history_loading = false;
                     session.history_focus_pending = true;
                     match result {
-                        Ok(files) => session.history_files = files,
+                        Ok((files, total_bytes)) => {
+                            session.history_files = files;
+                            session.history_total_bytes = total_bytes;
+                        }
                         Err(error) => session.error = Some(error.to_string()),
                     }
                     cx.notify();
@@ -1453,6 +1511,7 @@ impl Editor {
             source_list,
             source_focus_pending: true,
             history_files: Vec::new(),
+            history_total_bytes: 0,
             history_rename: None,
             history_list: cx.new(|cx| gpui_kit::component::command::CommandState::new(window, cx)),
             history_loading: false,

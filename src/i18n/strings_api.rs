@@ -536,6 +536,8 @@ impl I18nStrings {
         strings.ai_history_conversations = "对话".into();
         strings.ai_history_rename = "重命名对话".into();
         strings.ai_history_export = "导出为 Markdown".into();
+        strings.ai_history_cleanup = "清理未置顶的旧对话".into();
+        strings.ai_history_total = "共 {count} 条 · {size}".into();
         strings.ai_history_quick_commands = "快捷指令".into();
         strings.ai_panel_new_chat = "新任务".into();
         strings.ai_panel_copy = "复制".into();
@@ -1137,6 +1139,8 @@ impl I18nStrings {
             ai_history_conversations: "Conversations".into(),
             ai_history_rename: "Rename conversation".into(),
             ai_history_export: "Export as Markdown".into(),
+            ai_history_cleanup: "Clean up unpinned old conversations".into(),
+            ai_history_total: "{count} records · {size}".into(),
             ai_history_quick_commands: "Quick commands".into(),
             ai_panel_new_chat: "New task".into(),
             ai_panel_copy: "Copy".into(),

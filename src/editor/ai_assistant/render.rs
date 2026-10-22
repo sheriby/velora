@@ -637,6 +637,21 @@ impl Editor {
             }
         }
 
+        if session.mode == PanelMode::History && !session.history_loading {
+            header = header.child(self.ai_button(
+                "ai-history-cleanup",
+                false,
+                cx,
+                |button, _| {
+                    button
+                        .icon(IconName::Trash)
+                        .accessibility_label(strings.ai_history_cleanup.clone())
+                        .tooltip(strings.ai_history_cleanup.clone())
+                },
+                |editor, _, cx| editor.cleanup_ai_history(cx),
+            ));
+        }
+
         if session.mode == PanelMode::Skills {
             header = header.child(self.ai_button(
                 "ai-skills-reload",
@@ -1293,6 +1308,18 @@ impl Editor {
                     eprintln!("打开 AI 历史失败：{error}");
                 }
             });
+        let history_size = if session.history_total_bytes >= 1024 * 1024 {
+            format!(
+                "{:.1} MB",
+                session.history_total_bytes as f64 / (1024.0 * 1024.0)
+            )
+        } else {
+            format!("{} KB", session.history_total_bytes / 1024)
+        };
+        let total_label = strings
+            .ai_history_total
+            .replace("{count}", &session.history_files.len().to_string())
+            .replace("{size}", &history_size);
         let rename_label = strings.ai_history_rename.clone();
         let cancel_label = strings.preferences_cancel.clone();
         let save_label = strings.ai_panel_save.clone();
@@ -1346,6 +1373,16 @@ impl Editor {
             .flex_col()
             .when_some(rename, |body, rename| body.child(rename))
             .child(list)
+            .child(
+                div()
+                    .id("ai-history-total")
+                    .debug_selector(|| "ai-history-total".into())
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(total_label),
+            )
             .on_prepaint(move |_, window, cx| {
                 if let Err(error) = owner.update(cx, |editor, cx| {
                     if let Some(session) = editor.ai_session.as_mut().filter(|session| {

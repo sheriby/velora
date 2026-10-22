@@ -503,6 +503,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_history_conversations",
     "ai_history_rename",
     "ai_history_export",
+    "ai_history_cleanup",
+    "ai_history_total",
     "ai_history_quick_commands",
     "ai_panel_new_chat",
     "ai_panel_copy",
