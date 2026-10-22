@@ -19,6 +19,7 @@ fn request() -> RunRequest {
         api_key: String::new(),
         history: vec![],
         prompt: "修订这篇文章后再次检查".into(),
+        attachments: Vec::new(),
         system: "文档助手".into(),
         max_turns: 32,
         timeout: Duration::from_secs(600),
@@ -121,6 +122,7 @@ fn ai_runtime_keeps_a_multi_turn_conversation_and_pending_proposals() {
                 RunRequest {
                     history: history.clone(),
                     prompt: (*prompt).into(),
+                    attachments: Vec::new(),
                     ..request()
                 },
                 workspace.clone(),

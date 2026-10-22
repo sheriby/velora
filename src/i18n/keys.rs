@@ -541,6 +541,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_panel_delete_instruction",
     "ai_panel_more",
     "ai_panel_add_context",
+    "ai_panel_add_image",
     "ai_panel_accept_edit",
     "ai_panel_files_scope",
     "ai_panel_send_preview",

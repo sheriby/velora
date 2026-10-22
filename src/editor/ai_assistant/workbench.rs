@@ -563,6 +563,21 @@ impl Editor {
             })
             .child(div().flex_1())
             .child(self.ai_button(
+                "ai-add-image",
+                true,
+                cx,
+                |button, _cx| {
+                    button
+                        .icon(IconName::Image)
+                        .accessibility_label(strings.ai_panel_add_image.clone())
+                        .tooltip(strings.ai_panel_add_image.clone())
+                        .disabled(
+                            session.saved.running || session.attachments.len() >= 5,
+                        )
+                },
+                |editor, _, cx| editor.add_ai_attachment(cx),
+            ))
+            .child(self.ai_button(
                 "ai-context",
                 true,
                 cx,
@@ -652,6 +667,33 @@ impl Editor {
                             .aria_label(strings.ai_custom_placeholder.clone()),
                     ),
             )
+            .when(!session.attachments.is_empty(), |composer| {
+                composer.child(
+                    div()
+                        .id("ai-attachments")
+                        .debug_selector(|| "ai-attachments".into())
+                        .w_full()
+                        .flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .children(session.attachments.iter().map(|path| {
+                            let path = path.clone();
+                            let name = path
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| path.display().to_string());
+                            self.ai_button(
+                                SharedString::from(format!("ai-attachment:{name}")),
+                                false,
+                                cx,
+                                move |button, _| button.label(format!("{name} ×")),
+                                move |editor, _, cx| {
+                                    editor.remove_ai_attachment(path.clone(), cx)
+                                },
+                            )
+                        })),
+                )
+            })
             .child(controls)
             // 使用冒泡的回车动作，让提交与组词检查共享当前窗口。
             .on_action(cx.listener(move |editor, action: &InputEnter, window, cx| {

@@ -91,9 +91,33 @@ pub(crate) struct RunRequest {
     pub api_key: String,
     pub history: Vec<Value>,
     pub prompt: String,
+    pub attachments: Vec<std::path::PathBuf>,
     pub system: String,
     pub max_turns: usize,
     pub timeout: std::time::Duration,
+}
+
+fn image_content(path: &std::path::Path) -> Result<Content> {
+    let bytes = std::fs::read(path)?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        anyhow::bail!("图片超过 8 MiB 发送预算");
+    }
+    let mime_type = match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        _ => anyhow::bail!("AI 目前只能发送 PNG、JPEG、GIF、WebP 图片"),
+    };
+    Ok(Content::Image {
+        data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes),
+        mime_type: mime_type.to_owned(),
+    })
 }
 
 pub(crate) fn run_blocking(
@@ -222,8 +246,14 @@ pub(crate) async fn run_with_provider(
         }
     }));
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let mut initial = Message::user(request.prompt);
+    if let Message::User { content, .. } = &mut initial {
+        for path in request.attachments {
+            content.push(image_content(&path)?);
+        }
+    }
     let runner = yoagent::agent_loop(
-        vec![Message::user(request.prompt).into()],
+        vec![initial.into()],
         &mut context,
         &config,
         sender,
@@ -381,6 +411,7 @@ pub(crate) fn test_connection(
     let output = run_blocking(RunRequest {
         model, api_key: endpoint.api_key.trim().to_owned(), history: Vec::new(),
         prompt: "Call list_documents once to verify tool calling, then reply OK. This is an empty isolated test workspace.".into(),
+        attachments: Vec::new(),
         system: "You are a connectivity and tool-calling probe.".into(), max_turns: 4, timeout: std::time::Duration::from_secs(30),
     }, workspace, control, |_| {})?;
     if let Some(error) = &output.error {

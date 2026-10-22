@@ -1182,6 +1182,7 @@ impl I18nStringsDe {
             ai_panel_delete_instruction: self.ai_panel_delete_instruction.unwrap_or(defaults.ai_panel_delete_instruction),
             ai_panel_more: self.ai_panel_more.unwrap_or(defaults.ai_panel_more),
             ai_panel_add_context: self.ai_panel_add_context.unwrap_or(defaults.ai_panel_add_context),
+            ai_panel_add_image: self.ai_panel_add_image.unwrap_or(defaults.ai_panel_add_image),
             ai_panel_accept_edit: self.ai_panel_accept_edit.unwrap_or(defaults.ai_panel_accept_edit),
             ai_panel_files_scope: self.ai_panel_files_scope.unwrap_or(defaults.ai_panel_files_scope),
             ai_panel_send_preview: self

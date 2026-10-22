@@ -53,6 +53,7 @@ pub(super) struct AiSession {
     panel_navigation: bool,
     pub(super) saved: SavedSession,
     input: Entity<TextareaState>,
+    attachments: Vec<PathBuf>,
     _input_subscription: Subscription,
     composer_focus: FocusHandle,
     language: Entity<InputState>,
@@ -389,6 +390,61 @@ impl Editor {
                     eprintln!("暂存宿主审阅状态失败：{error}");
                 }
             });
+        }
+        cx.notify();
+    }
+
+    fn add_ai_attachment(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.ai_session.as_mut() else {
+            return;
+        };
+        if session.saved.running || session.attachments.len() >= 5 {
+            return;
+        }
+        let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some(strings.ai_panel_add_image.clone().into()),
+            directory: self.open_dialog_start_dir(),
+        });
+        let owner = cx.entity().downgrade();
+        cx.spawn(async move |_this, cx: &mut AsyncApp| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            let _ = owner.update(cx, |editor, cx| {
+                let Some(session) = editor.ai_session.as_mut() else {
+                    return;
+                };
+                for path in paths {
+                    if session.attachments.len() >= 5 {
+                        break;
+                    }
+                    let supported = path
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        .map(|extension| extension.to_ascii_lowercase())
+                        .is_some_and(|extension| {
+                            matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp")
+                        });
+                    let within_budget = path
+                        .metadata()
+                        .is_ok_and(|metadata| metadata.len() <= 8 * 1024 * 1024);
+                    if supported && within_budget && !session.attachments.contains(&path) {
+                        session.attachments.push(path);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn remove_ai_attachment(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if let Some(session) = self.ai_session.as_mut() {
+            session.attachments.retain(|entry| entry != &path);
         }
         cx.notify();
     }
@@ -1476,6 +1532,7 @@ impl Editor {
             panel_navigation: false,
             saved,
             input,
+            attachments: Vec::new(),
             _input_subscription: input_subscription,
             composer_focus: cx.focus_handle(),
             language,
@@ -1975,6 +2032,7 @@ impl Editor {
             .input
             .update(cx, |input, cx| input.set_value("", window, cx));
         session.saved.draft.clear();
+        session.attachments.clear();
         session.saved.workspace.cursor_target = (|| {
             Some(crate::ai::workspace::CursorTarget {
                 document_id: editor_context
@@ -2026,6 +2084,7 @@ impl Editor {
             api_key: String::new(),
             history: session.saved.history.clone(),
             prompt,
+            attachments: session.attachments.clone(),
             max_turns: 32,
             timeout: Duration::from_secs(600),
             system: profile.system.clone(),

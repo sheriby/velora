@@ -544,6 +544,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) ai_panel_delete_instruction: Option<String>,
     pub(crate) ai_panel_more: Option<String>,
     pub(crate) ai_panel_add_context: Option<String>,
+    pub(crate) ai_panel_add_image: Option<String>,
     pub(crate) ai_panel_accept_edit: Option<String>,
     pub(crate) ai_panel_files_scope: Option<String>,
     pub(crate) ai_panel_send_preview: Option<String>,
