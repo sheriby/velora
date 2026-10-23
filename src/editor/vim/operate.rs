@@ -2939,7 +2939,20 @@ impl Editor {
             return;
         };
         if content.linewise || content.text.contains('\n') {
-            self.vim_paste_linewise(&content, false, window, cx);
+            // 插入模式里的 Ctrl-r 是「在光标处把寄存器打进正文」，不是粘贴：
+            // 逐行插入，行间走块自己的换行动作；走粘贴那条路会另起一块。
+            let mut lines: Vec<&str> = content.text.split('\n').collect();
+            if content.linewise && lines.last().is_some_and(|line| line.is_empty()) {
+                lines.pop();
+            }
+            for (index, line) in lines.iter().enumerate() {
+                if index > 0 {
+                    self.vim_insert_newline(window, cx);
+                }
+                if !line.is_empty() {
+                    self.vim_insert_raw_text(line, window, cx);
+                }
+            }
         } else {
             self.vim_insert_raw_text(&content.text, window, cx);
         }

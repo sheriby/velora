@@ -2925,3 +2925,23 @@ async fn ctrl_a_increments_the_whole_number_under_the_cursor(cx: &mut TestAppCon
         "光标在多位数字中间时，进位要作用于整段数字"
     );
 }
+
+#[gpui::test]
+async fn ctrl_r_in_insert_types_a_linewise_register_at_the_cursor(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo");
+    cx.simulate_keystrokes("\" a y y");
+    cx.simulate_keystrokes("G");
+    cx.simulate_keystrokes("i");
+    cx.simulate_keystrokes("ctrl-r a");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["one", "onetwo"],
+        "插入模式的 Ctrl-r 要把行级寄存器打进光标处，不另起一块"
+    );
+}
+
+
+
+
+
+
