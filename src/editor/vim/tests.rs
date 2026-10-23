@@ -3163,6 +3163,44 @@ async fn vim_search_ignores_the_panel_regex_and_fuzzy_switches(cx: &mut TestAppC
     );
 }
 
+// ---- 行级复制取 Markdown 源码 ----
+
+fn unnamed_register(editor: &Entity<Editor>, cx: &VisualTestContext) -> Option<String> {
+    editor.read_with(cx, |editor, cx| {
+        editor
+            .vim
+            .registers
+            .read('"', cx, false)
+            .map(|content| content.text)
+    })
+}
+
+#[gpui::test]
+async fn linewise_yank_keeps_markers_of_a_later_hard_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "第一行\n第二行 `code`\n\n尾段");
+    cx.simulate_keystrokes("j");
+    cx.simulate_keystrokes("y y");
+    assert_eq!(
+        unnamed_register(&editor, &cx).as_deref(),
+        Some("第二行 `code`\n"),
+        "第二硬行的行级复制也要带行内记号，不能回落成显示文本"
+    );
+}
+
+#[gpui::test]
+async fn linewise_yank_of_adjacent_list_items_keeps_the_original_separator(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx) = vim_editor(cx, "- a\n- b\n\ntail");
+    cx.simulate_keystrokes("V j y");
+    assert_eq!(
+        unnamed_register(&editor, &cx).as_deref(),
+        Some("- a\n- b\n"),
+        "紧邻列表项之间是原文的那一个换行，不是写死的空行"
+    );
+}
+
+
 
 
 

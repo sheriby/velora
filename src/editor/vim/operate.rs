@@ -1426,6 +1426,8 @@ impl Editor {
     /// 区间盖住整块（一块或连续几块）就按块的源码区间取；软换行段落里的「一行」
     /// 按 markdown 偏移切那一段源码。起点不在硬行行首时不是行级区间，交回可见
     /// 文本那条路。
+    /// 行级区间的 Markdown 源码：整块取缓冲区原文，块内片段按同一套
+    /// 「显示区间 → Markdown 区间」换算取。
     fn vim_linewise_source_text(
         &self,
         entities: &[Entity<Block>],
@@ -1433,33 +1435,61 @@ impl Editor {
         cx: &App,
     ) -> Option<String> {
         let end_block = entities.get(range.end.block_index)?.read(cx);
-        let last_index = if range.end.offset == 0 && range.end.block_index > range.start.block_index
-        {
+        // 行级区间的终点落在下一行（下一块）行首时，那一行不属于本次操作。
+        let ends_at_block_edge = range.end.offset == 0 && range.end.block_index > range.start.block_index;
+        let last_index = if ends_at_block_edge {
             range.end.block_index - 1
-        } else if range.end.offset >= end_block.visible_len() {
-            range.end.block_index
         } else {
-            if range.start.block_index != range.end.block_index || range.start.offset != 0 {
-                return None;
-            }
-            let markdown_range =
-                end_block.current_range_to_markdown_range(range.start.offset..range.end.offset);
-            let markdown = end_block.record.title.serialize_markdown();
-            let range = crate::components::markdown::inline::clamp_range_to_char_boundaries(
-                &markdown,
-                markdown_range,
-            );
-            return (!range.is_empty()).then(|| markdown[range].to_string());
+            range.end.block_index
         };
-        if range.start.offset != 0 || range.start.block_index > last_index {
+        if range.start.block_index > last_index || last_index >= entities.len() {
             return None;
         }
-        let mut chunks = Vec::new();
-        for entity in &entities[range.start.block_index..=last_index] {
+        let mut pieces: Vec<String> = Vec::new();
+        let mut previous_end: Option<usize> = None;
+        for block_index in range.start.block_index..=last_index {
+            let entity = entities.get(block_index)?;
             let span = self.block_source_range(entity.entity_id(), cx)?;
-            chunks.push(self.buffer.slice(span).to_string());
+            let block = entity.read(cx);
+            let partial_start =
+                block_index == range.start.block_index && range.start.offset > 0;
+            let partial_end = block_index == last_index
+                && !ends_at_block_edge
+                && range.end.offset < block.visible_len();
+            let piece = if partial_start || partial_end {
+                let from = if block_index == range.start.block_index {
+                    range.start.offset
+                } else {
+                    0
+                };
+                let to = if partial_end { range.end.offset } else { block.visible_len() };
+                let markdown = block.record.title.serialize_markdown();
+                let mut markdown_range = block.current_range_to_markdown_range(from..to);
+                // 贴到块两端时把记号一起带上：行尾的收尾反引号在显示文本里是
+                // 隐藏的，映射给的排他端停在字面文本上会少掉它。
+                if from == 0 {
+                    markdown_range.start = 0;
+                }
+                if to >= block.visible_len() {
+                    markdown_range.end = markdown.len();
+                }
+                let clamped = crate::components::markdown::inline::clamp_range_to_char_boundaries(
+                    &markdown,
+                    markdown_range,
+                );
+                markdown[clamped].to_string()
+            } else {
+                self.buffer.slice(span.clone()).to_string()
+            };
+            if let Some(previous) = previous_end {
+                // 块与块之间用缓冲区里的原始分隔字节：紧邻列表项与连续引用不会
+                // 因为写死两个换行而多插空行、丢掉层级结构。
+                pieces.push(self.buffer.slice(previous..span.start).to_string());
+            }
+            pieces.push(piece);
+            previous_end = Some(span.end);
         }
-        Some(chunks.join("\n\n"))
+        Some(pieces.concat())
     }
 
     fn vim_yank_quiet(
