@@ -971,8 +971,47 @@ async fn shift_left_removes_one_indent_level(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn guu_lowercases_the_current_line(cx: &mut TestAppContext) {
-    let (editor, cx) = vim_editor(cx, "MiXeD");
+async fn count_shift_right_indents_each_hard_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\ntwo\nthree");
+    cx.simulate_keystrokes("2 > >");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["    one\n    two\nthree"],
+        "2>> 要给两条硬行各加一级，不是把同一行加两遍"
+    );
+}
+
+#[gpui::test]
+async fn shift_right_and_left_work_on_code_block_lines(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```\nfn main() {}\n```");
+    cx.simulate_keystrokes("> >");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["    fn main() {}"],
+        "代码块 >> 要在行首加一级，不是在光标处插空格"
+    );
+    cx.simulate_keystrokes("0");
+    cx.simulate_keystrokes("< <");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["fn main() {}"],
+        "代码块 << 要真去掉一级缩进"
+    );
+}
+
+#[gpui::test]
+async fn visual_line_shift_right_indents_each_selected_block(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo");
+    cx.simulate_keystrokes("V j >");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["    one", "    two"],
+        "行级可视的 > 要给每一块所选行都加一级"
+    );
+}
+
+#[gpui::test]
+async fn guu_lowercases_the_current_line(cx: &mut TestAppContext) {    let (editor, cx) = vim_editor(cx, "MiXeD");
     cx.simulate_keystrokes("g u u");
     assert_eq!(document_text(&editor, &cx), "mixed");
 }
@@ -2536,6 +2575,19 @@ async fn block_visual_indent_touches_every_selected_line(cx: &mut TestAppContext
         visible_texts(&editor, &cx),
         vec!["    ab\n    cd"],
         "块状缩进要给每条被选硬行都加一级"
+    );
+}
+
+#[gpui::test]
+async fn block_visual_indent_on_a_paragraph_adds_one_level_per_line(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx) = vim_editor(cx, "one\ntwo");
+    cx.simulate_keystrokes("ctrl-q j >");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "    one\n    two",
+        "段落里的块状缩进每行只加一级，不能叠成八格"
     );
 }
 

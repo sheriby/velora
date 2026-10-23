@@ -1839,8 +1839,6 @@ impl Editor {
             operator,
             Operator::Delete
                 | Operator::Change
-                | Operator::Indent
-                | Operator::Outdent
                 | Operator::Lowercase
                 | Operator::Uppercase
                 | Operator::SwapCase
@@ -1850,10 +1848,18 @@ impl Editor {
                 .map(|(block_index, _)| entities[*block_index].clone())
                 .collect();
             self.vim_mark_blocks_dirty(&touched, cx);
+        } else if matches!(operator, Operator::Indent | Operator::Outdent) {
+            // 缩进会改块的结构（四空格段落会变成缩进代码、列表项会换层级），
+            // 区间写回表达不了这种变化，只能整篇重投影。
+            self.mark_dirty(cx);
         }
     }
 
-    /// >>/<<：缩进按块算（列表层级/段首四空格），复用块自己的缩进动作。
+    /// >>/<<：行级操作按区间覆盖的每条硬行在行首增删一个缩进级。
+    ///
+    /// 列表块例外：它的缩进是列表层级（由块自己的 Indent/Outdent 动作实现），
+    /// 不是四个空格，所以整块交给现有动作一次。段落、代码块、标题这些没有
+    /// 层级概念的块共用「行首增删」这一处判据。
     fn vim_indent_range(
         &mut self,
         entities: &[Entity<Block>],
@@ -1862,52 +1868,62 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        for index in range.start.block_index..=range.end.block_index.min(entities.len().saturating_sub(1)) {
-            let block = entities[index].clone();
-            let plain_paragraph = block.read(cx).kind() == BlockKind::Paragraph;
-            if !plain_paragraph {
-                block.update(cx, |block, cx| {
-                    if indent {
-                        block.on_indent_block(&crate::components::IndentBlock, window, cx);
-                    } else {
-                        block.on_outdent_block(&crate::components::OutdentBlock, window, cx);
-                    }
-                });
+        let stream = VimDocStream::new(entities, cx);
+        let last_block = range.end.block_index.min(entities.len().saturating_sub(1));
+        let mut lines: Vec<(usize, std::ops::Range<usize>)> = Vec::new();
+        let mut list_blocks: Vec<usize> = Vec::new();
+        for block_index in range.start.block_index..=last_block {
+            if entities[block_index].read(cx).kind().is_list_item() {
+                list_blocks.push(block_index);
                 continue;
             }
-            // vim 的 >>/<< 动的是行首缩进，不是光标处；段落没有列表层级，
-            // 直接按四个空格增删。
-            let line = block.read(cx).cursor_line_display_range();
-            if indent {
-                block.update(cx, |block, cx| {
-                    block.replace_text_in_visible_range(
-                        line.start..line.start,
-                        "    ",
-                        Some(0..0),
-                        false,
-                        cx,
-                    );
-                });
+            // 行级区间的终点停在下一行（下一块）行首，那一行不属于本次操作。
+            if block_index == range.end.block_index
+                && range.linewise
+                && range.end.offset == 0
+                && block_index != range.start.block_index
+            {
+                continue;
+            }
+            let text_len = stream.text_for_line(block_index).len();
+            let first = if block_index == range.start.block_index {
+                range.start.offset.min(text_len)
             } else {
-                let text = block.read(cx).display_text().to_string();
-                let spaces: String = text[line.start..line.end.min(text.len())]
-                    .chars()
-                    .take(4)
-                    .take_while(|ch| *ch == ' ')
-                    .collect();
-                if !spaces.is_empty() {
-                    block.update(cx, |block, cx| {
-                        block.replace_text_in_visible_range(
-                            line.start..line.start + spaces.len(),
-                            "",
-                            Some(0..0),
-                            false,
-                            cx,
-                        );
-                    });
+                0
+            };
+            let raw_last = if block_index == range.end.block_index {
+                range.end.offset
+            } else {
+                text_len
+            };
+            let last = if raw_last > first { raw_last - 1 } else { first }.min(text_len);
+            let mut cursor = first;
+            loop {
+                let line = stream.hard_line_range(block_index, cursor);
+                lines.push((block_index, line.start..line.end.min(text_len)));
+                if line.end >= text_len || line.end >= last {
+                    break;
                 }
+                cursor = line.end + 1;
             }
         }
+        // 同一块从后往前改，前面各行的行首偏移才不会被后面的插入带偏。
+        for (block_index, line) in lines.into_iter().rev() {
+            let block = entities[block_index].clone();
+            self.vim_indent_hard_line(&block, line, indent, cx);
+        }
+        for block_index in list_blocks {
+            let block = entities[block_index].clone();
+            block.update(cx, |block, cx| {
+                if indent {
+                    block.on_indent_block(&crate::components::IndentBlock, window, cx);
+                } else {
+                    block.on_outdent_block(&crate::components::OutdentBlock, window, cx);
+                }
+            });
+        }
+        // 落笔都由块自己的改动事件写回缓冲区：缩进会改行的前缀，这里再补一次
+        // mark_dirty 会把「模型里的四个空格」与「块记录的前缀」叠成八格。
         // vim 的 >> 收尾停在行首首个非空白处。
         if indent
             && let Some(entity) = entities.get(range.start.block_index)
@@ -1928,6 +1944,50 @@ impl Editor {
                 cx,
             );
         }
+    }
+
+    /// 在一条硬行的行首增删一个缩进级（空格按 4 个、制表符按 1 个）。
+    /// 返回是否真的动了正文。
+    fn vim_indent_hard_line(
+        &self,
+        block: &Entity<Block>,
+        line: std::ops::Range<usize>,
+        indent: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if indent {
+            block.update(cx, |block, cx| {
+                block.replace_text_in_visible_range(
+                    line.start..line.start,
+                    "    ",
+                    Some(0..0),
+                    false,
+                    cx,
+                );
+            });
+            return true;
+        }
+        let text = block.read(cx).display_text().to_string();
+        let start = line.start.min(text.len());
+        let rest = &text[start..line.end.min(text.len())];
+        let remove = if rest.starts_with('\t') {
+            1
+        } else {
+            rest.chars().take_while(|ch| *ch == ' ').count().min(4)
+        };
+        if remove == 0 {
+            return false;
+        }
+        block.update(cx, |block, cx| {
+            block.replace_text_in_visible_range(
+                start..start + remove,
+                "",
+                Some(0..0),
+                false,
+                cx,
+            );
+        });
+        true
     }
 
     /// gu/gU/g~：块内字符级大小写转换。
