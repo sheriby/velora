@@ -202,7 +202,7 @@ fn welcome_actions_support_keyboard_without_opening_a_removed_recent_folder(
         "先确认欢迎页实际挂载"
     );
     visual.update(|window, cx| {
-        for id in ["welcome-new-document", "welcome-open-file"] {
+        for id in ["welcome-new-document", "welcome-open-folder"] {
             assert_eq!(
                 window.try_find(id).and_then(|button| button.role()),
                 Some(gpui::Role::Button),
@@ -281,7 +281,7 @@ async fn welcome_page_keeps_two_primary_buttons_and_dispatches_open_action(
     cx.update(|cx| {
         cx.on_action({
             let actions = actions.clone();
-            move |_: &crate::components::OpenFile, _| actions.borrow_mut().push("file")
+            move |_: &crate::components::OpenFolder, _| actions.borrow_mut().push("folder")
         });
     });
     let (editor, cx) =
@@ -291,25 +291,25 @@ async fn welcome_page_keeps_two_primary_buttons_and_dispatches_open_action(
         cx.notify();
     });
     redraw(cx);
-    let file = cx.debug_bounds("welcome-open-file");
-    assert!(file.is_some(), "欢迎页应提供打开入口");
+    let folder = cx.debug_bounds("welcome-open-folder");
+    assert!(folder.is_some(), "欢迎页应提供打开文件夹入口");
     let new_document = cx
         .debug_bounds("welcome-new-document")
         .expect("新建文档入口");
     assert_eq!(
-        file.unwrap().top(),
+        folder.unwrap().top(),
         new_document.top(),
         "保留两个主按钮并排的布局"
     );
     assert!(
-        cx.debug_bounds("welcome-open-folder").is_none(),
-        "欢迎页不增加第三个按钮"
+        cx.debug_bounds("welcome-open-file").is_none(),
+        "打开文件夹取代打开文件按钮，而不是并排两个打开入口"
     );
-    cx.simulate_click(file.unwrap().center(), Modifiers::none());
+    cx.simulate_click(folder.unwrap().center(), Modifiers::none());
     cx.run_until_parked();
     assert_eq!(
         *actions.borrow(),
-        vec!["file"],
+        vec!["folder"],
         "打开按钮应走既有原生打开动作"
     );
 }

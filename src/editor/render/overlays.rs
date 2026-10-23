@@ -64,13 +64,13 @@ impl Editor {
                             .on_click(cx.listener(Self::on_welcome_new_document)),
                     )
                     .child(
-                        Button::new("welcome-open-file")
-                            .debug_selector(|| "welcome-open-file".into())
+                        Button::new("welcome-open-folder")
+                            .debug_selector(|| "welcome-open-folder".into())
                             .outline()
-                            .label(strings.open_markdown_files_prompt.clone())
-                            .icon(Icon::default().path("icon/workspace/activity-files.svg"))
+                            .label(strings.open_folder_prompt.clone())
+                            .icon(Icon::default().path("icon/workspace/open-folder.svg"))
                             .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(crate::components::OpenFile), cx)
+                                window.dispatch_action(Box::new(crate::components::OpenFolder), cx)
                             }),
                     ),
             );
