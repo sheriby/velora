@@ -1033,8 +1033,7 @@ async fn vim_search_highlights_hits_without_the_search_panel(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-async fn nohl_clears_the_document_search_highlights(cx: &mut TestAppContext) {
-    let (editor, cx) = vim_editor(cx, "one\n\ntwo\n\ntwo again");
+async fn nohl_clears_the_document_search_highlights(cx: &mut TestAppContext) {    let (editor, cx) = vim_editor(cx, "one\n\ntwo\n\ntwo again");
     let highlighted = |editor: &Entity<Editor>, window: &VisualTestContext| {
         editor.read_with(window, |editor, cx| {
             editor
@@ -2894,6 +2893,24 @@ async fn zz_writes_the_dirty_document_and_closes(cx: &mut TestAppContext) {
         );
     });
 }
+
+// ---- Ctrl-[ 与命令行的组合态 ----
+
+#[gpui::test]
+async fn ctrl_bracket_returns_to_normal_mode(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha");
+    cx.simulate_keystrokes("i");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Insert);
+    cx.simulate_keystrokes("ctrl-[");
+    assert_eq!(
+        current_mode(&editor, &cx),
+        VimMode::Normal,
+        "Ctrl-[ 是终端里的 Esc，要能退出插入"
+    );
+    cx.simulate_keystrokes("ctrl-[");
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal, "普通模式下 Ctrl-[ 无副作用");
+}
+
 
 
 

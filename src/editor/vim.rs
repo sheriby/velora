@@ -112,6 +112,11 @@ impl VimKey {
             if modifiers.shift {
                 return None;
             }
+            // Ctrl-[ 就是终端里的 Esc（0x1B）；不在这里认，下面的 Ctrl('[')
+            // 分支全是死代码。
+            if key == "[" {
+                return Some(VimKey::Esc);
+            }
             let ch = key.chars().next()?;
             if ch.is_ascii_lowercase() {
                 return Some(VimKey::Ctrl(ch));
@@ -648,7 +653,7 @@ impl Editor {
             };
         }
         match key {
-            VimKey::Esc | VimKey::Ctrl('[') | VimKey::Ctrl('c') => {
+            VimKey::Esc | VimKey::Ctrl('c') => {
                 self.vim_finish_insert_session(window, cx);
                 self.vim_cursor_left_on_escape(cx);
                 self.vim_enter_mode(VimMode::Normal, cx);
@@ -839,7 +844,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> bool {
         match key {
-            VimKey::Esc | VimKey::Ctrl('[') | VimKey::Ctrl('c') => {
+            VimKey::Esc | VimKey::Ctrl('c') => {
                 self.vim_finish_replace_session(cx);
                 self.vim_enter_mode(VimMode::Normal, cx);
                 true
@@ -1678,7 +1683,7 @@ impl Editor {
             VimKey::Char(':') => VimAction::OpenCmdline(command::CmdlineKind::Command),
             VimKey::Char('%') => VimAction::Move(Motion::MatchPair),
             VimKey::Char('|') => VimAction::Move(Motion::ColumnNo(count.max(1))),
-            VimKey::Esc | VimKey::Ctrl('[') => VimAction::EnterNormalMode,
+            VimKey::Esc => VimAction::EnterNormalMode,
             VimKey::Char('Z') => {
                 match rest.first() {
                     Some(VimKey::Char('Z')) => VimAction::SaveAndClose,
@@ -2046,7 +2051,7 @@ impl Editor {
                     VimAction::ToggleVisual(VisualKind::Block)
                 }
             }
-            VimKey::Esc | VimKey::Ctrl('[') => VimAction::EnterNormalMode,
+            VimKey::Esc => VimAction::EnterNormalMode,
             VimKey::Char('o') => VimAction::ExchangeVisualAnchor,
             VimKey::Char('O') => VimAction::SwapVisualBlockColumn,
             VimKey::Char('d') | VimKey::Char('x') | VimKey::Delete => {
