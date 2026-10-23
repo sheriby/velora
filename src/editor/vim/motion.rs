@@ -1102,6 +1102,14 @@ pub(super) fn sentence_step(
     position: VimPosition,
     forward: bool,
 ) -> Option<VimPosition> {
+    let is_terminator = |position: VimPosition| {
+        matches!(
+            stream
+                .grapheme_at(position)
+                .and_then(|grapheme| grapheme.chars().next()),
+            Some('.' | '!' | '?')
+        )
+    };
     let mut current = position;
     if forward {
         // 跳过当前残句到终结符，再越过空白落到下一句首。
@@ -1110,6 +1118,10 @@ pub(super) fn sentence_step(
             let ch = grapheme.chars().next()?;
             if matches!(ch, '.' | '!' | '?') {
                 current = stream.next_grapheme(current)?;
+                // 连续终结符（`!?`、`…`）要一起越过，`)` 才不停在第二个符号上。
+                while is_terminator(current) {
+                    current = stream.next_grapheme(current)?;
+                }
                 break;
             }
             current = stream.next_grapheme(current)?;
@@ -1139,7 +1151,23 @@ pub(super) fn sentence_step(
         loop {
             let ch = stream.grapheme_at(previous)?.chars().next()?;
             if matches!(ch, '.' | '!' | '?') {
-                return stream.next_grapheme(previous);
+                // 句尾找到了：还要越过连续终结符与其后的空白，`(` 才落在句首的
+                // 第一个非空白上，而不是停在标点后的那个空格。
+                let mut landing = stream.next_grapheme(previous)?;
+                while is_terminator(landing) {
+                    landing = stream.next_grapheme(landing)?;
+                }
+                while stream
+                    .grapheme_at(landing)
+                    .and_then(|grapheme| grapheme.chars().next())
+                    .is_some_and(|ch| ch.is_whitespace())
+                {
+                    let Some(next) = stream.next_grapheme(landing) else {
+                        break;
+                    };
+                    landing = next;
+                }
+                return Some(landing);
             }
             let Some(before) = stream.prev_grapheme(previous) else {
                 return Some(previous);

@@ -3295,18 +3295,28 @@ async fn count_before_gj_joins_that_many_lines(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn open_bracket_lands_on_the_first_non_blank_of_the_sentence(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx) = vim_editor(cx, "Hello. World.");
+    cx.simulate_keystrokes("l l l l l l l l l");
+    assert_eq!(first_block_caret(&editor, &cx), 9, "夹具：光标落在 World 的 o 上");
+    cx.simulate_keystrokes("(");
+    assert_eq!(
+        first_block_caret(&editor, &cx),
+        7,
+        "( 要落到句首的 W，不是句号后的那个空格"
+    );
+}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+#[gpui::test]
+async fn close_bracket_steps_over_a_run_of_terminators(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "Really!? Yes.");
+    cx.simulate_keystrokes(")");
+    assert_eq!(
+        first_block_caret(&editor, &cx),
+        9,
+        ") 要越过 !? 整段终结符与空白，落到下一句首"
+    );
+}
