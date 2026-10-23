@@ -12,8 +12,15 @@ impl Editor {
         })).collect()
     }
 
+    /// 只给测试探标签缓存用的读口：产品路径按 `ai_cached_document_paths` +
+    /// 单块取文，不再整篇克隆标签正文（A-25），所以它在构建里是死代码。
+    #[cfg(test)]
     pub(in crate::editor) fn ai_cached_document_sources(&self) -> Vec<(PathBuf, String)> {
-        self.workspace.open_documents.iter().map(|tab| (tab.path.clone(), tab.markdown.clone())).collect()
+        self.workspace
+            .open_documents
+            .iter()
+            .map(|tab| (tab.path.clone(), tab.markdown.clone()))
+            .collect()
     }
 
     pub(in crate::editor) fn ai_cached_document_paths(&self) -> Vec<(PathBuf, uuid::Uuid)> {

@@ -1448,9 +1448,12 @@ impl Editor {
         range: &VimRange,
         cx: &App,
     ) -> Option<String> {
-        let end_block = entities.get(range.end.block_index)?.read(cx);
+        if range.end.block_index >= entities.len() {
+            return None;
+        }
         // 行级区间的终点落在下一行（下一块）行首时，那一行不属于本次操作。
-        let ends_at_block_edge = range.end.offset == 0 && range.end.block_index > range.start.block_index;
+        let ends_at_block_edge =
+            range.end.offset == 0 && range.end.block_index > range.start.block_index;
         let last_index = if ends_at_block_edge {
             range.end.block_index - 1
         } else {
