@@ -3127,6 +3127,43 @@ async fn l_and_h_step_over_combining_marks_as_one_grapheme(cx: &mut TestAppConte
     );
 }
 
+#[gpui::test]
+async fn vim_search_ignores_the_panel_regex_and_fuzzy_switches(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "ab\n\na.");
+    // 面板把正则开着：vim 的 / 仍按字面量匹配，不能被当成正则。
+    editor.update(cx, |editor, _cx| {
+        editor.apply_search_options(crate::editor::workspace::SearchOptions {
+            match_case: true,
+            whole_word: false,
+            use_regex: true,
+            fuzzy: true,
+        });
+    });
+    cx.simulate_keystrokes("/");
+    cx.simulate_input("a.");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    cx.run_until_parked();
+    assert_eq!(
+        cursor_block(&editor, &cx),
+        1,
+        "/ 要找字面量 a.，不是正则的 a 加任意字符（那会落在第一块的 ab）"
+    );
+    // 同一句再搜一次：模糊开着会把 a. 当成子序列匹配，命中位置会漂。
+    cx.simulate_keystrokes("n");
+    assert_eq!(
+        cursor_block(&editor, &cx),
+        1,
+        "n 仍在同一处命中：面板的模糊开关不参与 vim 搜索"
+    );
+    let options = editor.read_with(&*cx, |editor, _cx| editor.search_options());
+    assert!(
+        !options.use_regex && !options.fuzzy,
+        "面板开关要跟上实际命中表的口径，两处不能算出两样结果：{options:?}"
+    );
+}
+
+
 
 
 

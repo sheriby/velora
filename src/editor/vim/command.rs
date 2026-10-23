@@ -170,14 +170,20 @@ impl Editor {
         whole_word: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.workspace.search_query != query
-            || self.workspace.search_whole_word != whole_word
-        {
-            self.workspace.search_query = query.to_string();
-            self.workspace.search_whole_word = whole_word;
-            self.workspace.search_scope =
-                crate::editor::workspace::WorkspaceSearchScope::Document;
-        }
+        // vim 的 `/` 是字面量查找：不跟面板的正则/模糊开关走，否则同一句查询
+        // 的结果随无关面板状态漂移。大小写按 vim 的 ignorecase 默认（区分）。
+        // 面板开关由这里一并写下，面板显示的口径与命中表永远是同一份。
+        self.apply_search_options(crate::editor::workspace::SearchOptions {
+            match_case: true,
+            whole_word,
+            use_regex: false,
+            fuzzy: false,
+        });
+        // 查询与范围每次都按 vim 的意图写定：只在「与面板不同」时才写的话，
+        // 面板刚把工作区范围留着、查询串又恰好相同，这次 `/` 会搜成全库。
+        self.workspace.search_query = query.to_string();
+        self.workspace.search_scope =
+            crate::editor::workspace::WorkspaceSearchScope::Document;
         self.schedule_workspace_search(cx);
     }
 

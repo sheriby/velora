@@ -12,6 +12,15 @@ impl Editor {
         }
     }
 
+    /// 把面板的四个开关一次写定：字段只住在本模块，写入也留在本模块，
+    /// 外部（vim 的 `/`）不伸手改工作区状态，口径与命中表才是同一份。
+    pub(crate) fn apply_search_options(&mut self, options: SearchOptions) {
+        self.workspace.search_match_case = options.match_case;
+        self.workspace.search_whole_word = options.whole_word;
+        self.workspace.search_use_regex = options.use_regex;
+        self.workspace.search_fuzzy = options.fuzzy;
+    }
+
     pub(crate) fn schedule_workspace_search(&mut self, cx: &mut Context<Self>) {
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         let generation = self.workspace.search_generation;

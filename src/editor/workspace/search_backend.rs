@@ -3,10 +3,10 @@ use super::*;
 /// Match options for workspace/document search, mirroring VS Code's toggles.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SearchOptions {
-    pub(super) match_case: bool,
-    pub(super) whole_word: bool,
-    pub(super) use_regex: bool,
-    pub(super) fuzzy: bool,
+    pub(crate) match_case: bool,
+    pub(crate) whole_word: bool,
+    pub(crate) use_regex: bool,
+    pub(crate) fuzzy: bool,
 }
 
 /// 一次搜索的编译结果。匹配本身交给 ripgrep 引擎（`search_engine::CompiledQuery`），
