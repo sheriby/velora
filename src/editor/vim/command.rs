@@ -698,7 +698,17 @@ pub(super) fn vim_cmdline_key_down(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> bool {
-    if editor.vim.cmdline.is_none() {
+    let Some(command_line) = editor.vim.cmdline.clone() else {
+        return false;
+    };
+    let is_commit_or_close = keystroke.key == "enter" || keystroke.key == "escape";
+    if is_commit_or_close
+        && command_line
+            .input
+            .update(cx, |input, cx| input.marked_text_range(window, cx).is_some())
+    {
+        // 组词期间 Enter/Esc 属于输入法：抢下来会把组合中的字连丢掉。判据与
+        // AI 输入区同一处（marked_text_range）。
         return false;
     }
     match keystroke.key.as_str() {
