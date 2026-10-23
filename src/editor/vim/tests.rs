@@ -3225,6 +3225,44 @@ async fn substitute_expands_the_whole_match_and_group_backreferences(
     );
 }
 
+#[gpui::test]
+async fn cmdline_recalls_the_previous_search_with_up_arrow(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo\n\nthree");
+    cx.simulate_keystrokes("/");
+    cx.simulate_input("two");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(cursor_block(&editor, &cx), 1, "夹具：先搜到 two");
+    cx.simulate_keystrokes("/");
+    cx.simulate_keystrokes("up");
+    let value = editor.read_with(&*cx, |editor, cx| {
+        editor
+            .vim
+            .cmdline
+            .as_ref()
+            .map(|line| line.input.read(cx).value().to_string())
+    });
+    assert_eq!(value.as_deref(), Some("/two"), "↑ 要取回上一次搜索");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_keystrokes("G");
+    cx.simulate_keystrokes("/");
+    cx.simulate_keystrokes("up");
+    cx.simulate_keystrokes("up");
+    let value = editor.read_with(&*cx, |editor, cx| {
+        editor
+            .vim
+            .cmdline
+            .as_ref()
+            .map(|line| line.input.read(cx).value().to_string())
+    });
+    assert_eq!(
+        value.as_deref(),
+        Some("/two"),
+        "只有一句历史时再按 ↑ 停在同一条，不越界"
+    );
+    cx.simulate_keystrokes("escape");
+}
+
+
 
 
 

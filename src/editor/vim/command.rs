@@ -66,6 +66,7 @@ impl Editor {
         });
         let focus = input.read(cx).focus_handle(cx);
         self.vim.cmdline = Some(VimCommandLine { kind, input });
+        self.vim.history_index = None;
         window.focus(&focus, cx);
         cx.notify();
     }
@@ -102,6 +103,76 @@ impl Editor {
     }
 
     /// Enter：提交命令行。
+    /// 记下这一句：`:` 与 `/` 各存一份历史（Vim 也分开），空串与重复的末条不记。
+    fn vim_record_cmdline_history(
+        &mut self,
+        kind: CmdlineKind,
+        raw: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = match kind {
+            CmdlineKind::Search { .. } => raw.trim_start_matches(['/', '?']),
+            CmdlineKind::Command => raw.trim_start_matches(':'),
+            CmdlineKind::VisualCommand => raw.trim_start_matches(":'<,'>"),
+        }
+        .trim()
+        .to_string();
+        let history = match kind {
+            CmdlineKind::Search { .. } => &mut self.vim.search_history,
+            CmdlineKind::Command | CmdlineKind::VisualCommand => &mut self.vim.command_history,
+        };
+        if !entry.is_empty() && history.last().map(String::as_str) != Some(entry.as_str()) {
+            history.push(entry);
+            if history.len() > 100 {
+                history.remove(0);
+            }
+        }
+        self.vim.history_index = None;
+        let _ = cx;
+    }
+
+    /// ↑/↓ 在命令行里回溯历史：整行换成提示符 + 历史条目，光标位置交给输入框。
+    fn vim_recall_cmdline_history(
+        &mut self,
+        state: &VimCommandLine,
+        going_back: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let history: Vec<String> = match state.kind {
+            CmdlineKind::Search { .. } => self.vim.search_history.clone(),
+            CmdlineKind::Command | CmdlineKind::VisualCommand => {
+                self.vim.command_history.clone()
+            }
+        };
+        if history.is_empty() {
+            return false;
+        }
+        let last = history.len() - 1;
+        let position = match self.vim.history_index {
+            Some(index) if going_back => index.saturating_sub(1),
+            Some(index) => (index + 1).min(last),
+            None => last,
+        };
+        self.vim.history_index = Some(position);
+        let prefix = match state.kind {
+            CmdlineKind::Command => ":",
+            CmdlineKind::VisualCommand => ":'<,'>",
+            CmdlineKind::Search { reverse } => {
+                if reverse {
+                    "?"
+                } else {
+                    "/"
+                }
+            }
+        };
+        let value = format!("{prefix}{}", history[position]);
+        state.input.update(cx, |input, cx| {
+            input.set_value(value, window, cx);
+        });
+        true
+    }
+
     pub(super) fn vim_commit_cmdline_inner(
         &mut self,
         window: &mut Window,
@@ -109,6 +180,7 @@ impl Editor {
     ) {
         let Some(state) = self.vim.cmdline.clone() else { return };
         let raw = state.input.read(cx).value();
+        self.vim_record_cmdline_history(state.kind, &raw, cx);
         self.vim_close_cmdline_inner(cx);
         match state.kind {
             CmdlineKind::Search { reverse } => {
@@ -780,6 +852,10 @@ pub(super) fn vim_cmdline_key_down(
         // 组词期间 Enter/Esc 属于输入法：抢下来会把组合中的字连丢掉。判据与
         // AI 输入区同一处（marked_text_range）。
         return false;
+    }
+    if keystroke.key == "up" || keystroke.key == "down" {
+        let going_back = keystroke.key == "up";
+        return editor.vim_recall_cmdline_history(&command_line, going_back, window, cx);
     }
     match keystroke.key.as_str() {
         "enter" => {

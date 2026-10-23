@@ -266,6 +266,11 @@ pub(crate) struct VimState {
     pub(super) replaying: bool,
     /// 正在重放的宏寄存器，按调用顺序入栈；同名再入即 Vim 的 E223。
     pub(super) macro_stack: Vec<char>,
+    /// `:` 与 `/` 的历史（Vim 也分开存）：命令行里 ↑/↓ 回溯。
+    pub(super) command_history: Vec<String>,
+    pub(super) search_history: Vec<String>,
+    /// 正在回溯到第几条；None 表示还没开始翻。
+    pub(super) history_index: Option<usize>,
 }
 
 impl Default for VimState {
@@ -306,6 +311,9 @@ impl Default for VimState {
             pending_cmdline: None,
             replaying: false,
             macro_stack: Vec::new(),
+            command_history: Vec::new(),
+            search_history: Vec::new(),
+            history_index: None,
         }
     }
 }
