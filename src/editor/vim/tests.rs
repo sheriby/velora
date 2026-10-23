@@ -2672,3 +2672,30 @@ async fn visual_inner_quote_selects_exactly_the_inner_text(cx: &mut TestAppConte
         "vi\" 选中两个引号之间的内容，引号要留下"
     );
 }
+
+#[gpui::test]
+async fn block_visual_o_keeps_the_rectangle(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```\nabcd\nefgh\n```");
+    cx.simulate_keystrokes("ctrl-q j l o");
+    cx.simulate_keystrokes("d");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["cd\ngh"],
+        "块状 o 交换两个角后矩形面积不变"
+    );
+}
+
+#[gpui::test]
+async fn block_visual_capital_o_keeps_the_rectangle(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```\nabcd\nefgh\n```");
+    cx.simulate_keystrokes("ctrl-q j l O");
+    cx.simulate_keystrokes("d");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["cd\ngh"],
+        "块状 O 交换两列后矩形面积不变"
+    );
+}
+
+
+

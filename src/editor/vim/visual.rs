@@ -316,8 +316,12 @@ impl Editor {
         let entities = self.vim_navigation_entities(cx);
         let Some(focus) = self.vim_current_position(&entities, cx) else { return };
         let Some(anchor) = self.vim.visual_anchor else { return };
+        // 块状的 o 交换的是矩形的两个角：锚点列换成旧焦点列，光标移到旧锚点，
+        // 行列两组端点各换一次，矩形面积才不变。取旧焦点列而不是旧锚点列，
+        // 否则两列相同，矩形塌成一列。
+        let new_anchor_column = self.vim_grapheme_column(&entities, focus, cx);
         self.vim.visual_anchor = Some(focus);
-        self.vim.visual_block_anchor_column = Some(self.vim_grapheme_column(&entities, anchor, cx));
+        self.vim.visual_block_anchor_column = Some(new_anchor_column);
         self.vim_set_cursor(&entities, anchor, cx);
         self.vim_refresh_visual_selection(cx);
     }
@@ -327,10 +331,42 @@ impl Editor {
         let entities = self.vim_navigation_entities(cx);
         let Some(focus) = self.vim_current_position(&entities, cx) else { return };
         let focus_column = self.vim_grapheme_column(&entities, focus, cx);
-        let anchor_column = self.vim.visual_block_anchor_column;
+        let Some(anchor_column) = self.vim.visual_block_anchor_column else { return };
+        if anchor_column == focus_column {
+            return;
+        }
+        // 行的范围不动，只把焦点移到旧锚点列、锚点列换成旧焦点列；
+        // 只换锚点列而光标不动，两列就成了同一列。
+        let Some(landed) = self.vim_position_at_column(&entities, focus, anchor_column, cx) else {
+            return;
+        };
         self.vim.visual_block_anchor_column = Some(focus_column);
-        let _ = anchor_column;
+        self.vim_set_cursor(&entities, landed, cx);
         self.vim_refresh_visual_selection(cx);
+    }
+
+    /// 同一硬行内第 column 个字素的起点；超出行长就停在行末字素上。
+    fn vim_position_at_column(
+        &self,
+        entities: &[Entity<Block>],
+        position: VimPosition,
+        column: usize,
+        cx: &App,
+    ) -> Option<VimPosition> {
+        let stream = VimDocStream::new(entities, cx);
+        let line = stream.hard_line_range(position.block_index, position.offset);
+        let text = stream.text_for_line(position.block_index);
+        let mut offset = line.start;
+        let mut current_column = 0usize;
+        while current_column < column && offset < line.end {
+            let Some(next) = next_grapheme_start(&text, offset) else { break };
+            if next >= line.end {
+                break;
+            }
+            offset = next;
+            current_column += 1;
+        }
+        Some(VimPosition { block_index: position.block_index, offset })
     }
 
     /// 可视模式里 i"/a"/iw…：把选区扩到对象。
