@@ -1598,32 +1598,35 @@ impl Editor {
         let line = block.read(cx).cursor_line_display_range();
         let line_start = line.start.min(text.len());
         let line_end = line.end.min(text.len()).max(line_start);
-        let line_text = &text[line_start..line_end];
-        // 按字符边界扫描，避免光标落在多字节字符中间时切出非法 UTF-8。
-        let mut number_range: Option<std::ops::Range<usize>> = None;
-        for (index, character) in line_text.char_indices() {
-            let offset = line_start + index;
-            if !character.is_ascii_digit() {
-                if let Some(range) = number_range.take() {
-                    if range.end > cursor {
-                        number_range = Some(range);
-                        break;
-                    }
-                }
-                continue;
-            }
-            match number_range {
-                Some(ref mut range) => range.end = offset + 1,
-                None => {
-                    if offset + 1 > cursor {
-                        number_range = Some(offset..offset + 1);
-                    }
-                }
-            }
-        }
-        let Some(digits) = number_range.filter(|range| range.end > cursor) else {
-            return;
+        // 光标落在数字上就取**整段**数字，向后找才取下一段。旧写法从光标那一格
+        // 起算，1299 的光标停在第一个 9 上时只递增 "99"，进位后就变成 12100。
+        // 数字都是 ASCII，按字节步进不会切进多字节字符中间。
+        let bytes = text.as_bytes();
+        let is_digit = |offset: usize| {
+            bytes
+                .get(offset)
+                .is_some_and(|byte| byte.is_ascii_digit())
         };
+        let mut start = if is_digit(cursor) {
+            cursor
+        } else {
+            let mut index = cursor;
+            while index < line_end && !is_digit(index) {
+                index += 1;
+            }
+            if index >= line_end {
+                return;
+            }
+            index
+        };
+        while start > line_start && is_digit(start - 1) {
+            start -= 1;
+        }
+        let mut end = start + 1;
+        while end < line_end && is_digit(end) {
+            end += 1;
+        }
+        let digits = start..end;
         let start = digits.start;
         let end = digits.end;
         let mut sign = start;

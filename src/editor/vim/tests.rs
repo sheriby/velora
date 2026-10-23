@@ -2897,8 +2897,7 @@ async fn zz_writes_the_dirty_document_and_closes(cx: &mut TestAppContext) {
 // ---- Ctrl-[ 与命令行的组合态 ----
 
 #[gpui::test]
-async fn ctrl_bracket_returns_to_normal_mode(cx: &mut TestAppContext) {
-    let (editor, cx) = vim_editor(cx, "alpha");
+async fn ctrl_bracket_returns_to_normal_mode(cx: &mut TestAppContext) {    let (editor, cx) = vim_editor(cx, "alpha");
     cx.simulate_keystrokes("i");
     assert_eq!(current_mode(&editor, &cx), VimMode::Insert);
     cx.simulate_keystrokes("ctrl-[");
@@ -2911,7 +2910,18 @@ async fn ctrl_bracket_returns_to_normal_mode(cx: &mut TestAppContext) {
     assert_eq!(current_mode(&editor, &cx), VimMode::Normal, "普通模式下 Ctrl-[ 无副作用");
 }
 
+// ---- Ctrl-a 进位与插入模式的 Ctrl-r ----
 
-
-
-
+#[gpui::test]
+async fn ctrl_a_increments_the_whole_number_under_the_cursor(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "value 1299");
+    cx.simulate_keystrokes("w w l l");
+    let caret = first_block_caret(&editor, &cx);
+    assert_eq!(caret, 8, "夹具：光标要落在第一个 9 上");
+    cx.simulate_keystrokes("ctrl-a");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "value 1300",
+        "光标在多位数字中间时，进位要作用于整段数字"
+    );
+}
