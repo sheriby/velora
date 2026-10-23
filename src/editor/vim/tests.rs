@@ -3320,3 +3320,46 @@ async fn close_bracket_steps_over_a_run_of_terminators(cx: &mut TestAppContext) 
         ") 要越过 !? 整段终结符与空白，落到下一句首"
     );
 }
+
+#[gpui::test]
+async fn quote_object_does_not_pair_across_two_strings(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "\"a\" \"b\"");
+    cx.simulate_keystrokes("l l l");
+    assert_eq!(first_block_caret(&editor, &cx), 3, "夹具：光标在两个串之间的空格");
+    cx.simulate_keystrokes("c i \"");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "\"a\" \"b\"",
+        "没有包住光标的引号对时，ci\" 不该把上一串的闭引号与下一串的开引号配成对"
+    );
+}
+
+#[gpui::test]
+async fn quote_object_skips_escaped_quotes(cx: &mut TestAppContext) {
+    // 代码块里的正文按字面显示，反斜杠不会被 Markdown 的转义规则吃掉。
+    let (editor, cx) = vim_editor(cx, "```\n\"a \\\"b\\\" c\"\n```");
+    cx.simulate_keystrokes("l");
+    cx.simulate_keystrokes("d i \"");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["\"\""],
+        "转义引号不参与成对：内层整个删掉，只剩最外一对引号"
+    );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

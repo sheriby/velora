@@ -680,15 +680,29 @@ impl Editor {
             }
             TextObject::Quote(quote, inner) => {
                 let line = stream.hard_line_range(cursor.block_index, cursor.offset);
-                // 找光标两侧最近的同类引号对。
-                let positions: Vec<usize> = line
-                    .clone()
-                    .filter(|byte| text.as_bytes().get(*byte) == Some(&(quote as u8)))
-                    .collect();
+                // 成对解析：被奇数个反斜杠转义的引号不算数，剩下的从行首按顺序
+                // 两两成对。旧的「相邻两个就是一对」会在两个字符串之间的空白上
+                // 把上一串的闭引号与下一串的开引号配成一对，选中中间那段错文。
+                let mut positions: Vec<usize> = Vec::new();
+                let mut backslashes = 0usize;
+                for byte in line.clone() {
+                    match text.as_bytes().get(byte) {
+                        Some(b'\\') => backslashes += 1,
+                        Some(value) if *value == quote as u8 => {
+                            if backslashes % 2 == 0 {
+                                positions.push(byte);
+                            }
+                            backslashes = 0;
+                        }
+                        _ => backslashes = 0,
+                    }
+                }
                 let mut pair: Option<(usize, usize)> = None;
-                for window in positions.windows(2) {
-                    if window[0] <= cursor.offset && cursor.offset <= window[1] {
-                        pair = Some((window[0], window[1]));
+                let mut candidates = positions.into_iter();
+                while let Some(open) = candidates.next() {
+                    let Some(close) = candidates.next() else { break };
+                    if open <= cursor.offset && cursor.offset <= close {
+                        pair = Some((open, close));
                         break;
                     }
                 }
