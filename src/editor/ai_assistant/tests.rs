@@ -3367,6 +3367,80 @@ fn ai_restoring_history_does_not_overwrite_a_stashed_session(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+fn ai_history_restore_keeps_the_float_surface(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    let mut saved = crate::ai::session::SavedSession::new(
+        crate::ai::workspace::AiWorkspace::new(None, Vec::new()).unwrap(),
+    );
+    saved.messages.push(crate::ai::session::ChatMessage {
+        role: "user".into(),
+        text: "历史里的消息".into(),
+        thinking: "".into(),
+    });
+    let disk_path = saved.path().unwrap();
+    saved.save_at(&disk_path).unwrap();
+
+    let task_path = editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        assert!(!session.expanded, "夹具：浮窗打开时不该是停靠布局");
+        session
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "user".into(),
+                text: "暂存任务的消息".into(),
+                thinking: "".into(),
+            });
+        editor.persist_ai_session(cx);
+        editor.ai_task_sessions.push(editor.ai_session.take().unwrap());
+        let restored = editor.ai_task_sessions.last().unwrap().saved.path().unwrap();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor.restore_ai_history(disk_path.clone(), window, cx);
+        restored
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert!(
+            !session.expanded,
+            "在浮窗里还原磁盘历史，表面要留在浮窗"
+        );
+        assert_eq!(session.saved.messages.last().unwrap().text.to_string(), "历史里的消息");
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.restore_ai_history(task_path.clone(), window, cx);
+    });
+    cx.run_until_parked();
+    editor.update_in(cx, |editor, window, cx| {
+        editor.on_toggle_ai_sidebar(&crate::components::ToggleAiSidebar, window, cx);
+    });
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.ai_session.as_ref().unwrap().expanded,
+            "夹具：显式切到侧栏要生效"
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.restore_ai_history(task_path.clone(), window, cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert!(
+            session.expanded,
+            "在侧栏里还原历史也不该被换成浮窗：表面由用户决定"
+        );
+        assert_eq!(session.saved.messages.last().unwrap().text.to_string(), "暂存任务的消息");
+    });
+    std::fs::remove_file(disk_path).unwrap();
+    std::fs::remove_file(task_path).unwrap();
+}
+
+#[gpui::test]
 fn ai_panel_actions_are_buttons_and_can_be_closed_from_the_keyboard(cx: &mut TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     use gpui::AppContext as _;

@@ -1121,6 +1121,12 @@ impl Editor {
     }
 
     fn restore_ai_history(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        // 还原历史只换内容，不换表面：在浮窗里点历史记录不该把面板换成侧栏。
+        // 没有前台会话时沿用被还原会话自己的布局。
+        let current_expanded = self
+            .ai_session
+            .as_ref()
+            .map(|session| session.expanded);
         if let Some(index) = self
             .ai_task_sessions
             .iter()
@@ -1142,7 +1148,9 @@ impl Editor {
             }
             let mut session = self.ai_task_sessions.remove(index);
             session.visible = true;
-            session.expanded = true;
+            if let Some(expanded) = current_expanded {
+                session.expanded = expanded;
+            }
             session.collapsed = false;
             session.panel_navigation = false;
             session.mode = PanelMode::Task;
@@ -1174,7 +1182,6 @@ impl Editor {
                         match loaded {
                             Ok(saved) => {
                                 session.saved = saved;
-                                session.expanded = true;
                                 session.visible = true;
                                 session.collapsed = false;
                                 session.panel_navigation = false;
