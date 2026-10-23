@@ -136,6 +136,7 @@ impl Editor {
         });
         self.vim.hlsearch = true;
         self.vim_apply_search_query(query, whole_word, cx);
+        self.vim_push_jump_before_leaving(cx);
         self.find_next_document_match(reverse, cx);
     }
 
@@ -162,6 +163,7 @@ impl Editor {
         };
         self.vim_apply_search_query(&search.query, search.whole_word, cx);
         let reverse = search.reverse != opposite;
+        self.vim_push_jump_before_leaving(cx);
         self.find_next_document_match(reverse, cx);
     }
 

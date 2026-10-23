@@ -2593,13 +2593,7 @@ impl Editor {
         else {
             return;
         };
-        let entities_now = entities.clone();
-        let Some(current) = self.vim_current_position(&entities_now, cx) else { return };
-        self.vim_push_jumplist(
-            entities_now.get(current.block_index).map(|entity| entity.entity_id()),
-            current.offset,
-            cx,
-        );
+        self.vim_push_jump_before_leaving(cx);
         let mut target = VimPosition { block_index: index, offset };
         if linewise {
             let stream = VimDocStream::new(&entities, cx);
@@ -2648,6 +2642,20 @@ impl Editor {
         };
         if entry.0 != identity {
             return;
+        }
+        // 后退时把「正要离开的那一处」留在表上（插到目标之后），Ctrl-i 才回得来。
+        // 旧写法只压「跳之前的位置」，指针一旦后退，较新的那一处就不在表上了。
+        if backward {
+            let entities_now = self.vim_navigation_entities(cx);
+            if let Some(current) = self.vim_current_position(&entities_now, cx)
+                && let Some(entity) = entities_now.get(current.block_index)
+            {
+                let leaving = (identity, entity.entity_id(), current.offset);
+                let insert_at = (target_index + 1).min(self.vim.jumplist.len());
+                if self.vim.jumplist.get(insert_at) != Some(&leaving) {
+                    self.vim.jumplist.insert(insert_at, leaving);
+                }
+            }
         }
         self.vim.jump_index = target_index;
         let entities = self.vim_navigation_entities(cx);

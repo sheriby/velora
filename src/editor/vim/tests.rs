@@ -3040,6 +3040,38 @@ async fn insert_mode_double_click_still_selects_the_word(cx: &mut TestAppContext
     });
 }
 
+#[gpui::test]
+async fn ctrl_i_returns_to_the_position_left_by_ctrl_o(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo\n\nthree");
+    assert_eq!(cursor_block(&editor, &cx), 0);
+    cx.simulate_keystrokes("G");
+    assert_eq!(cursor_block(&editor, &cx), 2, "夹具：G 要跳到末块");
+    cx.simulate_keystrokes("ctrl-o");
+    assert_eq!(cursor_block(&editor, &cx), 0, "ctrl-o 回到跳之前");
+    cx.simulate_keystrokes("ctrl-i");
+    assert_eq!(
+        cursor_block(&editor, &cx),
+        2,
+        "ctrl-i 要能回到刚离开的那一处"
+    );
+}
+
+#[gpui::test]
+async fn search_jump_is_recorded_in_the_jumplist(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo\n\nthree");
+    cx.simulate_keystrokes("/");
+    cx.simulate_input("three");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(cursor_block(&editor, &cx), 2, "夹具：/ 要跳到命中所在块");
+    cx.simulate_keystrokes("ctrl-o");
+    assert_eq!(
+        cursor_block(&editor, &cx),
+        0,
+        "搜索跳转也要进跳转表，ctrl-o 才回得到搜索前"
+    );
+}
+
+
 
 
 

@@ -1045,8 +1045,20 @@ impl Editor {
     }
 
     /// 跳转表压栈（gg/G/%/标记/搜索前调用）。
-    pub(super) fn vim_push_jumplist(
-        &mut self,
+    /// 跳转前把当前落点压进跳转表。`/`、`?`、`n`、`N`、`*`、`#` 与标记跳转
+    /// 共用这一处，不在各调用方重抄一遍取位置的代码。
+    pub(super) fn vim_push_jump_before_leaving(&mut self, cx: &mut Context<Self>) {
+        let entities = self.vim_navigation_entities(cx);
+        let Some(current) = self.vim_current_position(&entities, cx) else {
+            return;
+        };
+        let entity_id = entities
+            .get(current.block_index)
+            .map(|entity| entity.entity_id());
+        self.vim_push_jumplist(entity_id, current.offset, cx);
+    }
+
+    pub(super) fn vim_push_jumplist(        &mut self,
         entity_id: Option<gpui::EntityId>,
         offset: usize,
         cx: &mut Context<Self>,
