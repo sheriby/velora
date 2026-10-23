@@ -1008,6 +1008,19 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.close_workspace_tabs_with(paths, false, window, cx);
+    }
+
+    /// `save_first`：先落盘再关，不弹「未保存」确认（vim 的 `:wq` / `:x` / `ZZ`）。
+    /// 落盘失败由 `finish_close_workspace_tabs` 报错并停在原页，与模态里的
+    /// 「保存并关闭」走同一条链路，判据只有一处。
+    pub(crate) fn close_workspace_tabs_with(
+        &mut self,
+        paths: &[PathBuf],
+        save_first: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if paths.is_empty() {
             return;
         }
@@ -1025,6 +1038,10 @@ impl Editor {
             .cloned()
             .collect();
         if closing.is_empty() {
+            return;
+        }
+        if save_first {
+            self.finish_close_workspace_tabs(&closing, true, window, cx);
             return;
         }
         let dirty: Vec<WorkspaceDocumentTab> = closing

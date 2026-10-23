@@ -32,6 +32,20 @@ pub(crate) struct VimCommandLine {
     pub input: Entity<gpui_kit::component::input::InputState>,
 }
 
+/// `:q` / `:q!` / `:wq`（`:x`、`ZZ`）三种关闭意图。
+///
+/// 用枚举而不是布尔：`q!` 的「丢弃」与 `:wq` 的「先写再关」在旧写法里都是同一个
+/// `force: false`，两者的差别恰好是要不要落盘。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum VimClose {
+    /// 有改动弹「未保存」确认（`:q`）。
+    Ask,
+    /// 丢弃改动直接关（`:q!`）。
+    Discard,
+    /// 先落盘再关，落盘失败就停在原页（`:wq` / `:x` / `ZZ`）。
+    Save,
+}
+
 impl Editor {
     /// 打开命令行（`:` / `/`）。
     pub(super) fn vim_open_cmdline_inner(
@@ -360,11 +374,10 @@ impl Editor {
         match command {
             "w" | "write" => self.request_save_document(cx),
             "wq" | "x" => {
-                self.request_save_document(cx);
-                self.vim_close_current_tab(false, window, cx);
+                self.vim_close_current_tab(VimClose::Save, window, cx);
             }
-            "q" | "quit" => self.vim_close_current_tab(false, window, cx),
-            "q!" | "quit!" => self.vim_close_current_tab(true, window, cx),
+            "q" | "quit" => self.vim_close_current_tab(VimClose::Ask, window, cx),
+            "q!" | "quit!" => self.vim_close_current_tab(VimClose::Discard, window, cx),
             "nohl" | "noh" | "nohlsearch" => self.vim_clear_search_highlight_inner(cx),
             // 冒号行也接受命令注册表里的 id，与命令面板共享同一份命令。
             body if crate::commands::command_by_id(body).is_some() => {
@@ -431,16 +444,27 @@ impl Editor {
         (None, trimmed)
     }
 
-    fn vim_close_current_tab(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if force {
+    fn vim_close_current_tab(
+        &mut self,
+        mode: VimClose,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if mode == VimClose::Discard {
             // q!：直接按干净文档处理，关闭即丢弃。
             self.document_dirty = false;
         }
         let Some(path) = self.file_path.clone() else {
-            self.request_close_current_window(window, cx);
+            // 无名文档：:wq 只发起保存（会走另存面板），不抢先关窗口——落盘还没
+            // 排上就关窗口等于丢弃。
+            if mode == VimClose::Save {
+                self.request_save_document(cx);
+            } else {
+                self.request_close_current_window(window, cx);
+            }
             return;
         };
-        self.close_workspace_tabs(&[path], window, cx);
+        self.close_workspace_tabs_with(&[path], mode == VimClose::Save, window, cx);
     }
 
     /// `:s/{pat}/{rep}/{flags}`：范围内正则替换，一次成型后走缓冲区写回。
@@ -656,8 +680,7 @@ pub(super) fn vim_save_and_close(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    editor.request_save_document(cx);
-    editor.vim_close_current_tab(false, window, cx);
+    editor.vim_close_current_tab(VimClose::Save, window, cx);
 }
 
 pub(super) fn vim_close_discarding(
@@ -665,7 +688,7 @@ pub(super) fn vim_close_discarding(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    editor.vim_close_current_tab(true, window, cx);
+    editor.vim_close_current_tab(VimClose::Discard, window, cx);
 }
 
 /// 浮层按键：Enter 提交、Esc 关闭。返回 true 表示已消费。

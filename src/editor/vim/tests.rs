@@ -13,8 +13,7 @@ use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 fn vim_editor<'a>(
     cx: &'a mut TestAppContext,
     markdown: &str,
-) -> (Entity<Editor>, &'a mut VisualTestContext) {
-    vim_editor_with(
+) -> (Entity<Editor>, &'a mut VisualTestContext) {    vim_editor_with(
         cx,
         markdown,
         VimPreferences {
@@ -48,6 +47,47 @@ fn vim_editor_with<'a>(
 
 fn document_text(editor: &Entity<Editor>, cx: &VisualTestContext) -> String {
     editor.read_with(cx, |editor, _cx| editor.buffer.text().to_string())
+}
+
+/// 真从临时文件打开的 vim 编辑器：`:wq`、`ZZ` 这类要落盘的命令用它。
+/// 返回的第三个值是那个文件；配置根与文档同在一个临时目录下。
+fn vim_editor_from_file<'a>(
+    cx: &'a mut TestAppContext,
+    markdown: &str,
+) -> (Entity<Editor>, &'a mut VisualTestContext, std::path::PathBuf) {
+    init_editor_test_app(cx);
+    let root = temp_fixture_dir().join(format!("vim-file-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create vim file root");
+    let path = root.join("note.md");
+    std::fs::write(&path, markdown).expect("write fixture");
+    {
+        let _guard = crate::config::override_test_config_root(&root);
+        cx.update(|cx| {
+            EditorSettings::init(cx, true);
+            EditorSettings::set_vim_in_memory(
+                cx,
+                VimPreferences {
+                    enable: true,
+                    ..Default::default()
+                },
+            );
+        });
+    }
+    let window_path = path.clone();
+    let (editor, window) = cx.add_window_view(move |_window, cx| {
+        Editor::from_file_source(cx, markdown.to_string(), Some(window_path.clone()))
+    });
+    let workspace_root = root.clone();
+    let tab_path = path.clone();
+    window.update(|inner_window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(workspace_root, cx);
+            editor.open_workspace_file(tab_path, inner_window, cx);
+        });
+    });
+    redraw(window);
+    redraw(window);
+    (editor, window, path)
 }
 
 fn current_mode(editor: &Entity<Editor>, cx: &VisualTestContext) -> VimMode {
@@ -2696,6 +2736,63 @@ async fn block_visual_capital_o_keeps_the_rectangle(cx: &mut TestAppContext) {
         "块状 O 交换两列后矩形面积不变"
     );
 }
+
+// ---- :wq / :x / ZZ 先落盘再关 ----
+
+#[gpui::test]
+async fn cmdline_wq_writes_the_dirty_document_and_closes(cx: &mut TestAppContext) {
+    let (editor, cx, path) = vim_editor_from_file(cx, "alpha\n");
+    cx.simulate_keystrokes("A");
+    cx.simulate_input("x");
+    cx.simulate_keystrokes("escape");
+    assert!(
+        editor.read_with(&*cx, |editor, _cx| editor.document_dirty),
+        "改过之后文档应是脏的"
+    );
+
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("wq");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    cx.run_until_parked();
+
+    let on_disk = std::fs::read_to_string(&path).expect("read the file back");
+    assert_eq!(
+        on_disk.trim(),
+        "alphax",
+        ":wq 要把改动写盘，而不是排队等下一帧"
+    );
+    editor.read_with(&*cx, |editor, _cx| {
+        assert!(editor.modal.is_none(), ":wq 不该弹「未保存」确认框");
+        assert_ne!(
+            editor.file_path.as_deref(),
+            Some(path.as_path()),
+            ":wq 写盘成功后要关掉这一页"
+        );
+    });
+}
+
+#[gpui::test]
+async fn zz_writes_the_dirty_document_and_closes(cx: &mut TestAppContext) {
+    let (editor, cx, path) = vim_editor_from_file(cx, "alpha\n");
+    cx.simulate_keystrokes("A");
+    cx.simulate_input("y");
+    cx.simulate_keystrokes("escape");
+    cx.simulate_keystrokes("Z Z");
+    redraw(cx);
+    cx.run_until_parked();
+    let on_disk = std::fs::read_to_string(&path).expect("read the file back");
+    assert_eq!(on_disk.trim(), "alphay", "ZZ 等价 :x，要写盘再关");
+    editor.read_with(&*cx, |editor, _cx| {
+        assert!(editor.modal.is_none(), "ZZ 不该弹「未保存」确认框");
+        assert_ne!(
+            editor.file_path.as_deref(),
+            Some(path.as_path()),
+            "ZZ 写盘成功后要关掉这一页"
+        );
+    });
+}
+
 
 
 
