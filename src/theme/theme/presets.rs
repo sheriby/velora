@@ -1,5 +1,18 @@
 use super::*;
 
+/// Paper / Ink 的衬线字体：macOS 自带宋体，其他平台用 Georgia。
+/// 主题编辑器的 `tokens.js` 需要跨平台一致，生成时统一成非 macOS 值。
+pub(crate) const SERIF_FONT_FAMILY_MACOS: &str = "Songti SC";
+pub(crate) const SERIF_FONT_FAMILY_DEFAULT: &str = "Georgia";
+
+pub(super) fn serif_font_family() -> &'static str {
+    if cfg!(target_os = "macos") {
+        SERIF_FONT_FAMILY_MACOS
+    } else {
+        SERIF_FONT_FAMILY_DEFAULT
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Theme {
     pub name: String,
@@ -512,13 +525,8 @@ impl Theme {
             },
         );
         theme.typography.text_line_height = 1.72;
-        let serif = if cfg!(target_os = "macos") {
-            "Songti SC"
-        } else {
-            "Georgia"
-        };
-        theme.typography.body_font_family = serif.into();
-        theme.typography.heading_font_family = serif.into();
+        theme.typography.body_font_family = serif_font_family().into();
+        theme.typography.heading_font_family = serif_font_family().into();
         theme.typography.h1_weight = FontWeightDef::Semibold;
         theme.typography.h2_weight = FontWeightDef::Semibold;
         theme.dimensions.block_gap = 8.0;
@@ -652,13 +660,8 @@ impl Theme {
             },
         );
         theme.typography.text_line_height = 1.7;
-        let serif = if cfg!(target_os = "macos") {
-            "Songti SC"
-        } else {
-            "Georgia"
-        };
-        theme.typography.body_font_family = serif.into();
-        theme.typography.heading_font_family = serif.into();
+        theme.typography.body_font_family = serif_font_family().into();
+        theme.typography.heading_font_family = serif_font_family().into();
         theme.typography.h1_weight = FontWeightDef::Semibold;
         theme.typography.h2_weight = FontWeightDef::Semibold;
         theme.dimensions.block_gap = 8.0;

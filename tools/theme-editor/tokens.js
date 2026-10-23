@@ -4954,8 +4954,8 @@
               "status_bar_text_size": 11.0
             },
             "typography": {
-              "body_font_family": "Songti SC",
-              "heading_font_family": "Songti SC",
+              "body_font_family": "Georgia",
+              "heading_font_family": "Georgia",
               "text_size": 17.0,
               "text_line_height": 1.72,
               "text_letter_spacing": 0.0125,
@@ -5737,8 +5737,8 @@
               "status_bar_text_size": 11.0
             },
             "typography": {
-              "body_font_family": "Songti SC",
-              "heading_font_family": "Songti SC",
+              "body_font_family": "Georgia",
+              "heading_font_family": "Georgia",
               "text_size": 17.0,
               "text_line_height": 1.7,
               "text_letter_spacing": 0.0125,

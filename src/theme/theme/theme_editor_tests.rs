@@ -12,6 +12,8 @@ use serde_json::Value;
 
 use crate::theme::Theme;
 
+use super::presets::{SERIF_FONT_FAMILY_DEFAULT, SERIF_FONT_FAMILY_MACOS};
+
 const TOKENS_FILE: &str = "tools/theme-editor/tokens.js";
 const REGENERATE_HINT: &str = "主题编辑器的 tokens.js 已过期。重新生成：\n\
     VELORA_UPDATE_THEME_EDITOR_TOKENS=1 cargo test --bin velora theme_editor_tokens -- --nocapture";
@@ -201,12 +203,33 @@ fn builtin_bases() -> Vec<ThemeEditorBase> {
         ("ink", "Ink", Theme::ink_theme()),
     ]
     .into_iter()
-    .map(|(id, name, theme)| ThemeEditorBase {
-        id: id.to_string(),
-        name: name.to_string(),
-        theme: round_numbers(serde_json::to_value(theme).expect("内置主题应当可序列化")),
+    .map(|(id, name, theme)| {
+        let mut value = serde_json::to_value(theme).expect("内置主题应当可序列化");
+        canonicalize_platform_fonts(&mut value);
+        ThemeEditorBase {
+            id: id.to_string(),
+            name: name.to_string(),
+            theme: round_numbers(value),
+        }
     })
     .collect()
+}
+
+/// Paper / Ink 的衬线字体按平台不同（macOS 宋体、其他平台 Georgia）。
+/// `tokens.js` 是提交到仓库的单一快照，统一成非 macOS 值，才能让
+/// macOS 与 Windows 上的生成结果一致。
+fn canonicalize_platform_fonts(theme: &mut Value) {
+    let Some(typography) = theme.get_mut("typography").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for key in ["body_font_family", "heading_font_family"] {
+        let Some(Value::String(family)) = typography.get_mut(key) else {
+            continue;
+        };
+        if family == SERIF_FONT_FAMILY_MACOS || family == SERIF_FONT_FAMILY_DEFAULT {
+            *family = SERIF_FONT_FAMILY_DEFAULT.to_string();
+        }
+    }
 }
 
 /// f32 序列化会带出 `1.600000023841858` 这种尾巴；网页只做展示与导出，保留
@@ -439,6 +462,28 @@ fn theme_editor_tokens_file_is_up_to_date() {
         generated,
         "{REGENERATE_HINT}"
     );
+}
+
+#[test]
+fn theme_editor_snapshot_uses_portable_fonts() {
+    for base in build_data().bases {
+        let typography = base
+            .theme
+            .get("typography")
+            .and_then(Value::as_object)
+            .expect("快照应当包含 typography");
+        for key in ["body_font_family", "heading_font_family"] {
+            let family = typography
+                .get(key)
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("{} 缺少 {key}", base.id));
+            assert_ne!(
+                family, SERIF_FONT_FAMILY_MACOS,
+                "{} 的快照里不能出现 macOS 专有字体，否则 tokens.js 无法跨平台生成",
+                base.id
+            );
+        }
+    }
 }
 
 #[test]
