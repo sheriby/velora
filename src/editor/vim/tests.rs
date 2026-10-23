@@ -2638,4 +2638,37 @@ async fn counted_replace_does_not_cross_the_hard_line_end(cx: &mut TestAppContex
     );
 }
 
+// ---- 字符可视的端点与块状可视的角交换 ----
 
+#[gpui::test]
+async fn visual_then_delete_removes_the_cursor_grapheme(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abc");
+    cx.simulate_keystrokes("v d");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "bc",
+        "刚按 v 时选区含光标所在字素，Vim 的 v d 删掉它"
+    );
+}
+
+#[gpui::test]
+async fn visual_inner_word_selects_exactly_the_word(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    cx.simulate_keystrokes("v i w d");
+    assert_eq!(
+        document_text(&editor, &cx),
+        " beta",
+        "viw 只选 alpha 本身，不能多带一个词尾字素"
+    );
+}
+
+#[gpui::test]
+async fn visual_inner_quote_selects_exactly_the_inner_text(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "\"hello\"");
+    cx.simulate_keystrokes("l l v i \" d");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "\"\"",
+        "vi\" 选中两个引号之间的内容，引号要留下"
+    );
+}

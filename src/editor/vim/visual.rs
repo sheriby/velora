@@ -112,21 +112,18 @@ impl Editor {
                 let stream = VimDocStream::new(entities, cx);
                 // 可视选区含焦点所在字素（独占端 +1 字素）。焦点落在块末字素时
                 // next_grapheme 返回 None，独占端要取块尾，否则末字被漏掉。
-                let end_inclusive = if end == anchor && end == focus {
+                // 锚点与焦点重合（刚按 v）也一样含当前字素：Vim 的 `v d` 删光标字符。
+                let text_len = stream.text_for_line(end.block_index).len();
+                let end_inclusive = if end.offset >= text_len {
                     end
                 } else {
-                    let text_len = stream.text_for_line(end.block_index).len();
-                    if end.offset >= text_len {
-                        end
-                    } else {
-                        stream
-                            .next_grapheme(end)
-                            .filter(|next| next.block_index == end.block_index)
-                            .unwrap_or(VimPosition {
-                                block_index: end.block_index,
-                                offset: text_len,
-                            })
-                    }
+                    stream
+                        .next_grapheme(end)
+                        .filter(|next| next.block_index == end.block_index)
+                        .unwrap_or(VimPosition {
+                            block_index: end.block_index,
+                            offset: text_len,
+                        })
                 };
                 Some(VimRange { start, end: end_inclusive, linewise: false })
             }
@@ -350,12 +347,17 @@ impl Editor {
             return;
         };
         self.vim.visual_anchor = Some(range.start);
-        self.vim_set_cursor(&entities, range.end, cx);
-        // 对象选区含端点：焦点右移一字素。
+        // 对象给的是排他终点，而可视选区的口径是「焦点所在字素就是最后一个被含
+        // 的字素」，所以焦点落在终点前一个字素上；再往右一格就会多选一个字素。
         let stream = VimDocStream::new(&entities, cx);
-        if let Some(next) = stream.next_grapheme(range.end) {
-            self.vim_set_cursor(&entities, next, cx);
-        }
+        let focus = stream
+            .prev_grapheme(range.end)
+            .filter(|previous| {
+                (previous.block_index, previous.offset)
+                    >= (range.start.block_index, range.start.offset)
+            })
+            .unwrap_or(range.end);
+        self.vim_set_cursor(&entities, focus, cx);
         self.vim_refresh_visual_selection(cx);
         let _ = window;
     }
