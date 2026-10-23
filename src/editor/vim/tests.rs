@@ -1011,6 +1011,56 @@ async fn visual_line_shift_right_indents_each_selected_block(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn vim_search_highlights_hits_without_the_search_panel(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo\n\ntwo again");
+    cx.simulate_keystrokes("/");
+    cx.simulate_input("two");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    cx.run_until_parked();
+    let highlighted = editor.read_with(&*cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .filter(|entry| !entry.entity.read(cx).search_highlight_ranges.is_empty())
+            .count()
+    });
+    assert_eq!(
+        highlighted, 2,
+        "vim 的 / 要在正文里画出命中，不依赖搜索面板是否开着"
+    );
+}
+
+#[gpui::test]
+async fn nohl_clears_the_document_search_highlights(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo\n\ntwo again");
+    let highlighted = |editor: &Entity<Editor>, window: &VisualTestContext| {
+        editor.read_with(window, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .iter()
+                .filter(|entry| !entry.entity.read(cx).search_highlight_ranges.is_empty())
+                .count()
+        })
+    };
+    cx.simulate_keystrokes("/");
+    cx.simulate_input("two");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    cx.run_until_parked();
+    assert_eq!(highlighted(&editor, &cx), 2, "夹具：先要画出命中");
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("noh");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    cx.run_until_parked();
+    assert_eq!(highlighted(&editor, &cx), 0, ":noh 要清掉正文里的全部命中高亮");
+}
+
+
+#[gpui::test]
 async fn guu_lowercases_the_current_line(cx: &mut TestAppContext) {    let (editor, cx) = vim_editor(cx, "MiXeD");
     cx.simulate_keystrokes("g u u");
     assert_eq!(document_text(&editor, &cx), "mixed");

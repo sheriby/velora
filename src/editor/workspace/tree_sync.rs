@@ -11,9 +11,19 @@ impl Editor {
     /// 之后同样要看到高亮（此前跳转后无高亮）。
     pub(crate) fn sync_document_search_highlights(&mut self, cx: &mut Context<Self>) {
         let query = self.workspace.search_query.trim().to_string();
-        let active = self.workspace.is_open
-            && self.workspace.active_tab == WorkspaceTab::Search
-            && !query.is_empty();
+        // 命中高亮有两个入口：搜索面板（原有的）与 vim 的 `/`。vim 只写
+        // search_query / search_scope，不会把面板切到 Search，所以判据必须认它
+        // 自己的 hlsearch——否则 `/` 的命中根本不画，`:noh` 也只是翻一个没人读的标志。
+        let vim_shows_highlight = self.vim_enabled
+            && self.vim.hlsearch
+            && self
+                .vim
+                .last_search
+                .as_ref()
+                .is_some_and(|search| search.query.trim() == query);
+        let panel_shows_highlight =
+            self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Search;
+        let active = !query.is_empty() && (panel_shows_highlight || vim_shows_highlight);
         let key = SearchHighlightKey {
             identity: self.buffer.identity(),
             revision: self.buffer.revision(),
