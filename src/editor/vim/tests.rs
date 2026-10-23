@@ -3200,6 +3200,32 @@ async fn linewise_yank_of_adjacent_list_items_keeps_the_original_separator(
     );
 }
 
+#[gpui::test]
+async fn substitute_expands_the_whole_match_and_group_backreferences(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx) = vim_editor(cx, "abc");
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("s/a/A&/");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    assert_eq!(
+        document_text(&editor, &cx),
+        "Aabc",
+        "& 要展开成整个命中，而不是字面的 &"
+    );
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("s/(b)/x\\1/");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    assert_eq!(
+        document_text(&editor, &cx),
+        "Aaxbc",
+        "\\1 要展开成第一个分组，而不是只剩字面反斜杠"
+    );
+}
+
+
 
 
 

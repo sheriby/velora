@@ -523,8 +523,8 @@ impl Editor {
         else {
             return;
         };
-        // vim 的 \1 反向引用翻译成 Rust 的 ${1}。
-        let replacement = replacement.replace("\\1", "${1}").replace("\\2", "${2}").replace("\\0", "${0}");
+        // vim 的 & 与 \1..\9 展开成交换机位；反向引用交给 Rust 的 ${n} 写法。
+        let replacement = vim_replacement_to_expansion(replacement, delimiter);
 
         // 范围 → 缓冲区字节区间。
         let snapshot = self.capture_source_selection_snapshot(cx);
@@ -605,8 +605,46 @@ impl Editor {
 }
 
 /// 按分隔符切分，反斜杠转义的分隔符不算。
-fn split_escaped(text: &str, delimiter: char) -> Vec<&str> {
-    let mut parts = Vec::new();
+/// vim 的替换串 → Rust regex 的展开语法：`&` 是整个命中，`\1`..`\9` 是分组，
+/// `\&`、`\\`、`\{分隔符}` 是字面量，`\n` 是换行。
+///
+/// `\u`/`\U`/`\l`/`\L` 的大小写翻转不实现（regex crate 的 expand 没有这个能力），
+/// 原样交给展开器，不做猜测。
+fn vim_replacement_to_expansion(replacement: &str, delimiter: char) -> String {
+    let mut out = String::new();
+    let mut characters = replacement.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' => match characters.next() {
+                Some(digit) if digit.is_ascii_digit() => {
+                    out.push('$');
+                    out.push('{');
+                    out.push(digit);
+                    out.push('}');
+                }
+                Some('n') => out.push('\n'),
+                Some('&') => out.push('&'),
+                Some('\\') => out.push('\\'),
+                Some(other) if other == delimiter => out.push(other),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            },
+            '&' => {
+                out.push('$');
+                out.push('{');
+                out.push('0');
+                out.push('}');
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn split_escaped(text: &str, delimiter: char) -> Vec<&str> {    let mut parts = Vec::new();
     let mut start = 0usize;
     let mut escaped = false;
     for (index, ch) in text.char_indices() {
