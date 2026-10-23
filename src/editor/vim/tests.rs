@@ -2940,6 +2940,38 @@ async fn ctrl_r_in_insert_types_a_linewise_register_at_the_cursor(cx: &mut TestA
     );
 }
 
+#[gpui::test]
+async fn reading_mode_edit_commands_leave_text_and_registers_alone(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo");
+    editor.update(cx, |editor, cx| editor.toggle_reading_mode(cx));
+    redraw(cx);
+    cx.simulate_keystrokes("y y");
+    let register = editor.read_with(&*cx, |editor, cx| {
+        editor.vim.registers.read('"', cx, false).map(|content| content.text)
+    });
+    assert_eq!(
+        register.as_deref(),
+        Some("one\n"),
+        "夹具：只读下 yank 仍要能用"
+    );
+    cx.simulate_keystrokes("G d d");
+    cx.simulate_keystrokes("x");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["one", "two"],
+        "只读模式里编辑命令不该改正文"
+    );
+    let register = editor.read_with(&*cx, |editor, cx| {
+        editor.vim.registers.read('"', cx, false).map(|content| content.text)
+    });
+    assert_eq!(
+        register.as_deref(),
+        Some("one\n"),
+        "被拒绝的删除不该把正文写进寄存器与剪贴板"
+    );
+}
+
+
 
 
 

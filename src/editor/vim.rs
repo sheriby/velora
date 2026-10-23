@@ -1111,6 +1111,13 @@ impl Editor {
                 | VimAction::SwapCaseAtCursor
                 | VimAction::EnterInsert(_)
         );
+        // 只读（阅读模式）下编辑命令整体不执行：正文本来就被块级只读守卫拒掉，
+        // 但寄存器与系统剪贴板会被「删掉的内容」覆盖，光标和模式也照命令走，
+        // 用户以为删成了。yank 不在 is_change 里，只读下仍可复制。
+        if is_change && self.is_read_only() {
+            cx.notify();
+            return;
+        }
         // 可视粘贴的入口键（p/P）在普通模式下无法重放；视觉重放素材单独记录。
         let visual_paste = matches!(action, VimAction::Paste { .. })
             && matches!(self.vim.mode, VimMode::Visual(_));
