@@ -417,15 +417,26 @@ impl Block {
             return;
         }
 
-        if event.click_count >= 2 && !event.modifiers.shift {
-            // 双击数学块打开公式编辑器弹窗（用户要求：独立编辑窗口）；
-            // 其余块双击选词。
-            if self.kind() == BlockKind::MathBlock {
-                self.is_selecting = false;
-                cx.stop_propagation();
-                cx.emit(BlockEvent::RequestFormulaEditor);
-                return;
+        if event.click_count >= 2 && !event.modifiers.shift && self.kind() == BlockKind::MathBlock {
+            // 双击数学块打开公式编辑器弹窗（用户要求：独立编辑窗口），与模式无关。
+            self.is_selecting = false;
+            cx.stop_propagation();
+            cx.emit(BlockEvent::RequestFormulaEditor);
+            return;
+        }
+
+        // 普通/替换模式下鼠标只移动光标：选区归 vim（`v` 才是选词）。留下真实
+        // 选区会让块光标不画，进入插入后第一个字符还会替换整段。
+        if self.vim_mouse_moves_caret {
+            self.is_selecting = false;
+            self.move_to(offset, cx);
+            if !was_focused {
+                cx.emit(BlockEvent::RequestFocus);
             }
+            return;
+        }
+
+        if event.click_count >= 2 && !event.modifiers.shift {
             // 双击选词（用户要求）：选中所点的字词段。聚焦与不聚焦两个
             // 分支都要处理——第一次单击只聚焦，第二次（已聚焦）才成词选。
             self.is_selecting = true;

@@ -535,15 +535,17 @@ impl Editor {
     /// 广播（`sync_vim_block_carets`）与新建表格单元格共用这一处判据：
     /// 单元格实体在文档载入后才由运行时重建，默认值是可接受输入，必须
     /// 在创建时套用当前模式，不能指望之后某次广播补上。
-    pub(super) fn vim_caret_state(&self) -> (bool, bool) {
+    pub(super) fn vim_caret_state(&self) -> (bool, bool, bool) {
         (
             self.vim_enabled && self.vim.mode.uses_block_caret(),
             !self.vim_enabled || self.vim.mode == VimMode::Insert,
+            self.vim_enabled
+                && matches!(self.vim.mode, VimMode::Normal | VimMode::Replace),
         )
     }
 
     pub(super) fn sync_vim_block_carets(&mut self, cx: &mut Context<Self>) {
-        let (block_caret, accepts_text) = self.vim_caret_state();
+        let (block_caret, accepts_text, mouse_moves_caret) = self.vim_caret_state();
         let visible = self.document.visible_blocks().to_vec();
         let cells = self
             .table_cells
@@ -555,14 +557,19 @@ impl Editor {
             .map(|entry| &entry.entity)
             .chain(cells.iter());
         for entity in entities {
-            let (caret, accepts) = {
+            let (caret, accepts, mouse) = {
                 let block = entity.read(cx);
-                (block.vim_block_caret, block.vim_accepts_text_input)
+                (
+                    block.vim_block_caret,
+                    block.vim_accepts_text_input,
+                    block.vim_mouse_moves_caret,
+                )
             };
-            if caret != block_caret || accepts != accepts_text {
+            if caret != block_caret || accepts != accepts_text || mouse != mouse_moves_caret {
                 entity.update(cx, |block, cx| {
                     block.vim_block_caret = block_caret;
                     block.vim_accepts_text_input = accepts_text;
+                    block.vim_mouse_moves_caret = mouse_moves_caret;
                     cx.notify();
                 });
             }

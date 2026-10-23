@@ -154,6 +154,10 @@ pub struct Block {
     /// vim 普通/可视/替换模式不接受系统文本输入：否则 macOS 会把可打印字符
     /// 送进输入法通道，按键拦截器拿不到字母。插入模式与关闭 vim 时为真。
     pub(crate) vim_accepts_text_input: bool,
+    /// 普通/替换模式下鼠标只移动光标：选区归 vim 管（`v` 才产生选区）。
+    /// 双击留下的真实选区会让块光标不画，且进入插入后第一个字符会替换整段。
+    /// 可视模式为假，鼠标仍可扩选。
+    pub(crate) vim_mouse_moves_caret: bool,
     /// Content-local byte ranges highlighted as document search matches
     /// (roadmap B2). Owned by the editor's search panel state.
     pub(crate) search_highlight_ranges: Vec<Range<usize>>,
@@ -342,6 +346,7 @@ impl Block {
             selected_range: 0..0,
             vim_block_caret: false,
             vim_accepts_text_input: true,
+            vim_mouse_moves_caret: false,
             search_highlight_ranges: Vec::new(),
             search_active_range: None,
             folded: false,

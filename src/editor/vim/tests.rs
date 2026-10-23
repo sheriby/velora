@@ -2971,6 +2971,76 @@ async fn reading_mode_edit_commands_leave_text_and_registers_alone(cx: &mut Test
     );
 }
 
+#[gpui::test]
+async fn normal_mode_double_click_only_moves_the_caret(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    let center = editor.read_with(&*cx, |editor, cx| {
+        editor.document.visible_blocks()[0]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("段落该有布局边界")
+            .center()
+    });
+    cx.simulate_event(gpui::MouseDownEvent {
+        position: center,
+        button: gpui::MouseButton::Left,
+        modifiers: gpui::Modifiers::none(),
+        click_count: 2,
+        first_mouse: false,
+    });
+    cx.simulate_mouse_up(center, gpui::MouseButton::Left, gpui::Modifiers::none());
+    redraw(cx);
+    editor.read_with(&*cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.read(cx);
+        assert!(
+            block.selected_range.is_empty(),
+            "普通模式双击不该留下真实选区：{:?}",
+            block.selected_range
+        );
+    });
+    cx.simulate_keystrokes("A");
+    cx.simulate_input("!");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "alpha beta!",
+        "双击之后的输入不该替换整段"
+    );
+}
+
+#[gpui::test]
+async fn insert_mode_double_click_still_selects_the_word(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    cx.simulate_keystrokes("i");
+    let center = editor.read_with(&*cx, |editor, cx| {
+        editor.document.visible_blocks()[0]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("段落该有布局边界")
+            .center()
+    });
+    cx.simulate_event(gpui::MouseDownEvent {
+        position: center,
+        button: gpui::MouseButton::Left,
+        modifiers: gpui::Modifiers::none(),
+        click_count: 2,
+        first_mouse: false,
+    });
+    cx.simulate_mouse_up(center, gpui::MouseButton::Left, gpui::Modifiers::none());
+    redraw(cx);
+    editor.read_with(&*cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.read(cx);
+        assert!(
+            !block.selected_range.is_empty(),
+            "插入模式里双击仍要选词：{:?}",
+            block.selected_range
+        );
+    });
+}
+
+
 
 
 

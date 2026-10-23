@@ -648,10 +648,11 @@ impl Editor {
     /// 重建（打开文档、撤销、改结构），新格子必须在创建时套用当前模式；
     /// 等下一次模式切换再广播，第一次点击进格子时字符就已经漏进去了。
     fn adopt_vim_caret_state(&self, cell: &Entity<Block>, cx: &mut Context<Self>) {
-        let (block_caret, accepts_text) = self.vim_caret_state();
+        let (block_caret, accepts_text, mouse_moves_caret) = self.vim_caret_state();
         cell.update(cx, |block, _cx| {
             block.vim_block_caret = block_caret;
             block.vim_accepts_text_input = accepts_text;
+            block.vim_mouse_moves_caret = mouse_moves_caret;
         });
     }
 
