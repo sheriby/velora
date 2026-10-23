@@ -67,6 +67,10 @@ pub(crate) struct SavedSession {
     pub running: bool,
     #[serde(default)]
     pub target: Option<TargetSnapshot>,
+    /// 这条会话诞生时所在的文档。还原历史要先回到它，否则会话内容会静默灌进
+    /// 用户当前正在看的另一篇文档。旧文件没有这个字段，为 None 时保持原地还原。
+    #[serde(default)]
+    pub origin_document: Option<PathBuf>,
     #[serde(default)]
     pub endpoint_id: String,
     #[serde(default)]
@@ -112,6 +116,7 @@ impl SavedSession {
             interrupted: false,
             running: false,
             target: None,
+            origin_document: None,
             endpoint_id: String::new(),
             bindings: Default::default(),
             references: Vec::new(),

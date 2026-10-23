@@ -3441,6 +3441,107 @@ fn ai_history_restore_keeps_the_float_surface(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn ai_history_restore_returns_to_the_session_owning_document(cx: &mut TestAppContext) {
+    let (editor, cx, directory, first, second) = tab_review_fixture(cx);
+    let path = editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let origin = editor
+            .ai_session
+            .as_ref()
+            .and_then(|session| session.saved.origin_document.clone());
+        assert_eq!(
+            origin.as_deref(),
+            Some(first.as_path()),
+            "会话要记下诞生时所在的那篇文档"
+        );
+        if let Some(session) = editor.ai_session.as_mut() {
+            session
+                .saved
+                .messages
+                .push(crate::ai::session::ChatMessage {
+                    role: "user".into(),
+                    text: "first 的提问".into(),
+                    thinking: "".into(),
+                });
+        }
+        editor.persist_ai_session(cx);
+        editor.ai_session.as_ref().unwrap().saved.path().unwrap()
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(second.clone(), window, cx);
+    });
+    draw(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.restore_ai_history(path.clone(), window, cx);
+    });
+    cx.run_until_parked();
+    draw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.active_document_path(),
+            Some(&first),
+            "还原历史要带回这条会话所属的文档，不能灌进当前这篇"
+        );
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(
+            session.saved.messages.last().unwrap().text.to_string(),
+            "first 的提问"
+        );
+        assert_eq!(session.error, None, "{:?}", session.error);
+    });
+    std::fs::remove_dir_all(directory).ok();
+}
+
+#[gpui::test]
+fn ai_history_restore_refuses_to_overwrite_the_current_document(cx: &mut TestAppContext) {
+    let (editor, cx, directory, first, _second) = tab_review_fixture(cx);
+    let path = editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        if let Some(session) = editor.ai_session.as_mut() {
+            // 伪造成「原文档已经不在了」的会话：同工作区，只是路径被删。
+            session.saved.origin_document = Some(directory.join("gone.md"));
+            session
+                .saved
+                .messages
+                .push(crate::ai::session::ChatMessage {
+                    role: "user".into(),
+                    text: "别篇的消息".into(),
+                    thinking: "".into(),
+                });
+        }
+        editor.persist_ai_session(cx);
+        let path = editor.ai_session.as_ref().unwrap().saved.path().unwrap();
+        // 另起一条空白任务：还原失败时前台必须还是这条空会话。
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        path
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.restore_ai_history(path.clone(), window, cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert!(
+            session.saved.messages.is_empty(),
+            "原文档已经不在时，不能把会话内容灌进当前这篇：{:?}",
+            session.saved.messages
+        );
+        assert_eq!(
+            session.saved.origin_document.as_deref(),
+            Some(first.as_path()),
+            "当前会话的所属文档不能被还原过程改写"
+        );
+        assert!(
+            session.error.as_deref().unwrap_or_default().contains("已不在"),
+            "要明确报错而不是静默失败：{:?}",
+            session.error
+        );
+    });
+    std::fs::remove_file(path).ok();
+    std::fs::remove_dir_all(directory).ok();
+}
+
+#[gpui::test]
 fn ai_panel_actions_are_buttons_and_can_be_closed_from_the_keyboard(cx: &mut TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     use gpui::AppContext as _;
@@ -5709,7 +5810,7 @@ fn ai_history_groups_native_rows_and_keeps_deletion_separate_from_restore(cx: &m
                 .unwrap()
                 .history_files
                 .iter()
-                .find(|(_, _, kind, _)| *kind == SessionKind::Conversation)
+                .find(|(_, _, kind, _, _)| *kind == SessionKind::Conversation)
                 .unwrap()
                 .0
                 .clone()
@@ -6312,7 +6413,7 @@ fn ai_sidebar_history_restores_a_conversation_and_keeps_the_composer(cx: &mut Te
                 .unwrap()
                 .history_files
                 .iter()
-                .any(|(entry, title, _, _)| entry == &path && title.contains("上周的讨论")),
+                .any(|(entry, title, _, _, _)| entry == &path && title.contains("上周的讨论")),
             "历史列表必须包含已保存的对话：{:?}",
             editor.ai_session.as_ref().unwrap().history_files
         );

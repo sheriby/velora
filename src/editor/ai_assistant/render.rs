@@ -534,10 +534,10 @@ impl Editor {
                 } else {
                     SessionKind::QuickCommand
                 };
-                if let Some((path, title, _, pinned)) = session
+                if let Some((path, title, _, pinned, _)) = session
                     .history_files
                     .iter()
-                    .filter(|(_, _, entry, _)| *entry == kind)
+                    .filter(|(_, _, entry, _, _)| *entry == kind)
                     .nth(index.row)
                 {
                     let pinned = *pinned;
@@ -1231,10 +1231,20 @@ impl Editor {
             session
                 .history_files
                 .iter()
-                .filter(|(_, _, entry, _)| *entry == kind)
-                .map(|(path, title, _, pinned)| {
+                .filter(|(_, _, entry, _, _)| *entry == kind)
+                .map(|(path, title, _, pinned, origin)| {
                     let prefix = if *pinned { "★ " } else { "" };
-                    (path.clone(), format!("{prefix}{title}"))
+                    // 带上所属文档名：历史列表是整个工作区共用的，不写出来就分不出
+                    // 哪条是哪篇的，点开才会知道它跳去了另一篇文档。
+                    let document = origin
+                        .as_ref()
+                        .and_then(|origin| origin.file_name())
+                        .map(|name| name.to_string_lossy().into_owned());
+                    let label = match document {
+                        Some(name) => format!("{prefix}{title} · {name}"),
+                        None => format!("{prefix}{title}"),
+                    };
+                    (path.clone(), label)
                 })
                 .collect::<Vec<_>>()
         });

@@ -30,6 +30,17 @@ impl Editor {
         })
     }
 
+    /// 这篇文档现在是否开着标签（含当前这篇）。未命名文档的伪路径不在盘上，
+    /// 只能靠这里认，否则会被当成「原文档已不在」。
+    pub(crate) fn is_workspace_document_open(&self, path: &Path) -> bool {
+        self.active_document_path().is_some_and(|active| active == path)
+            || self
+                .workspace
+                .open_documents
+                .iter()
+                .any(|tab| tab.path == path)
+    }
+
     pub(crate) fn finish_pending_tab_close(
         &mut self,
         window: &mut Window,

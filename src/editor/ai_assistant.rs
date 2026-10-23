@@ -91,7 +91,7 @@ pub(super) struct AiSession {
     review_navigation: Option<uuid::Uuid>,
     source_list: Entity<gpui_kit::component::list::ListState<source_list::SourceList>>,
     source_focus_pending: bool,
-    history_files: Vec<(PathBuf, String, SessionKind, bool)>,
+    history_files: Vec<(PathBuf, String, SessionKind, bool, Option<PathBuf>)>,
     history_total_bytes: u64,
     history_rename: Option<(PathBuf, Entity<InputState>)>,
     history_list: Entity<gpui_kit::component::command::CommandState>,
@@ -1025,6 +1025,7 @@ impl Editor {
                     },
                     session.saved.kind,
                     session.saved.pinned,
+                    session.saved.origin_document.clone(),
                 ))
             })
             .collect::<Vec<_>>();
@@ -1052,40 +1053,45 @@ impl Editor {
                         .ok(),
                 )
             });
-            files.retain(|path| !retained.iter().any(|(retained, _, _, _)| retained == path));
+            files.retain(|path| {
+                !retained
+                    .iter()
+                    .any(|(retained, _, _, _, _)| retained == path)
+            });
             files.truncate(20);
             let mut summaries = retained;
             for path in files {
-                let (title, kind, pinned) = match SavedSession::load_at(&path, root.as_deref()) {
-                    Ok(saved) => (
-                        saved
-                            .title
-                            .clone()
-                            .filter(|title| !title.trim().is_empty())
-                            .or_else(|| {
-                                saved
-                                    .messages
-                                    .iter()
-                                    .find(|message| message.role == "user")
-                                    .map(|message| message.text.chars().take(60).collect::<String>())
-                            })
-                            .filter(|title| !title.is_empty())
-                            .unwrap_or_else(|| saved.id.clone()),
-                        saved.kind,
-                        saved.pinned,
-                    ),
-                    Err(error) => (
-                        format!(
-                            "{} · {error}",
-                            path.file_stem().unwrap_or_default().to_string_lossy()
+                let (title, kind, pinned, origin) =
+                    match SavedSession::load_at(&path, root.as_deref()) {
+                        Ok(saved) => (
+                            saved
+                                .title
+                                .clone()
+                                .filter(|title| !title.trim().is_empty())
+                                .or_else(|| {
+                                    saved.messages.iter().find(|message| message.role == "user").map(
+                                        |message| message.text.chars().take(60).collect::<String>(),
+                                    )
+                                })
+                                .filter(|title| !title.is_empty())
+                                .unwrap_or_else(|| saved.id.clone()),
+                            saved.kind,
+                            saved.pinned,
+                            saved.origin_document.clone(),
                         ),
-                        SessionKind::Conversation,
-                        false,
-                    ),
-                };
-                summaries.push((path, title, kind, pinned));
+                        Err(error) => (
+                            format!(
+                                "{} · {error}",
+                                path.file_stem().unwrap_or_default().to_string_lossy()
+                            ),
+                            SessionKind::Conversation,
+                            false,
+                            None,
+                        ),
+                    };
+                summaries.push((path, title, kind, pinned, origin));
             }
-            summaries.sort_by_key(|(path, _, _, pinned)| {
+            summaries.sort_by_key(|(path, _, _, pinned, _)| {
                 (
                     !pinned,
                     std::cmp::Reverse(
@@ -1120,6 +1126,30 @@ impl Editor {
         cx.notify();
     }
 
+    /// 还原历史先把面板带回这条会话所属的文档。既不是当前篇、也没开着标签、
+    /// 盘上又找不到时返回错误：把内容静默灌进用户正在看的另一篇，比不动更糟。
+    fn ai_history_goto_document(
+        &mut self,
+        origin: Option<&PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let Some(origin) = origin else {
+            return Ok(());
+        };
+        if self.active_document_path() == Some(origin) {
+            return Ok(());
+        }
+        if !self.is_workspace_document_open(origin) && !origin.exists() {
+            return Err(format!(
+                "原对话所在的「{}」已不在，未改动当前文档",
+                origin.display()
+            ));
+        }
+        self.open_workspace_file(origin.clone(), window, cx);
+        Ok(())
+    }
+
     fn restore_ai_history(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         // 还原历史只换内容，不换表面：在浮窗里点历史记录不该把面板换成侧栏。
         // 没有前台会话时沿用被还原会话自己的布局。
@@ -1143,10 +1173,21 @@ impl Editor {
                             })
                         })
                     });
-            if let Some(destination) = destination {
-                self.open_workspace_file(destination, window, cx);
+            let origin = destination.or_else(|| {
+                self.ai_task_sessions
+                    .get(index)
+                    .and_then(|session| session.saved.origin_document.clone())
+            });
+            if let Err(message) = self.ai_history_goto_document(origin.as_ref(), window, cx) {
+                if let Some(session) = self.ai_session.as_mut() {
+                    session.error = Some(message);
+                }
+                cx.notify();
+                return;
             }
+            let document = self.ai_review_navigation_origin(cx);
             let mut session = self.ai_task_sessions.remove(index);
+            session.document = document;
             session.visible = true;
             if let Some(expanded) = current_expanded {
                 session.expanded = expanded;
@@ -1176,37 +1217,61 @@ impl Editor {
                     // 磁盘加载在途时会话可能已被新任务暂存；暂存会话不递增
                     // generation，按 id 回退搜索会命中它并把待审状态整体替换掉。
                     // 只认仍在前台的同一会话，否则丢弃这次加载。
-                    if let Some(session) = editor.ai_session.as_mut().filter(|session| {
-                        session.saved.id == id && session.generation == generation
-                    }) {
-                        match loaded {
-                            Ok(saved) => {
-                                session.saved = saved;
-                                session.visible = true;
-                                session.collapsed = false;
-                                session.panel_navigation = false;
-                                session.command = session
-                                    .saved
-                                    .prompt_profile
-                                    .as_ref()
-                                    .map_or(AiCommand::Ask, |profile| profile.command);
-                                let draft = session.saved.draft.clone();
-                                session
-                                    .input
-                                    .update(cx, |input, cx| input.set_value(draft, window, cx));
-                                session.mode = PanelMode::Task;
-                                session.error = None;
-                                session.stream_index = None;
-                                session.conversation = None;
-                                session.review = None;
-                                session.review_navigation = None;
-                                session.review_dirty = true;
-                            }
-                            Err(error) => session.error = Some(error.to_string()),
-                        }
-                        editor.refresh_ai_preview(cx);
-                        cx.notify();
+                    let foreground_is_the_restoring_one = editor
+                        .ai_session
+                        .as_ref()
+                        .is_some_and(|session| session.saved.id == id && session.generation == generation);
+                    if !foreground_is_the_restoring_one {
+                        return;
                     }
+                    let saved = match loaded {
+                        Ok(saved) => saved,
+                        Err(error) => {
+                            if let Some(session) = editor.ai_session.as_mut() {
+                                session.error = Some(error.to_string());
+                            }
+                            cx.notify();
+                            return;
+                        }
+                    };
+                    let origin = saved
+                        .origin_document
+                        .clone()
+                        .or_else(|| saved.target.as_ref().and_then(|target| target.path.clone()));
+                    if let Err(message) = editor.ai_history_goto_document(origin.as_ref(), window, cx)
+                    {
+                        if let Some(session) = editor.ai_session.as_mut() {
+                            session.error = Some(message);
+                        }
+                        cx.notify();
+                        return;
+                    }
+                    let document = editor.ai_review_navigation_origin(cx);
+                    if let Some(session) = editor.ai_session.as_mut() {
+                        session.saved = saved;
+                        session.document = document;
+                        session.visible = true;
+                        session.collapsed = false;
+                        session.panel_navigation = false;
+                        session.command = session
+                            .saved
+                            .prompt_profile
+                            .as_ref()
+                            .map_or(AiCommand::Ask, |profile| profile.command);
+                        let draft = session.saved.draft.clone();
+                        session
+                            .input
+                            .update(cx, |input, cx| input.set_value(draft, window, cx));
+                        session.mode = PanelMode::Task;
+                        session.error = None;
+                        session.stream_index = None;
+                        session.conversation = None;
+                        session.review = None;
+                        session.review_navigation = None;
+                        session.review_dirty = true;
+                    }
+                    editor.refresh_ai_preview(cx);
+                    cx.notify();
                 })
             {
                 eprintln!("恢复 AI 会话失败：{error}");
@@ -1457,6 +1522,7 @@ impl Editor {
         let settings = loaded.unwrap_or_default();
         workspace.excluded_paths = settings.excluded_paths.clone();
         let mut saved = SavedSession::new(workspace);
+        saved.origin_document = self.active_document_path().cloned();
         saved.kind = if command == AiCommand::Ask {
             SessionKind::Conversation
         } else {
