@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Velora Theme Editor</title>
+  <link rel="stylesheet" href="theme-editor.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div class="brand-text">
+        <strong>Velora Theme Editor</strong>
+        <span data-i18n="subtitle">在浏览器里实时调整主题变量，导出后导入 Velora</span>
+      </div>
+    </div>
+
+    <div class="header-fields">
+      <label class="field">
+        <span data-i18n="baseTheme">基底主题</span>
+        <select id="base-theme"></select>
+      </label>
+      <label class="field">
+        <span data-i18n="themeName">主题名称</span>
+        <input id="theme-name" type="text" maxlength="80" spellcheck="false">
+      </label>
+      <label class="field">
+        <span data-i18n="creator">作者</span>
+        <input id="theme-creator" type="text" maxlength="80" spellcheck="false">
+      </label>
+    </div>
+
+    <div class="header-actions">
+      <button id="language-toggle" class="button ghost" type="button" title="Switch language">EN</button>
+      <button id="import-button" class="button" type="button" data-i18n="importTheme">导入主题</button>
+      <input id="import-input" type="file" accept=".json,application/json" hidden>
+      <button id="export-button" class="button primary" type="button" data-i18n="exportTheme">导出主题</button>
+    </div>
+  </header>
+
+  <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+  <main class="workspace">
+    <section class="token-panel" aria-label="Theme tokens">
+      <div class="panel-toolbar">
+        <input id="token-search" class="search" type="search" spellcheck="false" data-i18n-placeholder="searchPlaceholder" placeholder="搜索 token、说明或分组">
+        <div class="panel-toolbar-actions">
+          <button id="expand-groups" class="button ghost small" type="button" data-i18n="expandAll">展开全部</button>
+          <button id="collapse-groups" class="button ghost small" type="button" data-i18n="collapseAll">折叠全部</button>
+          <button id="reset-all" class="button ghost small danger-text" type="button" data-i18n="resetAll">全部重置</button>
+        </div>
+      </div>
+      <div id="token-groups" class="token-groups"></div>
+      <div class="panel-footer">
+        <span id="token-count" class="muted"></span>
+        <span id="modified-count" class="muted"></span>
+      </div>
+    </section>
+
+    <section class="preview-panel" aria-label="Preview">
+      <div class="preview-toolbar">
+        <div class="tabs" role="tablist">
+          <button id="tab-document" class="tab selected" type="button" role="tab" aria-selected="true" data-i18n="documentTab">文档</button>
+          <button id="tab-interface" class="tab" type="button" role="tab" aria-selected="false" data-i18n="interfaceTab">界面</button>
+        </div>
+        <span class="muted preview-hint" data-i18n="previewHint">预览是模拟渲染；少数视口相关尺寸主要影响真实应用</span>
+      </div>
+
+      <div id="panel-document" class="preview-page" role="tabpanel">
+        <div class="preview-surface">
+          <div class="editor-canvas">
+            <div class="editor-column">
+              <div class="doc-block heading heading-1">
+                <span class="markdown-marker"># </span>Velora 主题预览
+              </div>
+              <div class="doc-block heading heading-2">在浏览器里调整颜色与留白</div>
+              <div class="doc-block heading heading-3">三级标题</div>
+              <div class="doc-block heading heading-4">四级标题</div>
+              <div class="doc-block heading heading-5">五级标题</div>
+              <div class="doc-block heading heading-6">六级标题</div>
+
+              <div class="doc-block paragraph">
+                这是一段正文，包含 <strong>加粗</strong>、<a href="#" onclick="return false">链接文字</a>、
+                <code class="inline-code">行内代码</code> 与一个<mark class="search-hit">搜索命中</mark>。
+                <mark class="search-hit active">当前命中</mark>
+              </div>
+
+              <div class="doc-block editor-line current-line">
+                <span class="selection">被选中的文字</span><span class="caret"></span>
+                <span class="matching-bracket">(</span>括号匹配<span class="matching-bracket">)</span>
+              </div>
+
+              <blockquote class="doc-block quote">
+                引用块会读取引用文字色、左边框颜色与宽度。
+              </blockquote>
+
+              <div class="doc-block callout callout-note">
+                <div class="callout-header"><span class="callout-icon">i</span><strong>Note</strong></div>
+                <div>提示块 Note 的背景与左边框。</div>
+              </div>
+              <div class="doc-block callout callout-tip">
+                <div class="callout-header"><span class="callout-icon">✦</span><strong>Tip</strong></div>
+                <div>提示块 Tip 的背景与左边框。</div>
+              </div>
+              <div class="doc-block callout callout-important">
+                <div class="callout-header"><span class="callout-icon">!</span><strong>Important</strong></div>
+                <div>提示块 Important 的背景与左边框。</div>
+              </div>
+              <div class="doc-block callout callout-warning">
+                <div class="callout-header"><span class="callout-icon">△</span><strong>Warning</strong></div>
+                <div>提示块 Warning 的背景与左边框。</div>
+              </div>
+              <div class="doc-block callout callout-caution">
+                <div class="callout-header"><span class="callout-icon">×</span><strong>Caution</strong></div>
+                <div>提示块 Caution 的背景与左边框。</div>
+              </div>
+
+              <div class="doc-block task-list">
+                <div class="task-row"><span class="task-checkbox checked">✓</span><span class="task-done">已完成的任务</span></div>
+                <div class="task-row"><span class="task-checkbox"></span><span>待完成的任务</span></div>
+              </div>
+
+              <div class="doc-block list-block">
+                <div class="list-row"><span class="list-marker">1.</span><span>有序列表第一项</span></div>
+                <div class="list-row"><span class="list-marker">2.</span><span>有序列表第二项</span></div>
+                <div class="list-row nested"><span class="list-marker">•</span><span>嵌套列表项使用 nested_block_indent</span></div>
+                <div class="list-row"><span class="list-marker">•</span><span>无序列表项</span></div>
+              </div>
+
+              <pre class="doc-block code-block"><span class="code-language-input">rust</span><code><span class="syn-comment">// 语法高亮颜色</span>
+<span class="syn-keyword">fn</span> <span class="syn-function">main</span>() {
+    <span class="syn-keyword">let</span> <span class="syn-variable">answer</span>: <span class="syn-type">u32</span> = <span class="syn-number">42</span>;
+    <span class="syn-function">println!</span>(<span class="syn-string">"hello, velora"</span>);
+}</code></pre>
+
+              <div class="doc-block source-mode-block">
+                <div class="source-line"><span class="md-marker"># </span><span class="md-heading1">一级</span></div>
+                <div class="source-line"><span class="md-marker">## </span><span class="md-heading2">二级</span></div>
+                <div class="source-line"><span class="md-marker">### </span><span class="md-heading3">三级</span></div>
+                <div class="source-line"><span class="md-marker">#### </span><span class="md-heading4">四级</span></div>
+                <div class="source-line"><span class="md-marker">##### </span><span class="md-heading5">五级</span></div>
+                <div class="source-line"><span class="md-marker">###### </span><span class="md-heading6">六级</span></div>
+                <div class="source-line"><span class="md-marker">- </span><span class="md-strong">**强调**</span> <span class="md-code">`代码`</span></div>
+                <div class="source-line"><span class="md-link-text">[链接文字]</span><span class="md-marker">(</span><span class="md-link-url">https://example.com</span><span class="md-marker">)</span></div>
+                <div class="source-line"><span class="md-label">#标签</span> <span class="md-marker">&gt; 引用</span> <span class="md-marker">---</span></div>
+              </div>
+
+              <div class="doc-block comment-block">注释块背景（comment_bg）</div>
+
+              <div class="doc-block table-wrap">
+                <table class="preview-table">
+                  <thead><tr><th>列一</th><th>列二</th><th class="active-cell">活动单元格</th></tr></thead>
+                  <tbody>
+                    <tr><td>正文</td><td class="axis-preview">行预览</td><td>内容</td></tr>
+                    <tr><td class="axis-selected">列选中</td><td>内容</td><td>内容</td></tr>
+                  </tbody>
+                </table>
+                <div class="table-append-row"><span class="table-append-button">+</span></div>
+                <div class="table-append-column"><span class="table-append-button">+</span></div>
+              </div>
+
+              <div class="doc-block image-block">
+                <div class="image-placeholder"><span>图片占位</span></div>
+                <div class="image-caption">图注文字</div>
+              </div>
+
+              <div class="doc-block footnote">
+                <span class="footnote-badge">1</span>
+                脚注内容 <span class="footnote-backref">↩</span>
+              </div>
+
+              <div class="doc-block separator"></div>
+
+              <div class="doc-block empty-block"><span id="empty-placeholder"></span><span class="caret"></span></div>
+            </div>
+
+            <div class="fake-scrollbar"><div class="fake-scrollbar-thumb"></div></div>
+            <div class="view-mode-toggle">渲染</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="panel-interface" class="preview-page" role="tabpanel" hidden>
+        <div class="preview-surface interface-surface">
+          <div class="interface-frame">
+            <div class="menu-demo">
+              <div class="menu-bar">
+                <span class="menu-bar-item">文件</span>
+                <span class="menu-bar-item active">编辑</span>
+                <span class="menu-bar-item">主题</span>
+              </div>
+              <div class="menu-panel">
+                <div class="menu-item">撤销 <span class="menu-shortcut">⌘Z</span></div>
+                <div class="menu-item active">重做 <span class="menu-shortcut">⇧⌘Z</span></div>
+                <div class="menu-separator"></div>
+                <div class="menu-item">复制 <span class="menu-shortcut">⌘C</span></div>
+              </div>
+              <div class="context-menu-panel">
+                <div class="menu-item">插入表格</div>
+                <div class="menu-item">插入图片</div>
+                <div class="menu-item">添加脚注</div>
+              </div>
+            </div>
+
+            <div class="status-bar">
+              <span class="status-item">已保存</span>
+              <span class="status-item dim">1,204 字</span>
+              <span class="status-item dim">Ln 12, Col 8</span>
+              <span class="status-item hovered">Markdown</span>
+            </div>
+
+            <div class="dialog-scene">
+              <div class="dialog-backdrop">
+                <div class="dialog">
+                  <div class="dialog-title">保存修改？</div>
+                  <div class="dialog-body">这个对话框使用主题里的对话框颜色与按钮尺寸。</div>
+                  <div class="dialog-muted">未保存的修改会丢失。</div>
+                  <div class="dialog-actions">
+                    <button class="dialog-button secondary" type="button">取消</button>
+                    <button class="dialog-button danger" type="button">放弃</button>
+                    <button class="dialog-button primary" type="button">保存</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="table-insert-demo">
+              <div class="table-insert-title">插入表格</div>
+              <div class="table-insert-row">
+                <span>行</span>
+                <button class="stepper-button" type="button">−</button>
+                <span class="stepper-value">3</span>
+                <button class="stepper-button" type="button">+</button>
+              </div>
+              <div class="table-insert-row">
+                <span>列</span>
+                <button class="stepper-button" type="button">−</button>
+                <span class="stepper-value">4</span>
+                <button class="stepper-button" type="button">+</button>
+              </div>
+            </div>
+
+            <div class="folder-demo">
+              <span class="folder-icon">▰</span>
+              <span>工作区文件</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="tokens.js"></script>
+  <script src="theme-editor.js"></script>
+</body>
+</html>

@@ -53,6 +53,11 @@ jobs:
         # 前者下面单独跑，后者 CI 永不跑。
         run: cargo test --locked --bin velora
 
+      - name: Test theme editor
+        # 网页工具的纯函数用 Node 自带 test runner 跑；tokens.js 与 Theme 结构的
+        # 一致性由上面的 theme_editor_* 那组 Rust 测试守。
+        run: node --test tools/theme-editor/theme-editor.test.cjs
+
       - name: Generate perf fixtures
         # 夹具不进版本库（见 .gitignore），CI 检出后现场生成：不生成的话 10 MiB /
         # 1 MiB 那两条慢用例会自跳（`open_document` 找不到夹具就 return）。CI 不看护

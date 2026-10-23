@@ -7,6 +7,8 @@
 
 > 一致性由测试 `theme_token_documentation_covers_every_token` 守护：主题结构体新增字段而本文档未同步时测试失败。
 
+> 想快速试配色？`tools/theme-editor/index.html` 是仓库内独立的网页主题编辑器，可用浏览器直接打开，基于六个内置主题实时调整全部 token 并导出完整主题 JSON，再通过「主题 → 添加主题配置…」导入 Velora。用法见 `tools/theme-editor/README.md`。
+
 ## colors（颜色，值形如 `#RRGGBBAA` 或主题 JSON 中的颜色对象）
 
 | token | 类型 | 含义 |

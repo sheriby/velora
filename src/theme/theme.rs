@@ -594,4 +594,7 @@ mod manager_parts;
 mod presets;
 
 #[cfg(test)]
+mod theme_editor_tests;
+
+#[cfg(test)]
 mod tests;
