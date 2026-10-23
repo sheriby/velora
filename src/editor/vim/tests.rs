@@ -3072,8 +3072,7 @@ async fn search_jump_is_recorded_in_the_jumplist(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn cmdline_closes_when_focus_leaves_it(cx: &mut TestAppContext) {
-    let (editor, cx) = vim_editor(cx, "alpha beta");
+async fn cmdline_closes_when_focus_leaves_it(cx: &mut TestAppContext) {    let (editor, cx) = vim_editor(cx, "alpha beta");
     crate::editor::tests::common::activate_visual_window(cx);
     cx.simulate_keystrokes(":");
     redraw(cx);
@@ -3096,6 +3095,38 @@ async fn cmdline_closes_when_focus_leaves_it(cx: &mut TestAppContext) {
         "点了正文之后冒号行要收起，不再挂在底部吃键"
     );
 }
+
+// ---- 字素簇步进 ----
+
+#[gpui::test]
+async fn x_deletes_a_whole_zwj_family_cluster(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}x");
+    cx.simulate_keystrokes("x");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "x",
+        "x 要删掉整个 ZWJ 家族簇，不能只切掉一个 code point"
+    );
+}
+
+#[gpui::test]
+async fn l_and_h_step_over_combining_marks_as_one_grapheme(cx: &mut TestAppContext) {
+    // "e\u{0301}" 是一个字素簇（e + 组合尖音符）：l 一步跨过整簇。
+    let (editor, cx) = vim_editor(cx, "e\u{0301}abc");
+    cx.simulate_keystrokes("l");
+    assert_eq!(
+        first_block_caret(&editor, &cx),
+        3,
+        "l 要停在组合字素之后的 a 上（e 与组合符共 3 字节）"
+    );
+    cx.simulate_keystrokes("h");
+    assert_eq!(
+        first_block_caret(&editor, &cx),
+        0,
+        "h 要退回组合字素的起点，不是停在组合符中间"
+    );
+}
+
 
 
 

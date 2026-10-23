@@ -471,27 +471,40 @@ impl<'a> VimDocStream<'a> {
 }
 
 /// 字素工具：起点处字素的后继起点（越界返回 None）。
+///
+/// 必须按字素簇而不是字符边界步进：`👨‍👩‍👧` 是 6 个 code point 用 ZWJ 连成的
+/// 一个簇，按 char 走会把一个人删成半截；`e\u{0301}` 同理。
 pub(super) fn next_grapheme_start(text: &str, offset: usize) -> Option<usize> {
-    let mut boundary = offset;
-    while boundary < text.len() {
-        boundary += 1;
-        if text.is_char_boundary(boundary) {
-            return Some(boundary);
-        }
+    use unicode_segmentation::UnicodeSegmentation;
+    let mut start = offset.min(text.len());
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
     }
-    None
+    let mut clusters = text[start..].grapheme_indices(true);
+    clusters.next()?;
+    // 与按字符步进的老口径同一约定：最后一个字素之后是「文本末尾」，只有 offset
+    // 已在末尾时才返回 None；调用方靠这个区分「块内末字」与「无后继」。
+    Some(clusters.next().map_or(text.len(), |(index, _)| start + index))
 }
 
 /// 起点处字素的前驱起点。
 pub(super) fn prev_grapheme_start(text: &str, offset: usize) -> Option<usize> {
-    let mut boundary = offset.min(text.len());
-    while boundary > 0 {
-        boundary -= 1;
-        if text.is_char_boundary(boundary) {
-            return Some(boundary);
-        }
+    use unicode_segmentation::UnicodeSegmentation;
+    let end = offset.min(text.len());
+    if end == 0 {
+        return None;
     }
-    None
+    // 簇最长也就几十字节（ZWJ 家庭、区域指示符成对）：回退一个窗口，再正向切到
+    // 窗口内最后一个簇的起点——那正是 offset 之前（或含 offset）的那个字素。
+    let mut window = end.saturating_sub(128);
+    while window < end && !text.is_char_boundary(window) {
+        window += 1;
+    }
+    let mut start = None;
+    for (index, _) in text[window..end].grapheme_indices(true) {
+        start = Some(window + index);
+    }
+    start
 }
 
 impl Editor {
