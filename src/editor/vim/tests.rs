@@ -3071,6 +3071,33 @@ async fn search_jump_is_recorded_in_the_jumplist(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn cmdline_closes_when_focus_leaves_it(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "alpha beta");
+    crate::editor::tests::common::activate_visual_window(cx);
+    cx.simulate_keystrokes(":");
+    redraw(cx);
+    assert!(
+        editor.read_with(&*cx, |editor, _cx| editor.vim.cmdline.is_some()),
+        "夹具：冒号行应已打开"
+    );
+    let center = editor.read_with(&*cx, |editor, cx| {
+        editor.document.visible_blocks()[0]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("段落该有布局边界")
+            .center()
+    });
+    cx.simulate_click(center, gpui::Modifiers::none());
+    redraw(cx);
+    assert!(
+        editor.read_with(&*cx, |editor, _cx| editor.vim.cmdline.is_none()),
+        "点了正文之后冒号行要收起，不再挂在底部吃键"
+    );
+}
+
+
 
 
 

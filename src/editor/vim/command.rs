@@ -77,6 +77,30 @@ impl Editor {
         }
     }
 
+    /// 命令行只在输入框持焦时停留并接管按键：点了正文、AI 面板或别的窗口就要
+    /// 收起。旧写法只由 Enter/Esc 清除，失焦后浮层还挂在底部并继续吃键。
+    pub(crate) fn vim_close_cmdline_if_blurred(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(state) = self.vim.cmdline.clone() else {
+            return;
+        };
+        if !window.is_window_active() {
+            // 整扇窗口不是当前应用（切去别的程序）不算离开命令行，回来还得能用。
+            return;
+        }
+        let focused = state
+            .input
+            .read(cx)
+            .focus_handle(cx)
+            .contains_focused(window, cx);
+        if !focused {
+            self.vim_close_cmdline_inner(cx);
+        }
+    }
+
     /// Enter：提交命令行。
     pub(super) fn vim_commit_cmdline_inner(
         &mut self,

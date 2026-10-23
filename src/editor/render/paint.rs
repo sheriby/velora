@@ -79,6 +79,9 @@ impl Render for Editor {
         if self.split_active { self.apply_pending_focus(window, cx); }
         else { self.pending_focus = None; }
         self.apply_pending_scroll_into_view(window, cx);
+        // 命令行浮层的失焦收起：它只由 Enter/Esc 清除过，点了正文或 AI 面板之后
+        // 还挂在底部并继续吃键。
+        self.vim_close_cmdline_if_blurred(window, cx);
         self.apply_pending_workspace_search_focus(window, cx);
         self.apply_pending_formula_editor(window, cx);
         if self.vim_enabled {

@@ -160,6 +160,7 @@ impl Editor {
             || self.formula_editor.is_some()
             || self.quick_open.is_some()
             || self.command_palette.is_some()
+            || self.vim.cmdline.is_some()
         {
             return None;
         }

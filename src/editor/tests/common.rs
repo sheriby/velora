@@ -134,7 +134,7 @@ pub(super) fn real_label_widths(
     })
 }
 
-pub(super) fn activate_visual_window(cx: &mut VisualTestContext) -> AnyWindowHandle {
+pub(crate) fn activate_visual_window(cx: &mut VisualTestContext) -> AnyWindowHandle {
     cx.update(|window, _cx| window.activate_window());
     cx.run_until_parked();
     cx.cx
