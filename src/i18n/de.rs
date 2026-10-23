@@ -561,7 +561,6 @@ pub(crate) struct I18nStringsDe {
     pub(crate) ai_custom_placeholder: Option<String>,
     pub(crate) ai_panel_retry: Option<String>,
     pub(crate) ai_panel_continue: Option<String>,
-    pub(crate) ai_panel_edit_last: Option<String>,
     pub(crate) ai_panel_stop: Option<String>,
     pub(crate) ai_panel_running: Option<String>,
     pub(crate) ai_tool_trace: Option<String>,

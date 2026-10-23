@@ -591,7 +591,6 @@ impl I18nStrings {
         strings.ai_custom_placeholder = "询问或描述修改…".into();
         strings.ai_panel_retry = "重试".into();
         strings.ai_panel_continue = "继续生成".into();
-        strings.ai_panel_edit_last = "编辑上一条".into();
         strings.ai_panel_stop = "停止".into();
         strings.ai_panel_running = "生成中…".into();
         strings.ai_tool_trace = "工具调用".into();
@@ -1195,7 +1194,6 @@ impl I18nStrings {
             ai_custom_placeholder: "Ask or describe a change…".into(),
             ai_panel_retry: "Retry".into(),
             ai_panel_continue: "Continue".into(),
-            ai_panel_edit_last: "Edit last request".into(),
             ai_panel_stop: "Stop".into(),
             ai_panel_running: "Generating…".into(),
             ai_tool_trace: "Tool calls".into(),

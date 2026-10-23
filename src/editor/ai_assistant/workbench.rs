@@ -373,21 +373,6 @@ impl Editor {
                 },
             ));
         }
-        if !session.saved.running
-            && session
-                .saved
-                .messages
-                .iter()
-                .any(|message| message.role == "user")
-        {
-            panel = panel.child(self.ai_button(
-                "ai-edit-last",
-                false,
-                cx,
-                |button, _cx| button.label(strings.ai_panel_edit_last.clone()),
-                |editor, window, cx| editor.edit_last_ai_message(window, cx),
-            ));
-        }
         // 快捷指令完成后同样提供追问输入；运行中的停止按钮在输入框里。
         panel = panel.child(self.render_ai_composer(theme, window, cx));
         let owner = cx.entity().downgrade();
