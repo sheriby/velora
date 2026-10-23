@@ -3262,6 +3262,40 @@ async fn cmdline_recalls_the_previous_search_with_up_arrow(cx: &mut TestAppConte
     cx.simulate_keystrokes("escape");
 }
 
+#[gpui::test]
+async fn count_before_the_repeated_operator_deletes_two_lines(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo\n\nthree\n\nfour");
+    cx.simulate_keystrokes("d 2 d");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["three", "four"],
+        "d2d 等价 2dd：删掉当前行与下一行"
+    );
+}
+
+#[gpui::test]
+async fn count_inside_the_repeated_operator_indents_two_lines(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo\n\nthree");
+    cx.simulate_keystrokes("> 2 >");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["    one", "    two", "three"],
+        ">2> 要给两行各加一级缩进"
+    );
+}
+
+#[gpui::test]
+async fn count_before_gj_joins_that_many_lines(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "a\nb\nc\nd");
+    cx.simulate_keystrokes("3 g J");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["abc\nd"],
+        "3gJ 要并三行（外层计数不能被固定的两行吃掉）"
+    );
+}
+
+
 
 
 

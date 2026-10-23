@@ -80,6 +80,11 @@ impl SurroundPair {
     }
 }
 
+/// `J`/`gJ` 要并的行数：无计数并相邻两行，`3J` 并三行（两次并入）。
+fn vim_join_line_count(count: u32) -> u32 {
+    if count > 0 { count } else { 2 }
+}
+
 /// 拦截层里的最小按键表示。带 cmd/alt/function 修饰的组合一开始就放行，
 /// 不进本类型；ctrl 只认无 shift 的单字母。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1521,6 +1526,13 @@ impl Editor {
                         action: VimAction::Operate(operator, OperatorTarget::CurrentLines),
                     });
                 }
+                if let Some(lines) = Self::vim_linewise_repeat_count(head, rest, count) {
+                    return ParseOutcome::Execute(VimCommand {
+                        count: lines,
+                        register,
+                        action: VimAction::Operate(operator, OperatorTarget::CurrentLines),
+                    });
+                }
                 return Self::vim_parse_operator_target(operator, rest, count, register);
             }
             VimKey::Char('>') | VimKey::Char('<') => {
@@ -1535,6 +1547,13 @@ impl Editor {
                 if rest[0] == head {
                     return ParseOutcome::Execute(VimCommand {
                         count: count.max(1),
+                        register,
+                        action: VimAction::Operate(operator, OperatorTarget::CurrentLines),
+                    });
+                }
+                if let Some(lines) = Self::vim_linewise_repeat_count(head, rest, count) {
+                    return ParseOutcome::Execute(VimCommand {
+                        count: lines,
                         register,
                         action: VimAction::Operate(operator, OperatorTarget::CurrentLines),
                     });
@@ -1688,7 +1707,7 @@ impl Editor {
             VimKey::Char('p') => VimAction::Paste { after: true },
             VimKey::Char('P') => VimAction::Paste { after: false },
             VimKey::Char('J') => VimAction::JoinLines {
-                count: count.max(1),
+                count: vim_join_line_count(count),
                 keep_space: true,
             },
             VimKey::Char('u') => VimAction::Undo,
@@ -1784,7 +1803,7 @@ impl Editor {
             VimKey::Char('0') => VimAction::Move(Motion::HardLineStart),
             VimKey::Char('i') => VimAction::EnterInsert(InsertPlacement::LastInsertPosition),
             VimKey::Char('I') => VimAction::EnterInsert(InsertPlacement::FirstColumn),
-            VimKey::Char('J') => VimAction::JoinLines { count: 2, keep_space: false },
+            VimKey::Char('J') => VimAction::JoinLines { count: vim_join_line_count(count), keep_space: false },
             VimKey::Char('v') => VimAction::ReselectVisual,
             VimKey::Char('e') => VimAction::Move(Motion::WordEndBackward { big: false }),
             VimKey::Char('E') => VimAction::Move(Motion::WordEndBackward { big: true }),
@@ -2107,7 +2126,7 @@ impl Editor {
                 };
                 VimAction::VisualReplaceChar(ch)
             }
-            VimKey::Char('J') => VimAction::JoinLines { count: 2, keep_space: true },
+            VimKey::Char('J') => VimAction::JoinLines { count: vim_join_line_count(count), keep_space: true },
             VimKey::Char('g') => {
                 let Some(next) = rest.first() else {
                     return ParseOutcome::NeedMore;
@@ -2116,7 +2135,10 @@ impl Editor {
                     VimKey::Char('J') => ParseOutcome::Execute(VimCommand {
                         count,
                         register,
-                        action: VimAction::JoinLines { count: 2, keep_space: false },
+                        action: VimAction::JoinLines {
+                            count: vim_join_line_count(count),
+                            keep_space: false,
+                        },
                     }),
                     VimKey::Char('c') => ParseOutcome::Execute(VimCommand {
                         count,
@@ -2152,6 +2174,16 @@ impl Editor {
     }
 
     // ---- 计数与寄存器前缀 ----
+
+    /// 「操作符 + 计数 + 同一个操作符」是行级：`d2d`、`y3y`、`>2>`。
+    /// 返回（行数 = 外层计数与内层计数的较大者，消费到的位置）。
+    fn vim_linewise_repeat_count(head: VimKey, rest: &[VimKey], count: u32) -> Option<u32> {
+        let (extra, next) = Self::vim_parse_count(rest, 0);
+        if next == 0 {
+            return None;
+        }
+        (rest.get(next) == Some(&head)).then(|| extra.max(1).max(count.max(1)))
+    }
 
     fn vim_parse_count(keys: &[VimKey], mut index: usize) -> (u32, usize) {
         // 前导 0 是「行首」动作，不算计数。
