@@ -2430,3 +2430,35 @@ async fn math_block_live_preview_keeps_its_height_while_the_formula_reloads(
         "换源首帧源码卡片不能先塌再撑，必须与加载完成后同位"
     );
 }
+
+#[gpui::test]
+async fn formula_editor_apply_without_changes_keeps_body_only_block_verbatim(
+    cx: &mut TestAppContext,
+) {
+    // body-only 形状（display_text 即正文本身）落到分段守卫覆盖不到的那条臂：
+    // 不改一字的「应用」曾用 draft.trim() 把正文削一遍——dirty 置位、多出一笔
+    // undo 组，落盘由 $$\n\nx\n\n$$ 变 $$\nx\n$$（规范化溢出到 format_document
+    // 之外，违反写法落盘）。
+    init_editor_test_app(cx);
+    let source = "$$\n\nx\n\n$$\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    let undo_before = editor.read_with(cx, |editor, _| editor.undo_history.len());
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_formula_editor_for_block(math.entity_id(), window, cx);
+        editor.apply_formula_editor(window, cx);
+    });
+
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.formula_editor.is_none(), "应用后弹窗该关闭");
+        assert_eq!(editor.buffer.text(), source, "不改一字的「应用」不得改写正文");
+        assert!(!editor.document_dirty, "无变更的「应用」不得置脏");
+        assert_eq!(editor.undo_history.len(), undo_before, "无变更的「应用」不得多出撤销组");
+    });
+}

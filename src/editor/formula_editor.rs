@@ -723,7 +723,16 @@ impl Editor {
                 }
                 raw.as_str()
             }
-            _ => raw.as_str(),
+            // body-only 形状（display_text 即正文本身）解析不出分段：无变更守卫
+            // 只能拿整段正文比对，否则不改一字的「应用」也会 trim 改写正文。
+            _ => {
+                if raw == draft {
+                    self.restore_focus_after_overlay(cx);
+                    cx.notify();
+                    return;
+                }
+                raw.as_str()
+            }
         };
         let Some(start) = raw.find(formula_raw) else {
             eprintln!("公式编辑写回失败：原始块中找不到目标公式跨度");
@@ -732,13 +741,14 @@ impl Editor {
             return;
         };
         let end = start + formula_raw.len();
+        // 三个分支统一原样写草稿：写法落盘，弹窗不做 trim 之类的顺手规范化。
         let replacement = if block.read(cx).record.math_body_only {
             // 模型里只有正文：草稿就是新的正文，两行围栏由序列化那一侧补回来。
-            draft.trim().to_string()
+            draft
         } else if !formula_raw.contains('\n') && !draft.contains('\n') {
             format!("$${draft}$$")
         } else {
-            format!("$$\n{}\n$$", draft.trim())
+            format!("$$\n{draft}\n$$")
         };
         // 分段解析已确定目标跨度，不能用单公式草稿覆盖整个块（尾文与相邻公式会丢）。
         let mut new_text = raw;
