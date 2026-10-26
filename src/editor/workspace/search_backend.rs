@@ -53,7 +53,8 @@ impl SearchMatcher {
     }
 
     /// 整段文本里的全部命中（绝对字节区间 + 行号）。编译失败时交回空表。
-    #[cfg(test)]
+    /// 与结果列表同一份引擎输出（multi_line 整文匹配）——替换与计数的口径
+    /// 必须跟列表一致，跨行正则才不会「列表有命中、替换空手」。
     pub(crate) fn find_all_in_text(&self, source: &str) -> Vec<SearchHit> {
         match self.engine.as_ref() {
             Some(engine) => engine.find_all(source.as_bytes()),

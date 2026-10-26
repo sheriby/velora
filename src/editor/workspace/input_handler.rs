@@ -127,13 +127,11 @@ impl EntityInputHandler for Editor {
 }
 
 /// Number of matches in a whole source string.
+///
+/// 与结果列表同一份引擎输出（整文匹配）：确认框计数、实际替换、命中列表
+/// 三处是同一集合，跨行正则与 `^`/`$` 锚点才不会各说各话。
 pub(crate) fn count_matches_in_source(source: &str, matcher: &SearchMatcher) -> usize {
-    let mut count = 0;
-    for raw_line in source.split_inclusive('\n') {
-        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
-        count += matcher.find_in_line(line).len();
-    }
-    count
+    matcher.find_all_in_text(source).len()
 }
 
 /// Rewrites every match in `source` with `replacement`.
@@ -141,24 +139,22 @@ pub(crate) fn replace_in_source(source: &str, matcher: &SearchMatcher, replaceme
     if matcher.is_empty() {
         return source.to_string();
     }
-    let mut updated = String::with_capacity(source.len());
-    for raw_line in source.split_inclusive('\n') {
-        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
-        let trailing_newline = raw_line.len() - line.len();
-        let mut line_cursor = 0usize;
-        for range in matcher.find_in_line(line) {
-            if range.start < line_cursor {
-                continue;
-            }
-            updated.push_str(&line[line_cursor..range.start]);
-            updated.push_str(replacement);
-            line_cursor = range.end;
-        }
-        updated.push_str(&line[line_cursor..]);
-        if trailing_newline > 0 {
-            updated.push('\n');
-        }
+    let hits = matcher.find_all_in_text(source);
+    if hits.is_empty() {
+        return source.to_string();
     }
+    let mut updated = String::with_capacity(source.len());
+    let mut cursor = 0usize;
+    for hit in hits {
+        let range = hit.range;
+        if range.start < cursor || range.end > source.len() {
+            continue;
+        }
+        updated.push_str(&source[cursor..range.start]);
+        updated.push_str(replacement);
+        cursor = range.end;
+    }
+    updated.push_str(&source[cursor..]);
     updated
 }
 

@@ -1,6 +1,7 @@
 use super::super::{
     Editor, SearchMatcher, SearchOptions, WorkspaceTab, collect_workspace_files_on_disk,
-    is_likely_text_file, search_utf8_to_utf16, search_utf16_to_utf8, search_workspace_files,
+    count_matches_in_source, is_likely_text_file, replace_in_source, search_utf8_to_utf16,
+    search_utf16_to_utf8, search_workspace_files,
 };
 use crate::components::UndoCaptureKind;
 use gpui::{
@@ -3082,4 +3083,25 @@ fn native_search_results_return_filename_activation_to_the_query(cx: &mut TestAp
         })
         .unwrap();
     cx.on_quit(move || fs::remove_dir_all(root).unwrap());
+}
+
+#[test]
+fn workspace_replace_and_count_use_the_same_cross_line_engine_as_the_results_list() {
+    // 结果列表走 find_all（multi_line 整文匹配），替换/确认框计数曾走逐行
+    // find_in_line：跨行正则列表有命中、计数为 0、替换空手；同一查询三处
+    // 必须同一集合。
+    let matcher = SearchMatcher::new(
+        "a\nb",
+        SearchOptions {
+            use_regex: true,
+            ..Default::default()
+        },
+    );
+    let source = "x a\nb y\n";
+    assert_eq!(count_matches_in_source(source, &matcher), 1);
+    assert_eq!(replace_in_source(source, &matcher, "Z"), "x Z y\n");
+    // 字面量与非跨行正则的既有行为不变。
+    let literal = SearchMatcher::new("a", SearchOptions::default());
+    assert_eq!(count_matches_in_source("a\na\n", &literal), 2);
+    assert_eq!(replace_in_source("a\na\n", &literal, "b"), "b\nb\n");
 }

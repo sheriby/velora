@@ -700,7 +700,7 @@ pub(super) use file_tree::*;
 pub(crate) use file_tree::collect_workspace_files_on_disk_reporting_skips;
 pub(super) use input_handler::*;
 // AI 的 get_outline 与侧栏共用同一份大纲判据，需要跨 editor 模块引用。
-pub(crate) use input_handler::document_outline;
+pub(crate) use input_handler::{count_matches_in_source, document_outline, replace_in_source};
 pub(super) use render_panel::*;
 pub(super) use search_backend::*;
 // AI 的 search_documents 复用同一套 ripgrep 匹配，需跨 editor 模块引用。
