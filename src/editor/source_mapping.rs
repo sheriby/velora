@@ -927,6 +927,17 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         // 挂在容器里的行写着 `> | 甲 | 乙 |`：容器记号不是第一列。
         let prefix = table_row_container_prefix(row_line);
         let core = &row_line[prefix..];
+        // 与 push_table_mappings_in_root 同一道守卫：量的槽数对不上模型格数时
+        // 什么都不推，命中退回宿主表格块——按错位槽位取格子原文区间比没有映射
+        // 更糟（光标/粘贴/写回都会落进别的格子的字节）。
+        if table_row_slots(core).len() != cells.len() {
+            #[cfg(test)]
+            println!("GUARD-REJECT slots={:?} cells={} core={:?}", table_row_slots(core), cells.len(), core);
+            if cfg!(not(test)) {
+                return;
+            }
+            return;
+        }
         for (column, cell) in cells.iter().enumerate() {
             let Some(range) = cell_content_range_in_line(core, line_start + prefix, column) else {
                 continue;

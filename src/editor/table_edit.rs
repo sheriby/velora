@@ -1620,20 +1620,11 @@ impl Editor {
 }
 
 /// 一行表格里「真正的列分隔符」的字节位置。反斜杠转义的 `|` 不算列分隔符。
+/// 与解析/序列化同一把尺：`cell_separator_positions`（跳代码段、只认
+/// CommonMark 可转义字符前的反斜杠）。旧实现只做反斜杠奇偶翻转、不跳代码段，
+/// 格内行内代码带竖线的行会被量出多余的槽位，映射与格子写回按错位切片。
 fn unescaped_pipe_offsets(line: &str) -> Vec<usize> {
-    let mut offsets = Vec::new();
-    let mut escaped = false;
-    for (offset, byte) in line.bytes().enumerate() {
-        if byte == b'\\' {
-            escaped = !escaped;
-        } else if byte == b'|' && !escaped {
-            offsets.push(offset);
-            escaped = false;
-        } else {
-            escaped = false;
-        }
-    }
-    offsets
+    crate::components::markdown::table::cell_separator_positions(line)
 }
 
 /// 分隔行里一格的新写法：换成 `alignment`，但这一格的宽度尽量不动。

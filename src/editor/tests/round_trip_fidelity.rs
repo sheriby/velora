@@ -2382,3 +2382,45 @@ fn representable_encodings_still_open_at_the_choke_point() {
         let _ = fs::remove_file(&path);
     }
 }
+
+/// 格内行内代码里的竖线不是列分隔符：解析器按 `cell_separator_positions`
+/// 认 2 格（代码段整体跳过、序列化同判据不补 `\|`），编辑侧量格子的尺必须
+/// 是同一把——否则格子 0 的映射落在 `` `a `` 上，光标/粘贴/行列号按错切片，
+/// 打字把内容写进错的字节区间。
+#[gpui::test]
+async fn table_cell_with_code_span_pipe_maps_to_its_own_bytes(cx: &mut TestAppContext) {
+    const FIXTURE: &str = "| `a|b` | c |\n| --- | --- |\n| d | e |";
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, FIXTURE.to_string(), None));
+    redraw(cx);
+
+    let mapped = editor.read_with(cx, |editor, cx| {
+        let source = editor.buffer.text();
+        ["`a|b`", "c", "d", "e"]
+            .into_iter()
+            .map(|text| {
+                let binding = editor
+                    .table_cells
+                    .values()
+                    .find(|binding| binding.cell.read(cx).display_text() == text)
+                    .cloned();
+                let Some(binding) = binding else {
+                    return format!("{text}: 没有这一格的绑定");
+                };
+                match editor.source_mapping_for_entity(binding.cell.entity_id(), cx) {
+                    Some(mapping) => {
+                        let range = mapping.full_source_range;
+                        format!("{text}: {:?}", &source[..range.end][range.start..])
+                    }
+                    None => format!("{text}: 没有映射"),
+                }
+            })
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        mapped,
+        vec!["`a|b`: \"`a|b`\"", "c: \"c\"", "d: \"d\"", "e: \"e\""],
+        "代码段带竖线的格子的映射没有落在它自己的原文字节上：{mapped:?}"
+    );
+}

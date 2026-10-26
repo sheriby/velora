@@ -601,7 +601,7 @@ fn strip_table_indent(line: &str) -> Option<&str> {
 /// `escape_cell_separator_pipes`），两端才不会对「哪个竖线会切开」各说各话
 /// （cases/02-table-code.md：预处理反转义曾把 `` `a\\b` `` 显示成 `a\b`、
 /// 把 `$a\|b$` 的转义竖线洗成裸竖线，改了文档的意思）。
-fn cell_separator_positions(text: &str) -> Vec<usize> {
+pub(crate) fn cell_separator_positions(text: &str) -> Vec<usize> {
     let chars = text.chars().collect::<Vec<_>>();
     let byte_offsets = chars
         .iter()
