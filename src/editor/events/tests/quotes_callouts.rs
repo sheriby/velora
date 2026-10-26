@@ -518,3 +518,31 @@
             assert_eq!(editor.document.markdown_text(cx), "> first\n> - item");
         });
     }
+
+    #[gpui::test]
+    async fn entering_existing_callout_body_skips_reference_registry_rebuild(
+        cx: &mut TestAppContext,
+    ) {
+        // 纯焦点移动的回车（callout 已有正文）不改任何文本与结构，
+        // 不得触发整篇 buffer.text() 克隆 + 引用注册表重建的按键路径全文操作。
+        let cx = cx.add_empty_window();
+        let editor = cx.new(|cx| Editor::from_markdown(cx, "> [!TIP]\n> body".to_string(), None));
+
+        editor.update(cx, |editor, cx| {
+            let callout = editor.document.visible_blocks()[0].entity.clone();
+            let rebuilds_before = editor.reference_registry_rebuilds.get();
+            editor.on_block_event(callout, &BlockEvent::RequestEnterCalloutBody, cx);
+
+            assert_eq!(
+                editor.reference_registry_rebuilds.get(),
+                rebuilds_before,
+                "已有正文的 callout 里按 Enter 只做焦点移动，不重建引用注册表",
+            );
+            let body = editor.document.visible_blocks()[1].entity.clone();
+            assert_eq!(
+                editor.pending_focus,
+                Some(body.entity_id()),
+                "焦点应落到正文首块",
+            );
+        });
+    }

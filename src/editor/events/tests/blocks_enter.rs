@@ -1,6 +1,6 @@
     use super::super::Editor;
     use crate::components::{
-        BlockKind, BlockRecord,
+        BlockEvent, BlockKind, BlockRecord,
         ExitCodeBlock, Newline,
     };
     use gpui::{AppContext, TestAppContext};
@@ -428,3 +428,32 @@
         }
     }
 
+
+    #[gpui::test]
+    async fn focus_next_past_trailing_multiline_block_lands_undoable_dirty_paragraph(
+        cx: &mut TestAppContext,
+    ) {
+        // 文档末尾按 ↓ 自动补的尾段落是用户可见编辑：必须置脏（否则关闭不提示
+        // 丢字）且落在撤销组里（否则撤销永远删不掉它）。
+        let original = "```rust\nlet value = 1;\n```";
+        let cx = cx.add_empty_window();
+        let editor = cx.new(|cx| Editor::from_markdown(cx, original.to_string(), None));
+
+        editor.update(cx, |editor, cx| {
+            let code = editor.document.first_root().expect("root code block").clone();
+            editor.on_block_event(code, &BlockEvent::RequestFocusNext { preferred_x: None }, cx);
+
+            assert_eq!(
+                editor.buffer.text(),
+                format!("{original}\n\n"),
+                "多行块末尾按 ↓ 应自动补尾段落",
+            );
+            assert!(editor.document_dirty, "自动补的尾段落必须置脏");
+            editor.undo_document(cx);
+            assert_eq!(
+                editor.buffer.text(),
+                original,
+                "尾段落编辑必须可整体撤销",
+            );
+        });
+    }

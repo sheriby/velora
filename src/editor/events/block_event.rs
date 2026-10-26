@@ -262,8 +262,10 @@ impl Editor {
                 let created = self.ensure_callout_body_entry(&block, cx);
                 if let Some(body) = created {
                     self.focus_block(body.entity_id());
-                    self.rebuild_image_runtimes(cx);
                     if needs_body {
+                        // 只有真正新建正文块才算结构变更；纯焦点移动（已有正文）
+                        // 不走按键路径的整篇注册表重建。
+                        self.rebuild_image_runtimes(cx);
                         self.mark_dirty(cx);
                         self.finalize_pending_undo_capture(cx);
                     }
@@ -681,6 +683,9 @@ impl Editor {
                     let Some(parent_location) =
                         self.document.find_block_location(parent.entity_id())
                     else {
+                        // prepare 之后早退必须把组收掉：挂着空组会让下一次动作并进
+                        // 这一步的撤销组，选区快照也是上一次的（与下方 RequestIndent 同规）。
+                        self.finalize_pending_undo_capture(cx);
                         return;
                     };
 
@@ -747,6 +752,8 @@ impl Editor {
                 });
 
                 let Some(downgraded) = downgraded else {
+                    // prepare 之后早退必须把组收掉（与 RequestIndent 同规）。
+                    self.finalize_pending_undo_capture(cx);
                     return;
                 };
 
@@ -870,7 +877,15 @@ impl Editor {
                     // below to move to, so give it a paragraph to land on and
                     // focus that, matching how a trailing table behaves.
                     if block.read(cx).kind().is_multiline_text_block() {
+                        // 自动补尾段落是用户可见编辑：必须落撤销组并置脏，否则关闭
+                        // 不提示丢字、撤销永远删不掉它（与粘贴路径同规）。
+                        self.prepare_undo_capture(
+                            crate::components::UndoCaptureKind::NonCoalescible,
+                            cx,
+                        );
                         self.ensure_trailing_paragraph_after_structural(&block, cx);
+                        self.mark_dirty(cx);
+                        self.finalize_pending_undo_capture(cx);
                         let visible = self.document.flatten_visible_blocks();
                         if let Some(landing) = visible
                             .iter()
@@ -987,6 +1002,8 @@ impl Editor {
                 });
 
                 if removed.is_none() {
+                    // prepare 之后早退必须把组收掉（与 RequestIndent 同规）。
+                    self.finalize_pending_undo_capture(cx);
                     return;
                 }
 
