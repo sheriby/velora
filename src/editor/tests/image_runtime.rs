@@ -1704,3 +1704,39 @@ async fn image_file_preview_keeps_quick_open_visible_and_lists_images(cx: &mut T
         );
     });
 }
+
+#[gpui::test]
+async fn printing_an_image_preview_shows_a_modal_instead_of_panicking(cx: &mut TestAppContext) {
+    // print_document 的失败分支曾重入 editor.update（实体正在 update 栈上）：
+    // GPUI 双重租借 panic。菜单派发路径必须弹应用内模态。
+    use crate::editor::workspace::WorkspaceOpenMode;
+    init_editor_test_app(cx);
+    let root = image_preview_fixture_root(cx);
+    let path = root.join("print.png");
+    fs::write(&path, PNG_PREVIEW_BYTES).expect("写入图片");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file_in_mode(path, WorkspaceOpenMode::Preview, window, cx);
+        });
+        window.draw(cx).clear(cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.image_preview.is_some(), "夹具应处于图片预览");
+    });
+
+    cx.update(|window, cx| {
+        let target = editor.downgrade();
+        crate::app_menu::dispatch_menu_action_for_editor(
+            &crate::components::PrintDocument,
+            &target,
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.modal.is_some(), "打印失败应弹应用内模态而不是重入 panic");
+    });
+}

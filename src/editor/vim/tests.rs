@@ -3422,3 +3422,24 @@ async fn gcc_on_last_line_of_nonfinal_code_block_is_not_a_noop(cx: &mut TestAppC
     );
     assert_eq!(document_text(&editor, &cx), "```rust\n// let a = 1;\n```\n\ntext");
 }
+
+#[gpui::test]
+async fn global_menu_chain_dispatches_toggle_vim_mode(cx: &mut TestAppContext) {
+    // 原生菜单与命令面板的「切换 Vim 模式」落全局派发链：分支缺席时点了
+    // 没反应（every_menu_bar_command_has_a_handler 用 is_action_available，
+    // 结构性看不见这类洞）。
+    let (editor, cx) = vim_editor(cx, "文本");
+    let before = cx.update(|_window, cx| crate::config::EditorSettings::vim(cx).enable);
+    // with_active_editor 读 cx.active_window()：测试窗口默认不是 active。
+    cx.update(|window, _cx| window.activate_window());
+    cx.update(|_window, cx| {
+        crate::app_menu::dispatch_menu_action(
+            &crate::components::ToggleVimMode as &dyn gpui::Action,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    let after = cx.update(|_window, cx| crate::config::EditorSettings::vim(cx).enable);
+    assert_ne!(after, before, "全局菜单链必须能切换 Vim 模式");
+    let _ = editor;
+}

@@ -619,19 +619,19 @@ fn request_update_check_on_active_editor(cx: &mut App) {
 
 /// roadmap F4 打印：先把当前文档写成临时导出 HTML（含 F3 主题配置），
 /// 再在后台线程渲染为临时 PDF 并交给系统预览/打印，避免阻塞 UI。
-fn print_document(editor: &Editor, window: &mut Window, cx: &mut Context<Editor>) {
+fn print_document(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
     let html_path = crate::export::print::print_temp_html_path();
     if let Err(err) = editor.export_document_to_path(ExportFormat::Html, &html_path, cx) {
+        // cx 就是当前正在 update 的这个 Editor 的 Context：错误分支只能直接
+        // 弹模态，再走 entity.update 是重入（GPUI 双重租借 panic，本仓历史
+        // 上因此 coredump）。
+        let _ = window;
         let title = cx
             .global::<I18nManager>()
             .strings()
             .export_failed_title
             .clone();
-        let editor = cx.entity();
-        let _ = window;
-        let _ = editor.update(cx, |editor, cx| {
-            editor.show_message_modal(title, err.to_string(), cx);
-        });
+        editor.show_message_modal(title, err.to_string(), cx);
         return;
     }
 
@@ -1044,6 +1044,14 @@ fn dispatch_menu_action_after_event(action: &dyn Action, cx: &mut App) {
         let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_focus_mode(cx));
     } else if action.as_any().is::<ToggleTypewriterMode>() {
         let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_typewriter_mode(cx));
+    } else if action.as_any().is::<ToggleVimMode>() {
+        // 与 dispatch.rs 的窗内链同规：原生菜单/命令面板落这条全局链，
+        // 缺分支就是「点了没反应」（守卫测试结构性看不见）。
+        let _ = with_active_editor(cx, |editor, window, cx| editor.toggle_vim_mode(window, cx));
+    } else if action.as_any().is::<CloseTab>() {
+        // CloseTab 的常驻处理者挂在编辑器组节点上：焦点不在该子树内时
+        // （窗口刚开、侧栏输入框）只有这条链能接到。
+        let _ = with_active_editor(cx, |editor, window, cx| editor.close_active_tab(window, cx));
     } else if action.as_any().is::<FindInDocument>() {
         let _ = with_active_editor(cx, |editor, _, cx| editor.open_document_find(cx));
     } else if action.as_any().is::<FindNextMatch>() {
