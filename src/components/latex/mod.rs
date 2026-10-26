@@ -398,7 +398,12 @@ fn render_latex_svg_to_cache(
     let mut cache = CACHE.get_or_init(|| Mutex::new(LatexSvgCache::default()))
         .lock().map_err(|error| anyhow!("LaTeX 缓存锁不可用：{error}"))?;
     if let Some(rendered) = cache.renders.get(&key).cloned() {
-        return Ok(rendered);
+        // 磁盘上那份文件是 img 元素要读的东西：缓存目录被清理掉之后，内存里
+        // 还留着结果但文件已经没了，直接返回就会让公式永远加载不出来。文件
+        // 不在就按未命中走，那条路会把它重新写出来（mermaid 同款）。
+        if rendered.path.is_file() {
+            return Ok(rendered);
+        }
     }
     let directory = match &cache.directory {
         Some(directory) => directory.clone(),
@@ -409,16 +414,9 @@ fn render_latex_svg_to_cache(
         }
     };
     let path = directory.join(format!("{key}.svg"));
-    let svg = match fs::read_to_string(&path) {
-        Ok(svg) => svg,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let svg = render_latex_to_svg(latex, text_color, font_size, math_layout)?;
-            fs::write(&path, &svg)
-                .with_context(|| format!("failed to write LaTeX SVG cache '{}'", path.display()))?;
-            svg
-        }
-        Err(error) => return Err(error).with_context(|| format!("无法读取公式缓存 '{}'", path.display())),
-    };
+    let svg = read_or_render_latex_svg_cache(&path, || {
+        render_latex_to_svg(latex, text_color, font_size, math_layout)
+    })?;
     let rendered = LatexSvgRender { path, svg };
     // 草稿每次编辑都会产生新键，限制进程内缓存避免长期编辑累积整份 SVG。
     if cache.renders.len() >= 256 && let Some(oldest) = cache.order.pop_front() {
@@ -427,6 +425,33 @@ fn render_latex_svg_to_cache(
     cache.order.push_back(key.clone());
     cache.renders.insert(key, rendered.clone());
     Ok(rendered)
+}
+
+/// 磁盘缓存读-渲染-写的那一段（路径与渲染器由调用方给）。读回必须以
+/// `</svg>` 收尾才算有效档——半截文件（写缓存时崩溃/断电的产物）按未命中
+/// 自愈重渲染；写盘走同目录临时文件 + rename，半截文件不会顶掉好档。
+fn read_or_render_latex_svg_cache(
+    path: &std::path::Path,
+    render: impl FnOnce() -> anyhow::Result<String>,
+) -> anyhow::Result<String> {
+    if let Some(svg) = fs::read_to_string(path).ok().filter(|svg| svg.contains("</svg>")) {
+        return Ok(svg);
+    }
+    let svg = render()?;
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temp = path.with_file_name(format!(
+        "{file_name}.{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    fs::write(&temp, &svg)
+        .with_context(|| format!("failed to write LaTeX SVG cache temp '{}'", temp.display()))?;
+    fs::rename(&temp, path)
+        .with_context(|| format!("failed to install LaTeX SVG cache '{}'", path.display()))?;
+    Ok(svg)
 }
 
 /// Render a LaTeX expression into self-contained SVG text.
@@ -798,6 +823,33 @@ mod tests {
     #[test]
     fn rejects_unclosed_display_math() {
         assert!(parse_display_math_source("$$\n\\frac{1}{2}").is_none());
+    }
+
+    /// 半截缓存（无闭合 `</svg>`，断电/崩溃写的产物）按未命中重渲染；
+    /// 写盘走同目录临时文件 + rename，成功路径不留 .tmp。
+    #[test]
+    fn half_written_cache_reads_as_a_miss_and_writes_are_atomic() {
+        let root = std::env::temp_dir()
+            .join(format!("velora-latex-cache-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create root");
+        let path = root.join("base.svg");
+        std::fs::write(&path, "<svg xmlns=\"http://www.w3.org/2000/svg\"><g>").expect("seed half file");
+
+        let svg = read_or_render_latex_svg_cache(&path, || {
+            Ok("<svg>…renderer output…</svg>".into())
+        })
+        .expect("re-render on half cache");
+        assert_eq!(svg, "<svg>…renderer output…</svg>", "半截缓存必须重渲染");
+        assert!(std::fs::read_to_string(&path).expect("read").contains("</svg>"));
+
+        let leftovers: Vec<_> = std::fs::read_dir(&root)
+            .expect("read dir")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "成功路径不得留临时文件：{leftovers:?}");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
