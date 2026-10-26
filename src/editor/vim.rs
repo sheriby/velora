@@ -1300,15 +1300,20 @@ impl Editor {
             }
         }
 
-        // 修改操作符把插入会话并进同一组，等 Esc 收尾时再落账。
-        if capture_undo
-            && !matches!(action, VimAction::Operate(Operator::Change, _))
-        {
+        // 修改操作符把插入会话并进同一组，等 Esc 收尾时再落账。目标解析失败的
+        // Change 没进插入模式（mode 仍是 Normal）：必须当场收组，否则下一笔
+        // 编辑并进这个空组，选区快照还停留在失败命令的时刻。
+        let change_entered_insert = matches!(action, VimAction::Operate(Operator::Change, _))
+            && self.vim.mode == VimMode::Insert;
+        if capture_undo && !change_entered_insert {
             self.finalize_pending_undo_capture(cx);
         }
 
-        // `.` 素材：变更命令记下入口键（插入会话的键在 esc 时补记）。
-        if is_change && !self.vim.replaying {
+        // `.` 素材：变更命令记下入口键（插入会话的键在 esc 时补记）；
+        // 失败的 Change 什么都没改，不记。
+        let change_failed = matches!(action, VimAction::Operate(Operator::Change, _))
+            && self.vim.mode != VimMode::Insert;
+        if is_change && !self.vim.replaying && !change_failed {
             if was_visual && visual_repeat.is_none() {
                 // 块状可视暂时没有可重建的形状，宁可清空也不要留下待解析操作符。
                 self.vim.dot = None;

@@ -3363,3 +3363,62 @@ async fn quote_object_skips_escaped_quotes(cx: &mut TestAppContext) {
 
 
 
+
+#[gpui::test]
+async fn x_at_block_tail_does_not_swallow_the_next_block(cx: &mut TestAppContext) {
+    // 字符级操作符区间不越过块界：x 只删本硬行末字符，
+    // 不得把相邻两段并成一段（多块夹具；旧实现的 x/dw 测试全是单块文档）。
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo");
+    cx.simulate_keystrokes("$");
+    cx.simulate_keystrokes("x");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "on\n\ntwo",
+        "块尾 x 只删本行末字符，不得并段",
+    );
+}
+
+#[gpui::test]
+async fn g_u_u_on_last_line_of_nonfinal_block_is_not_a_noop(cx: &mut TestAppContext) {
+    // gUU 的 linewise 区间终点是下一块起点：旧实现把它钳到本块长度上
+    // 得到空区间，整体静默 no-op。
+    let (editor, cx) = vim_editor(cx, "one\n\ntwo");
+    cx.simulate_keystrokes("g U U");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "ONE\n\ntwo",
+        "gUU 对非末块的最后一行必须生效",
+    );
+}
+
+#[gpui::test]
+async fn failed_change_operator_does_not_pollute_next_undo_group(cx: &mut TestAppContext) {
+    // ci" 目标解析失败时已开的撤销组必须收掉：否则下一笔编辑并进该组，
+    // 撤销后光标回到失败命令时刻的快照而不是上一笔编辑之前。
+    let (editor, cx) = vim_editor(cx, "abcde");
+    cx.simulate_keystrokes("c i \"");
+    cx.simulate_keystrokes("$");
+    cx.simulate_keystrokes("x");
+    assert_eq!(document_text(&editor, &cx), "abcd");
+    cx.simulate_keystrokes("u");
+    assert_eq!(document_text(&editor, &cx), "abcde");
+    assert_eq!(
+        first_block_caret(&editor, &cx),
+        4,
+        "撤销后光标应回到 x 之前的位置（4），而不是失败 ci\" 时刻的 0",
+    );
+}
+
+#[gpui::test]
+async fn gcc_on_last_line_of_nonfinal_code_block_is_not_a_noop(cx: &mut TestAppContext) {
+    // gcc 的 linewise 终点是下一块起点：旧实现按 start.block != end.block
+    // 整体早退，非末块代码块的最后一行注释不了。
+    let (editor, cx) = vim_editor(cx, "```rust\nlet a = 1;\n```\n\ntext");
+    cx.simulate_keystrokes("g c c");
+    assert_eq!(
+        visible_texts(&editor, &cx),
+        vec!["// let a = 1;", "text"],
+        "非末块代码块最后一行 gcc 必须生效，且不影响后续块",
+    );
+    assert_eq!(document_text(&editor, &cx), "```rust\n// let a = 1;\n```\n\ntext");
+}

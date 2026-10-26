@@ -466,6 +466,31 @@ impl Editor {
                 target = self.vim_resolve_motion_target(entities, cursor, motion, count, cx)?;
             }
         }
+        // 操作符区间不跟随纯移动的跨块语义：字符与词类动作的目标落到别的块时，
+        // 按「停在硬行末」的同一口径钳回当前硬行——vim 的 x/dw 在段末不吞并
+        // 下一块。段落/句子/文档级动作（}、(、G）本来就要跨块，不在其列。
+        if target.block_index != cursor.block_index
+            && matches!(
+                motion,
+                Motion::Left
+                    | Motion::Right
+                    | Motion::ForwardChars
+                    | Motion::BackwardChars
+                    | Motion::WordForward { .. }
+                    | Motion::WordBackward { .. }
+                    | Motion::WordEnd { .. }
+            )
+        {
+            let backward = matches!(
+                motion,
+                Motion::Left | Motion::BackwardChars | Motion::WordBackward { .. }
+            );
+            let line = stream.hard_line_range(cursor.block_index, cursor.offset);
+            target = VimPosition {
+                block_index: cursor.block_index,
+                offset: if backward { line.start } else { line.end },
+            };
+        }
         // 方向归一只在这一处：目标落在光标左侧（db/d0/d^/dF/d{/d% 的反向情形）时，
         // 区间是 [target, cursor)，包含类动作要保留的那个字素就是 target 本身，
         // 不再向右越一格；否则才是 [cursor, end)。倒着构造的区间会被删成空。
@@ -2048,32 +2073,44 @@ impl Editor {
         operator: Operator,
         cx: &mut Context<Self>,
     ) {
-        let block = entities[range.start.block_index].clone();
-        let length = block.read(cx).visible_len();
-        let end = range.end.offset.min(length);
-        let start = range.start.offset.min(end);
-        if start == end {
-            return;
-        }
-        block.update(cx, |block, cx| {
-            let text = block.display_text();
-            let transformed: String = text[start..end]
-                .chars()
-                .map(|ch| match operator {
-                    Operator::Lowercase => ch.to_lowercase().next().unwrap_or(ch),
-                    Operator::Uppercase => ch.to_uppercase().next().unwrap_or(ch),
-                    _ => {
-                        if ch.is_lowercase() {
-                            ch.to_uppercase().next().unwrap_or(ch)
-                        } else {
-                            ch.to_lowercase().next().unwrap_or(ch)
+        // 跨块区间（gUU 的 linewise 终点是下一块起点）逐块落笔：只按 start 块
+        // 取长度会把 end 钳成 0 而整体空转。
+        for block_index in range.start.block_index..=range.end.block_index {
+            let block = entities[block_index].clone();
+            let length = block.read(cx).visible_len();
+            let start = if block_index == range.start.block_index {
+                range.start.offset.min(length)
+            } else {
+                0
+            };
+            let end = if block_index == range.end.block_index {
+                range.end.offset.min(length)
+            } else {
+                length
+            };
+            if start >= end {
+                continue;
+            }
+            block.update(cx, |block, cx| {
+                let text = block.display_text();
+                let transformed: String = text[start..end]
+                    .chars()
+                    .map(|ch| match operator {
+                        Operator::Lowercase => ch.to_lowercase().next().unwrap_or(ch),
+                        Operator::Uppercase => ch.to_uppercase().next().unwrap_or(ch),
+                        _ => {
+                            if ch.is_lowercase() {
+                                ch.to_uppercase().next().unwrap_or(ch)
+                            } else {
+                                ch.to_lowercase().next().unwrap_or(ch)
+                            }
                         }
-                    }
-                })
-                .collect();
-            block.replace_text_in_visible_range(start..end, &transformed, Some(0..0), false, cx);
-        });
-        self.vim_mark_single_block_dirty(&block, cx);
+                    })
+                    .collect();
+                block.replace_text_in_visible_range(start..end, &transformed, Some(0..0), false, cx);
+            });
+            self.vim_mark_single_block_dirty(&block, cx);
+        }
     }
 
     /// gr{motion}/grr：用寄存器内容替换区间。被替换文本走黑洞寄存器，
@@ -2133,10 +2170,37 @@ impl Editor {
         range: &VimRange,
         cx: &mut Context<Self>,
     ) {
-        if range.start.block_index != range.end.block_index {
-            return;
+        // 跨块区间（gcc 落在代码块最后一行时终点是下一块起点）逐块落笔，
+        // 与 vim_case_range 同规。linewise 终点 (下一块, 0) 不把那一块算进来。
+        let last_block = if range.end.offset == 0 {
+            range.end.block_index.saturating_sub(1)
+        } else {
+            range.end.block_index
+        };
+        for block_index in range.start.block_index..=last_block {
+            let block = entities[block_index].clone();
+            let text_len = block.read(cx).display_text().len();
+            let start_offset = if block_index == range.start.block_index {
+                range.start.offset
+            } else {
+                0
+            };
+            let end_offset = if block_index == range.end.block_index {
+                range.end.offset.saturating_sub(1)
+            } else {
+                text_len
+            };
+            self.vim_toggle_comment_in_block(&block, start_offset, end_offset, cx);
         }
-        let block = entities[range.start.block_index].clone();
+    }
+
+    fn vim_toggle_comment_in_block(
+        &mut self,
+        block: &Entity<Block>,
+        start_offset: usize,
+        end_offset: usize,
+        cx: &mut Context<Self>,
+    ) {
         let (kind, text) = {
             let block = block.read(cx);
             (block.kind(), block.display_text().to_string())
@@ -2147,6 +2211,8 @@ impl Editor {
         let Some(token) = vim_line_comment_token(language.as_deref()) else {
             return;
         };
+        let start_offset = start_offset.min(text.len());
+        let end_offset = end_offset.min(text.len());
         let mut line_ranges = Vec::new();
         let mut line_start = 0usize;
         for (index, ch) in text.char_indices() {
@@ -2156,8 +2222,6 @@ impl Editor {
             }
         }
         line_ranges.push(line_start..text.len());
-        let start_offset = range.start.offset.min(text.len());
-        let end_offset = range.end.offset.saturating_sub(1).min(text.len());
         let first = text
             .get(..start_offset)
             .map_or(0, |before| before.matches('\n').count())
