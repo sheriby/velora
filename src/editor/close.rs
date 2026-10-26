@@ -92,9 +92,8 @@ impl Editor {
                     .await;
                 cx.background_executor()
                     .spawn(async move {
-                        static WINDOW_FRAME_WRITE_LOCK: std::sync::Mutex<()> =
-                            std::sync::Mutex::new(());
-                        let _guard = WINDOW_FRAME_WRITE_LOCK.lock().ok();
+                        // 与主线程的偏好 setter 共用 persistence 的那把进程级
+                        // 配置锁，整文件 RMW 不再各写各的。
                         if let Err(error) = crate::config::store_window_frame(frame) {
                             eprintln!("failed to save window frame: {error}");
                         }

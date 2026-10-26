@@ -986,6 +986,7 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     include_prereleases: bool,
     dirs: &VeloraConfigDirs,
 ) -> anyhow::Result<AppPreferences> {
+    let _guard = lock_config_preferences();
     let mut preferences =
         load_or_create_app_preferences_with_dirs_and_locales(dirs, sys_locale::get_locales())?;
     preferences.updates.check_on_startup = check_updates_on_startup;
@@ -1028,9 +1029,31 @@ pub(crate) fn save_preferences_from_window_with_dirs(
 pub(crate) fn update_app_preferences(
     update: impl FnOnce(&mut AppPreferences),
 ) -> anyhow::Result<AppPreferences> {
-    let mut preferences = load_or_create_app_preferences()?;
+    update_app_preferences_with_dirs(&crate::config::VeloraConfigDirs::from_system()?, update)
+}
+
+/// config.toml 的整文件读-改-写必须整段串行：后台线程的窗口 frame 防抖写
+/// 与主线程的偏好 setter、偏好窗口保存并发时，后落盘者带着读盘旧快照会把
+/// 前者的修改回滚掉（session.json 侧早有同款先例）。
+static CONFIG_PREFERENCES_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 拿配置锁。持锁期间 panic 中毒后照常继续：锁只管写串行，中毒不该把
+/// 后续所有偏好写入永久卡死。
+fn lock_config_preferences() -> std::sync::MutexGuard<'static, ()> {
+    CONFIG_PREFERENCES_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+pub(crate) fn update_app_preferences_with_dirs(
+    dirs: &crate::config::VeloraConfigDirs,
+    update: impl FnOnce(&mut AppPreferences),
+) -> anyhow::Result<AppPreferences> {
+    let _guard = lock_config_preferences();
+    let mut preferences =
+        load_or_create_app_preferences_with_dirs_and_locales(dirs, sys_locale::get_locales())?;
     update(&mut preferences);
-    save_app_preferences(&preferences)?;
+    save_app_preferences_with_dirs(&preferences, dirs)?;
     Ok(preferences)
 }
 

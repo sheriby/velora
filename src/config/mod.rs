@@ -700,6 +700,9 @@ mod tests {
         read_recent_files_with_dirs, record_recent_file_with_dirs, remove_recent_file_with_dirs,
         sanitize_config_file_stem, strip_jsonc_comments,
     };
+    use super::preferences::{
+        load_or_create_app_preferences_with_dirs_and_locales, update_app_preferences_with_dirs,
+    };
     use serde_json::json;
     use std::path::{Path, PathBuf};
 
@@ -979,6 +982,47 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn concurrent_config_rmw_does_not_lose_updates() {
+        // 后台线程的窗口 frame 防抖写与主线程的偏好 setter 是两条无共享锁的
+        // 整文件读-改-写：后落盘者带着读盘旧快照，会把前者的修改回滚掉。
+        // 收编到同一把进程级锁后，两个字段的最终值都必须活着。
+        let root =
+            std::env::temp_dir().join(format!("velora-config-lock-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create config stress root");
+        let dirs = VeloraConfigDirs::from_root(&root);
+        let dirs_background = VeloraConfigDirs::from_root(&root);
+
+        let background = std::thread::spawn(move || {
+            for iteration in 0..40u64 {
+                update_app_preferences_with_dirs(&dirs_background, |preferences| {
+                    preferences.autosave_debounce_ms = 800 + iteration;
+                })
+                .expect("background rmw");
+            }
+        });
+        for iteration in 0..40i64 {
+            update_app_preferences_with_dirs(&dirs, |preferences| {
+                preferences.zoom_percent = 100 + iteration;
+            })
+            .expect("main rmw");
+        }
+        background.join().expect("background thread");
+
+        let final_preferences = load_or_create_app_preferences_with_dirs_and_locales(
+            &dirs,
+            std::iter::empty::<String>(),
+        )
+        .expect("load final");
+        assert_eq!(final_preferences.zoom_percent, 139, "主线程的最后一笔不得被回滚");
+        assert_eq!(
+            final_preferences.autosave_debounce_ms, 839,
+            "后台线程的最后一笔不得被回滚"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
 }
 
     /// 配置目录里落盘的文件一律 0600（Unix）：同目录还有 recovery/*.json（未保存

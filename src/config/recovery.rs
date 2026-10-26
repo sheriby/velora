@@ -23,23 +23,11 @@ pub(crate) fn save_recovery_snapshot_with_dir(snapshot: &RecoverySnapshot, dir: 
     std::fs::create_dir_all(dir)
         .with_context(|| format!("failed to create recovery directory '{}'", dir.display()))?;
     let path = dir.join(format!("{}.json", snapshot.id));
-    let temporary_path = dir.join(format!("{}.json.tmp", snapshot.id));
     let contents = serde_json::to_vec(snapshot).context("failed to encode recovery snapshot")?;
-    std::fs::write(&temporary_path, contents).with_context(|| {
-        format!(
-            "failed to write recovery snapshot '{}'",
-            temporary_path.display()
-        )
-    })?;
-    // 快照是未保存正文全文：rename 前收成 0600（判据在 config/mod.rs 一处）。
-    #[cfg(unix)]
-    super::restrict_config_file_to_owner(&temporary_path).with_context(|| {
-        format!(
-            "failed to restrict recovery snapshot '{}'",
-            temporary_path.display()
-        )
-    })?;
-    std::fs::rename(&temporary_path, &path)
+    // 单点判据 write_config_bytes_atomic：临时文件**建出就收紧 0600** 再写内容、
+    // sync_all、rename。旧实现先以 umask 默认权限把未保存正文全文写完才 chmod，
+    // 多用户机器上有一段同机其他用户可读的窗口。
+    crate::config::write_config_bytes_atomic(&path, &contents)
         .with_context(|| format!("failed to install recovery snapshot '{}'", path.display()))?;
     Ok(())
 }
