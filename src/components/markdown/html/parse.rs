@@ -150,10 +150,16 @@ pub(crate) fn serialize_handle(node: &Handle) -> String {
 /// their HTML shape, while raw text nodes are escaped so browsers cannot
 /// execute or interpret them.
 pub(crate) fn sanitize_html_for_export(raw_source: &str) -> String {
-    if let Some(image) = parse_html_image_block(raw_source) {
-        return image.to_sanitized_html_with_src(&image.src);
-    }
+    sanitize_html_for_export_with_image_src(raw_source, &|src| src.to_string())
+}
 
+/// 同上，但 img 的 src 由调用方给的重写函数处理：导出侧用它把本地绝对路径
+/// 内联或换成中性占位——src 原样保留会把作者的目录结构与用户名烘进分享件
+/// （独立 <img> 块在导出侧早已这么处理，容器里的 img 曾漏掉）。
+pub(crate) fn sanitize_html_for_export_with_image_src(
+    raw_source: &str,
+    rewrite_image_src: &dyn Fn(&str) -> String,
+) -> String {
     let document = parse_html_document(raw_source);
     if document.renders_nothing() {
         return String::new();
@@ -168,7 +174,7 @@ pub(crate) fn sanitize_html_for_export(raw_source: &str) -> String {
     document
         .nodes
         .iter()
-        .map(sanitize_node_for_export)
+        .map(|node| sanitize_node_for_export(node, rewrite_image_src))
         .collect::<String>()
 }
 
@@ -178,7 +184,7 @@ pub(crate) fn sanitize_inline_html_open_for_export(raw_source: &str, expected_na
     if document.nodes.len() != 1 { return None; }
     let node = document.nodes.first()?;
     if node.kind != HtmlNodeKind::InlineSemantic || node.tag_name != expected_name { return None; }
-    Some(sanitized_open_tag(node))
+    Some(sanitized_open_tag(node, &|src| src.to_string()))
 }
 
 /// Parses the safe visual subset of a semantic node's `style` attribute.
@@ -199,7 +205,10 @@ pub(crate) fn style_for_node(node: &HtmlNode) -> HtmlInlineStyle {
     parsed
 }
 
-fn sanitize_node_for_export(node: &HtmlNode) -> String {
+fn sanitize_node_for_export(
+    node: &HtmlNode,
+    rewrite_image_src: &dyn Fn(&str) -> String,
+) -> String {
     if node.kind == HtmlNodeKind::RawTextBlock {
         return format!(
             "<span class=\"vlt-raw-html\">{}</span>",
@@ -212,7 +221,7 @@ fn sanitize_node_for_export(node: &HtmlNode) -> String {
     }
 
     if is_void_tag(&node.tag_name) {
-        return sanitized_open_tag(node);
+        return sanitized_open_tag(node, rewrite_image_src);
     }
 
     let Some(_open_end) = node.raw_source.find('>').map(|index| index + 1) else {
@@ -224,16 +233,16 @@ fn sanitize_node_for_export(node: &HtmlNode) -> String {
     let children = node
         .children
         .iter()
-        .map(sanitize_node_for_export)
+        .map(|child| sanitize_node_for_export(child, rewrite_image_src))
         .collect::<String>();
-    format!("{}{children}{close}", sanitized_open_tag(node))
+    format!("{}{children}{close}", sanitized_open_tag(node, rewrite_image_src))
 }
 
-fn sanitized_open_tag(node: &HtmlNode) -> String {
+fn sanitized_open_tag(node: &HtmlNode, rewrite_image_src: &dyn Fn(&str) -> String) -> String {
     if node.tag_name == "img"
         && let Some(image) = parse_html_image_block(&node.raw_source)
     {
-        return image.to_sanitized_html_with_src(&image.src);
+        return image.to_sanitized_html_with_src(&rewrite_image_src(&image.src));
     }
 
     let mut open = format!("<{}", node.tag_name);

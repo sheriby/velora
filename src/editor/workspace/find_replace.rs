@@ -317,6 +317,12 @@ impl Editor {
         if self.is_read_only() {
             return;
         }
+        // 双链目标来自文档内容（外部 vault 也可能进来）：不做路径校验，
+        // `[[../../x]]` 就能穿越工作区根在盘上任意位置建文件、或打开根外
+        // 任意文本文件。与 tree_edit 的建文件判据同一把尺。
+        if !super::tree_edit::valid_workspace_name(&target) {
+            return;
+        }
         // Create `<target>.md` at the workspace root.
         let path = self
             .workspace

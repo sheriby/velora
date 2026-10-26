@@ -201,3 +201,50 @@ async fn tmp_debug_merge_state(cx: &mut TestAppContext) {
         })
         .expect("read");
 }
+
+#[gpui::test]
+async fn wikilink_traversal_target_is_rejected(cx: &mut TestAppContext) {
+    // `[[../../x]]` 不得穿越工作区根：在根外落文件、或打开根外任意文本文件。
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = temp_fixture_dir().join(format!("velora-wikilink-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+
+    let marker = format!("escape-{}", uuid::Uuid::new_v4());
+    let escaped = root
+        .canonicalize()
+        .expect("canonical root")
+        .parent()
+        .and_then(|parent| parent.parent())
+        .map(|grandparent| grandparent.join(format!("{marker}.md")))
+        .expect("grandparent");
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_wikilink(format!("../../{marker}"), window, cx);
+        });
+        window.draw(cx).clear(cx);
+    });
+    cx.run_until_parked();
+
+    assert!(
+        !escaped.exists(),
+        "穿越目标不得在根外落文件：{}",
+        escaped.display()
+    );
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.file_path.is_none(),
+            "穿越目标也不得被当作工作区文件打开"
+        );
+    });
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_file(&escaped);
+}

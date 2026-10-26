@@ -89,12 +89,44 @@ pub(crate) fn apply_environment(cx: &App) {
 
 #[cfg(not(test))]
 fn apply_environment_now(cx: &App) {
-    let Some(url) = configured_url(cx) else {
-        return;
-    };
-    for key in ENVIRONMENT_KEYS {
-        // SAFETY: 调用点是启动早期与保存偏好之后，改的是本进程自己的环境变量。
-        unsafe { std::env::set_var(key, &url) };
+    apply_proxy_environment(configured_url(cx).as_deref());
+}
+
+/// 每个代理变量要落的动作：设置成新地址，或从进程环境里移除。
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ProxyEnvAction {
+    Set(String),
+    Remove,
+}
+
+/// 给定配置（`None` 含空白 = 未配置）算出每个代理变量的目标动作。
+/// 纯函数单独拆出来：环境变量是进程全局的，测试不能真改（会把并发用例的
+/// HTTP 请求导到代理上），只能钉这份计划——**清空必须对每个键给 Remove**，
+/// 否则用户删掉代理后第三方客户端仍沿用进程里残留的旧代理直到重启。
+pub(crate) fn proxy_environment_plan(url: Option<&str>) -> Vec<(&'static str, ProxyEnvAction)> {
+    match url {
+        Some(url) => ENVIRONMENT_KEYS
+            .iter()
+            .map(|key| (*key, ProxyEnvAction::Set(url.to_string())))
+            .collect(),
+        None => ENVIRONMENT_KEYS
+            .iter()
+            .map(|key| (*key, ProxyEnvAction::Remove))
+            .collect(),
+    }
+}
+
+/// 按计划落进程环境。
+///
+/// # Safety
+/// 只在启动早期与保存偏好之后调用（此时没有并发读环境变量的线程），
+/// 改的是本进程自己的环境变量。
+fn apply_plan(plan: Vec<(&'static str, ProxyEnvAction)>) {
+    for (key, action) in plan {
+        match action {
+            ProxyEnvAction::Set(url) => unsafe { std::env::set_var(key, url) },
+            ProxyEnvAction::Remove => unsafe { std::env::remove_var(key) },
+        }
     }
 }
 
@@ -130,5 +162,30 @@ mod tests {
             let lower = name.to_lowercase();
             assert!(ENVIRONMENT_KEYS.contains(&lower.as_str()));
         }
+    }
+}
+mod plan_tests {
+    use super::{ProxyEnvAction, ENVIRONMENT_KEYS, proxy_environment_plan};
+
+    /// 清空代理必须对每个键给 Remove：apply_environment_now 曾在清空分支
+    /// 直接 return，set_var 写进去的六个键无人回收，旧代理残留至重启——
+    /// AI 请求要么全部失败（旧代理已关）要么继续从已撤销的出口发出。
+    #[test]
+    fn clearing_the_proxy_plans_removal_for_every_variable() {
+        let plan = proxy_environment_plan(Some("http://127.0.0.1:7890"));
+        assert_eq!(plan.len(), ENVIRONMENT_KEYS.len());
+        assert!(plan
+            .iter()
+            .all(|(key, action)| ENVIRONMENT_KEYS.contains(key)
+                && matches!(action, ProxyEnvAction::Set(url) if url == "http://127.0.0.1:7890")));
+
+        let plan = proxy_environment_plan(None);
+        assert_eq!(plan.len(), ENVIRONMENT_KEYS.len());
+        assert!(
+            plan.iter()
+                .all(|(key, action)| ENVIRONMENT_KEYS.contains(key)
+                    && matches!(action, ProxyEnvAction::Remove)),
+            "清空分支必须 remove 每个代理变量：{plan:?}"
+        );
     }
 }

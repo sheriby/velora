@@ -28,7 +28,8 @@ use crate::components::markdown::inline::{is_single_inline_dollar, looks_like_cu
 use crate::components::BlockKind;
 pub(super) use crate::components::{
     display_math_font_size, inline_math_font_size, is_mermaid_info_string, parse_display_math_source,
-    parse_html_image_block, render_latex_to_svg, render_mermaid_to_svg_for_theme, sanitize_html_for_export,
+    parse_html_image_block, render_latex_to_svg, render_mermaid_to_svg_for_theme,
+    sanitize_html_for_export_with_image_src,
 };
 use crate::file_url::percent_decode_or_raw;
 pub(super) use crate::theme::{FontWeightDef, Theme};
@@ -1130,7 +1131,12 @@ impl<'a> ExportRewriter<'a> {
                     .unwrap_or_else(|| image.src.clone());
                 return image.to_sanitized_html_with_src(&src);
             }
-        sanitize_html_for_export(trimmed)
+        sanitize_html_for_export_with_image_src(trimmed, &|src| {
+            // 与上方独立 <img> 块同一条链：本地文件内联，绝对路径换中性占位。
+            local_image_data_uri(src, self.base_dir)
+                .or_else(|| absolute_local_image_export_replacement(src, self.base_dir))
+                .unwrap_or_else(|| src.to_string())
+        })
     }
 
     /// 行内 HTML 叶子：单个开标签当作用域压栈，闭标签出栈，其余按净化后的原文出去。

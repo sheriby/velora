@@ -978,6 +978,20 @@ mod tests {
     }
 
     #[test]
+    fn container_img_src_does_not_leak_absolute_paths_into_export() {
+        // 独立 <img> 块导出时会把本地绝对路径内联或换成中性占位；嵌在语义
+        // 容器里的 img 曾原样保留 src——作者的目录结构与用户名被烘进分享件，
+        // 且 CSP 不含 file:/相对路径，图也必然碎裂。
+        let markdown = "<div><img src=\"/Users/name/notes/photo.png\"></div>";
+        let html = render_html(markdown, &Theme::default_theme(), "Doc");
+        let body = body_only(&html);
+        assert!(
+            !body.contains("/Users/name"),
+            "容器内 img 的绝对路径不得原样进导出：{html}"
+        );
+    }
+
+    #[test]
     fn keeps_math_like_dollars_in_link_destination() {
         // cases/06-link-url.md：链接 URL 曾被改写导致 `<a href>` 整个消失。
         let markdown = "[doc](https://example.com/$x$)";
@@ -1626,3 +1640,4 @@ mod tests {
         );
     }
 }
+
