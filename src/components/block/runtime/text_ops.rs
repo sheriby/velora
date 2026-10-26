@@ -435,8 +435,15 @@ impl Block {
                 Ok(idx) | Err(idx) => idx,
             };
 
+        // 行表（last_layout，上一帧）与字节行表（当前文本）可能错配：被跳过
+        // 绘制的帧里改过文本时行数对不上，旧行号裸下标会越界，钳回有效行。
+        let line_range = ranges
+            .get(target_line_idx)
+            .or_else(|| ranges.last())
+            .cloned()
+            .unwrap_or(0..0);
         let flat_offset = crate::components::markdown::inline::clamp_to_char_boundary(
-            text, ranges[target_line_idx].start + target_offset_in_line,
+            text, line_range.start + target_offset_in_line,
         );
         self.move_to_with_preferred_x(flat_offset, Some(preferred_x), cx);
         true
@@ -479,8 +486,13 @@ impl Block {
         {
             Ok(idx) | Err(idx) => idx,
         };
+        let line_range = ranges
+            .get(target_line_idx)
+            .or_else(|| ranges.last())
+            .cloned()
+            .unwrap_or(0..0);
         crate::components::markdown::inline::clamp_to_char_boundary(
-            text, ranges[target_line_idx].start + offset_in_line,
+            text, line_range.start + offset_in_line,
         )
     }
 
@@ -747,7 +759,13 @@ impl Block {
         // 字形几何反推的字节偏移可能落在多字节字符内部（中文文本里很常见）。
         // 这个偏移会进选择范围，之后按它切片（状态栏选词统计、复制）就会
         // panic；release 下 panic = abort，即用户报的 coredump。就地收敛。
-        clamp_to_char_boundary(text, ranges[line_idx].start + offset_in_line)
+        // 行表（last_layout）与字节行表错配时钳回有效行，不拿旧行号裸下标。
+        let line_range = ranges
+            .get(line_idx)
+            .or_else(|| ranges.last())
+            .cloned()
+            .unwrap_or(0..0);
+        clamp_to_char_boundary(text, line_range.start + offset_in_line)
     }
 
     pub(crate) fn active_range_or_cursor_bounds(&self) -> Option<Bounds<Pixels>> {

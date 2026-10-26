@@ -339,8 +339,14 @@ impl EntityInputHandler for Block {
         {
             Ok(idx) | Err(idx) => idx,
         };
+        // 行表（last_layout）与字节行表错配时钳回有效行，不拿旧行号裸下标。
+        let line_range = ranges
+            .get(line_idx)
+            .or_else(|| ranges.last())
+            .cloned()
+            .unwrap_or(0..0);
         let utf8_index = crate::components::markdown::inline::clamp_to_char_boundary(
-            text, ranges[line_idx].start + utf8_offset_in_line,
+            text, line_range.start + utf8_offset_in_line,
         );
         Some(Self::utf8_to_utf16_in(self.display_text(), utf8_index))
     }
