@@ -44,7 +44,9 @@ impl SearchMatcher {
         self.error.as_ref().map(|error| error.message.as_str())
     }
 
-    /// 一行内的全部命中字节区间。
+    /// 一行内的全部命中字节区间。生产侧已全部改读命中表（find_all_in_text），
+    /// 现在只服务阶段 0 的行为快照测试。
+    #[cfg(test)]
     pub(crate) fn find_in_line(&self, line: &str) -> Vec<Range<usize>> {
         match self.engine.as_ref() {
             Some(engine) => engine.find_in_line(line),

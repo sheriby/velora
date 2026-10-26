@@ -149,11 +149,7 @@ pub(crate) fn serialize_handle(node: &Handle) -> String {
 /// Rewrites an HTML fragment for document export: safe semantic nodes keep
 /// their HTML shape, while raw text nodes are escaped so browsers cannot
 /// execute or interpret them.
-pub(crate) fn sanitize_html_for_export(raw_source: &str) -> String {
-    sanitize_html_for_export_with_image_src(raw_source, &|src| src.to_string())
-}
-
-/// 同上，但 img 的 src 由调用方给的重写函数处理：导出侧用它把本地绝对路径
+/// img 的 src 由调用方给的重写函数处理：导出侧用它把本地绝对路径
 /// 内联或换成中性占位——src 原样保留会把作者的目录结构与用户名烘进分享件
 /// （独立 <img> 块在导出侧早已这么处理，容器里的 img 曾漏掉）。
 pub(crate) fn sanitize_html_for_export_with_image_src(

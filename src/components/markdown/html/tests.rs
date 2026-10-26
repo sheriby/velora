@@ -1,5 +1,10 @@
     use super::*;
-    use super::parse::{parse_html_document, parse_html_image_block, sanitize_html_for_export, style_for_node};
+
+    /// 恒等重写的便捷包装：本文件的用例不关心 img 换源，导出侧的换源行为
+    /// 由 export/html 的测试钉。
+    fn sanitize_html_for_export(source: &str) -> String {
+        super::parse::sanitize_html_for_export_with_image_src(source, &|src| src.to_string())
+    }
 
     #[test]
     fn safe_inline_html_classifies_as_semantic() {

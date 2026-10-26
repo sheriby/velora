@@ -187,8 +187,9 @@ impl CompiledQuery {
         out
     }
 
-    /// 单行里的命中区间。给「手上只有一行文本」的调用方用（逐行扫磁盘文件、
-    /// 逐块扫缓冲区切片）。
+    /// 单行里的命中区间。生产消费方已改走 find_all/命中表，现在只服务
+    /// SearchMatcher::find_in_line 的行为快照测试。
+    #[cfg(test)]
     pub(crate) fn find_in_line(&self, line: &str) -> Vec<Range<usize>> {
         self.find_all(line.as_bytes())
             .into_iter()

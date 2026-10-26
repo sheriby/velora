@@ -89,7 +89,7 @@ pub(crate) fn apply_environment(cx: &App) {
 
 #[cfg(not(test))]
 fn apply_environment_now(cx: &App) {
-    apply_proxy_environment(configured_url(cx).as_deref());
+    apply_plan(proxy_environment_plan(configured_url(cx).as_deref()));
 }
 
 /// 每个代理变量要落的动作：设置成新地址，或从进程环境里移除。
@@ -132,7 +132,7 @@ fn apply_plan(plan: Vec<(&'static str, ProxyEnvAction)>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ENVIRONMENT_KEYS, reqwest_proxy_from_disk};
+    use super::{ENVIRONMENT_KEYS, ProxyEnvAction, proxy_environment_plan, reqwest_proxy_from_disk};
 
     /// 盘上写了代理地址，后台线程那条路（更新检查）也要拿得到。
     #[test]
@@ -162,12 +162,7 @@ mod tests {
             let lower = name.to_lowercase();
             assert!(ENVIRONMENT_KEYS.contains(&lower.as_str()));
         }
-    }
-}
-mod plan_tests {
-    use super::{ProxyEnvAction, ENVIRONMENT_KEYS, proxy_environment_plan};
-
-    /// 清空代理必须对每个键给 Remove：apply_environment_now 曾在清空分支
+    }    /// 清空代理必须对每个键给 Remove：apply_environment_now 曾在清空分支
     /// 直接 return，set_var 写进去的六个键无人回收，旧代理残留至重启——
     /// AI 请求要么全部失败（旧代理已关）要么继续从已撤销的出口发出。
     #[test]

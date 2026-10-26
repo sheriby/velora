@@ -844,4 +844,26 @@ mod tests {
         );
         assert_eq!(entry.theme.typography.h1_size, 35.0);
     }
+
+    #[test]
+    fn theme_replacements_bump_the_generation() {
+        // 形状备忘与派生主题缓存用代数作指纹：Arc 是 request_layout 里的局部
+        // 变量，释放后地址会被同尺寸分配复用，指针指纹相等就会命中旧主题烘焙
+        // 进 runs 的颜色。每次替换 current 都必须换代。
+        let mut manager = ThemeManager::default();
+        let initial = manager.current_theme_generation();
+        assert!(
+            manager.set_theme_by_id(crate::theme::BUILTIN_THEME_LIGHT_ID),
+            "内置浅色主题应能激活",
+        );
+        let after_light = manager.current_theme_generation();
+        assert_ne!(after_light, initial, "换主题必须换代");
+        assert!(manager.set_theme_by_id(crate::theme::BUILTIN_THEME_DARK_ID));
+        assert_ne!(
+            manager.current_theme_generation(),
+            after_light,
+            "再换一次主题代数必须继续前进"
+        );
+    }
+
 }

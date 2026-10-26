@@ -71,9 +71,14 @@ pub(crate) struct CustomThemeEntry {
 /// `cx.global::<ThemeManager>().current()` without passing props.
 pub struct ThemeManager {
     current: Arc<Theme>,
-    /// 字号派生缓存（基础主题 + 字体偏好 + 界面缩放 → 派生主题）。键含基础
-    /// Arc 指针：换主题必换指针。块渲染借用这一份，不再每块每帧克隆整份
-    /// Theme 自己派生（评审报告维度四建议 5）。
+    /// current 的换代计数：唯一的替换口是 `replace_current`，每换一次自增。
+    /// 消费方缓存（shape 备忘、派生主题）用它作指纹——Arc 指针不行：Arc 是
+    /// request_layout 里的局部变量，释放后地址会被同尺寸分配复用，指针指纹
+    /// 相等就会命中旧主题烘焙进 runs 的颜色。
+    theme_generation: u64,
+    /// 字号派生缓存（基础主题 + 字体偏好 + 界面缩放 → 派生主题）。键含
+    /// 主题代数。块渲染借用这一份，不再每块每帧克隆整份 Theme 自己派生
+    /// （评审报告维度四建议 5）。
     derived_cache:
         std::cell::RefCell<Option<(u64, std::sync::Arc<Theme>)>>,
     current_theme_id: String,
@@ -88,6 +93,7 @@ impl Default for ThemeManager {
     fn default() -> Self {
         Self {
             current: Arc::new(Theme::default_theme()),
+            theme_generation: 0,
             derived_cache: std::cell::RefCell::new(None),
             current_theme_id: BUILTIN_THEME_DARK_ID.into(),
             system_appearance: WindowAppearance::Light,
@@ -134,6 +140,17 @@ impl ThemeManager {
         self.current.clone()
     }
 
+    /// current 的换代数：形状/派生缓存的指纹键用它。
+    pub fn current_theme_generation(&self) -> u64 {
+        self.theme_generation
+    }
+
+    /// 唯一的 current 替换口：每换一次自增代数。
+    fn replace_current(&mut self, theme: Theme) {
+        self.current = Arc::new(theme);
+        self.theme_generation = self.theme_generation.wrapping_add(1);
+    }
+
     /// 派生主题（基础主题 + 字号/界面缩放已套好）。输入不变时只 bump 引用
     /// 计数；变化才重新克隆派生一次。
     pub fn derived_theme(&self, cx: &App) -> Arc<Theme> {
@@ -142,7 +159,7 @@ impl ThemeManager {
         let fonts = crate::config::EditorSettings::fonts(cx);
         let zoom = crate::config::EditorSettings::zoom_percent(cx);
         let mut hasher = std::hash::DefaultHasher::new();
-        (std::sync::Arc::as_ptr(&base) as usize).hash(&mut hasher);
+        self.theme_generation.hash(&mut hasher);
         fonts.hash(&mut hasher);
         zoom.hash(&mut hasher);
         let key = hasher.finish();
@@ -200,7 +217,7 @@ impl ThemeManager {
     pub fn load_file(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
         let theme = Theme::from_file(path)?;
         self.current_theme_id = self.theme_id_for_loaded_theme(&theme);
-        self.current = Arc::new(theme);
+        self.replace_current(theme);
         Ok(())
     }
 
@@ -208,20 +225,20 @@ impl ThemeManager {
     pub fn load_json(&mut self, json: &str) -> anyhow::Result<()> {
         let theme = Theme::from_json(json)?;
         self.current_theme_id = self.theme_id_for_loaded_theme(&theme);
-        self.current = Arc::new(theme);
+        self.replace_current(theme);
         Ok(())
     }
 
     /// Replaces the active theme with a fully constructed value.
     pub fn set_theme(&mut self, theme: Theme) {
         self.current_theme_id = self.theme_id_for_loaded_theme(&theme);
-        self.current = Arc::new(theme);
+        self.replace_current(theme);
     }
 
     /// Restores the built-in default theme.
     pub fn reset(&mut self) {
         self.current_theme_id = BUILTIN_THEME_SYSTEM_ID.into();
-        self.current = Arc::new(match self.system_appearance {
+        self.replace_current(match self.system_appearance {
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Theme::default_theme(),
             WindowAppearance::Light | WindowAppearance::VibrantLight => Theme::light_theme(),
         });
@@ -231,7 +248,7 @@ impl ThemeManager {
     pub fn set_system_appearance(&mut self, appearance: WindowAppearance) {
         self.system_appearance = appearance;
         if self.current_theme_id == BUILTIN_THEME_SYSTEM_ID {
-            self.current = Arc::new(match appearance {
+            self.replace_current(match appearance {
                 WindowAppearance::Dark | WindowAppearance::VibrantDark => Theme::default_theme(),
                 WindowAppearance::Light | WindowAppearance::VibrantLight => Theme::light_theme(),
             });
@@ -243,7 +260,7 @@ impl ThemeManager {
         match theme_id {
             id if id == BUILTIN_THEME_SYSTEM_ID => {
                 self.current_theme_id = BUILTIN_THEME_SYSTEM_ID.into();
-                self.current = Arc::new(match self.system_appearance {
+                self.replace_current(match self.system_appearance {
                     WindowAppearance::Dark | WindowAppearance::VibrantDark => {
                         Theme::default_theme()
                     }
@@ -254,32 +271,32 @@ impl ThemeManager {
                 true
             }
             id if id == BUILTIN_THEME_DARK_ID => {
-                self.current = Arc::new(Theme::default_theme());
+                self.replace_current(Theme::default_theme());
                 self.current_theme_id = BUILTIN_THEME_DARK_ID.into();
                 true
             }
             id if id == BUILTIN_THEME_LIGHT_ID => {
-                self.current = Arc::new(Theme::light_theme());
+                self.replace_current(Theme::light_theme());
                 self.current_theme_id = BUILTIN_THEME_LIGHT_ID.into();
                 true
             }
             id if id == BUILTIN_THEME_PAPER_ID => {
-                self.current = Arc::new(Theme::paper_theme());
+                self.replace_current(Theme::paper_theme());
                 self.current_theme_id = BUILTIN_THEME_PAPER_ID.into();
                 true
             }
             id if id == BUILTIN_THEME_FOREST_ID => {
-                self.current = Arc::new(Theme::forest_theme());
+                self.replace_current(Theme::forest_theme());
                 self.current_theme_id = BUILTIN_THEME_FOREST_ID.into();
                 true
             }
             id if id == BUILTIN_THEME_MIDNIGHT_ID => {
-                self.current = Arc::new(Theme::midnight_theme());
+                self.replace_current(Theme::midnight_theme());
                 self.current_theme_id = BUILTIN_THEME_MIDNIGHT_ID.into();
                 true
             }
             id if id == BUILTIN_THEME_INK_ID => {
-                self.current = Arc::new(Theme::ink_theme());
+                self.replace_current(Theme::ink_theme());
                 self.current_theme_id = BUILTIN_THEME_INK_ID.into();
                 true
             }
@@ -287,8 +304,11 @@ impl ThemeManager {
                 let Some(entry) = self.custom_themes.iter().find(|entry| entry.id == id) else {
                     return false;
                 };
-                self.current = Arc::new(entry.theme.clone());
-                self.current_theme_id = entry.id.clone();
+                // 先落句柄再换代：entry 借着 self，replace_current 要 &mut。
+                let theme = entry.theme.clone();
+                let theme_id = entry.id.clone();
+                self.replace_current(theme);
+                self.current_theme_id = theme_id;
                 true
             }
         }

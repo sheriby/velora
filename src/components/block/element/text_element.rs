@@ -162,7 +162,9 @@ impl Element for BlockTextElement {
         style_font.weight.hash(&mut fingerprint_hasher);
         style_font.style.hash(&mut fingerprint_hasher);
         let font_fingerprint = fingerprint_hasher.finish();
-        let theme_fingerprint = std::sync::Arc::as_ptr(&theme) as usize as u64;
+        // 主题指纹用代数不用指针：theme Arc 是局部变量，释放后地址会被同
+        // 尺寸分配复用，指针键相等就会用旧主题烘焙的颜色画新主题的文本。
+        let theme_fingerprint = cx.global::<ThemeManager>().current_theme_generation();
         let memo_key_base = ShapeMemoKey {
             generation: input.display_generation(),
             render_generation: input.render_generation(),
