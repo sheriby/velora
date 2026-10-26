@@ -500,7 +500,7 @@ fn has_legacy_temp_fixture_name(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .map(|name| {
             let name = name.to_ascii_lowercase();
-            name.starts_with("velora-drop-") || name.starts_with("velora-drop-")
+            name.starts_with("velora-drop-")
         })
         .unwrap_or(false)
 }

@@ -1215,9 +1215,11 @@ impl I18nStrings {
 
     /// Returns a built-in string set for a supported language id.
     pub fn for_language_id(language_id: &str) -> Option<Self> {
+        // 内置语言集合的判据用 pack.rs 的常量：字面量抄本会让将来新增的
+        // 内置语言在语言菜单里点了没反应。
         match language_id {
-            "zh-CN" => Some(Self::zh_cn()),
-            "en-US" => Some(Self::en_us()),
+            crate::i18n::pack::BUILTIN_LANGUAGE_ZH_CN_ID => Some(Self::zh_cn()),
+            crate::i18n::pack::BUILTIN_LANGUAGE_EN_US_ID => Some(Self::en_us()),
             _ => None,
         }
     }

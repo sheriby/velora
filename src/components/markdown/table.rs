@@ -706,7 +706,13 @@ fn split_table_cells(line: &str) -> Option<Vec<String>> {
     // Outer pipes are optional (GFM): strip them when present so pipeless rows
     // like `Name | Score` split the same way as `| Name | Score |`.
     let inner = rest.strip_prefix('|').unwrap_or(rest);
-    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    // 行尾是不是外层收尾管道，用同一切分判据判定：手写行 `| a | b \|`
+    // 末格以转义竖线收尾（没有外层收尾管道），strip_suffix 会把格内的
+    // `\|` 剥掉、丢一个字符。
+    let inner = match cell_separator_positions(inner).last() {
+        Some(&position) if position + 1 == inner.len() => &inner[..position],
+        _ => inner,
+    };
 
     let mut cells = Vec::new();
     let mut cursor = 0usize;

@@ -373,6 +373,15 @@ impl ExpandedInlineProjection {
                     )
                     | ExpandedInlineSegmentKind::OpeningDelimiter(
                         ExpandedInlineKind::SubscriptMarkdown,
+                    )
+                    | ExpandedInlineSegmentKind::OpeningDelimiter(
+                        ExpandedInlineKind::Highlight,
+                    )
+                    | ExpandedInlineSegmentKind::OpeningDelimiter(
+                        ExpandedInlineKind::SuperscriptHtml,
+                    )
+                    | ExpandedInlineSegmentKind::OpeningDelimiter(
+                        ExpandedInlineKind::SubscriptHtml,
                     ) => {
                         clean_to_display_cursor[segment.clean_range.start] =
                             segment.display_range.end;
@@ -392,6 +401,15 @@ impl ExpandedInlineProjection {
                     )
                     | ExpandedInlineSegmentKind::ClosingDelimiter(
                         ExpandedInlineKind::SubscriptMarkdown,
+                    )
+                    | ExpandedInlineSegmentKind::ClosingDelimiter(
+                        ExpandedInlineKind::Highlight,
+                    )
+                    | ExpandedInlineSegmentKind::ClosingDelimiter(
+                        ExpandedInlineKind::SuperscriptHtml,
+                    )
+                    | ExpandedInlineSegmentKind::ClosingDelimiter(
+                        ExpandedInlineKind::SubscriptHtml,
                     ) => {
                         clean_to_display_cursor[segment.clean_range.start] =
                             segment.display_range.start;

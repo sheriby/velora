@@ -720,3 +720,35 @@ async fn pasting_url_over_mid_char_selection_clamps_once(cx: &mut TestAppContext
         );
     });
 }
+
+#[gpui::test]
+async fn typed_wrap_symbol_is_literal_inside_code_blocks(cx: &mut TestAppContext) {
+    // 代码块里选中后键入包裹符号：原样插入键入字符，不注 Markdown 记号
+    // （紧邻的 smart_punctuation 分支为此显式排除代码块，包裹分支曾漏掉）。
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::CodeBlock { language: None },
+                InlineTextTree::from_markdown("value = 1"),
+            ),
+        )
+    });
+
+    block.update(cx, |block, _cx| {
+        block.selected_range = 0..5; // "value"
+    });
+
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            <Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "*", window, block_cx,
+            );
+        });
+    });
+
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(block.display_text().to_string(), "* = 1");
+    });
+}

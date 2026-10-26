@@ -355,11 +355,17 @@ fn normalize_link_destination(destination: &str) -> String {
     unescape_ascii_punctuation(super::image::angle_bracket_destination(destination))
 }
 
-fn unescape_ascii_punctuation(input: &str) -> String {
+/// 可转义集只认 `is_commonmark_escapable` 这一处判据（行内目标的换行符
+/// 不可达，与 `is_ascii_punctuation` 等价，但判据必须单点）。
+pub(crate) fn unescape_ascii_punctuation(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '\\' && chars.peek().is_some_and(|next| next.is_ascii_punctuation()) {
+        if ch == '\\'
+            && chars
+                .peek()
+                .is_some_and(|next| crate::components::markdown::inline::is_commonmark_escapable(*next))
+        {
             output.push(chars.next().expect("peeked punctuation must exist"));
         } else {
             output.push(ch);

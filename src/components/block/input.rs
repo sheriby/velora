@@ -154,6 +154,8 @@ impl EntityInputHandler for Block {
         // Wrap a non-empty selection with the typed paired symbol (roadmap
         // B4): typing `*` over a selection becomes *selection*, etc.
         if let Some((mut open, mut close)) = wrap_pair_for(new_text)
+            && !self.kind().is_code_block()
+            && !self.uses_raw_text_editing()
             && !visible_range.is_empty()
             && !self.display_text()[visible_range.clone()].contains('\n')
         {

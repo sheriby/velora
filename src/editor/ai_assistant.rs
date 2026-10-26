@@ -924,6 +924,19 @@ impl Editor {
             return;
         };
         let root = session.saved.workspace.root.clone();
+        // 在用会话（前台 + 暂存任务）的文件不参与清理：删了之后 delete_at 的
+        // 删除标记会把该会话之后所有保存永久静默拦截（含退出时 Drop 保存），
+        // 对话记录丢失且界面无任何报错。
+        let active_paths: Vec<std::path::PathBuf> = self
+            .ai_session
+            .iter()
+            .filter_map(|session| session.saved.path().ok())
+            .chain(
+                self.ai_task_sessions
+                    .iter()
+                    .filter_map(|session| session.saved.path().ok()),
+            )
+            .collect();
         let background = cx.background_spawn(async move {
             let directory = SavedSession::directory(root.as_deref())?;
             let mut files = std::fs::read_dir(&directory)?
@@ -943,8 +956,8 @@ impl Editor {
             let mut removed = 0_usize;
             for (index, path) in files.into_iter().enumerate() {
                 let saved = SavedSession::load_at(&path, root.as_deref()).ok();
-                let keep = saved.as_ref().is_some_and(|saved| saved.pinned) || index < 50;
-                if !keep {
+                let pinned = saved.as_ref().is_some_and(|saved| saved.pinned);
+                if !cleanup_should_keep(index, pinned, &path, &active_paths) {
                     SavedSession::delete_at(&path)?;
                     removed += 1;
                 }
@@ -2703,3 +2716,25 @@ pub(in crate::editor) fn ai_document_id(
 
 #[cfg(test)]
 mod tests;
+
+/// 清理保留判定：置顶或最近 50 个之外才删；在用会话的文件永远保留。
+fn cleanup_should_keep(index: usize, pinned: bool, path: &std::path::Path, active_paths: &[std::path::PathBuf]) -> bool {
+    pinned || index < 50 || active_paths.contains(&path.to_path_buf())
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::cleanup_should_keep;
+
+    #[test]
+    fn cleanup_never_deletes_active_session_files() {
+        let active = std::path::PathBuf::from("/tmp/session-1.json");
+        // 第 51 个（index 50）本该删，但它在用：保留。
+        assert!(cleanup_should_keep(50, false, &active, &[active.clone()]));
+        // 同一位置、不在用：照常删。
+        assert!(!cleanup_should_keep(50, false, std::path::Path::new("/tmp/other.json"), &[active.clone()]));
+        // 置顶与最近 50 个的既有口径不变。
+        assert!(cleanup_should_keep(500, true, std::path::Path::new("/tmp/pinned.json"), &[]));
+        assert!(cleanup_should_keep(49, false, std::path::Path::new("/tmp/recent.json"), &[]));
+    }
+}

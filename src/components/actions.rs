@@ -1179,6 +1179,12 @@ pub(crate) fn resolved_keybindings(config: &BTreeMap<String, Vec<String>>) -> Ve
     bindings.push(KeyBinding::new("cmd-+", ZoomIn, None));
     bindings.push(KeyBinding::new("cmd--", ZoomOut, None));
     bindings.push(KeyBinding::new("cmd-0", ZoomReset, None));
+    // Windows 上 cmd 规范化为 win（且 Win+= 被 OS 抢占为放大镜）：Ctrl 系
+    // 必须成对给出，否则缩放在 Windows 键盘不可达。
+    bindings.push(KeyBinding::new("ctrl-=", ZoomIn, None));
+    bindings.push(KeyBinding::new("ctrl-+", ZoomIn, None));
+    bindings.push(KeyBinding::new("ctrl--", ZoomOut, None));
+    bindings.push(KeyBinding::new("ctrl-0", ZoomReset, None));
     // Fixed tab-switch bindings (⌘1-⌘9 / ⌃1-⌃9); intentionally outside the
     // customizable shortcut table.
     for index in 1u8..=9 {

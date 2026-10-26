@@ -218,7 +218,7 @@ pub(crate) fn parse_standalone_image(markdown: &str) -> Option<ImageSyntax> {
     }
     let alt_end = alt_end?;
 
-    let alt = unescape_ascii_punctuation(&markdown[2..alt_end]);
+    let alt = super::link::unescape_ascii_punctuation(&markdown[2..alt_end]);
     match bytes.get(alt_end + 1) {
         Some(b'(') if markdown.ends_with(')') => {
             let inner = &markdown[alt_end + 2..markdown.len() - 1];
@@ -353,7 +353,7 @@ fn parse_inline_image_at(markdown: &str, start: usize) -> Option<(String, ImageS
     }
 
     let alt_end = find_unescaped_char(markdown, start + 2, b']')?;
-    let alt = unescape_ascii_punctuation(&markdown[start + 2..alt_end]);
+    let alt = super::link::unescape_ascii_punctuation(&markdown[start + 2..alt_end]);
     let next = markdown.as_bytes().get(alt_end + 1).copied();
 
     match next {
@@ -769,7 +769,7 @@ fn find_open_title_quote(input: &str, close_quote: usize) -> Option<usize> {
 fn normalize_image_source(source: &str) -> String {
     // 先剥尖括号再解转义：`<assets/blue\>card.png>` 里的 `\>` 在尖括号内部是合法的
     // 转义，反过来先解转义会把定界符本身解没。
-    unescape_ascii_punctuation(angle_bracket_destination(source))
+    super::link::unescape_ascii_punctuation(angle_bracket_destination(source))
 }
 
 /// CommonMark 的 `<…>` 目标：内部允许空格，只不许出现未转义的 `<`、`>` 和换行。
@@ -798,18 +798,7 @@ pub(crate) fn angle_bracket_destination(source: &str) -> &str {
     inner
 }
 
-fn unescape_ascii_punctuation(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' && chars.peek().is_some_and(|next| next.is_ascii_punctuation()) {
-            output.push(chars.next().expect("peeked punctuation must exist"));
-        } else {
-            output.push(ch);
-        }
-    }
-    output
-}
+
 
 fn find_unescaped_char(input: &str, start: usize, target: u8) -> Option<usize> {
     let bytes = input.as_bytes();

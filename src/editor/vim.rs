@@ -1366,19 +1366,26 @@ impl Editor {
     /// `.` 与 `3o` 的重放：入口命令 → 插入会话 → 退出插入。
     pub(super) fn vim_replay_record(&mut self, record: &DotRecord, window: &mut Window, cx: &mut Context<Self>) {
         self.vim.replaying = true;
-        if let Some(repeat) = record.visual {
-            self.vim_replay_visual_repeat(repeat, window, cx);
-        }
-        for key in &record.entry_keys {
-            self.vim_route_key(*key, window, cx);
-        }
-        for key in &record.insert_keys {
-            self.vim_route_key(*key, window, cx);
-        }
-        if self.vim.mode == VimMode::Insert {
-            self.vim_route_key(VimKey::Esc, window, cx);
-        }
+        // 与 vim_replay_macro 同规：重放途中 panic 也必须把 replaying 复位，
+        // 否则此后所有按键都按重放路径走、不再记 dot/宏。
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Some(repeat) = record.visual {
+                self.vim_replay_visual_repeat(repeat, window, cx);
+            }
+            for key in &record.entry_keys {
+                self.vim_route_key(*key, window, cx);
+            }
+            for key in &record.insert_keys {
+                self.vim_route_key(*key, window, cx);
+            }
+            if self.vim.mode == VimMode::Insert {
+                self.vim_route_key(VimKey::Esc, window, cx);
+            }
+        }));
         self.vim.replaying = false;
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     /// 记录当前可视选区的形状，`.` 重放时按同样的字素数/行数重建。

@@ -480,9 +480,8 @@ impl Editor {
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {
-    left == right
-        || match (left.canonicalize(), right.canonicalize()) {
-            (Ok(left), Ok(right)) => left == right,
-            _ => false,
-        }
+    // 路径等同判据全仓只有一处：file_url::canonical_path（含 Windows verbatim
+    // 前缀剥离）。旧实现自己 canonicalize、缺前缀剥离，一侧路径已不可
+    // canonicalize 时与标签登记的判据分叉。
+    crate::file_url::canonical_path(left) == crate::file_url::canonical_path(right)
 }

@@ -624,7 +624,7 @@ pub(crate) fn highlight_code_block(
             };
 
             let mut spans = Vec::new();
-            let mut active = Vec::new();
+            let mut active: Vec<Option<CodeHighlightClass>> = Vec::new();
             for event in events {
                 let Ok(event) = event else {
                     return Some(CodeHighlightResult {
@@ -635,14 +635,16 @@ pub(crate) fn highlight_code_block(
 
                 match event {
                     HighlightEvent::Source { start, end } => {
-                        if let Some(class) = active.last().copied() {
+                        // 栈顶的 Some 才是生效的类：嵌套在未命中作用域里的
+                        // Source 事件不背着外层的类着色。
+                        if let Some(class) = active.last().copied().flatten() {
                             push_highlight_span(&mut spans, start..end, class);
                         }
                     }
                     HighlightEvent::HighlightStart(highlight) => {
-                        if let Some(class) = class_for_highlight(highlight) {
-                            active.push(class);
-                        }
+                        // 命中与否都压一个哨兵：End 是无条件出栈，未命中的
+                        // Start 不压栈会让内层 End 把外层的类弹掉。
+                        active.push(class_for_highlight(highlight));
                     }
                     HighlightEvent::HighlightEnd => {
                         active.pop();

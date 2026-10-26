@@ -778,3 +778,15 @@ mod tests {
         assert_eq!(table.column_count(), 1);
     }
 }
+
+    #[test]
+    fn row_ending_with_escaped_pipe_keeps_its_cell_content() {
+        // 手写行没有外层收尾管道、末格以转义竖线收尾：行尾的 \| 是格内容，
+        // 不能被当成外层管道剥掉。
+        let cells = super::split_table_cells("| a | b \\|").expect("split");
+        assert_eq!(cells, vec!["a", "b \\|"]);
+
+        // 外层收尾管道仍在时照常剥。
+        let cells = super::split_table_cells("| a | b |").expect("split");
+        assert_eq!(cells, vec!["a", "b"]);
+    }
