@@ -1085,6 +1085,17 @@ pub(crate) fn parse_inline_link(
             builder.fragments.push(fragment);
         }
     }
+    // 内层解析记下的转义账本跟着片段并回外层输出树，序列化才好在这些位置
+    // 补回反斜杠。label 的可见偏移从 normalized_start 起连续摆放（上面的合并
+    // 循环就是按这个顺序累计的）；并入后清掉序列身份，外层后续的转义字符
+    // 不得并进 label 的最后一段。
+    for escaped in &label_result.tree.escaped_offsets {
+        builder.escaped_offsets.push(
+            (normalized_start + escaped.start as usize) as u32
+                ..(normalized_start + escaped.end as usize) as u32,
+        );
+    }
+    builder.last_escaped_sequence = None;
 
     Some(located.end_index + 1)
 }

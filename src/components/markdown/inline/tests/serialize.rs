@@ -394,3 +394,27 @@
         let tree = InlineTextTree::from_markdown("` b ` \\*Z");
         assert_eq!(tree.serialize_markdown(), "`b` \\*Z");
     }
+
+    #[test]
+    fn link_label_keeps_escaped_markers_through_round_trip() {
+        // 链接标签在归一化里被重解析成一棵新树：内层解析记下的转义账本
+        // （哪些字符是「源码用反斜杠换来的字面记号」）必须跟着片段一起并回
+        // 外层输出树，否则序列化不再补反斜杠，`\*` 在盘上洗成 `*`，
+        // 重新打开后裸星号配对成强调，语义被改写。
+        let source = "[a \\*b c\\*](x)";
+        let tree = InlineTextTree::from_markdown(source);
+
+        assert_eq!(tree.visible_text(), "a *b c*");
+        assert_eq!(tree.serialize_markdown(), source);
+    }
+
+    #[test]
+    fn reference_style_link_label_keeps_escaped_markers_through_round_trip() {
+        let source = "[a \\*b][ref]\n\n[ref]: /x";
+        let tree = InlineTextTree::from_markdown_with_link_references(
+            source,
+            &crate::components::markdown::inline::LinkReferenceDefinitions::default(),
+        );
+
+        assert_eq!(tree.serialize_markdown(), source);
+    }
