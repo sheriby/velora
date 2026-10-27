@@ -212,7 +212,7 @@ impl Block {
         self.paste_from_clipboard(false, window, cx);
     }
 
-    /// ⌘⇧V：只按剪贴板里的纯文本落笔。与「粘贴」差两件事——不读粘贴板的 HTML 味道
+    /// ⌘⇧V：只按剪贴板里的纯文本落笔。与「粘贴」差两件事——不读粘贴板的 HTML 版本
     /// （不做 HTML→markdown 转换），也不把「选中文字后粘一个网址」改写成链接。
     /// 剪贴板里只有图片没有文字时仍走图片那一条：那是唯一能落的东西，丢了用户会以为按键坏了。
     pub(crate) fn on_paste_as_plain_text(
@@ -237,6 +237,11 @@ impl Block {
         if self.kind().is_separator() && !self.uses_raw_text_editing() {
             return;
         }
+
+        // 源码/代码块编的就是原文：剪贴板里的 HTML 版本一律不读，也不把
+        // 「选中文字 + 网址」改写成链接。文本文件里落下的就是那几个字符，
+        // 不替用户转成 Markdown。
+        let plain_only = plain_only || self.uses_raw_text_editing();
 
         let clipboard_change = if plain_only || cx.is_test() {
             None

@@ -111,10 +111,11 @@ impl Editor {
             return;
         }
         // 默认复制带 Markdown 记号：粘贴回编辑器才是同一份内容。渲染后的
-        // 可见文本由「复制为纯文本」提供。
+        // 可见文本由「复制为纯文本」提供；源码/代码块编的本来就是原文，
+        // 见 `selected_markdown_text` 的原文分支。
         let markdown = self
             .selected_markdown_text(cx)
-            .or_else(|| self.current_line_markdown_text(cx));
+            .or_else(|| self.current_line_copy_text(cx));
         let Some(markdown) = markdown else {
             cx.propagate();
             return;
@@ -123,15 +124,23 @@ impl Editor {
         cx.stop_propagation();
     }
 
-    /// 没有选区时默认复制光标所在硬行，内容同样取 Markdown 源码。
-    fn current_line_markdown_text(&self, cx: &App) -> Option<String> {
+    /// 没有选区时默认复制光标所在硬行。渲染块取 Markdown 源码（粘贴回来才是
+    /// 同一份内容），源码/代码块取原文。
+    fn current_line_copy_text(&self, cx: &App) -> Option<String> {
         let block = self.current_edit_target_from_state(cx)?;
         let block = block.read(cx);
-        let markdown_range =
-            block.current_range_to_markdown_range(block.cursor_line_display_range());
-        let markdown = block.record.title.serialize_markdown();
-        let range = clamp_range_to_char_boundaries(&markdown, markdown_range);
-        (!range.is_empty()).then(|| markdown[range].to_owned())
+        let display_range = block.cursor_line_display_range();
+        let text = if block.uses_raw_text_editing() {
+            let display = block.display_text();
+            let range = clamp_range_to_char_boundaries(display, display_range);
+            display[range].to_owned()
+        } else {
+            let markdown_range = block.current_range_to_markdown_range(display_range);
+            let markdown = block.record.title.serialize_markdown();
+            let range = clamp_range_to_char_boundaries(&markdown, markdown_range);
+            markdown[range].to_owned()
+        };
+        (!text.is_empty()).then_some(text)
     }
 
     pub(super) fn on_cut_capture(&mut self, _: &Cut, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1009,6 +1018,17 @@ impl Editor {
         for entity in self.single_block_selection_candidates() {
             let block = entity.read_untracked(cx);
             if block.selected_range.is_empty() {
+                continue;
+            }
+            // 源码/代码块编的就是原文：可见文本逐字节就是文件里那几个。再走一遍
+            // Markdown 序列化会把 `\.` 翻成 `\\.`、`\_` 翻成 `\\_`（那层转义
+            // 只对渲染块有意义：它要防「可见文本重新解析」时变味）。
+            if block.uses_raw_text_editing() {
+                let display = block.display_text();
+                let range = clamp_range_to_char_boundaries(display, block.selected_range.clone());
+                if !range.is_empty() {
+                    return Some(display[range].to_owned());
+                }
                 continue;
             }
             let markdown_range =

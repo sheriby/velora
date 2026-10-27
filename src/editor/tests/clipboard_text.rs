@@ -1,5 +1,5 @@
 //! 「粘贴为纯文本」与「复制为 Markdown」：与「粘贴」「复制」并排的两条入口，
-//! 差在内容来源——前者只用剪贴板的文本味道，后者取文件里的那几个字节而不是渲染后的字。
+//! 差在内容来源——前者只用剪贴板的文本版本，后者取文件里的那几个字节而不是渲染后的字。
 //!
 //! 用例钉四件事：两条入口各自与对照那条的差异、剪贴板里到底进了什么、一步撤销回到原样、
 //! 菜单里的两行与键位走的是同一个动作。
@@ -505,6 +505,92 @@ async fn two_menu_rounds_land_on_the_selection_in_effect(cx: &mut TestAppContext
             buffer_text(&editor, cx),
             format!("{URL}\n\n另一段\n"),
             "第 {round} 轮把整块选中再点「粘贴为纯文本」，落的该只是那个网址"
+        );
+    }
+}
+
+/// 纯文本/代码文件里的选区：剪贴板要的是文件里那几个字节。
+/// 走 Markdown 序列化会把 `\.` 翻成 `\\.`、`\_` 翻成 `\\_`（缓冲区存的是源码，
+/// 序列化又按「可见文本 → Markdown」转义一次），端点还会错位截断。
+#[gpui::test]
+async fn copying_from_a_plain_text_code_file_keeps_the_source_bytes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "pattern = \\.\\*\\_\\`\nlatex = 5\\% \\{x\\}\npath = C:\\Users\\a_b\n";
+    let body = source.trim_end();
+    for action in ["copy", "copy-as-markdown"] {
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| {
+            editor.replace_document_from_code_source(
+                source.to_string(),
+                std::path::PathBuf::from("probe.py"),
+                cx,
+            );
+        });
+        redraw(cx);
+        select(&editor, 0, 0..body.len(), cx);
+        match action {
+            "copy" => cx.dispatch_action(Copy),
+            _ => cx.dispatch_action(CopyAsMarkdown),
+        }
+        assert_eq!(
+            clipboard_text(cx).as_deref(),
+            Some(body),
+            "{action} 从纯文本代码文件复制，剪贴板必须逐字节是原文"
+        );
+    }
+}
+
+/// 没选区时的「复制当前行」同理：代码文件里那一行的原文，不做 Markdown 转义。
+#[gpui::test]
+async fn copying_the_current_line_from_a_plain_text_code_file_keeps_the_source_bytes(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = "pattern = \\.\\*\\_\\`\npath = C:\\Users\\a_b\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.replace_document_from_code_source(
+            source.to_string(),
+            std::path::PathBuf::from("probe.py"),
+            cx,
+        );
+    });
+    redraw(cx);
+    let line = "path = C:\\Users\\a_b";
+    let offset = source.find(line).expect("第二行") + "path = ".len();
+    put_caret(&editor, 0, offset, cx);
+    cx.dispatch_action(Copy);
+    assert_eq!(
+        clipboard_text(cx).as_deref(),
+        Some(line),
+        "光标所在行的复制也不许把 `\\U` 写成 `\\\\U`"
+    );
+}
+
+/// 纯文本/代码文件里粘贴：落下的就是剪贴板那几个字符，不读 HTML 版本，
+/// 也不把「选中文字 + 网址」改写成链接。
+#[gpui::test]
+async fn pasting_into_a_plain_text_code_file_stays_plain_text(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for source in ["plain.txt", "probe.py"] {
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| {
+            editor.replace_document_from_code_source(
+                "alpha beta\n".to_string(),
+                std::path::PathBuf::from(source),
+                cx,
+            );
+        });
+        redraw(cx);
+        set_clipboard(URL, cx);
+        select(&editor, 0, 0..5, cx);
+        cx.dispatch_action(Paste);
+        assert_eq!(
+            buffer_text(&editor, cx),
+            format!("{URL} beta\n"),
+            "{source} 里粘贴网址不该把选中的字改写成链接"
         );
     }
 }

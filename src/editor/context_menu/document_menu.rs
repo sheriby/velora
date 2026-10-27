@@ -110,7 +110,7 @@ pub(crate) enum DocumentMenuCommand {
     Cut,
     Copy,
     Paste,
-    /// 「粘贴为纯文本」：只用剪贴板的文本味道，不转 HTML、不把网址写成链接。
+    /// 「粘贴为纯文本」：只用剪贴板的文本版本，不转 HTML、不把网址写成链接。
     PasteAsPlainText,
     /// 「复制为 Markdown」：选区的源码文本（无选区时整篇）进剪贴板。
     CopyAsMarkdown,
