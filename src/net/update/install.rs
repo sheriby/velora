@@ -268,6 +268,24 @@ try {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 删除临时目录。Windows 上刚退出的进程镜像会被系统或杀毒软件短暂持有，
+    /// 这期间 `remove_dir_all` 报共享冲突（os error 32）：独立测试程序副本正好
+    /// 是「刚跑完的 exe」，一删就撞上。目录只是测试用的临时物，重试到占用消失；
+    /// 仍删不掉就留给系统临时目录，不让清理失败把绿用例打成红。
+    fn remove_test_directory(directory: &std::path::Path) {
+        for attempt in 1..=100 {
+            match fs::remove_dir_all(directory) {
+                Ok(()) => return,
+                Err(error) if attempt == 100 => {
+                    eprintln!("清理测试目录失败（保留在系统临时目录）：{error}");
+                    return;
+                }
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(25)),
+            }
+        }
+    }
+
     #[test]
     fn update_instance_probe() {
         let Some(directory) = std::env::var_os("VELORA_UPDATE_INSTANCE_PROBE") else {
@@ -297,7 +315,7 @@ mod tests {
                 .args(["--exact", "net::update::install::tests::another_running_instance_blocks_update_before_the_current_workspace_exits", "--ignored", "--nocapture"])
                 .env(ISOLATED, "1")
                 .output();
-            fs::remove_dir_all(&directory).expect("清理独立测试程序");
+            remove_test_directory(&directory);
             let output = output.expect("启动独立实例回归");
             assert!(output.status.success(), "独立实例回归失败：{}\n{}\n{}", output.status, String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
             return;
