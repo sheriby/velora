@@ -585,6 +585,43 @@ async fn pasting_uppercase_url_over_selection_makes_link(cx: &mut TestAppContext
     });
 }
 
+/// 粘进来的标识符不能变成 `flash\_attention\_score`：串上的反斜杠会一路进
+/// 缓冲区、存盘文件，再复制出去（哪怕目标是 txt）也是转义写法。
+#[gpui::test]
+async fn pasting_identifier_with_underscores_keeps_the_literal_text(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(BlockKind::Paragraph, InlineTextTree::from_markdown("入口 ")),
+        )
+    });
+
+    block.update(cx, |block, _cx| {
+        block.selected_range = "入口 ".len().."入口 ".len();
+    });
+
+    cx.update(|window, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+            "flash_attention_score".into(),
+        ));
+        block.update(cx, |block, block_cx| {
+            block.on_paste(&crate::components::Paste, window, block_cx);
+        });
+    });
+
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(
+            block.record.title.visible_text(),
+            "入口 flash_attention_score"
+        );
+        assert_eq!(
+            block.record.title.serialize_markdown(),
+            "入口 flash_attention_score"
+        );
+    });
+}
+
 #[gpui::test]
 async fn typed_wrap_symbol_wraps_selection(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();

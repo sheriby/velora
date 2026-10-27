@@ -11,6 +11,8 @@ use std::rc::Rc;
 
 use htmd::HtmlToMarkdown;
 use htmd::options::{BulletListMarker, Options};
+use html5ever::tendril::Tendril;
+use html5ever::tendril::fmt::UTF8;
 
 use super::html::{Handle, Node, NodeData, parse_html_fragment, serialize_handle};
 
@@ -150,10 +152,93 @@ pub(crate) fn maybe_markdown_from_clipboard(item_html: Option<&str>, plain: &str
     html_to_markdown_or(html, plain)
 }
 
+/// 私用区字符：正常粘贴内容里不会出现，htmd 的转义扫描也不认它，正好拿来当占位符。
+const UNDERSCORE_PLACEHOLDER: char = '\u{e000}';
+
 fn convert(html: &str) -> String {
-    converter()
-        .convert(&with_table_headers(html))
-        .unwrap_or_default()
+    let html = with_table_headers(html);
+    let neutralized = neutralize_intraword_underscores(&html);
+    let source = neutralized.as_deref().unwrap_or(html.as_str());
+    let markdown = converter().convert(source).unwrap_or_default();
+    match neutralized {
+        // 反斜杠只由 htmd 决定写不写，还原这里只管把字面字符放回去。
+        Some(_) => markdown.replace(UNDERSCORE_PLACEHOLDER, "_"),
+        None => markdown,
+    }
+}
+
+/// htmd 在文本节点里把 `_` 无条件转义：`flash_attention_score` 粘进来就成了
+/// `flash\_attention\_score`，缓冲区、存盘文件与「复制为纯文本」于是全带反斜杠。
+/// 词内下划线的反斜杠是纯污染：两侧都是字词字符时它既不左倾也不右倾（CommonMark
+/// 的 flanking 规则），既开不了也闭不了强调，多出来的只有字节。
+///
+/// 判据落在 HTML 文本节点上而不是转换后的 Markdown 上：文本节点正是 htmd 决定
+/// 转义的地方，换成占位符它就看不见那颗下划线，转换完再还原成字面字符。`pre` /
+/// `code` / `script` / `style` 的内文不碰——htmd 本来也不转义那里，动了只会把
+/// 作者自己的 `\_`（LaTeX、正则）洗掉。返回 `None` 表示没有要改的节点（HTML
+/// 原文一个字节都不动），或原文里已有占位符、还原会张冠李戴。
+fn neutralize_intraword_underscores(html: &str) -> Option<String> {
+    // htmd 原样搬运内文的元素。
+    const RAW_TEXT_ELEMENTS: [&str; 5] = ["pre", "code", "script", "style", "textarea"];
+
+    if html.contains(UNDERSCORE_PLACEHOLDER) {
+        return None;
+    }
+    let dom = parse_html_fragment(html);
+    if !replace_intraword_underscores(&dom.document, &RAW_TEXT_ELEMENTS) {
+        return None;
+    }
+    Some(serialize_document_children(&dom.document))
+}
+
+/// 把 `node` 子树里文本节点的词内下划线换成占位符；有没有换过。
+fn replace_intraword_underscores(node: &Handle, raw_text_elements: &[&str]) -> bool {
+    let mut replaced = false;
+    for child in node.children.borrow().iter() {
+        replaced |= match &child.data {
+            NodeData::Text { contents } => replace_underscores_in_text(contents),
+            NodeData::Element { name, .. } => {
+                !raw_text_elements.contains(&name.local.as_ref())
+                    && replace_intraword_underscores(child, raw_text_elements)
+            }
+            _ => false,
+        };
+    }
+    replaced
+}
+
+/// 单个文本节点的替换。没有词内下划线时不动这个节点。
+fn replace_underscores_in_text(contents: &RefCell<Tendril<UTF8>>) -> bool {
+    let replaced = {
+        let text = contents.borrow();
+        let mut replaced = false;
+        let mut output = String::with_capacity(text.len());
+        let mut previous: Option<char> = None;
+        let mut iterator = text.chars().peekable();
+        while let Some(ch) = iterator.next() {
+            let intraword =
+                ch == '_' && is_word_char(previous) && is_word_char(iterator.peek().copied());
+            if intraword {
+                output.push(UNDERSCORE_PLACEHOLDER);
+                replaced = true;
+            } else {
+                output.push(ch);
+            }
+            previous = Some(ch);
+        }
+        if !replaced {
+            return false;
+        }
+        output
+    };
+
+    *contents.borrow_mut() = Tendril::from(replaced);
+    true
+}
+
+/// 下划线两侧算不算「字词字符」：字母、数字或下划线本身。
+fn is_word_char(ch: Option<char>) -> bool {
+    ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
 }
 
 /// Returns `html` rewritten so every table starts with a header row.
@@ -169,9 +254,13 @@ fn with_table_headers(html: &str) -> String {
     if promote_first_rows(&dom.document) == 0 {
         return html.to_string();
     }
-    // rcdom refuses to serialize a document node, so its children go one by
-    // one; that is the same text without the wrapping element.
-    dom.document
+    serialize_document_children(&dom.document)
+}
+
+/// rcdom refuses to serialize a document node, so its children go one by one;
+/// that is the same text without the wrapping element.
+fn serialize_document_children(document: &Handle) -> String {
+    document
         .children
         .borrow()
         .iter()
@@ -310,6 +399,45 @@ mod tests {
         assert_eq!(markdown, "just text");
     }
 
+    /// 失败现场：从网页/文档里复制 `flash_attention_score` 粘进 Velora，缓冲区、
+    /// 存盘文件与再复制到 txt 的全是 `flash\_attention\_score`。词内下划线按
+    /// CommonMark 不是强调定界符，反斜杠是 htmd 文本节点转义的副作用。
+    #[test]
+    fn intraword_underscores_paste_without_backslashes() {
+        assert_eq!(
+            super::html_to_markdown_or(
+                "<p>变量 flash_attention_score 很重要</p>",
+                "变量 flash_attention_score 很重要",
+            ),
+            "变量 flash_attention_score 很重要"
+        );
+        assert_eq!(
+            super::html_to_markdown_or(
+                "<p><b>topic_embedding_attention</b> 与 <code>x_y_z</code></p>",
+                "",
+            ),
+            "**topic_embedding_attention** 与 `x_y_z`"
+        );
+        assert_eq!(
+            super::html_to_markdown_or("<ul><li>flash_attention_score</li></ul>", ""),
+            "- flash_attention_score"
+        );
+    }
+
+    /// 代码里的 `\_` 是作者自己写的（LaTeX、正则），转换不许把它洗成 `_`。
+    #[test]
+    fn code_content_keeps_its_own_backslash_escapes() {
+        let markdown = super::html_to_markdown_or("<pre><code>a\\_b</code></pre>", "fallback");
+        assert_eq!(markdown, "```\na\\_b\n```");
+    }
+
+    /// 两侧不是字词字符的下划线仍要转义：`_foo_`、`foo_b_` 去掉反斜杠就成强调。
+    #[test]
+    fn standalone_underscores_stay_escaped() {
+        let markdown = super::html_to_markdown_or("<p>_foo_ 与 bar_</p>", "");
+        assert_eq!(markdown, "\\_foo\\_ 与 bar\\_");
+    }
+
     #[test]
     fn code_blocks_survive() {
         let markdown = super::html_to_markdown_or("<pre><code>let x = 1;</code></pre>", "fallback");
@@ -378,7 +506,7 @@ mod tests {
     fn header_less_table_pastes_as_a_native_table() {
         // 报修：网站上复制的表格在 Word/Typora 里是表格，在 Velora 里成了纯文本。
         // 根因：`htmd` 的 Pure 模式拒收没有显式表头的表格，整表退化成段落文字，
-        // 粘贴策略再把那段文字换回剪贴板的纯文本味道，表格结构就此丢失。
+        // 粘贴策略再把那段文字换回剪贴板的纯文本版本，表格结构就此丢失。
         let markdown = super::html_to_markdown_or(
             "<meta charset='utf-8'><table border=\"1\" cellpadding=\"1\" style=\"border-collapse: collapse\"><tbody><tr><td>日期</td><td>版本</td></tr><tr><td>2026-08-04</td><td>1.0</td></tr></tbody></table>",
             "日期\t版本\n2026-08-04\t1.0",
@@ -417,8 +545,8 @@ mod tests {
 
     #[test]
     fn clipboard_html_flavor_pastes_as_a_native_table() {
-        // 报修的粘法：剪贴板里既有 HTML 味道（网站的表格），又有纯文本味道
-        // （制表符分隔）。HTML 味道优先，粘出来才是表格。
+        // 报修的粘法：剪贴板里既有 HTML 版本（网站的表格），又有纯文本版本
+        // （制表符分隔）。HTML 版本优先，粘出来才是表格。
         let markdown = super::maybe_markdown_from_clipboard(
             Some(
                 "<table><tbody><tr><td>日期</td><td>版本</td></tr><tr><td>2026-08-04</td><td>1.0</td></tr></tbody></table>",
@@ -427,7 +555,7 @@ mod tests {
         );
         let lines = markdown.lines().map(str::to_string).collect::<Vec<_>>();
         let table = super::super::table::parse_root_table_region(&lines)
-            .expect("剪贴板 HTML 味道里的表格必须粘成原生表格");
+            .expect("剪贴板 HTML 版本里的表格必须粘成原生表格");
         assert_eq!(table.header[0].serialize_markdown(), "日期");
         assert_eq!(table.rows.len(), 1);
     }
@@ -472,8 +600,8 @@ mod tests {
         }
     }
 
-    /// 载荷不是合法 UTF-8（中文版 Word/写字板按自己声明的编码写多字节）时，这一味道算
-    /// **没有**：让粘贴回退到同一次复制的纯文本味道，而不是把乱码写进缓冲区、还可能被
+    /// 载荷不是合法 UTF-8（中文版 Word/写字板按自己声明的编码写多字节）时，这一版本算
+    /// **没有**：让粘贴回退到同一次复制的纯文本版本，而不是把乱码写进缓冲区、还可能被
     /// 保存回文件。这与不变量 5 是同一条规则——读不懂的字节不认，不换成乱码留下。
     #[test]
     fn windows_clipboard_payload_with_invalid_utf8_yields_nothing() {
