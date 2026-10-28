@@ -30,14 +30,25 @@ pub(super) const SOURCE_DOCUMENT_CHUNK_LINES: usize = 512;
 /// 把源码文本按行切成若干块。各块文本不含块间换行符：把分块结果用
 /// `'\n'` 连接即可逐字节还原输入（空文本返回单个空块）。
 pub(super) fn split_source_document_chunks(source: &str) -> Vec<String> {
-    let lines: Vec<&str> = source.split('\n').collect();
+    // 结尾换行会让 `split('\n')` 多出一个空段：它不是真实的下一行，却能把
+    // 「恰好 512 行+尾换行」的文档骗进分块，切出一个空尾块。先剥掉、分块后
+    // 补回末块，`join('\n')` 仍然逐字节还原原文。
+    let trailing_newline = source.ends_with('\n');
+    let body = source.strip_suffix('\n').unwrap_or(source);
+    let lines: Vec<&str> = body.split('\n').collect();
     if lines.len() <= SOURCE_DOCUMENT_CHUNK_LINES {
         return vec![source.to_string()];
     }
-    lines
+    let mut chunks: Vec<String> = lines
         .chunks(SOURCE_DOCUMENT_CHUNK_LINES)
         .map(|group| group.join("\n"))
-        .collect()
+        .collect();
+    if trailing_newline
+        && let Some(last) = chunks.last_mut()
+    {
+        last.push('\n');
+    }
+    chunks
 }
 
 /// 整篇导入的两种口径。区别只在「阅读现场」：`Open` 是换一篇文档，视图模式、视口、
@@ -715,7 +726,26 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use super::split_source_document_chunks;
+    use super::{SOURCE_DOCUMENT_CHUNK_LINES, split_source_document_chunks};
+
+    /// 恰好 512 行且以换行结尾的文档：结尾换行产生的空段不是第 513 行，
+    /// 不该把文档骗进分块多切出一个空尾块。
+    #[test]
+    fn exactly_chunk_lines_with_trailing_newline_stays_one_chunk() {
+        let mut source = String::new();
+        for index in 0..SOURCE_DOCUMENT_CHUNK_LINES {
+            source.push_str(&format!("line-{index}\n"));
+        }
+        let chunks = split_source_document_chunks(&source);
+        assert_eq!(
+            chunks.len(),
+            1,
+            "恰好 {} 行+尾换行不该多出空尾块，实际切了 {} 块",
+            SOURCE_DOCUMENT_CHUNK_LINES,
+            chunks.len()
+        );
+        assert_eq!(chunks.join("\n"), source);
+    }
 
     #[test]
     fn small_sources_stay_one_chunk() {
