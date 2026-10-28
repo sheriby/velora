@@ -934,6 +934,15 @@ impl I18nStringsDe {
             formula_editor_cancel: self
                 .formula_editor_cancel
                 .unwrap_or(defaults.formula_editor_cancel),
+            formula_editor_discard_title: self
+                .formula_editor_discard_title
+                .unwrap_or(defaults.formula_editor_discard_title),
+            formula_editor_discard_message: self
+                .formula_editor_discard_message
+                .unwrap_or(defaults.formula_editor_discard_message),
+            formula_editor_discard: self
+                .formula_editor_discard
+                .unwrap_or(defaults.formula_editor_discard),
             formula_editor_hint: self.formula_editor_hint.unwrap_or(defaults.formula_editor_hint),
             formula_editor_placeholder: self
                 .formula_editor_placeholder

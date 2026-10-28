@@ -454,7 +454,8 @@ async fn formula_editor_mask_click_keeps_the_draft(cx: &mut TestAppContext) {
         "弹窗该仍在上屏"
     );
 
-    // Esc 仍保留关闭语义。
+    // Esc 在草稿动过时走确认路径（见 escape_with_modified_formula_draft_
+    // asks_before_discarding）：这里只断言弹窗与草稿仍在、确认模态弹出。
     editor.update_in(cx, |editor, window, cx| {
         let event = gpui::KeyDownEvent {
             prefer_character_input: false,
@@ -463,8 +464,10 @@ async fn formula_editor_mask_click_keeps_the_draft(cx: &mut TestAppContext) {
         };
         editor.formula_editor_key_down(&event, window, cx);
     });
+    redraw(cx);
     editor.read_with(cx, |editor, _cx| {
-        assert!(editor.formula_editor.is_none(), "Esc 该照常关闭");
+        assert!(editor.formula_editor.is_some(), "草稿动过时 Esc 不许直接关");
+        assert!(editor.modal_is_open(), "Esc 该弹确认");
     });
 }
 
@@ -508,6 +511,126 @@ async fn formula_editor_cancel_keeps_block_unchanged(cx: &mut TestAppContext) {
             text, "F = ma",
             "取消不得改动块文本，实际 {text:?}"
         );
+    });
+}
+
+fn dispatch_formula_escape(editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext) {
+    editor.update_in(cx, |editor, window, cx| {
+        let event = gpui::KeyDownEvent {
+            prefer_character_input: false,
+            keystroke: gpui::Keystroke::parse("escape").expect("escape keystroke"),
+            is_held: false,
+        };
+        editor.formula_editor_key_down(&event, window, cx);
+    });
+}
+
+/// 草稿动过时 Esc 必须先确认（评审 P219）：弹应用内确认模态，草稿原样保留；
+/// 选「放弃」才关弹窗，块文本不变。
+#[gpui::test]
+async fn escape_with_modified_formula_draft_asks_before_discarding(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nF = ma\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    editor.update(cx, |editor, cx| {
+        let len = editor
+            .formula_editor
+            .as_ref()
+            .map(|state| state.draft.len())
+            .unwrap_or(0);
+        editor.replace_formula_draft(0..len, "E = mc^2", None, false, cx);
+    });
+
+    dispatch_formula_escape(&editor, cx);
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.formula_editor.is_some(), "草稿动过时 Esc 不许直接丢");
+        assert!(editor.modal_is_open(), "应弹应用内确认");
+        assert_eq!(
+            editor
+                .formula_editor
+                .as_ref()
+                .expect("弹窗开着")
+                .draft,
+            "E = mc^2",
+            "确认之前草稿必须原样保留"
+        );
+    });
+
+    cx.update(|window, cx| window.click(("editor-modal-button", 1usize), cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        assert!(editor.formula_editor.is_none(), "放弃后弹窗该关闭");
+        assert!(!editor.modal_is_open(), "确认模态该收掉");
+        assert_eq!(
+            math.read(cx).display_text(),
+            "F = ma",
+            "放弃不得改动块文本"
+        );
+    });
+}
+
+/// 确认框里选「应用」：草稿写回块、弹窗关闭——误触 Esc 后不用重打一遍。
+#[gpui::test]
+async fn formula_discard_confirmation_apply_writes_the_draft_back(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nF = ma\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    editor.update(cx, |editor, cx| {
+        let len = editor
+            .formula_editor
+            .as_ref()
+            .map(|state| state.draft.len())
+            .unwrap_or(0);
+        editor.replace_formula_draft(0..len, "E = mc^2", None, false, cx);
+    });
+    dispatch_formula_escape(&editor, cx);
+    redraw(cx);
+
+    cx.update(|window, cx| window.click(("editor-modal-button", 0usize), cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        assert!(editor.formula_editor.is_none(), "应用后弹窗该关闭");
+        assert_eq!(
+            math.read(cx).display_text(),
+            "E = mc^2",
+            "确认框里的「应用」要把草稿写回块"
+        );
+    });
+}
+
+/// 草稿没动过时 Esc 直接关：确认框只为「有东西可丢」的情形存在。
+#[gpui::test]
+async fn escape_with_unmodified_formula_draft_closes_immediately(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nF = ma\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+
+    dispatch_formula_escape(&editor, cx);
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.formula_editor.is_none(), "没动过就该直接关");
+        assert!(!editor.modal_is_open(), "不该弹确认");
     });
 }
 /// 聚焦数学块后，右上角的 ƒx 标记必须真的上屏（走完整渲染路径）——

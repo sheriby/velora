@@ -26,6 +26,8 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
 };
 
+use super::modal::ModalSpec;
+
 use crate::components::latex::{
     LatexCategory, LatexSymbol, LATEX_SYMBOLS, latex_command_before_cursor,
     latex_completions_for,
@@ -313,6 +315,8 @@ pub(crate) struct FormulaEditorState {
     pub(crate) preview_task: Option<Task<()>>,
     /// 草稿里打 `\` 弹出的命令补全：锚在反斜杠上，随编辑刷新。
     pub(crate) completion: Option<FormulaDraftCompletion>,
+    /// 打开时的草稿快照：关闭路径用它判断「有没有未应用的修改」。
+    pub(crate) initial_draft: String,
 }
 
 /// 光标是否可见：移动后前半秒常亮，之后每半秒开关一次。
@@ -537,6 +541,7 @@ impl Editor {
             input_scroll: ScrollHandle::new(),
             focus: Some(focus),
             category: LatexCategory::Structures,
+            initial_draft: draft.clone(),
             draft,
             preview_path: None,
             preview_error: None,
@@ -566,6 +571,41 @@ impl Editor {
             self.restore_focus_after_overlay(cx);
             cx.notify();
         }
+    }
+
+    /// 用户发起的关闭（Esc、×、取消按钮）：草稿相对打开时的快照有改动就先弹
+    /// 应用内确认（应用/放弃/继续编辑），一次误触不许蒸发拼到一半的公式
+    /// （评审 P219）。没动过直接关；程序性关闭（应用、开其它浮层）不走这里。
+    pub(crate) fn request_close_formula_editor(&mut self, cx: &mut Context<Self>) {
+        let modified = self
+            .formula_editor
+            .as_ref()
+            .is_some_and(|state| state.draft != state.initial_draft);
+        if !modified {
+            self.close_formula_editor(cx);
+            return;
+        }
+        let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+        self.show_modal_with_destructive_button(
+            ModalSpec {
+                title: strings.formula_editor_discard_title.into(),
+                detail: Some(strings.formula_editor_discard_message.into()),
+                buttons: vec![
+                    strings.formula_editor_apply.into(),
+                    strings.formula_editor_discard.into(),
+                    strings.formula_editor_cancel.into(),
+                ],
+                default_index: 0,
+                cancel_index: 2,
+            },
+            1,
+            |choice, editor, window, cx| match choice {
+                0 => editor.apply_formula_editor(window, cx),
+                1 => editor.close_formula_editor(cx),
+                _ => {}
+            },
+            cx,
+        );
     }
 
     /// 安排一次草稿预览渲染：防抖到期后把「解析 + 排版 + SVG 序列化 + 写盘」
@@ -841,7 +881,7 @@ impl Editor {
                     cx.notify();
                     return;
                 }
-                self.close_formula_editor(cx);
+                self.request_close_formula_editor(cx);
             }
             "enter" => {
                 cx.stop_propagation();
@@ -1887,7 +1927,7 @@ impl Editor {
                                         .tooltip(close_label)
                                         .on_click(cx.listener(
                                             |editor, _e: &ClickEvent, _w, cx| {
-                                                editor.close_formula_editor(cx);
+                                                editor.request_close_formula_editor(cx);
                                             },
                                         ))
                                         .child("×"),
@@ -1950,7 +1990,7 @@ impl Editor {
                                         .accessibility_label(strings.formula_editor_cancel.clone())
                                         .on_click(cx.listener(
                                             |editor, _e: &ClickEvent, _w, cx| {
-                                                editor.close_formula_editor(cx);
+                                                editor.request_close_formula_editor(cx);
                                             },
                                         ))
                                         .label(strings.formula_editor_cancel.clone()),
