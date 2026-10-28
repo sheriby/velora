@@ -280,6 +280,24 @@ mod tests {
     }
 
     #[test]
+    fn pipeless_table_stops_at_the_next_block() {
+        for boundary in ["# Heading", "---", "- item", "> quote", "```", "    code"] {
+            let lines = vec![
+                "Name | Score".to_string(),
+                "--- | ---".to_string(),
+                "Alice | 10".to_string(),
+                boundary.to_string(),
+                "after".to_string(),
+            ];
+            assert_eq!(
+                collect_pipeless_table_region(&lines, 0),
+                Some(3),
+                "表格区域越过了块级起点 {boundary:?}"
+            );
+        }
+    }
+
+    #[test]
     fn prose_with_pipe_is_not_a_pipeless_table() {
         let lines = vec!["this | that".to_string(), "and the next line".to_string()];
         assert!(collect_pipeless_table_region(&lines, 0).is_none());

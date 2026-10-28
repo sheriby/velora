@@ -876,10 +876,58 @@ pub fn collect_pipeless_table_region(lines: &[String], start: usize) -> Option<u
     }
 
     let mut end = start + 2;
-    while end < lines.len() && !lines[end].trim().is_empty() {
+    while end < lines.len()
+        && !lines[end].trim().is_empty()
+        && !pipeless_table_stops_at(lines[end].as_str())
+    {
         end += 1;
     }
     Some(end)
+}
+
+/// 无外管道表格的结束边界：空行之外，任何块级起点都打断表格（GFM：表格在
+/// 另一个块级元素开始处结束）。四格以上缩进是缩进代码块，同样算边界。
+fn pipeless_table_stops_at(line: &str) -> bool {
+    let indent = line.bytes().take_while(|byte| *byte == b' ').count();
+    if indent > 3 {
+        return true;
+    }
+    let rest = &line[indent..];
+    if rest.is_empty() {
+        return false;
+    }
+    if rest.starts_with('>') {
+        return true;
+    }
+    if rest.starts_with("```") || rest.starts_with("~~~") {
+        return true;
+    }
+    if let Some(after_hash) = rest.strip_prefix('#') {
+        if after_hash.is_empty() || after_hash.starts_with([' ', '\t']) {
+            return true;
+        }
+    }
+    if matches!(rest.chars().next(), Some('-' | '*' | '_')) {
+        let marker = rest.chars().next().unwrap_or('-');
+        let count = rest.chars().take_while(|ch| *ch == marker).count();
+        if count >= 3 && rest[count..].trim().is_empty() {
+            return true;
+        }
+    }
+    if let Some(marker) = rest.chars().next()
+        && matches!(marker, '-' | '*' | '+')
+        && rest[marker.len_utf8()..].starts_with([' ', '\t'])
+    {
+        return true;
+    }
+    let digit_len = rest.bytes().take_while(|byte| byte.is_ascii_digit()).count();
+    if digit_len > 0
+        && rest[digit_len..].starts_with(['.', ')'])
+        && rest[digit_len + 1..].starts_with([' ', '\t'])
+    {
+        return true;
+    }
+    false
 }
 
 /// Returns true when a root-level line is a candidate native table row.

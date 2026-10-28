@@ -78,6 +78,23 @@
     }
 
     #[gpui::test]
+    async fn pipeless_table_stops_before_a_heading_without_blank_line(cx: &mut TestAppContext) {
+        let markdown = "A | B\n--- | ---\n1 | 2\n# Heading".to_string();
+        let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 2, "标题被吞进了无外管道表格");
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Table);
+            assert_eq!(
+                visible[1].entity.read(cx).kind(),
+                BlockKind::Heading { level: 1 }
+            );
+            assert_eq!(visible[1].entity.read(cx).display_text(), "Heading");
+        });
+    }
+
+    #[gpui::test]
     async fn broken_root_level_table_degrades_to_plain_text_lines(cx: &mut TestAppContext) {
         let markdown = "| A | B |\n| nope | --- |\n| 1 | 2 |".to_string();
         let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.clone(), None));
