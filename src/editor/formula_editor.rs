@@ -12,6 +12,14 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+/// 浮层输入的粘贴/插入文本归一：与整篇导入共用同一份 CRLF 口径
+/// （`normalize_document_text`），孤 \r 也折成 \n，草稿文本因此与
+/// 「保存后再打开」看到的一致。
+pub(crate) fn normalize_overlay_inserted_text(new_text: &str) -> String {
+    crate::editor::encoding::normalize_document_text(new_text)
+}
+
+
 use gpui::*;
 use gpui_kit::component::{
     Selectable as _, Sizable as _,
@@ -91,6 +99,10 @@ const CATEGORIES: [LatexCategory; 6] = [
 
 /// 草稿撤销栈的深度上限（一次弹窗生命周期内的编辑次数，再多就丢最早的）。
 const DRAFT_UNDO_LIMIT: usize = 200;
+
+/// 预览渲染的防抖窗口：连打时只在停顿超过这个时长后才渲染最后一版，
+/// 与主流编辑器的实时预览节奏同档。
+const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(120);
 
 /// 这次编辑算不算「光标处的单字符增删」：连着几次要合成一步撤销，否则打十个
 /// 字要按十次 ⌘Z 才退得掉。
@@ -296,6 +308,9 @@ pub(crate) struct FormulaEditorState {
     /// 显示 LaTeX 源码 + 错误），空草稿为 None（显示占位提示）。
     pub(crate) preview_path: Option<PathBuf>,
     pub(crate) preview_error: Option<String>,
+    /// 防抖中的预览渲染任务。挂在 state 上：连打时新一轮调度替换掉它（Task
+    /// 被丢弃即取消），弹窗关闭（state 被 take 走）时也随之取消。
+    pub(crate) preview_task: Option<Task<()>>,
     /// 草稿里打 `\` 弹出的命令补全：锚在反斜杠上，随编辑刷新。
     pub(crate) completion: Option<FormulaDraftCompletion>,
 }
@@ -505,7 +520,7 @@ impl Editor {
         self.overlay_focus_restore_target = self.focused_edit_target_entity_id(window, cx);
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        let mut editor = FormulaEditorState {
+        let editor = FormulaEditorState {
             target,
             selected_range: draft.len()..draft.len(),
             marked_range: None,
@@ -525,10 +540,12 @@ impl Editor {
             draft,
             preview_path: None,
             preview_error: None,
+            preview_task: None,
             completion: None,
         };
-        Self::sync_formula_preview(&mut editor, cx);
         self.formula_editor = Some(editor);
+        // 先入状态再调度：防抖任务要拿 WeakEntity 回写，本地变量来不及。
+        self.schedule_formula_preview(cx);
         cx.notify();
     }
 
@@ -551,9 +568,21 @@ impl Editor {
         }
     }
 
-    /// 把草稿渲染进预览（同步 ratex + 磁盘缓存；公式短，每次编辑一次渲染
-    /// 与 Typora 同档）。结果存进弹窗状态，帧间零成本。
-    pub(crate) fn sync_formula_preview(state: &mut FormulaEditorState, cx: &App) {
+    /// 安排一次草稿预览渲染：防抖到期后把「解析 + 排版 + SVG 序列化 + 写盘」
+    /// 整体挪到后台线程，完成后回主线程写回弹窗状态。矩阵这类
+    /// 复杂环境单次渲染可达数十毫秒，每键同步重排会把长公式打字压出卡顿。
+    pub(crate) fn schedule_formula_preview(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.formula_editor.as_mut() else {
+            return;
+        };
+        // 上一轮还没跑完的调度直接取消，别让它把过期结果写回来。
+        state.preview_task = None;
+        if state.draft.trim().is_empty() {
+            state.preview_path = None;
+            state.preview_error = None;
+            return;
+        }
+        let draft = state.draft.clone();
         let (color, font_size) = {
             let theme = cx.global::<crate::theme::ThemeManager>().current_arc();
             (
@@ -561,28 +590,46 @@ impl Editor {
                 crate::components::latex::display_math_font_size(theme.typography.text_size),
             )
         };
-        if state.draft.trim().is_empty() {
-            state.preview_path = None;
-            state.preview_error = None;
-            return;
-        }
-        match crate::components::latex::render_display_math_svg(
-            &crate::components::latex::DisplayMathSource {
-                raw: state.draft.clone(),
-                body: state.draft.clone(),
-            },
-            color,
-            font_size,
-        ) {
-            Ok(rendered) => {
-                state.preview_path = Some(rendered.path);
-                state.preview_error = None;
+        state.preview_task = Some(cx.spawn(async move |editor, cx: &mut AsyncApp| {
+            cx.background_executor().timer(PREVIEW_DEBOUNCE).await;
+            let rendered = cx
+                .background_spawn({
+                    let draft = draft.clone();
+                    async move {
+                        crate::components::latex::render_display_math_svg(
+                            &crate::components::latex::DisplayMathSource {
+                                raw: draft.clone(),
+                                body: draft,
+                            },
+                            color,
+                            font_size,
+                        )
+                    }
+                })
+                .await;
+            // 编辑器实体已销毁时无处写回：这条路径只在应用退出时走到，忽略。
+            if let Err(error) = editor.update(cx, |editor, cx| {                let Some(state) = editor.formula_editor.as_mut() else {
+                    return;
+                };
+                // 防抖窗口里草稿又变了的话，新一轮调度已经在路上，这次结果过期。
+                if state.draft != draft {
+                    return;
+                }
+                match rendered {
+                    Ok(rendered) => {
+                        state.preview_path = Some(rendered.path);
+                        state.preview_error = None;
+                    }
+                    Err(err) => {
+                        state.preview_path = None;
+                        state.preview_error = Some(err.to_string());
+                    }
+                }
+                cx.notify();
+            }) {
+                eprintln!("公式预览写回失败：{error}");
             }
-            Err(err) => {
-                state.preview_path = None;
-                state.preview_error = Some(err.to_string());
-            }
-        }
+        }));
     }
 
     /// 在草稿光标处替换/插入文本（输入系统、符号面板共用这一条），随后
@@ -626,7 +673,7 @@ impl Editor {
         state.caret_preferred = None;
         state.marked_range = (marked && !new_text.is_empty()).then_some(start..inserted_end);
         Self::refresh_formula_draft_completion(state);
-        Self::sync_formula_preview(state, cx);
+        self.schedule_formula_preview(cx);
         cx.notify();
     }
 
@@ -1034,7 +1081,7 @@ impl Editor {
         state.caret_preferred = None;
         state.caret_epoch = Instant::now();
         state.last_edit_coalesced = false;
-        Self::sync_formula_preview(state, cx);
+        self.schedule_formula_preview(cx);
         cx.notify();
     }
 
@@ -1059,6 +1106,9 @@ impl Editor {
             state.selection_anchor = offset;
         }
         state.marked_range = None;
+        // 光标移动即断组：移动后下一次单字符编辑要另起一步撤销，
+        // 否则 ⌘Z 会把移动前后两段输入一并跳过，中间状态没有独立撤销步。
+        state.last_edit_coalesced = false;
         state.caret_epoch = Instant::now();
         state.caret_preferred = preferred;
         cx.notify();
@@ -1100,6 +1150,9 @@ impl Editor {
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
             return;
         };
+        // 粘贴文本先过 CRLF 归一口径：「应用」会把草稿原样写回块源码，\r 混进
+        // markdown 会与全文档归一化相抵（与浮层打字路径共用同一函数）。
+        let text = normalize_overlay_inserted_text(&text);
         let Some(range) = self.formula_editor.as_ref().map(|state| {
             let start = draft_clamp_boundary(&state.draft, state.selected_range.start);
             let end = draft_clamp_boundary(&state.draft, state.selected_range.end).max(start);
@@ -1225,6 +1278,9 @@ impl Editor {
             state.selected_range = offset..offset;
         }
         state.caret_epoch = Instant::now();
+        // 点击定位同样是「只改光标不改文本」的入口，照键盘移动同口径断开
+        // 撤销合并组。
+        state.last_edit_coalesced = false;
         cx.notify();
     }
 
@@ -1784,12 +1840,9 @@ impl Editor {
                 .bottom_0()
                 .occlude()
                 .bg(c.dialog_backdrop)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|editor, _event: &MouseDownEvent, _window, cx| {
-                        editor.close_formula_editor(cx);
-                    }),
-                )
+                // 遮罩点击不再关闭：拼到一半的草稿一次误触就整体
+                // 蒸发，代价远大于「多点一下 ×」的麻烦。关闭只走 ×/取消与 Esc，
+                // 遮罩靠 occlude 挡住下层正文即可。
                 .child(
                     div()
                         .id("formula-editor-panel")

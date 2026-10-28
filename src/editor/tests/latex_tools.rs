@@ -209,6 +209,97 @@ async fn latex_completion_only_opens_in_math_context(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// 未知命令不弹空面板：结果为空就收掉会话，别留一个约 300×38px 的空心
+/// 面板盖住正文、吞掉鼠标与上下键。
+#[gpui::test]
+async fn latex_completion_unknown_command_opens_no_panel(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\\zz\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    let cursor = math.read_with(cx, |block, _cx| {
+        block.display_text().find("\\zz").expect("\\zz 在块里") + "\\zz".len()
+    });
+    math.update(cx, |block, block_cx| block.move_to(cursor, block_cx));
+    editor.update(cx, |editor, cx| {
+        editor.update_latex_completion_for_block(&math, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.latex_completion.is_none(), "无匹配命令不该开会话");
+    });
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("latex-completion-panel").is_none(),
+        "空会话不该上屏出实心面板"
+    );
+
+    // 更新分支：会话已在（先打了 \al 的现场），刷新到空结果也要收掉。
+    math.update(cx, |block, block_cx| {
+        block.replace_text_in_visible_range(0..block.visible_len(), "\\zz", None, false, block_cx);
+        block.move_to("\\zz".len(), block_cx);
+    });
+    editor.update(cx, |editor, cx| {
+        editor.latex_completion = Some(crate::editor::latex_completion::LatexCompletion {
+            block_id: math.entity_id(),
+            anchor: 0,
+            query: "al".into(),
+            selected: 0,
+            results: crate::components::latex::latex_completions_for("al", 8),
+            panel_bounds: None,
+        });
+        editor.update_latex_completion_for_block(&math, cx);
+        assert!(
+            editor.latex_completion.is_none(),
+            "更新到空结果也该收掉旧会话"
+        );
+    });
+}
+
+/// 补全开着时用键盘移走光标（Home/方向键不产生文本事件，面板不关），再按
+/// Enter：锚点已过期，必须放弃确认，不能把模板插进别处还残留原查询串
+/// ——那是悄悄改坏文档。
+#[gpui::test]
+async fn latex_completion_enter_with_stale_anchor_keeps_text_intact(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nx = \\fr\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    let cursor = math.read_with(cx, |block, _cx| {
+        block.display_text().find("\\fr").expect("\\fr 在块里") + "\\fr".len()
+    });
+    math.update(cx, |block, block_cx| block.move_to(cursor, block_cx));
+    editor.update(cx, |editor, cx| {
+        editor.update_latex_completion_for_block(&math, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.latex_completion.is_some(), "测试前提：\\fr 该弹出补全");
+    });
+
+    // 键盘把光标移到命令之前（等价 Home），面板不会自动关。
+    math.update(cx, |block, block_cx| block.move_to(0, block_cx));
+    editor.update(cx, |editor, cx| {
+        let enter = gpui::Keystroke::parse("enter").expect("enter keystroke");
+        assert!(editor.latex_completion_key_down(&enter, cx), "Enter 该被补全消费");
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert!(!editor.latex_completion_is_open(), "锚点过期该收掉会话");
+        assert_eq!(
+            math.read(cx).display_text(),
+            "x = \\fr",
+            "锚点过期后 Enter 不得改写正文，实际 {:?}",
+            math.read(cx).display_text()
+        );
+    });
+}
 /// 双击数学块打开公式编辑器弹窗——走完整渲染路径（双击事件 → 块事件 →
 /// pending → 下一帧弹窗上屏），debug_bounds 查面板选择器。
 #[gpui::test]
@@ -277,7 +368,8 @@ async fn formula_editor_draft_previews_and_applies(cx: &mut TestAppContext) {
         editor.open_formula_editor_for_block(math.entity_id(), window, cx);
     });
 
-    // 点符号面板的 frac：草稿出现模板，光标落进第一对花括号，预览渲染出来。
+    // 点符号面板的 frac：草稿出现模板，光标落进第一对花括号；预览是防抖的，
+    // 防抖窗口内还不渲染，到期后才补上。
     let frac = &LATEX_SYMBOLS[0];
     assert_eq!(frac.name, "frac");
     editor.update(cx, |editor, cx| editor.insert_formula_symbol(frac, cx));
@@ -286,8 +378,17 @@ async fn formula_editor_draft_previews_and_applies(cx: &mut TestAppContext) {
         assert_eq!(state.draft, "\\frac{}{}");
         assert_eq!(state.selected_range.start, "\\frac{".len());
         assert!(
+            state.preview_path.is_none(),
+            "防抖窗口内预览该还没刷出来"
+        );
+    });
+    cx.executor().advance_clock(Duration::from_millis(150));
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗该开着");
+        assert!(
             state.preview_path.is_some(),
-            "非空草稿应有渲染预览"
+            "防抖到期后该渲染出预览"
         );
     });
 
@@ -306,6 +407,64 @@ async fn formula_editor_draft_previews_and_applies(cx: &mut TestAppContext) {
             undo_before + 1,
             "应用应落一次独立 undo 组"
         );
+    });
+}
+
+/// 遮罩点击不再整单丢弃草稿：误触面板外一点不该蒸发用户拼好的公式
+/// 降级方案：弹确认需要新增 i18n 文案，此处先做最小改。
+/// 关闭只走 ×/取消按钮与 Esc。
+#[gpui::test]
+async fn formula_editor_mask_click_keeps_the_draft(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nF = ma\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    editor.update(cx, |editor, cx| {
+        let len = editor
+            .formula_editor
+            .as_ref()
+            .map(|state| state.draft.len())
+            .unwrap_or(0);
+        editor.replace_formula_draft(0..len, "E = mc^2", None, false, cx);
+    });
+    redraw(cx);
+
+    // 点遮罩（面板外左上角）：弹窗与草稿都必须还在。
+    cx.simulate_mouse_down(
+        gpui::point(gpui::px(6.0), gpui::px(6.0)),
+        gpui::MouseButton::Left,
+        gpui::Modifiers::none(),
+    );
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.formula_editor.is_some(), "点遮罩不该关弹窗");
+        assert_eq!(
+            editor.formula_editor.as_ref().expect("弹窗开着").draft,
+            "E = mc^2",
+            "点遮罩不得丢草稿"
+        );
+    });
+    assert!(
+        cx.debug_bounds("formula-editor-panel").is_some(),
+        "弹窗该仍在上屏"
+    );
+
+    // Esc 仍保留关闭语义。
+    editor.update_in(cx, |editor, window, cx| {
+        let event = gpui::KeyDownEvent {
+            prefer_character_input: false,
+            keystroke: gpui::Keystroke::parse("escape").expect("escape keystroke"),
+            is_held: false,
+        };
+        editor.formula_editor_key_down(&event, window, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.formula_editor.is_none(), "Esc 该照常关闭");
     });
 }
 
@@ -1089,6 +1248,88 @@ async fn formula_editor_draft_undo_redo(cx: &mut TestAppContext) {
     editor.read_with(cx, |editor, _cx| {
         let state = editor.formula_editor.as_ref().expect("弹窗开着");
         assert_eq!(state.draft, "abc", "撤销该只退掉粘贴那一步，实测 {:?}", state.draft);
+    });
+}
+
+/// 光标移动要断开草稿撤销的合并组：打字-移动-打字之后，⌘Z 一次只退掉
+/// 移动后那段输入，不能把移动前后两段一并跳过。
+#[gpui::test]
+async fn formula_editor_cursor_move_breaks_undo_coalescing(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+
+    // 打两个字（合成一组），方向键移动光标，再打一个字。
+    for character in ["a", "b"] {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.replace_text_in_range(None, character, window, cx);
+        });
+    }
+    press_draft_key(&editor, cx, "left");
+    editor.update_in(cx, |editor, window, cx| {
+        editor.replace_text_in_range(None, "c", window, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.formula_editor.as_ref().expect("弹窗开着").draft,
+            "acb",
+            "测试前提：c 该插在 a、b 之间"
+        );
+    });
+
+    press_draft_key(&editor, cx, "cmd-z");
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(
+            state.draft, "ab",
+            "第一次撤销只该退掉移动后的那段输入，实测 {:?}",
+            state.draft
+        );
+    });
+    press_draft_key(&editor, cx, "cmd-z");
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "", "第二次撤销才该退到开头，实测 {:?}", state.draft);
+    });
+}
+
+/// 粘贴进公式草稿的 CRLF 要归一成 \n：「应用」会把草稿原样写回块源码，
+/// \r 混进 markdown 与全文档归一化口径相抵。归一化与 IME/
+/// 系统插入路径共用同一个函数。
+#[gpui::test]
+async fn formula_editor_paste_normalizes_crlf(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+
+    cx.update(|_window, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("E=mc^2\r\nF=ma".into()))
+    });
+    press_draft_key(&editor, cx, "cmd-v");
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.formula_editor.as_ref().expect("弹窗开着").draft,
+            "E=mc^2\nF=ma",
+            "粘贴文本该剥掉 \\r"
+        );
+    });
+
+    editor.update_in(cx, |editor, window, cx| editor.apply_formula_editor(window, cx));
+    editor.read_with(cx, |_editor, cx| {
+        let text = math.read(cx).display_text();
+        assert_eq!(text, "E=mc^2\nF=ma", "应用后块文本不该含 \\r，实际 {text:?}");
     });
 }
 

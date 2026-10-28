@@ -69,6 +69,11 @@ impl Editor {
 
         let anchor = line_start + backslash_rel;
         let results = latex_completions_for(query, LATEX_COMPLETION_LIMIT);
+        // 空结果就收会话：照常创建/更新会留一个实心空面板盖住正文。
+        // 创建与更新两个分支共用这一处判据。
+        if results.is_empty() {
+            return self.close_latex_completion(cx);
+        }
         let unchanged = self.latex_completion.as_ref().is_some_and(|state| {
             state.block_id == block.entity_id()
                 && state.anchor == anchor
@@ -192,6 +197,15 @@ impl Editor {
             cx.notify();
             return;
         };
+        // 锚点过期校验：键盘移动光标不产生文本变更事件，面板既不关也不重算
+        // 锚点。光标已离开 `\查询串` 区间时替换区间会退化成插入，查询串残留
+        // 在正文里——放弃确认，只收会话。
+        let span_end = state.anchor + 1 + state.query.len();
+        let cursor = block.read(cx).cursor_offset();
+        if cursor < state.anchor || cursor > span_end {
+            cx.notify();
+            return;
+        }
         let insert = entry.insert;
         let caret = entry.caret;
         block.update(cx, |block, block_cx| {
@@ -218,12 +232,17 @@ impl Editor {
         cx: &mut gpui::Context<Self>,
     ) -> Option<AnyElement> {
         let state = self.latex_completion.as_ref()?;
+        // 空结果不渲染：更新侧收到空结果就会关会话，这里不兜底按 1 行画出
+        // 实心空面板的渲染侧双保险。
+        if state.results.is_empty() {
+            return None;
+        }
         let block = self.document.block_entity_by_id(state.block_id)?;
         let caret_bounds = block.read(cx).active_range_or_cursor_bounds()?;
         let c = &theme.colors;
         let t = &theme.typography;
         let viewport = window.viewport_size();
-        let row_count = state.results.len().max(1);
+        let row_count = state.results.len();
         let panel_width = px(300.0);
         let panel_height = px(30.0 * row_count as f32 + 8.0);
         let left = caret_bounds

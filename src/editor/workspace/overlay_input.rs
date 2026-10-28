@@ -59,7 +59,10 @@ impl Editor {
         if !old.is_char_boundary(start) || !old.is_char_boundary(end) {
             return;
         }
-        let inserted = new_text.replace('\r', "");
+        // 与粘贴路径共用同一份 CRLF 归一口径：孤 \r 也折成 \n，
+        // 与整篇导入同款。
+        let inserted =
+            crate::editor::formula_editor::normalize_overlay_inserted_text(new_text);
         let updated = {
             let mut updated = old.clone();
             updated.replace_range(start..end, &inserted);
@@ -98,8 +101,9 @@ impl Editor {
                     // 敲字这条路径也得刷 \ 补全：只同步预览的话，第一个反斜杠
                     // 永远不弹，要再敲一个字删掉才弹。
                     crate::editor::Editor::refresh_formula_draft_completion(state);
-                    crate::editor::Editor::sync_formula_preview(state, cx);
                 }
+                // 预览调度要拿 &mut self（弱引用回写），放在状态借用结束之后。
+                self.schedule_formula_preview(cx);
             }
         }
         cx.notify();
