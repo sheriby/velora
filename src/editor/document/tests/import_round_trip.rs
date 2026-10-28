@@ -705,7 +705,44 @@
             let visible = editor.document.visible_blocks();
             assert_eq!(visible.len(), 1, "定义与它的 URL 行是一块");
             assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::RawMarkdown);
+            assert_eq!(
+                editor
+                    .link_reference_definitions
+                    .get("foo")
+                    .map(|definition| definition.destination.as_str()),
+                Some("/url"),
+                "换行写的 URL 没有登记为链接定义，引用链接仍然解析不到"
+            );
             assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+
+    #[gpui::test]
+    async fn plain_text_after_an_unfinished_definition_stays_a_paragraph(
+        cx: &mut TestAppContext,
+    ) {
+        // 下一行不是合法目的地（裸目的地不许含空白）时不能整行并进定义块，
+        // 否则用户看到的正文被藏进 raw 块。
+        let source = "[foo]:\nnot a url";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert!(
+                visible.iter().any(|visible| {
+                    visible.entity.read(cx).kind() == BlockKind::Paragraph
+                        && visible.entity.read(cx).display_text() == "not a url"
+                }),
+                "普通文本被并进了定义块：{:?}",
+                visible
+                    .iter()
+                    .map(|visible| visible.entity.read(cx).display_text())
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                !editor.link_reference_definitions.contains_key("foo"),
+                "非法目的地被登记成了链接定义"
+            );
         });
     }
 

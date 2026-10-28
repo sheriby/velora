@@ -159,12 +159,19 @@ fn parse_link_reference_definition(
     let mut target = rest[label_end + 2..].trim_start().to_string();
     let mut consumed = 1usize;
 
-    if let Some(next_line) = lines.get(start + 1)
+    if target.is_empty()
+        && let Some(next_line) = lines.get(start + 1)
+        && valid_reference_target_line(next_line)
+    {
+        target = next_line.trim().to_string();
+        consumed += 1;
+    }
+
+    if !target.is_empty()
+        && let Some(next_line) = lines.get(start + consumed)
         && is_reference_definition_title_continuation(next_line)
     {
-        if !target.is_empty() {
-            target.push(' ');
-        }
+        target.push(' ');
         target.push_str(next_line.trim());
         consumed += 1;
     }
@@ -301,6 +308,59 @@ fn parse_reference_scan_html_block_start(line: &str) -> Option<HtmlBlockStart> {
         self_closing: rest.ends_with("/>"),
         closes_same_line: rest.contains(&format!("</{name}>")),
     })
+}
+
+/// 定义标签之后单独占一行的目的地是否合法：裸目的地不许含空白，尖括号
+/// 目的地允许空格；目的地后只接受双引号标题。认不出就当普通文本，绝不把
+/// 一整行正文并进定义。
+pub(crate) fn valid_reference_target_line(line: &str) -> bool {
+    let text = line.trim();
+    if text.is_empty() {
+        return false;
+    }
+    if text.starts_with('<') {
+        let Some(close) = text
+            .char_indices()
+            .skip(1)
+            .find(|(index, ch)| *ch == '>' && !super::image::is_escaped(text, *index))
+            .map(|(index, _)| index)
+        else {
+            return false;
+        };
+        let inner = &text[1..close];
+        if inner
+            .char_indices()
+            .any(|(offset, ch)| ch == '<' && !super::image::is_escaped(inner, offset))
+        {
+            return false;
+        }
+        let rest = text[close + 1..].trim();
+        return rest.is_empty() || is_double_quoted_title(rest);
+    }
+    let destination_end = (0..text.len())
+        .find(|index| {
+            text.as_bytes()[*index].is_ascii_whitespace() && !super::image::is_escaped(text, *index)
+        })
+        .unwrap_or(text.len());
+    if destination_end == 0 {
+        return false;
+    }
+    let destination = &text[..destination_end];
+    if destination
+        .char_indices()
+        .any(|(offset, ch)| ch == '<' && !super::image::is_escaped(destination, offset))
+    {
+        return false;
+    }
+    let rest = text[destination_end..].trim();
+    rest.is_empty() || is_double_quoted_title(rest)
+}
+
+fn is_double_quoted_title(text: &str) -> bool {
+    text.len() >= 2
+        && text.starts_with('"')
+        && text.ends_with('"')
+        && !super::image::is_escaped(text, text.len() - 1)
 }
 
 fn parse_reference_scan_html_close_tag_name(line: &str) -> Option<String> {
@@ -453,6 +513,36 @@ mod tests {
                 destination: "https://first.example".to_string(),
                 title: Some("Caption".to_string()),
             })
+        );
+    }
+
+    #[test]
+    fn parses_destination_written_on_the_next_line() {
+        let definitions = parse_link_reference_definitions(
+            "[ref]:\nhttps://next.example \"Caption\"\n[angle]:\n<assets/a b.png>",
+        );
+        assert_eq!(
+            definitions.get("ref"),
+            Some(&LinkReferenceDefinition {
+                destination: "https://next.example".to_string(),
+                title: Some("Caption".to_string()),
+            })
+        );
+        assert_eq!(
+            definitions.get("angle"),
+            Some(&LinkReferenceDefinition {
+                destination: "assets/a b.png".to_string(),
+                title: None,
+            })
+        );
+    }
+
+    #[test]
+    fn plain_text_after_a_label_is_not_a_destination() {
+        let definitions = parse_link_reference_definitions("[bad]:\nnot a url");
+        assert!(
+            definitions.is_empty(),
+            "不带空白约束的普通文本被当成了换行目的地"
         );
     }
 

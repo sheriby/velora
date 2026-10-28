@@ -569,9 +569,10 @@ pub(crate) fn collect_reference_definition_region(lines: &[String], start: usize
     // 那一行掉给根循环当正文段落，用户看到一个突兀的 `/url`；标题续行接着收。
     if index == start + 1
         && reference_definition_label_unfinished(&lines[start])
-        && lines.get(index).is_some_and(|next| {
-            !next.trim().is_empty() && !looks_like_root_block_start(lines, index)
-        })
+        && lines
+            .get(index)
+            .is_some_and(|next| crate::components::markdown::link::valid_reference_target_line(next))
+        && !looks_like_root_block_start(lines, index)
     {
         index += 1;
         while index < lines.len() && is_reference_definition_title_continuation(&lines[index]) {

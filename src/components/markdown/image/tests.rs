@@ -318,6 +318,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_image_destination_written_on_the_next_line() {
+        let definitions = parse_image_reference_definitions("[Ref Image]:\n./next.png");
+        assert_eq!(
+            definitions.get("ref image"),
+            Some(&ImageReferenceDefinition {
+                src: "./next.png".to_string(),
+                title: None,
+            })
+        );
+        assert!(
+            parse_image_reference_definitions("[bad]:\nnot a url").is_empty(),
+            "不带空白约束的普通文本被当成了换行目的地"
+        );
+    }
+
+    #[test]
     fn normalizes_reference_labels_case_and_whitespace_insensitively() {
         assert_eq!(
             normalize_reference_label("  Ref\t Image  "),

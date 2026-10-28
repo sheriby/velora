@@ -557,12 +557,19 @@ fn parse_image_reference_definition(
     let mut target = rest[label_end + 2..].trim_start().to_string();
     let mut consumed = 1usize;
 
-    if let Some(next_line) = lines.get(start + 1)
+    if target.is_empty()
+        && let Some(next_line) = lines.get(start + 1)
+        && super::link::valid_reference_target_line(next_line)
+    {
+        target = next_line.trim().to_string();
+        consumed += 1;
+    }
+
+    if !target.is_empty()
+        && let Some(next_line) = lines.get(start + consumed)
         && is_reference_definition_title_continuation(next_line)
     {
-        if !target.is_empty() {
-            target.push(' ');
-        }
+        target.push(' ');
         target.push_str(next_line.trim());
         consumed += 1;
     }
