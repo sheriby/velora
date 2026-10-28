@@ -37,7 +37,9 @@ impl Editor {
         let cancel_label = strings.open_link_cancel.clone();
 
         // 删除确认走应用内模态（用户要求：全软件不用系统原生弹窗）。
-        self.show_modal(
+        // 「确认删除」是破坏性按钮：不做默认、渲染 danger、排在非默认一侧，
+        // 手滑回车落在「取消」上而不是把文件删了。
+        self.show_modal_with_destructive_button(
             ModalSpec {
                 title: title.into(),
                 detail: Some(detail.into()),
@@ -45,6 +47,7 @@ impl Editor {
                 default_index: 0,
                 cancel_index: 1,
             },
+            0,
             move |choice, _editor, _window, cx| {
                 if choice != 0 {
                     return;

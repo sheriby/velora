@@ -94,6 +94,10 @@ pub(crate) struct EditorModal {
     mounted: bool,
     // 未挂载与挂载前没有焦点不同；替换模态时也要保留这个区别。
     restore_focus: Option<Option<WeakFocusHandle>>,
+    /// 破坏性按钮（删除确认这类）：不做默认、渲染 danger 样式、排在非默认一侧。
+    /// General 模态破坏性标记走这里；窗口关闭/拖放那两种由
+    /// [`ModalOrigin::is_destructive`] 按下标写死。
+    destructive_index: Option<usize>,
     scroll: ScrollHandle,
     on_choice: Option<Box<dyn FnOnce(usize, &mut Editor, &mut Window, &mut Context<Editor>)>>,
 }
@@ -105,9 +109,44 @@ impl Editor {
         on_choice: impl FnOnce(usize, &mut Self, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) {
+        self.open_modal(spec, None, on_choice, cx);
+    }
+
+    /// 与 [`Self::show_modal`] 相同，但指明哪个按钮是破坏性操作：它不做默认
+    /// （默认按钮让给取消位）、渲染 danger 样式、排序时留在非默认一侧。
+    /// 删除确认这类「手滑回车就删文件」的模态必须走这一条。
+    pub(crate) fn show_modal_with_destructive_button(
+        &mut self,
+        spec: ModalSpec,
+        destructive_index: usize,
+        on_choice: impl FnOnce(usize, &mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_modal(spec, Some(destructive_index), on_choice, cx);
+    }
+
+    fn open_modal(
+        &mut self,
+        spec: ModalSpec,
+        destructive_index: Option<usize>,
+        on_choice: impl FnOnce(usize, &mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) {
         let button_count = spec.buttons.len().max(1);
+        let destructive_index =
+            destructive_index.map(|index| index.min(button_count - 1));
+        let mut default_index = spec.default_index.min(button_count - 1);
+        // 破坏性按钮不做默认：默认让给取消位；取消位也是它时，让给第一个
+        // 非破坏性按钮。回车落在一个删不掉就恢复不了的动作上，代价不对称。
+        if destructive_index == Some(default_index) {
+            default_index = if spec.cancel_index.min(button_count - 1) != default_index {
+                spec.cancel_index.min(button_count - 1)
+            } else {
+                (0..button_count).find(|index| Some(*index) != destructive_index).unwrap_or(default_index)
+            };
+        }
         let spec = ModalSpec {
-            default_index: spec.default_index.min(button_count - 1),
+            default_index,
             cancel_index: spec.cancel_index.min(button_count - 1),
             ..spec
         };
@@ -120,6 +159,7 @@ impl Editor {
             focus: cx.focus_handle(),
             mounted: false,
             restore_focus,
+            destructive_index,
             scroll: ScrollHandle::new(),
             on_choice: Some(Box::new(on_choice)),
         });
@@ -155,6 +195,15 @@ impl Editor {
     #[cfg(test)]
     pub(crate) fn modal_spec(&self) -> Option<&ModalSpec> {
         self.modal.as_ref().map(|modal| &modal.spec)
+    }
+
+    /// 生效中的默认按钮与破坏性按钮：破坏性标记由 `open_modal` 归一化，
+    /// 「默认 = 破坏性」在打开时就已排除。
+    #[cfg(test)]
+    pub(crate) fn modal_default_and_destructive(&self) -> Option<(usize, Option<usize>)> {
+        self.modal
+            .as_ref()
+            .map(|modal| (modal.spec.default_index, modal.destructive_index))
     }
 
     pub(crate) fn modal_is_open(&self) -> bool {
@@ -372,16 +421,21 @@ impl Editor {
         let identity = modal.identity;
         let default_index = modal.spec.default_index;
         let cancel_index = modal.spec.cancel_index;
+        let destructive_index = modal.destructive_index;
         let focus = modal.focus.clone();
         let (panel_selector, overlay_selector) = modal.origin.selectors();
         let mut footer = DialogFooter::new().flex_shrink_0().flex_wrap();
         let mut buttons: Vec<_> = modal.spec.buttons.iter().enumerate().collect();
+        // 屏显顺序规则：默认按钮稳定挪到队尾（右下主按钮），破坏性按钮因为
+        // 不做默认，自然留在非默认一侧（左）。
         buttons.sort_by_key(|(index, _)| *index == default_index);
         for (index, label) in buttons {
             let named_id = modal.origin.button_ids().get(index).copied();
             let button_id: ElementId = named_id
                 .map(Into::into)
                 .unwrap_or_else(|| ("editor-modal-button", index).into());
+            let is_destructive =
+                modal.origin.is_destructive(index) || destructive_index == Some(index);
             footer = footer.child(
                 Button::new(button_id)
                     .debug_selector(move || {
@@ -392,9 +446,7 @@ impl Editor {
                     .label(label.clone())
                     .when(index == default_index, |button| button.primary())
                     .when(index != default_index, |button| button.outline())
-                    .when(modal.origin.is_destructive(index), |button| {
-                        button.danger().outline()
-                    })
+                    .when(is_destructive, |button| button.danger().outline())
                     .on_click(cx.listener(move |editor, _, window, cx| {
                         editor.dismiss_modal_if_current(identity, index, window, cx);
                     }))
@@ -518,6 +570,44 @@ mod tests {
     use super::{Editor, ModalSpec};
     use gpui::TestAppContext;
     use std::{cell::Cell, rc::Rc};
+
+    /// 删除确认的「确认删除」是破坏性按钮：不做默认（回车落在取消上）、
+    /// 带破坏性标记。以前 default_index=0 就是确认位，一次
+    /// 手滑回车就把文件删了。
+    #[gpui::test]
+    fn delete_confirmation_never_defaults_to_the_destructive_button(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let target = std::env::temp_dir().join(format!(
+            "velora-delete-confirm-{}.md",
+            uuid::Uuid::new_v4()
+        ));
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+        editor.update(cx, |editor, _cx| {
+            editor.workspace.selected =
+                Some(crate::editor::workspace::WorkspaceSelection::File(target));
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            editor.prompt_delete_selected(window, cx);
+        });
+        let (default_index, destructive) = editor.read_with(cx, |editor, _| {
+            editor.modal_default_and_destructive().expect("删除确认应打开模态")
+        });
+        assert_eq!(destructive, Some(0), "「确认删除」应带破坏性标记");
+        assert_ne!(
+            default_index, 0,
+            "破坏性按钮不能是默认按钮：回车不该直接删文件"
+        );
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.modal_spec().unwrap().cancel_index),
+            1,
+            "Esc 应对应「取消」"
+        );
+    }
 
     #[gpui::test]
     fn pending_decision_filters_an_expired_drop_target(cx: &mut TestAppContext) {
