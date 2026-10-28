@@ -513,7 +513,9 @@ impl BlockKind {
         }
 
         let rest = &trimmed_end[leading_spaces..];
-        if rest.len() < 3 {
+        // CommonMark 只要求至少一个字符：`Title\n=` 是一级标题、`Title\n--` 是
+        // 二级标题。以前这里卡三个字符，这两种写法退化成了带下划线的段落文本。
+        if rest.is_empty() {
             return None;
         }
 
@@ -718,6 +720,14 @@ pub struct BlockRecord {
     /// 标注头 `[!...]` 里那一串照用户写的样子存（`note` 与 `NOTE` 是两种写法）。
     /// `None` 是「没记」，序列化退回规范形状；「格式化文档」把它清成 `None`。
     pub callout_marker: Option<SharedString>,
+    /// 项标记后直接跟公式（`- $$…$$`）时，公式本来长在标记行上：序列化把子块公式
+    /// 首行并回项标记行、续行用子块缩进，不然项先落一行空标题（`- `）再缩进落公式，
+    /// 往返多出一个空标题行。只在解析期认出这一族时置位。
+    pub(crate) math_on_marker_line: bool,
+    /// Setext 标题的下划线原文（`Title\n===` 的 `===` 那一整行，含缩进与尾随空白）。
+    /// ATX 是规范写法，但文件里写的是 setext：写回照抄这一行，未编辑的标题才不换
+    /// 形状。`None` 是「不是 setext 或没记」，序列化落规范的 `#` 形状。
+    pub setext_underline: Option<String>,
     /// 标题树版本：每次 `set_title` 递增。markdown 序列化备忘键就靠它，
     /// 块自己的 markdown 只在自己被改时重算（P2：序列化曾占每键成本大半）。
     title_revision: u64,
@@ -756,6 +766,8 @@ impl BlockRecord {
             code_is_indented: false,
             math_body_only: false,
             callout_marker: None,
+            math_on_marker_line: false,
+            setext_underline: None,
             title_revision: 0,
             markdown_memo: std::cell::RefCell::new(None),
         };
@@ -850,6 +862,8 @@ impl BlockRecord {
         self.list_marker = ListMarkerStyle::default();
         self.list_start = None;
         self.callout_marker = None;
+        self.math_on_marker_line = false;
+        self.setext_underline = None;
         let mut title = self.title.clone();
         title.reset_emphasis_markers();
         self.set_title(title);

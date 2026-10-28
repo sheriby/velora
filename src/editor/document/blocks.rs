@@ -27,7 +27,29 @@ impl Editor {
         inline_code.consume(first);
         let mut index = start + 1;
         while index < lines.len() {
-            if (lines[index].trim().is_empty() || looks_like_root_block_start(lines, index))
+            let line = &lines[index];
+            // 缩进代码块与空列表项都不能打断段落（CommonMark）：紧邻的 4 空格行、
+            // 裸记号行（`-`/`*`/`1.` 行尾没有内容）是上一行的续行。拆出去的话
+            // 序列化时段落→代码接缝固定补一个空行，原文被加行改写。公式在应用里
+            // 任意缩进都算块，不在这里吞。
+            let continues_paragraph = (strip_indented_code_prefix(line).is_some()
+                && !is_display_math_start_at_any_indent(line))
+                || parse_list_marker(line).is_some_and(|marker| {
+                    marker.text.is_empty() && marker.style.task_box.is_none()
+                });
+            // setext 内容可以连续多行（CommonMark）：段落开着时，「这一行 + 下一行
+            // 是下划线」不算根块起点，整段连同下划线在循环出口并成一个标题。
+            // 表格候选行有自己的判据（表头 + 分隔行），不按 setext 续行吞。
+            let setext_continuation = looks_like_root_block_start(lines, index)
+                && !is_root_table_candidate_line(line)
+                && lines
+                    .get(index + 1)
+                    .and_then(|next| BlockKind::parse_setext_underline(next))
+                    .filter(|_| line_is_setext_heading_content(line))
+                    .is_some();
+            if !continues_paragraph
+                && !setext_continuation
+                && (line.trim().is_empty() || looks_like_root_block_start(lines, index))
                 && !inline_code.pending_run.is_some_and(|length| lookahead.has_backtick_after(length, line_base + index))
             {
                 break;
@@ -38,7 +60,57 @@ impl Editor {
             index += 1;
         }
 
-        let content = paragraph_lines.join("\n");
+        // 段落停在 setext 下划线上（断在 underline 行），或下划线被当续行吞进了
+        // 段落（`===` 不是任何根块起点，进不了上面的断点判据）：两种都把整段连同
+        // 下划线并成一个标题——按「段落 + 分隔线」落的话标题被拆成两块，接缝还会
+        // 凭空多补一个空行。
+        let mut content_lines = paragraph_lines;
+        let mut end = index;
+        let underline = match lines
+            .get(index)
+            .and_then(|line| BlockKind::parse_setext_underline(line))
+        {
+            Some(level) => {
+                end = (index + 1).min(lines.len());
+                Some((level, lines.get(index).cloned().unwrap_or_default()))
+            }
+            // 被吞进段落的下划线：它前面还得有合格的内容行才成标题，
+            // 不然只按普通段落落笔。
+            None => match content_lines
+                .last()
+                .and_then(|last| BlockKind::parse_setext_underline(last))
+                .filter(|_| {
+                    content_lines
+                        .iter()
+                        .rev()
+                        .nth(1)
+                        .is_some_and(|before_last| line_is_setext_heading_content(before_last))
+                }) {
+                Some(level) => {
+                    let underline = content_lines.pop().unwrap_or_default();
+                    Some((level, underline))
+                }
+                None => None,
+            },
+        };
+        if let Some((level, underline)) = underline
+            && content_lines
+                .last()
+                .is_some_and(|last| line_is_setext_heading_content(last))
+        {
+            let content = content_lines.join("\n");
+            let heading = native_block(cx, BlockKind::Heading { level }, content);
+            heading.update(cx, |heading, _cx| {
+                heading.record.source_line_prefixes = (start..end.saturating_sub(1))
+                    .map(|at| origins.get(at).copied().unwrap_or(0) as u32)
+                    .collect();
+                // 下划线原文照记：写回按它落笔，未编辑的标题不换形状。
+                heading.record.setext_underline = Some(underline);
+            });
+            return (heading, end);
+        }
+
+        let content = content_lines.join("\n");
         let block = native_block(cx, BlockKind::Paragraph, content);
         // 段落一行都不剥（内容就是传进来的那一行），所以宽度就是上级容器已经吃掉的
         // 那几字节——解析期就知道的事实，交给位置换算直接用，不再拿文件行与模型行比。
@@ -71,13 +143,12 @@ impl Editor {
         start: usize,
         origins: &[usize],
     ) -> (Entity<crate::editor::Block>, usize) {
-        let end = collect_quote_raw_region(lines, start);
-        let region = &lines[start..end];
-        let mut dequoted = Vec::with_capacity(region.len());
+        let mut end = collect_quote_raw_region(lines, start);
+        let mut dequoted = Vec::with_capacity(end - start);
         // 每一行被 `>` 记号吃掉几字节，是这里现算的事实——带着它往下递归，子块记的
         // 宽度就是**文件那一行**的绝对值（`BlockRecord::source_line_prefixes`）。
-        let mut dequoted_origins = Vec::with_capacity(region.len());
-        for (offset, line) in region.iter().enumerate() {
+        let mut dequoted_origins = Vec::with_capacity(end - start);
+        for (offset, line) in lines[start..end].iter().enumerate() {
             let inherited = origins.get(start + offset).copied().unwrap_or(0);
             if line.trim().is_empty() {
                 dequoted.push(String::new());
@@ -85,16 +156,59 @@ impl Editor {
                 continue;
             }
 
-            let Some(content) = strip_one_quote_level(line) else {
-                return (raw_block(cx, region.join("\n")), end);
-            };
-            dequoted_origins.push(inherited + (line.len() - content.len()));
-            dequoted.push(content);
+            if is_quote_start(line) {
+                let Some(content) = strip_one_quote_level(line) else {
+                    return (raw_block(cx, lines[start..end].join("\n")), end);
+                };
+                dequoted_origins.push(inherited + (line.len() - content.len()));
+                dequoted.push(content);
+                continue;
+            }
+
+            // 懒续行：没有 `>` 记号却属于引用里的段落。strip 账记宽度 0——
+            // 序列化端按「这一行没让位」落笔，字节才还原。
+            dequoted_origins.push(inherited);
+            dequoted.push(line.clone());
+        }
+        // 懒续行把区域从「全是 `>` 行」延伸出去：引用还停在未闭合段落上时，没有
+        // 记号的行、乃至 `>` 记号回来的行都是那段段落的续行（CommonMark）。拆出去
+        // 会把段落断成两块，重投影还会在接缝多插一个空行。
+        while end < lines.len() {
+            let line = &lines[end];
+            if line.trim().is_empty() {
+                break;
+            }
+            let last_index = dequoted.len().checked_sub(1);
+            if !last_index.is_some_and(|index| quote_paragraph_continues(&dequoted, index)) {
+                break;
+            }
+            if is_quote_start(line) {
+                let inherited = origins.get(end).copied().unwrap_or(0);
+                let Some(content) = strip_one_quote_level(line) else {
+                    break;
+                };
+                dequoted_origins.push(inherited + (line.len() - content.len()));
+                dequoted.push(content);
+            } else {
+                if looks_like_root_block_start(lines, end) {
+                    break;
+                }
+                dequoted_origins.push(origins.get(end).copied().unwrap_or(0));
+                dequoted.push(line.clone());
+            }
+            end += 1;
         }
 
         let Some(block) = Self::build_native_quote_block(cx, &dequoted, &dequoted_origins) else {
-            return (raw_block(cx, region.join("\n")), end);
+            return (raw_block(cx, lines[start..end].join("\n")), end);
         };
+        // 整段区域每行让开的字节记成完整账：带子块的引用落笔不再退回 `> ` 规范
+        // 重拼，`>- item`、裸 `>` 这些写法逐字节还原。长度对不上时序列化端按
+        // 自己的核对退回规范形状。
+        let ledger = dequoted_origins.iter().map(|width| *width as u32).collect::<Vec<_>>();
+        block.update(cx, |block, _cx| {
+            block.record.source_line_prefixes = ledger;
+        });
 
         (block, end)
     }
@@ -122,11 +236,6 @@ impl Editor {
 
         let lookahead = MarkdownLookahead::new(lines);
         let mut title_markdown = String::new();
-        // 引用自己那份正文的每一行让开几字节（文件口径）。空行段折成一行、开头的
-        // 空行没有内容行，这两种都会让「内容第 i 行」对不上「文件第 i 行」——那时
-        // 整份账作废（`title_desynced`），位置换算交回按文件量。
-        let mut title_prefixes: Vec<u32> = Vec::new();
-        let mut title_desynced = false;
         let mut children = Vec::new();
         let mut index = 0usize;
         let mut pending_blank_lines = 0usize;
@@ -141,7 +250,7 @@ impl Editor {
             }
 
             if is_table_candidate_line(line) {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 let table_end = collect_table_candidate_region(lines, index);
@@ -158,7 +267,7 @@ impl Editor {
             }
 
             if is_footnote_definition_start(line) {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 let footnote_end = collect_footnote_definition_region(lines, index);
@@ -174,7 +283,7 @@ impl Editor {
             }
 
             if let Some((comment, consumed)) = collect_comment_block(cx, lines, index, origins) {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 children.push(comment);
@@ -185,7 +294,7 @@ impl Editor {
             }
 
             if is_block_html_start(line) {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 let html_end = collect_block_html_region(lines, index);
@@ -197,7 +306,7 @@ impl Editor {
             }
 
             if is_display_math_start(line) {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 let math_end = collect_display_math_region(lines, index);
@@ -209,7 +318,7 @@ impl Editor {
             }
 
             if let Some(unsupported_end) = collect_unsupported_quote_region(lines, index) {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 children.push(raw_block_from_region(cx, lines, origins, index..unsupported_end));
@@ -220,7 +329,7 @@ impl Editor {
             }
 
             if is_quote_start(line) {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 let (quote, consumed) = Self::collect_quote_block(cx, lines, index, origins);
@@ -235,7 +344,7 @@ impl Editor {
             }
 
             if parse_list_marker(line).is_some() {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 let (list_blocks, _nested_spans, consumed) =
@@ -257,7 +366,7 @@ impl Editor {
                 && let Some((code_block, consumed)) =
                     collect_fenced_code_block(cx, lines, index, origins, &lookahead, 0)
             {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 children.push(code_block);
@@ -268,7 +377,7 @@ impl Editor {
             }
 
             if starts_with_standalone_image_child_paragraph(&lines[index..]) {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 children.push(standalone_image_block(cx, line.to_string()));
@@ -281,7 +390,7 @@ impl Editor {
             if strip_indented_code_prefix(line).is_some()
                 && let Some((code_block, consumed)) = collect_indented_code_block(cx, lines, index, origins)
             {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 children.push(code_block);
@@ -295,23 +404,16 @@ impl Editor {
             let mut paragraph_lines = vec![line.clone()];
             index += 1;
             while index < lines.len() {
-                let next = &lines[index];
-                if next.trim().is_empty()
-                    || is_quote_start(next)
-                    || parse_list_marker(next).is_some()
-                    || parse_opening_fence(next).is_some()
-                    || strip_indented_code_prefix(next).is_some()
-                    || quote_content_starts_unsupported(lines, index)
-                {
+                if !quote_paragraph_continues(lines, index) {
                     break;
                 }
 
-                paragraph_lines.push(next.clone());
+                paragraph_lines.push(lines[index].clone());
                 index += 1;
             }
 
             if is_standalone_image_paragraph(&paragraph_lines) {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 children.push(standalone_image_block(cx, paragraph_lines.join("\n")));
@@ -321,7 +423,7 @@ impl Editor {
             }
 
             if saw_child {
-                if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
+                if pending_blank_lines > 0 {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 children.push(Self::paragraph_child_block(
@@ -334,37 +436,30 @@ impl Editor {
             }
 
             if !title_markdown.is_empty() {
-                if pending_blank_lines > 1 {
-                    title_desynced = true;
-                } else if pending_blank_lines == 1 {
-                    // 分隔出来的那一个空内容行，就是紧挨着的前一行空行。
-                    let blank = paragraph_start - 1;
-                    title_prefixes.push((inherited(blank) + lines[blank].len()) as u32);
+                // 分隔出来的空内容行一行不多一行不少（空行段整段折进标题）：
+                // 模型与文件逐行对齐，序列化端的每行宽度账才用得上。
+                for _ in 0..=pending_blank_lines {
+                    title_markdown.push('\n');
                 }
-                title_markdown.push_str(if pending_blank_lines > 0 {
-                    "\n\n"
-                } else {
-                    "\n"
-                });
-            } else if pending_blank_lines > 0 {
-                // 开头的空行在内容里没有对应行，行号从这一步就错位了。
-                title_desynced = true;
+            } else {
+                // 开头的空行折进标题：引用以空行开头时那一行也得留在模型里，
+                // 不然保存后文件行数变少。
+                for _ in 0..pending_blank_lines {
+                    title_markdown.push('\n');
+                }
             }
             title_markdown.push_str(&paragraph_lines.join("\n"));
-            title_prefixes.extend((paragraph_start..index).map(|at| inherited(at) as u32));
             pending_blank_lines = 0;
         }
 
+        // 引用有内容时，收尾的空行折成空段落子块保住行数；整段空引用（`>` 一行）
+        // 保持「空引用」模型不变——事件层的降级/删除路径靠它。字节还原由序列化端
+        // 的每行宽度账兜住（`>` 与 `> ` 都照原文落笔）。
         if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
             append_quote_separator_children(&mut children, pending_blank_lines, cx);
         }
 
         let block = native_block(cx, BlockKind::Quote, title_markdown);
-        if !title_desynced && !title_prefixes.is_empty() {
-            block.update(cx, |block, _cx| {
-                block.record.source_line_prefixes = title_prefixes;
-            });
-        }
         attach_child_blocks(&block, children, cx);
         Some(block)
     }
@@ -496,18 +591,11 @@ impl Editor {
             let mut paragraph_lines = vec![line.clone()];
             index += 1;
             while index < lines.len() {
-                let next = &lines[index];
-                if next.trim().is_empty()
-                    || is_quote_start(next)
-                    || parse_list_marker(next).is_some()
-                    || parse_opening_fence(next).is_some()
-                    || strip_indented_code_prefix(next).is_some()
-                    || quote_content_starts_unsupported(lines, index)
-                {
+                if !quote_paragraph_continues(lines, index) {
                     break;
                 }
 
-                paragraph_lines.push(next.clone());
+                paragraph_lines.push(lines[index].clone());
                 index += 1;
             }
 
@@ -597,9 +685,12 @@ impl Editor {
             let block = native_block(cx, marker.kind.clone(), item_text);
             // 记号的写法是原文的一部分：块带着它，显示与序列化才不改用户写的 `+`、`1)`。
             // 有序项写下的那个号也一起带上（`5. 一` 的 5），界面才不至于把它数回 1。
+            // 公式长在标记行上这件事也要带上：序列化把子块公式首行并回标记行，
+            // 不然往返多出一个空标题行。
             block.update(cx, |block, _cx| {
                 block.record.list_marker = marker.style;
                 block.record.list_start = marker.numbered_start;
+                block.record.math_on_marker_line = marker_is_math;
             });
             // 项自己内容的每一行让开几字节，一行一行跟着 `append_markdown_to_block` 记。
             // 空行段超过一行时模型里的空行比文件里的少，行号对不上，整块的账作废。

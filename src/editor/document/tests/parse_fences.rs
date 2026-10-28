@@ -67,6 +67,22 @@
         assert_eq!(find_matching_closing_fence(&lines, 0, &opener), None);
     }
 
+    #[test]
+    fn bare_list_marker_parses_as_an_empty_item() {
+        // CommonMark 允许空列表项：记号后跟行尾即成空项，不必有一个空白。
+        let marker = parse_list_marker("-").expect("裸 `-` 是空列表项");
+        assert_eq!(marker.kind, BlockKind::BulletedListItem);
+        assert_eq!(marker.text, "");
+
+        let marker = parse_list_marker("1.").expect("裸 `1.` 是空列表项");
+        assert_eq!(marker.kind, BlockKind::NumberedListItem);
+        assert_eq!(marker.text, "");
+        assert_eq!(marker.numbered_start, Some(1));
+
+        // 记号后跟别的内容而没有空白时仍是普通文本。
+        assert!(parse_list_marker("-[ ]").is_none());
+    }
+
     #[gpui::test]
     async fn yaml_frontmatter_is_preserved_as_an_opaque_block(cx: &mut TestAppContext) {
         let source = "---\ntitle: Notes\ntags: [writing]\n---\n\n# Heading\n\nBody.";

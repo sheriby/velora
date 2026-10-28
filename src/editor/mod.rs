@@ -1765,6 +1765,12 @@ impl Editor {
         if !simple || markdown.contains('\n') {
             return None;
         }
+        // Setext 标题落笔是「内容行 + 下划线原文」两行，单行账对不上行数：
+        // 交回解析期与重解析自管（与引用同一口径），旧账留给落笔前的核对兜住。
+        if matches!(kind, BlockKind::Heading { .. }) && block_ref.record.setext_underline.is_some()
+        {
+            return None;
+        }
         let line = block_ref.record.markdown_line(0, block_ref.list_ordinal);
         Some((vec![line.len().saturating_sub(markdown.len()) as u32], None))
     }

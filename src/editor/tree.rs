@@ -1475,13 +1475,73 @@ impl DocumentTree {
             BlockKind::BulletedListItem
             | BlockKind::TaskListItem { .. }
             | BlockKind::NumberedListItem => {
-                lines.push(
-                    block_ref
-                        .record
-                        .markdown_line(list_depth, block_ref.list_ordinal),
-                );
+                let indentation = "  ".repeat(list_depth);
                 let child_list_depth = list_depth + 1;
-                for child in &block_ref.children {
+                // 裸记号（`-`/`1.` 行尾没有空格的空项）：账上首行让开的字节正好是
+                // 缩进加记号本身时，这一行在文件里就只有记号——按模型拼会多出一个
+                // 尾随空格，把没碰过的字节改写掉。
+                let marker_bytes = match block_ref.kind() {
+                    BlockKind::NumberedListItem => {
+                        block_ref.list_ordinal.unwrap_or(1).to_string().len() + 1
+                    }
+                    _ => 1,
+                };
+                let bare_marker = block_ref.record.title.visible_text().is_empty()
+                    && block_ref.record.source_line_prefixes.first()
+                        == Some(&((indentation.len() + marker_bytes) as u32));
+                // 项标记后直接跟公式（`- $$…$$`）：公式本来长在标记行上，首行并回
+                // 标记行、续行用子块缩进，不能先落一行空标题（`- `）再缩进公式——
+                // 3 行会被写成 4 行。
+                let marker_math_child = if block_ref.record.math_on_marker_line
+                    && block_ref.record.title.visible_text().is_empty()
+                {
+                    block_ref.children.first().and_then(|child| {
+                        (child.read(cx).kind() == BlockKind::MathBlock).then(|| child.clone())
+                    })
+                } else {
+                    None
+                };
+                if bare_marker {
+                    let marker = match block_ref.kind() {
+                        BlockKind::NumberedListItem => format!(
+                            "{}{}",
+                            block_ref.list_ordinal.unwrap_or(1),
+                            block_ref.record.list_marker.delimiter_or_default()
+                        ),
+                        _ => block_ref.record.list_marker.bullet_or_default().to_string(),
+                    };
+                    lines.push(format!("{indentation}{marker}"));
+                } else if let Some(math_child) = marker_math_child.as_ref() {
+                    let math_ref = math_child.read(cx);
+                    let raw = math_ref
+                        .record
+                        .raw_fallback
+                        .clone()
+                        .unwrap_or_else(|| math_ref.record.title_markdown());
+                    let mut math_lines = raw.split('\n');
+                    // 空标题时 `markdown_line` 落的就是标记前缀本身（尾随空格在内）。
+                    let marker_line =
+                        block_ref
+                            .record
+                            .markdown_line(list_depth, block_ref.list_ordinal);
+                    lines.push(format!(
+                        "{marker_line}{}",
+                        math_lines.next().unwrap_or_default()
+                    ));
+                    let child_indentation = "  ".repeat(child_list_depth);
+                    for line in math_lines {
+                        lines.push(format!("{child_indentation}{line}"));
+                    }
+                } else {
+                    lines.push(
+                        block_ref
+                            .record
+                            .markdown_line(list_depth, block_ref.list_ordinal),
+                    );
+                }
+                // 首个公式子块已经并进标记行时不再重复落笔。
+                let skipped_children = usize::from(marker_math_child.is_some());
+                for child in block_ref.children.get(skipped_children..).unwrap_or_default() {
                     let child_ref = child.read(cx);
                     if Self::list_child_requires_leading_blank_line(child_ref) {
                         lines.push(String::new());
@@ -1491,6 +1551,35 @@ impl DocumentTree {
                         child_list_depth,
                         cx,
                         lines,
+                    );
+                }
+            }
+            BlockKind::Heading { .. } => {
+                // Setext 标题（根级才有）写回照抄下划线原文：ATX 是规范写法，
+                // 但文件里写的是 `Title\n===`，未编辑的标题不该被换形状。
+                let setext_underline = if list_depth == 0 && block_ref.quote_depth == 0 {
+                    block_ref.record.setext_underline.clone()
+                } else {
+                    None
+                };
+                if let Some(underline) = setext_underline {
+                    for line in block_ref.record.title_markdown().split('\n') {
+                        lines.push(line.to_string());
+                    }
+                    lines.push(underline);
+                } else {
+                    lines.push(
+                        block_ref
+                            .record
+                            .markdown_line(list_depth, block_ref.list_ordinal),
+                    );
+                    let child_list_depth = list_depth + usize::from(block_ref.kind().is_list_item());
+                    Self::collect_markdown_lines(
+                        &block_ref.children,
+                        child_list_depth,
+                        cx,
+                        lines,
+                        false,
                     );
                 }
             }

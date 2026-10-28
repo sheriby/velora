@@ -214,7 +214,8 @@
     #[gpui::test]
     async fn imports_quote_list_item_with_native_child_paragraph(cx: &mut TestAppContext) {
         let markdown = "> - item\n>\n>     child text".to_string();
-        let canonical_markdown = "> - item\n> \n>   child text";
+        // 裸 `>` 那一行按文件写法逐字节还原（旧实现重拼成带尾随空格的 `> `）。
+        let canonical_markdown = "> - item\n>\n>   child text";
         let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
 
         editor.update(cx, |editor, cx| {
@@ -355,20 +356,22 @@
             "> after",
         ]
         .join("\n");
+        // `> after` 只带外层记号，是嵌套引用内段落的懒续行（CommonMark），
+        // 旧实现把它拆成标注自己的子段。空行落成规范形状是标注侧既有口径。
         let canonical_markdown = [
             "> [!WARNING] Custom title",
             "> body",
             "> > inner one",
             "> > ",
             "> > inner two",
-            "> after",
+            "> > after",
         ]
         .join("\n");
         let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.clone(), None));
 
         editor.update(cx, |editor, cx| {
             let visible = editor.document.visible_blocks();
-            assert_eq!(visible.len(), 4);
+            assert_eq!(visible.len(), 3, "after 归进嵌套引用，不再拆成标注子段");
             assert_eq!(
                 visible[0].entity.read(cx).kind(),
                 BlockKind::Callout(CalloutVariant::Warning)
@@ -378,7 +381,7 @@
             assert_eq!(visible[2].entity.read(cx).kind(), BlockKind::Quote);
             assert_eq!(
                 visible[2].entity.read(cx).display_text(),
-                "inner one\n\ninner two"
+                "inner one\n\ninner two\nafter"
             );
             assert_eq!(visible[2].entity.read(cx).quote_depth, 2);
             assert!(
@@ -388,16 +391,7 @@
                     .visible_quote_group_anchor
                     .is_some()
             );
-            assert_eq!(visible[3].entity.read(cx).kind(), BlockKind::Paragraph);
-            assert_eq!(visible[3].entity.read(cx).display_text(), "after");
-            assert_eq!(visible[3].entity.read(cx).quote_depth, 1);
-            assert!(
-                visible[3]
-                    .entity
-                    .read(cx)
-                    .visible_quote_group_anchor
-                    .is_none()
-            );
+            assert_eq!(visible.len(), 3, "after 归进嵌套引用，不再拆成标注子段");
             assert_eq!(editor.document.markdown_text(cx), canonical_markdown);
         });
     }
@@ -431,7 +425,8 @@
             assert_eq!(visible[2].entity.read(cx).kind(), BlockKind::Quote);
             assert_eq!(visible[2].entity.read(cx).display_text(), "inner");
             assert_eq!(visible[2].entity.read(cx).quote_depth, 2);
-            assert_eq!(editor.document.markdown_text(cx), "> outer\n> \n> > inner");
+            // 裸 `>` 与 `>>` 都按文件写法逐字节还原（旧实现重拼成 `> ` / `> > `）。
+            assert_eq!(editor.document.markdown_text(cx), "> outer\n>\n>> inner");
         });
     }
 
@@ -597,3 +592,78 @@
         });
     }
 
+
+    #[gpui::test]
+    async fn quote_lazy_continuation_line_stays_inside_the_quote(cx: &mut TestAppContext) {
+        // CommonMark 懒续行：没有 `>` 记号的下一行仍属于引用里那个未闭合的段落。
+        // 拆出去的话渲染上引用只剩「a」，重投影还会在接缝补一个空行。
+        let source = "> a\nb";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 1, "懒续行不能被拆成独立段落");
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Quote);
+            assert_eq!(visible[0].entity.read(cx).display_text(), "a\nb");
+            assert_eq!(editor.document.markdown_text(cx), "> a\nb");
+        });
+    }
+
+    #[gpui::test]
+    async fn quote_with_children_writes_the_file_marker_shapes(cx: &mut TestAppContext) {
+        // 带子块的引用序列化按解析期记下的每行宽度落笔：`>-` 没有空格、裸 `text`
+        // 没有让位、空行就是一个 `>`，统一重拼 `> ` 会把用户没碰的行改写。
+        let source = ">- item\n\n>text\n\n>";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Quote);
+            assert_eq!(visible[0].entity.read(cx).children.len(), 1, "第一根引用带列表子块");
+            assert_eq!(visible[2].entity.read(cx).kind(), BlockKind::Quote);
+            assert_eq!(visible[3].entity.read(cx).kind(), BlockKind::Quote);
+            assert_eq!(editor.document.markdown_text(cx), ">- item\n\n>text\n\n>");
+        });
+    }
+
+    #[gpui::test]
+    async fn quote_with_children_round_trips_blank_quote_lines(cx: &mut TestAppContext) {
+        let source = "> a\n>\n> - item";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+
+    #[gpui::test]
+    async fn quote_opening_blank_line_survives_round_trip(cx: &mut TestAppContext) {
+        // 引用以空行开头时那一行不能从模型里消失：保存后文件行数变少是真实丢数据。
+        let source = ">\n> - item";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 3, "空行折成空段落子块 + 列表子块，一行都不能少");
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Quote);
+            assert_eq!(visible[1].entity.read(cx).kind(), BlockKind::Paragraph);
+            assert_eq!(visible[2].entity.read(cx).kind(), BlockKind::BulletedListItem);
+            assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+
+
+
+    #[gpui::test]
+    async fn quote_blank_runs_round_trip_byte_for_byte(cx: &mut TestAppContext) {
+        for source in [
+            "> a\n>\n> b",
+            "> a\n>\n>\n> b",
+            "> a\n>\n>\n>\n> b",
+        ] {
+            let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+            editor.update(cx, |editor, cx| {
+                assert_eq!(editor.document.markdown_text(cx), source, "{source}");
+            });
+        }
+    }

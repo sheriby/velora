@@ -136,9 +136,11 @@
                 visible[1].entity.read(cx).display_text(),
                 "first line\nsecond line"
             );
+            // 下划线照原文写回：ATX 是规范写法，但文件里写的是 setext，
+            // 未编辑的标题不该换形状（旧断言烘焙了 `## Heading` 重写）。
             assert_eq!(
                 editor.document.markdown_text(cx),
-                "## Heading\n\nfirst line\nsecond line"
+                "Heading\n-------\n\nfirst line\nsecond line"
             );
         });
     }
@@ -587,9 +589,12 @@
             assert_eq!(visible[2].entity.read(cx).kind(), BlockKind::Quote);
             assert_eq!(visible[2].entity.read(cx).display_text(), "level3");
             assert_eq!(visible[2].entity.read(cx).quote_depth, 3);
+            // `>>` 按文件写法逐字节还原（旧断言烘焙了 `> > ` 规范重拼）；第三层
+            // 里层记号仍是规范形——每行宽度账只在 quote_depth == 1 的引用上消费，
+            // 里层的绝对宽度没法还原成 `>>>` 这种无空格叠写。
             assert_eq!(
                 editor.document.markdown_text(cx),
-                "> level1\n> > level2\n> > > level3"
+                "> level1\n>> level2\n>> > level3"
             );
         });
     }
@@ -628,3 +633,107 @@
         });
     }
 
+
+    #[gpui::test]
+    async fn single_character_setext_underline_round_trips(cx: &mut TestAppContext) {
+        // CommonMark 的 setext 下划线只要求至少一个字符：`Title\n=` 是一级标题、
+        // `Title\n--` 是二级标题；写回时下划线照原文落笔，不能改写成 ATX。
+        for (source, level) in [("Title\n=", 1u8), ("Title\n--", 2u8)] {
+            let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+            editor.update(cx, |editor, cx| {
+                let visible = editor.document.visible_blocks();
+                assert_eq!(visible.len(), 1, "{source}");
+                assert_eq!(
+                    visible[0].entity.read(cx).kind(),
+                    BlockKind::Heading { level },
+                    "{source}"
+                );
+                assert_eq!(visible[0].entity.read(cx).display_text(), "Title");
+                assert_eq!(editor.document.markdown_text(cx), source, "{source}");
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn multiline_setext_content_forms_one_heading(cx: &mut TestAppContext) {
+        // CommonMark 的 setext 内容可以连续多行：整段连同下划线是一个标题。
+        // 拆成「段落 + 下划线块」的话接缝还会凭空多补一个空行。
+        for (source, level) in [
+            ("a\nb\n---", 2u8),
+            ("a\nb\n===", 1u8),
+        ] {
+            let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+            editor.update(cx, |editor, cx| {
+                let visible = editor.document.visible_blocks();
+                assert_eq!(visible.len(), 1, "{source}");
+                assert_eq!(
+                    visible[0].entity.read(cx).kind(),
+                    BlockKind::Heading { level },
+                    "{source}"
+                );
+                assert_eq!(visible[0].entity.read(cx).display_text(), "a\nb", "{source}");
+                assert_eq!(editor.document.markdown_text(cx), source, "{source}");
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn indented_line_after_paragraph_stays_paragraph_text(cx: &mut TestAppContext) {
+        // 缩进代码块不能打断段落（CommonMark）：紧邻的 4 空格行是续行，
+        // 拆成代码块的话序列化时段落→代码接缝再补一个空行，原文被加行改写。
+        let source = "some text\n    code-ish line";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 1, "紧邻的缩进行按段落续行吞入");
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Paragraph);
+            assert_eq!(
+                visible[0].entity.read(cx).display_text(),
+                "some text\n    code-ish line"
+            );
+            assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+
+    #[gpui::test]
+    async fn reference_definition_url_on_the_next_line_stays_a_definition(cx: &mut TestAppContext) {
+        // `[foo]:` 换行 `/url` 是合法的链接定义写法：URL 行并进定义 raw 块，
+        // 不并的话它掉给根循环当正文段落，用户看到一个突兀的 `/url`。
+        let source = "[foo]:\n/url";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 1, "定义与它的 URL 行是一块");
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::RawMarkdown);
+            assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+
+    #[gpui::test]
+    async fn thematic_break_run_is_not_swallowed_by_frontmatter_detection(cx: &mut TestAppContext) {
+        // 以 `---`（水平分隔线）开头的文档，后文再出现一个 `---` 时，
+        // 中间的标题正文不能被整篇吞成 FrontMatter。
+        let source = "---\n# Title\n\nbody\n\n---\nmore";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert!(
+                !visible
+                    .iter()
+                    .any(|block| block.entity.read(cx).kind() == BlockKind::FrontMatter),
+                "分隔线开头的普通文档不能被吞成 YAML 块"
+            );
+            assert!(visible
+                .iter()
+                .any(|block| block.entity.read(cx).kind() == BlockKind::Heading { level: 1 }));
+            // 相邻根块之间的规范空行是序列化模型的既有口径（run-1 折进分隔符），
+            // 这里只锁「内容不被吞」：标题与正文都还在，各占自己的块。
+            let serialized = editor.document.markdown_text(cx);
+            assert!(serialized.contains("# Title"));
+            assert!(serialized.contains("body"));
+            assert!(serialized.contains("more"));
+        });
+    }

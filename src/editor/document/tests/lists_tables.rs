@@ -521,3 +521,61 @@
             assert_eq!(visible[0].entity.read(cx).display_text(), "标题");
         });
     }
+
+    #[gpui::test]
+    async fn list_item_marker_math_round_trips_on_the_marker_line(cx: &mut TestAppContext) {
+        // 项标记后直接跟公式（`- $$…$$`）：序列化时公式首行并回项标记行、
+        // 续行用项缩进，不能落成 `- ` 单独一行再缩进公式（3 行变 4 行）。
+        let markdown = concat!(
+            "- $$\\begin{aligned}\n",
+            "  x &= y\n",
+            "  \\end{aligned}$$\n",
+            "\n",
+            "下面是正文段落。",
+        )
+        .to_string();
+        let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.clone(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::BulletedListItem);
+            assert_eq!(editor.document.markdown_text(cx), markdown);
+        });
+    }
+
+    #[gpui::test]
+    async fn unclosed_math_region_leaves_the_blank_run_to_the_seam(cx: &mut TestAppContext) {
+        // 未闭合公式在空行处收尾时，空行段归接缝：划进块的话序列化端接缝再补一行，
+        // 往返凭空多出一个空行。
+        let source = "$$\nx\n\n- item";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 2);
+            assert!(matches!(
+                visible[0].entity.read(cx).kind(),
+                BlockKind::RawMarkdown | BlockKind::MathBlock
+            ));
+            assert!(visible[1].entity.read(cx).kind().is_list_item());
+            assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+
+    #[gpui::test]
+    async fn bare_list_marker_is_an_empty_list_item(cx: &mut TestAppContext) {
+        // CommonMark 允许空列表项：单独一行 `-`（或 `1.`）是合法空项，
+        // 退化成段落文本的话用户看到的是孤零零一个减号。
+        for source in ["-", "1."] {
+            let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+            editor.update(cx, |editor, cx| {
+                let visible = editor.document.visible_blocks();
+                assert_eq!(visible.len(), 1, "{source}");
+                assert!(
+                    visible[0].entity.read(cx).kind().is_list_item(),
+                    "{source} 应该是空列表项"
+                );
+                assert_eq!(editor.document.markdown_text(cx), source, "{source}");
+            });
+        }
+    }

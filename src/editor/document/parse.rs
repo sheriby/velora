@@ -324,14 +324,16 @@ pub(crate) fn parse_list_marker(line: &str) -> Option<ListMarker> {
         && matches!(marker, '-' | '*' | '+')
     {
         let after_marker = &rest[marker.len_utf8()..];
-        let separator_len = after_marker
-            .chars()
-            .next()
-            .filter(|ch| matches!(ch, ' ' | '\t'))
-            .map(char::len_utf8)?;
-        let text = after_marker
-            .strip_prefix(' ')
-            .or_else(|| after_marker.strip_prefix('\t'))?;
+        // 记号后没有空白也可以是列表项：CommonMark 允许空项（记号直接到行尾，
+        // 如单独一行 `-`）。记号后跟着别的内容而没有空白时仍是普通文本。
+        let (separator_len, text) = match after_marker.chars().next() {
+            Some(ch @ (' ' | '\t')) => {
+                let text = after_marker.strip_prefix(' ').or_else(|| after_marker.strip_prefix('\t'))?;
+                (ch.len_utf8(), text)
+            }
+            None => (0, ""),
+            Some(_) => return None,
+        };
         let (kind, text, task_box) =
             if let Some((box_char, prefix_len)) = BlockKind::parse_task_list_item_prefix(text) {
                 (
@@ -347,9 +349,12 @@ pub(crate) fn parse_list_marker(line: &str) -> Option<ListMarker> {
         return Some(ListMarker {
             kind,
             indent_columns,
-            content_indent_columns: display_columns(
-                &line[..indent_bytes + marker.len_utf8() + separator_len],
-            ),
+            // 空项没有正文可对齐：内容缩进取「记号 + 一个空格」的规范值。
+            content_indent_columns: if separator_len == 0 {
+                display_columns(&line[..indent_bytes + marker.len_utf8()]) + 1
+            } else {
+                display_columns(&line[..indent_bytes + marker.len_utf8() + separator_len])
+            },
             style: ListMarkerStyle {
                 bullet: Some(marker),
                 delimiter: None,
@@ -369,7 +374,11 @@ pub(crate) fn parse_list_marker(line: &str) -> Option<ListMarker> {
     Some(ListMarker {
         kind: BlockKind::NumberedListItem,
         indent_columns,
-        content_indent_columns: display_columns(&line[..indent_bytes + digit_len + marker_len]),
+        content_indent_columns: if marker_len == 1 {
+            display_columns(&line[..indent_bytes + digit_len + 1]) + 1
+        } else {
+            display_columns(&line[..indent_bytes + digit_len + marker_len])
+        },
         style: ListMarkerStyle {
             bullet: None,
             delimiter: Some(delimiter),
@@ -391,12 +400,14 @@ pub(crate) fn parse_ordered_list_marker(rest: &str) -> Option<(usize, usize, &st
         return None;
     }
 
-    let separator = *rest.as_bytes().get(digit_len + 1)?;
-    if !matches!(separator, b' ' | b'\t') {
-        return None;
+    // 记号后没有空白也可以是空项（单独一行 `1.`）；有分隔符才要求它存在，
+    // 记号后跟着别的内容时按普通文本处理。
+    let separator = rest.as_bytes().get(digit_len + 1).copied();
+    match separator {
+        Some(b' ' | b'\t') => Some((digit_len, 2, &rest[digit_len + 2..])),
+        None => Some((digit_len, 1, "")),
+        Some(_) => None,
     }
-
-    Some((digit_len, 2, &rest[digit_len + 2..]))
 }
 
 pub(crate) fn strip_one_quote_level(line: &str) -> Option<String> {
@@ -534,10 +545,38 @@ pub(crate) fn collect_markdown_html_region(lines: &[String], start: usize) -> us
     index
 }
 
+/// `[foo]:` 这种「标签后面什么都没跟」的未完成定义：规范允许目的地写在下一行。
+fn reference_definition_label_unfinished(line: &str) -> bool {
+    let trimmed_end = line.trim_end();
+    let leading_spaces = trimmed_end.bytes().take_while(|b| *b == b' ').count();
+    if leading_spaces > 3 {
+        return false;
+    }
+
+    let rest = &trimmed_end[leading_spaces..];
+    let Some(label_end) = rest.find("]:") else {
+        return false;
+    };
+    rest.starts_with('[') && rest[label_end + 2..].trim().is_empty()
+}
+
 pub(crate) fn collect_reference_definition_region(lines: &[String], start: usize) -> usize {
     let mut index = start + 1;
     while index < lines.len() && is_reference_definition_title_continuation(&lines[index]) {
         index += 1;
+    }
+    // URL 换行写法：`]:` 后面什么都不跟时，目的地可以写在下一行。不并进去的话
+    // 那一行掉给根循环当正文段落，用户看到一个突兀的 `/url`；标题续行接着收。
+    if index == start + 1
+        && reference_definition_label_unfinished(&lines[start])
+        && lines.get(index).is_some_and(|next| {
+            !next.trim().is_empty() && !looks_like_root_block_start(lines, index)
+        })
+    {
+        index += 1;
+        while index < lines.len() && is_reference_definition_title_continuation(&lines[index]) {
+            index += 1;
+        }
     }
     index
 }
@@ -610,7 +649,9 @@ pub(crate) fn collect_display_math_region(lines: &[String], start: usize) -> usi
             let region_ends = lookahead >= lines.len()
                 || (!closes_this_region && looks_like_root_block_start(lines, lookahead));
             if region_ends {
-                return lookahead;
+                // 空行段还给接缝：根级空行逻辑按「保留 run-1 + 分隔 1」恰好逐字节
+                // 还原；划进块的话序列化端接缝再补一行，往返凭空多一个空行。
+                return index;
             }
         }
 
@@ -697,6 +738,19 @@ pub(crate) fn collect_quote_raw_region(lines: &[String], start: usize) -> usize 
         index += 1;
     }
     index
+}
+
+/// 引用里剥掉一层 `>` 之后，这一行能不能作为普通段落内容续下去。
+/// `build_native_quote_block` 的段落回退循环与引用区域的懒续行判定共用这一份
+/// 判据——两边各写一份必然漂移。
+pub(crate) fn quote_paragraph_continues(lines: &[String], index: usize) -> bool {
+    let line = &lines[index];
+    !(line.trim().is_empty()
+        || is_quote_start(line)
+        || parse_list_marker(line).is_some()
+        || parse_opening_fence(line).is_some()
+        || strip_indented_code_prefix(line).is_some()
+        || quote_content_starts_unsupported(lines, index))
 }
 
 pub(crate) fn quote_content_starts_unsupported(lines: &[String], index: usize) -> bool {

@@ -252,19 +252,41 @@ impl Editor {
             // YAML frontmatter: a `---` fence pair at the very top of the
             // document is preserved byte-exact as a FrontMatter block instead
             // of being parsed as setext headings / thematic breaks (roadmap C1).
+            // 闭合搜索带一条常识约束：空行之后必须紧跟闭合——以 `---`（水平分隔
+            // 线）开头的普通文档，后文随便哪个 `---` 都不该把中间隔着空行的标题
+            // 正文整篇吞成 YAML 块。内容行本身不设形状约束：YAML 里什么都长得像
+            // （`#` 是注释、缩进是块标量），唯一站得住的信号是空行。
             if cursor.is_document_start
                 && index == 0
                 && roots.is_empty()
                 && line.trim_end_matches('\r') == "---"
-                && let Some(close) = (1..lines.len()).find(|&close_index| {
-                    lines[close_index].trim_end_matches('\r') == "---"
-                })
             {
-                let front_matter = lines[..=close].join("\n");
-                roots.push(Self::new_block(cx, BlockRecord::front_matter(front_matter)));
-                spans.push(index..close + 1);
-                index = close + 1;
-                continue;
+                let mut close = None;
+                for candidate in 1..lines.len() {
+                    let candidate_line = &lines[candidate];
+                    if candidate_line.trim_end_matches('\r') == "---" {
+                        close = Some(candidate);
+                        break;
+                    }
+                    if candidate_line.trim().is_empty() {
+                        // 空 FrontMatter 脚手架（`---\n\n---`）的空行后面就是闭合；
+                        // 再往后还没等到闭合就放弃。
+                        let closes_next = lines
+                            .get(candidate + 1)
+                            .is_some_and(|next| next.trim_end_matches('\r') == "---");
+                        if closes_next {
+                            close = Some(candidate + 1);
+                        }
+                        break;
+                    }
+                }
+                if let Some(close) = close {
+                    let front_matter = lines[..=close].join("\n");
+                    roots.push(Self::new_block(cx, BlockRecord::front_matter(front_matter)));
+                    spans.push(index..close + 1);
+                    index = close + 1;
+                    continue;
+                }
             }
 
             if line.trim().is_empty() {
@@ -383,6 +405,10 @@ impl Editor {
                 // 下划线不在标题文本里，不给它记内容偏移。
                 heading.update(cx, |heading, _cx| {
                     heading.record.source_line_prefixes = vec![origins.get(index).copied().unwrap_or(0) as u32];
+                    // 下划线原文照记：写回按它落笔，`Title\n=` 才不会被改成 `# Title`。
+                    if let Some(underline) = lines.get(index + 1) {
+                        heading.record.setext_underline = Some(underline.clone());
+                    }
                 });
                 roots.push(heading);
                 spans.push(index..index + 2);

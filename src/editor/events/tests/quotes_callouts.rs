@@ -429,17 +429,20 @@
         });
 
         editor.update(cx, |editor, cx| {
+            // 引用开头的空行现在折成空段落子块（行数 1:1 保住），删除路径
+            // 在空标题上无字可删，容器引用与子块都原样保留。
             let visible = editor.document.visible_blocks();
-            assert_eq!(visible.len(), 2);
+            assert_eq!(visible.len(), 3);
             assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Quote);
             assert_eq!(visible[0].entity.read(cx).display_text(), "");
             assert_eq!(visible[0].entity.read(cx).quote_depth, 1);
             assert!(!visible[0].entity.read(cx).children.is_empty());
+            assert_eq!(visible[1].entity.read(cx).kind(), BlockKind::Paragraph);
             assert_eq!(
-                visible[1].entity.read(cx).kind(),
+                visible[2].entity.read(cx).kind(),
                 BlockKind::BulletedListItem
             );
-            assert_eq!(editor.document.markdown_text(cx), "> - item");
+            assert_eq!(editor.document.markdown_text(cx), ">\n> - item");
         });
     }
 

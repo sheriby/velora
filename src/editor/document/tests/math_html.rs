@@ -206,7 +206,7 @@
             assert_eq!(visible[2].entity.read(cx).quote_depth, 1);
             assert_eq!(
                 editor.document.markdown_text(cx),
-                "> quote\n> \n> <!--\n> quoted\n> -->"
+                "> quote\n>\n> <!--\n> quoted\n> -->"
             );
         });
 
@@ -278,7 +278,7 @@
     #[gpui::test]
     async fn nested_quote_footnote_definition_upgrades_to_native_block(cx: &mut TestAppContext) {
         let markdown = "> outer\n>\n> [^note]: nested footnote".to_string();
-        let canonical_markdown = "> outer\n> \n> [^note]: nested footnote";
+        let canonical_markdown = "> outer\n>\n> [^note]: nested footnote";
         let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
 
         editor.update(cx, |editor, cx| {

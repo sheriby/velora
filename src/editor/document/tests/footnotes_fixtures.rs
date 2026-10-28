@@ -255,16 +255,16 @@
             );
         });
 
+        // 引用后面那行无记号的普通文本：是引用内段落的懒续行（CommonMark），
+        // 旧实现拆成独立段落还会在接缝补一个空行（字节被改写），一并修正。
         let quote_editor =
             cx.new(|cx| Editor::from_markdown(cx, "> quoted\ncontinued".to_string(), None));
         quote_editor.update(cx, |editor, cx| {
             let visible = editor.document.visible_blocks();
-            assert_eq!(visible.len(), 2);
+            assert_eq!(visible.len(), 1);
             assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Quote);
-            assert_eq!(visible[0].entity.read(cx).display_text(), "quoted");
-            assert_eq!(visible[1].entity.read(cx).kind(), BlockKind::Paragraph);
-            assert_eq!(visible[1].entity.read(cx).display_text(), "continued");
-            assert_eq!(editor.document.markdown_text(cx), "> quoted\n\ncontinued");
+            assert_eq!(visible[0].entity.read(cx).display_text(), "quoted\ncontinued");
+            assert_eq!(editor.document.markdown_text(cx), "> quoted\ncontinued");
         });
     }
 
@@ -299,22 +299,23 @@
     async fn non_quoted_line_after_quote_becomes_plain_paragraph_before_heading(
         cx: &mut TestAppContext,
     ) {
+        // CommonMark 懒续行：没有 `>` 的下一行属于引用里那个未闭合的段落，
+        // 不再拆成独立段落（拆出去的话重投影还会在接缝补一个空行）。
         let editor = cx.new(|cx| {
             Editor::from_markdown(cx, "> quoted\ncontinued\n\n## Next".to_string(), None)
         });
 
         editor.update(cx, |editor, cx| {
             let visible = editor.document.visible_blocks();
-            assert_eq!(visible.len(), 3);
+            assert_eq!(visible.len(), 2);
             assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Quote);
-            assert_eq!(visible[0].entity.read(cx).display_text(), "quoted");
-            assert_eq!(visible[1].entity.read(cx).kind(), BlockKind::Paragraph);
-            assert_eq!(visible[1].entity.read(cx).display_text(), "continued");
+            assert_eq!(visible[0].entity.read(cx).display_text(), "quoted\ncontinued");
             assert_eq!(
-                visible[2].entity.read(cx).kind(),
+                visible[1].entity.read(cx).kind(),
                 BlockKind::Heading { level: 2 }
             );
-            assert_eq!(visible[2].entity.read(cx).display_text(), "Next");
+            assert_eq!(visible[1].entity.read(cx).display_text(), "Next");
+            assert_eq!(editor.document.markdown_text(cx), "> quoted\ncontinued\n\n## Next");
         });
     }
 

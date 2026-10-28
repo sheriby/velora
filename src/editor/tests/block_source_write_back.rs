@@ -3341,11 +3341,13 @@ async fn resync_refreshes_the_ledger_before_the_next_keystroke(cx: &mut TestAppC
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, ">- 项一\n".to_string(), None));
     redraw(cx);
 
-    // 兜底档位：声明「树说了算」→ 整篇按序列化重写（`>- 项一` 变 `> - 项一`）。
+    // 兜底档位：声明「树说了算」→ 整篇按序列化重写。引用的每行宽度账修好之后
+    // 序列化形就是原文（`>- 项一` 逐字节还原），resync 不再把它重拼成 `> - 项一`；
+    // 「resync 后第一笔落对位」的不变量照旧由后半段踩。
     editor.update(cx, |editor, cx| editor.mark_dirty(cx));
     redraw(cx);
     editor.read_with(cx, |editor, _cx| {
-        assert_eq!(editor.buffer.text(), "> - 项一\n", "resync 没把缓冲区刷成序列化形");
+        assert_eq!(editor.buffer.text(), ">- 项一\n", "resync 没把缓冲区刷成序列化形");
     });
 
     // resync 之后的第一个字打在子块末尾：踩的就是刚过期的账。
@@ -3369,7 +3371,7 @@ async fn resync_refreshes_the_ledger_before_the_next_keystroke(cx: &mut TestAppC
 
     let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
     assert_eq!(
-        buffer_text, "> - 项一乙\n",
+        buffer_text, ">- 项一乙\n",
         "resync 后的第一次落笔用了过期账，字落错了位：{buffer_text:?}"
     );
 }
