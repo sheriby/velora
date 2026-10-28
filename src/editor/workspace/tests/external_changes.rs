@@ -152,6 +152,70 @@ async fn a_deleted_then_recreated_file_refreshes_the_view(cx: &mut TestAppContex
     });
 }
 
+/// 重载的读盘必须交给后台 executor（评审 P175）：调用返回的那一刻主线程还没
+/// 有应用任何磁盘内容——大文档一次「全量读 + 编码探测 + 解码 + 哈希」可达几十
+/// 毫秒，监听事件风暴时逐条同步读会把输入卡住。park 之后结果必须照常接上。
+#[gpui::test]
+async fn external_change_reload_defers_the_disk_read_off_the_calling_thread(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-external-async-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = crate::file_url::canonical_path(&root);
+    let path = root.join("note.md");
+    fs::write(&path, "# 原文\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(path.clone(), window, cx);
+        })
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.document.markdown_text(cx), "# 原文");
+    });
+
+    fs::write(&path, "# 改文\n").unwrap();
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reload_externally_changed_document(&path, cx)
+        })
+    });
+    // 不 park：后台读盘还没回来，同步实现此刻已经把改文应用进界面了。
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            "# 原文",
+            "读盘应当异步：调用返回时界面还该停在旧内容上"
+        );
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            "# 改文",
+            "后台读盘完成后要照常刷进界面"
+        );
+    });
+}
+
 /// 有未保存编辑时，外部改动**不能**被静默写进界面（那是丢用户的字），也**不能**
 /// 被反向盖回磁盘：本地内容留在屏幕上，盘上那一版保持不动，冲突由保存路径处理。
 #[gpui::test]
@@ -258,12 +322,14 @@ async fn an_unreadable_external_change_is_reported_and_rechecked(cx: &mut TestAp
     cx.run_until_parked();
 
     // 半截/不可无损表示的字节：读盘漏斗会拒绝（UTF-16 BOM + NUL + 孤立单元）。
+    // 读盘在后台跑（评审 P175），先 park 让读盘与落地走完再断言提示。
     fs::write(&path, [0xFF, 0xFE, 0x00, 0x00, 0xFF, 0xD8]).expect("write junk");
     cx.update(|_window, cx| {
         editor.update(cx, |editor, cx| {
             editor.reload_externally_changed_document(&path, cx)
         })
     });
+    cx.run_until_parked();
     editor.read_with(cx, |editor, _cx| {
         assert!(
             editor.workspace.file_error.is_some(),

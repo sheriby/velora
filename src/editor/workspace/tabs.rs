@@ -273,13 +273,51 @@ impl Editor {
     ///
     /// 复查只补一次（第二趟再失败就只留那条提示，不再排第三个计时），否则会跟着
     /// 监听事件滚成一串定时器。
+    ///
+    /// 读盘走后台 executor（评审 P175）：全量读+编码探测+解码+哈希对大文档可达
+    /// 几十毫秒，主线程只留脏检查、版本比对与应用三件便宜事。
     fn reload_externally_changed_document_with_recheck(
         &mut self,
         path: &Path,
         may_recheck: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some((cached_markdown, dirty)) = self.cached_tab_content_for_path(path, cx) else {
+        if self.cached_tab_is_dirty_for_path(path, cx) {
+            // Unsaved edits win; the save path already detects conflicts.
+            return;
+        }
+        // 外部变更策略（roadmap H2）：manual 模式不自动重载，交由用户手动刷新。
+        if crate::config::EditorSettings::external_change_policy(cx)
+            == crate::config::ExternalChangePolicy::Manual
+        {
+            return;
+        }
+        let load = cx.background_spawn({
+            let path = path.to_path_buf();
+            async move { crate::editor::encoding::load_document(&path) }
+        });
+        let path = path.to_path_buf();
+        cx.spawn(async move |this, cx| {
+            let document = load.await;
+            if let Err(error) = this.update(cx, |editor, cx| {
+                editor.apply_externally_loaded_document(path, document, may_recheck, cx);
+            }) {
+                eprintln!("应用外部变更重载失败：{error}");
+            }
+        })
+        .detach();
+    }
+
+    /// 后台读盘完成后的落地：现场重新取这一篇的状态——读盘的几毫秒里标签可能
+    /// 已关闭、用户可能已开始打字、另一条事件可能已重载过一版。
+    fn apply_externally_loaded_document(
+        &mut self,
+        path: PathBuf,
+        document: std::io::Result<crate::editor::encoding::LoadedDocument>,
+        may_recheck: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((cached_markdown, dirty)) = self.cached_tab_content_for_path(&path, cx) else {
             return;
         };
         if dirty {
@@ -292,7 +330,7 @@ impl Editor {
         {
             return;
         }
-        let document = match crate::editor::encoding::load_document(path) {
+        let document = match document {
             Ok(document) => document,
             Err(error) => {
                 // 以前这里是 `let Ok(..) else { return }`：静默吞掉一次读盘失败。
@@ -301,9 +339,9 @@ impl Editor {
                 // 句柄还被上一个写者独占，而很多平台这一次事件就是最后一次，
                 // 于是界面永远停在旧内容上，用户连一句为什么都拿不到。
                 // 现在：先说清这一趟为什么没刷，再补一次短延时的复查。
-                self.note_unreadable_external_change(path, &error, cx);
+                self.note_unreadable_external_change(&path, &error, cx);
                 if may_recheck {
-                    self.schedule_external_change_recheck(path.to_path_buf(), cx);
+                    self.schedule_external_change_recheck(path, cx);
                 }
                 return;
             }
@@ -316,7 +354,7 @@ impl Editor {
             self.clear_unreadable_external_change();
             return;
         }
-        self.apply_disk_reload(path, document, disk_version, cx);
+        self.apply_disk_reload(&path, document, disk_version, cx);
         self.clear_unreadable_external_change();
         cx.notify();
     }
@@ -350,7 +388,17 @@ impl Editor {
 
     /// 补一次复查：写入方往往还在写，那一瞬间的读失败多半是自己会好的；不补就只能
     /// 停在旧内容上（很多平台的监听事件会合并，之后不再有第二次机会）。
+    ///
+    /// 同一路径的复查在途时不再排新的：事件风暴里每条失败事件都排计时器的话，
+    /// 定时器会跟着事件滚成一串长链。
     fn schedule_external_change_recheck(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if !self
+            .workspace
+            .pending_external_change_rechecks
+            .insert(path.clone())
+        {
+            return;
+        }
         let editor = cx.entity().downgrade();
         cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
             cx.background_executor()
@@ -358,6 +406,10 @@ impl Editor {
                 .await;
             // 更新失败只剩一种可能：这个 Editor 实体已随窗口销毁，没有界面要刷新了。
             if let Err(error) = editor.update(cx, |editor, cx| {
+                editor
+                    .workspace
+                    .pending_external_change_rechecks
+                    .remove(&path);
                 editor.reload_externally_changed_document_with_recheck(&path, false, cx);
             }) {
                 eprintln!("failed to recheck the external change: {error}");

@@ -439,6 +439,8 @@ pub(super) struct WorkspaceState {
     pub(super) expanded: HashSet<String>,
     tree_refresh_task: Option<Task<()>>,
     pending_changed_paths: HashSet<PathBuf>,
+    /// 在途的外部变更复查路径：同一路径一次只挂一个计时器（评审 P175）。
+    pending_external_change_rechecks: HashSet<PathBuf>,
     paths_refresh_task: Option<Task<()>>,
     pub(super) selected: Option<WorkspaceSelection>,
     open_documents: Vec<WorkspaceDocumentTab>,
@@ -537,6 +539,7 @@ impl Default for WorkspaceState {
             expanded: HashSet::new(),
             tree_refresh_task: None,
             pending_changed_paths: HashSet::new(),
+            pending_external_change_rechecks: HashSet::new(),
             paths_refresh_task: None,
             selected: None,
             open_documents: Vec::new(),
