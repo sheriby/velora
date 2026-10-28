@@ -277,6 +277,24 @@ async fn double_click_selects_word_at_offset(cx: &mut TestAppContext) {
     assert_eq!(select_at(17), 14..19, "点 world 中间应选中 world");
     assert_eq!(select_at(19), 14..19, "点文本末尾应选中最后一个词");
     assert_eq!(select_at(1_000), 14..19, "超界偏移应收敛到最后一个词");
+
+    let trailing = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::plain("word "),
+            ),
+        )
+    });
+    trailing.update(cx, |block, block_cx| {
+        block.select_word_at(5, block_cx);
+        assert_eq!(
+            block.selected_range,
+            0..4,
+            "尾随空白上双击选中了空白段，而不是最后一个词"
+        );
+    });
 }
 
 /// 后台窗口不为光标闪烁（评审报告维度四建议 11）：`is_focused` 判不出窗口已不是

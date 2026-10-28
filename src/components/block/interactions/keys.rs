@@ -484,6 +484,19 @@ impl Block {
         let Some((start, end)) = chosen else {
             return;
         };
+        // 文本以空白结尾时，末尾双击命中的是空白段：向前回退到最后一个
+        // 非空白段，与主流编辑器「选最靠近的词」一致。
+        let (start, end) =
+            if offset == text.len() && text[start..end].trim().is_empty() {
+                text.split_word_bound_indices()
+                    .take_while(|(segment_start, _)| *segment_start < start)
+                    .filter(|(_, segment)| !segment.trim().is_empty())
+                    .last()
+                    .map(|(segment_start, segment)| (segment_start, segment_start + segment.len()))
+                    .unwrap_or((start, end))
+            } else {
+                (start, end)
+            };
         self.selected_range = start..end;
         self.selection_reversed = false;
         cx.notify();
