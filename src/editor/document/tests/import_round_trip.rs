@@ -589,12 +589,10 @@
             assert_eq!(visible[2].entity.read(cx).kind(), BlockKind::Quote);
             assert_eq!(visible[2].entity.read(cx).display_text(), "level3");
             assert_eq!(visible[2].entity.read(cx).quote_depth, 3);
-            // `>>` 按文件写法逐字节还原（旧断言烘焙了 `> > ` 规范重拼）；第三层
-            // 里层记号仍是规范形——每行宽度账只在 quote_depth == 1 的引用上消费，
-            // 里层的绝对宽度没法还原成 `>>>` 这种无空格叠写。
+            // 每层引用各记自己的本层记号宽度，`>>`、`>>>` 都能逐字节还原。
             assert_eq!(
                 editor.document.markdown_text(cx),
-                "> level1\n>> level2\n>> > level3"
+                "> level1\n>> level2\n>>> level3"
             );
         });
     }

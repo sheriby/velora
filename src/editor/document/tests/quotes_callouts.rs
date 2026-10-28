@@ -356,17 +356,9 @@
             "> after",
         ]
         .join("\n");
-        // `> after` 只带外层记号，是嵌套引用内段落的懒续行（CommonMark），
-        // 旧实现把它拆成标注自己的子段。空行落成规范形状是标注侧既有口径。
-        let canonical_markdown = [
-            "> [!WARNING] Custom title",
-            "> body",
-            "> > inner one",
-            "> > ",
-            "> > inner two",
-            "> > after",
-        ]
-        .join("\n");
+        // `> after` 只带外层记号，是嵌套引用内段落的懒续行（CommonMark）。
+        // 每层引用按自己的记号宽度落笔，外层标注再补一层，逐字节还原原文。
+        let canonical_markdown = markdown.clone();
         let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.clone(), None));
 
         editor.update(cx, |editor, cx| {
@@ -606,6 +598,56 @@
             assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Quote);
             assert_eq!(visible[0].entity.read(cx).display_text(), "a\nb");
             assert_eq!(editor.document.markdown_text(cx), "> a\nb");
+        });
+    }
+
+    #[gpui::test]
+    async fn nested_quote_lazy_continuation_stays_inside_the_inner_quote(
+        cx: &mut TestAppContext,
+    ) {
+        // 懒续行可以跳过两层引用记号：`bar` 仍属于内层引用里那个未闭合段落。
+        let source = "> > foo\nbar";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 2, "内层段落被拆成了引用外的根段落");
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Quote);
+            assert_eq!(visible[0].entity.read(cx).quote_depth, 1);
+            assert_eq!(visible[1].entity.read(cx).kind(), BlockKind::Quote);
+            assert_eq!(visible[1].entity.read(cx).quote_depth, 2);
+            assert_eq!(visible[1].entity.read(cx).display_text(), "foo\nbar");
+            assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+
+    #[gpui::test]
+    async fn quote_list_lazy_continuation_stays_inside_the_list_item(cx: &mut TestAppContext) {
+        let source = "> - foo\nbar";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 2, "列表项段落被拆成了引用外的根段落");
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Quote);
+            assert_eq!(visible[1].entity.read(cx).kind(), BlockKind::BulletedListItem);
+            assert_eq!(visible[1].entity.read(cx).display_text(), "foo\nbar");
+            // 列表续行的源缩进保真另行处理；这里钉住结构与行数：懒续行不能
+            // 掉到引用外，序列化也不许在接缝补空行。
+            let serialized = editor.document.markdown_text(cx);
+            assert_eq!(serialized.lines().count(), 2, "懒续行被接缝补了空行");
+            assert!(serialized.starts_with("> - foo\n"), "{serialized:?}");
+        });
+    }
+
+    #[gpui::test]
+    async fn nested_quote_keeps_each_lines_marker_width(cx: &mut TestAppContext) {
+        // 内层引用只在外层带记号的行（`> after`）不该被重拼成 `> > after`。
+        let source = "> > inner\n> after";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(editor.document.markdown_text(cx), source);
         });
     }
 

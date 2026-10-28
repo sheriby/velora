@@ -1361,8 +1361,12 @@ impl DocumentTree {
                 // 没有记号。解析期已经记下每一行让开几字节，落笔就按它补——按模型统一拼
                 // `> ` 会把没碰过的那几行改写（`>乙引用` 变成 `> 乙引用`，空行多出尾随
                 // 空格），那是「格式化文档」才许做的事。
-                if list_depth == 0 && block_ref.quote_depth == 1 {
-                    let widths = &block_ref.record.source_line_prefixes;
+                if list_depth == 0 {
+                    let widths = block_ref
+                        .record
+                        .quote_marker_widths
+                        .as_deref()
+                        .unwrap_or_default();
                     // 第一行必须有记号：`>` 是这一族存在的根据，记成 0 说明这份账不是
                     // 从引用行上来的（比如刚用 `> ` 快捷键造出来的空引用，账还是段落那份）。
                     if !widths.first().is_some_and(|width| *width >= 1) {

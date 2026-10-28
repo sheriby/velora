@@ -1809,6 +1809,9 @@ impl Editor {
         block.update(cx, |block, _cx| {
             block.record.source_kind = block.record.kind.clone();
             block.record.source_separator_bytes = 0;
+            // 这一段字节被重写过，引用那本「本层记号宽度」的账也跟着作废；
+            // 旧账留着会在行数碰巧对齐时把旧记号套到新文本上。
+            block.record.quote_marker_widths = None;
             match ledger {
                 Some((prefixes, fence)) => {
                     block.record.source_line_prefixes = prefixes;
@@ -1826,6 +1829,7 @@ impl Editor {
         let children = block.read(cx).children.clone();
         block.update(cx, |block, _cx| {
             block.record.source_line_prefixes.clear();
+            block.record.quote_marker_widths = None;
             // 围栏行的账一并清：留半份账（有围栏行没前缀）会让写侧的核对永远
             // 失配，掉进 list_depth 规范分支把缩进洗掉。
             block.record.source_fence_lines = None;

@@ -21,7 +21,11 @@ impl Block {
     pub(super) fn adjust_line_prefixes_for_text_edit(&mut self, old_text: &str, new_text: &str) {
         let recorded = self.record.source_line_prefixes.clone();
         let old_lines = old_text.split('\n').count();
-        if recorded.is_empty() || recorded.len() != old_lines || old_text == new_text {
+        if recorded.is_empty() || recorded.len() != old_lines {
+            self.record.quote_marker_widths = None;
+            return;
+        }
+        if old_text == new_text {
             return;
         }
 
@@ -59,9 +63,21 @@ impl Block {
             vec![recorded[first_line]; next_lines]
         } else {
             self.record.source_line_prefixes.clear();
+            self.record.quote_marker_widths = None;
             return;
         };
-        self.record.source_line_prefixes.splice(first_line..=last_line, kept);
+        self.record
+            .source_line_prefixes
+            .splice(first_line..=last_line, kept.clone());
+        // 引用的序列化账是同一份事实的本层刻度：拆行/并行时按同一条规则跟随，
+        // 否则编辑过一行之后整块退回规范 `> ` 形状。
+        if let Some(widths) = self.record.quote_marker_widths.as_mut() {
+            if widths.len() == old_lines {
+                widths.splice(first_line..=last_line, kept);
+            } else {
+                self.record.quote_marker_widths = None;
+            }
+        }
     }
 
     pub(crate) fn code_highlight_result(&self) -> Option<&CodeHighlightResult> {

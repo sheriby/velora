@@ -728,6 +728,11 @@ pub struct BlockRecord {
     /// ATX 是规范写法，但文件里写的是 setext：写回照抄这一行，未编辑的标题才不换
     /// 形状。`None` 是「不是 setext 或没记」，序列化落规范的 `#` 形状。
     pub setext_underline: Option<String>,
+    /// 引用每行的**本层**记号宽度（`>` 与它后面的空白；懒续行记 0）。
+    /// `source_line_prefixes` 记的是含容器继承的绝对宽度，序列化时父层还会
+    /// 补自己的前缀，只有本层宽度才能逐层拼回原文；两者不能混用。
+    /// `None` 是「不是引用或没记」，序列化退回规范的 `> ` 形状。
+    pub quote_marker_widths: Option<Vec<u32>>,
     /// 标题树版本：每次 `set_title` 递增。markdown 序列化备忘键就靠它，
     /// 块自己的 markdown 只在自己被改时重算（P2：序列化曾占每键成本大半）。
     title_revision: u64,
@@ -768,6 +773,7 @@ impl BlockRecord {
             callout_marker: None,
             math_on_marker_line: false,
             setext_underline: None,
+            quote_marker_widths: None,
             title_revision: 0,
             markdown_memo: std::cell::RefCell::new(None),
         };
@@ -864,6 +870,7 @@ impl BlockRecord {
         self.callout_marker = None;
         self.math_on_marker_line = false;
         self.setext_underline = None;
+        self.quote_marker_widths = None;
         let mut title = self.title.clone();
         title.reset_emphasis_markers();
         self.set_title(title);

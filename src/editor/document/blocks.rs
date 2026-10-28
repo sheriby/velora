@@ -178,8 +178,7 @@ impl Editor {
             if line.trim().is_empty() {
                 break;
             }
-            let last_index = dequoted.len().checked_sub(1);
-            if !last_index.is_some_and(|index| quote_paragraph_continues(&dequoted, index)) {
+            if !quote_region_ends_in_open_paragraph(&dequoted) {
                 break;
             }
             if is_quote_start(line) {
@@ -206,8 +205,19 @@ impl Editor {
         // 重拼，`>- item`、裸 `>` 这些写法逐字节还原。长度对不上时序列化端按
         // 自己的核对退回规范形状。
         let ledger = dequoted_origins.iter().map(|width| *width as u32).collect::<Vec<_>>();
+        // 序列化要的是本层记号宽度：绝对账里含容器继承，父层落笔时还会再补
+        // 自己的前缀，直接消费会逐层叠出多余记号。
+        let marker_widths = dequoted_origins
+            .iter()
+            .enumerate()
+            .map(|(offset, width)| {
+                let inherited = origins.get(start + offset).copied().unwrap_or(0);
+                (*width as u32).saturating_sub(inherited as u32)
+            })
+            .collect::<Vec<_>>();
         block.update(cx, |block, _cx| {
             block.record.source_line_prefixes = ledger;
+            block.record.quote_marker_widths = Some(marker_widths);
         });
 
         (block, end)

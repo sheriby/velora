@@ -740,6 +740,49 @@ pub(crate) fn collect_quote_raw_region(lines: &[String], start: usize) -> usize 
     index
 }
 
+/// 引用区域最后一行是否停在一个未闭合的段落上，从而允许下一行不带记号地
+/// 懒续。末行可能还在嵌套引用或列表项里（`> > foo`、`> - foo`）：逐层剥掉
+/// 容器记号，只看最内层是不是段落内容。围栏、表格、HTML、定义行这类块级
+/// 起点都不算。
+pub(crate) fn quote_region_ends_in_open_paragraph(lines: &[String]) -> bool {
+    let Some(last) = lines.iter().rev().find(|line| !line.trim().is_empty()) else {
+        return false;
+    };
+    let Some(last) = BlockKind::strip_code_fence_indent(last) else {
+        return false;
+    };
+    let mut current = last.to_string();
+    loop {
+        let text = current.trim_end();
+        if text.is_empty() || text.starts_with('\t') {
+            return false;
+        }
+        if let Some(rest) = text.strip_prefix('>') {
+            current = rest.strip_prefix(' ').unwrap_or(rest).to_string();
+            continue;
+        }
+        if parse_opening_fence(text).is_some()
+            || is_block_html_start(text)
+            || is_footnote_definition_start(text)
+            || is_reference_definition_start(text)
+            || is_root_table_candidate_line(text)
+            || is_display_math_start(text)
+            || BlockKind::parse_atx_heading_line(text).is_some()
+            || BlockKind::parse_separator_line(text)
+        {
+            return false;
+        }
+        if let Some(marker) = parse_list_marker(text) {
+            if marker.text.trim().is_empty() {
+                return false;
+            }
+            current = marker.text;
+            continue;
+        }
+        return quote_paragraph_continues(&[current.clone()], 0);
+    }
+}
+
 /// 引用里剥掉一层 `>` 之后，这一行能不能作为普通段落内容续下去。
 /// `build_native_quote_block` 的段落回退循环与引用区域的懒续行判定共用这一份
 /// 判据——两边各写一份必然漂移。
