@@ -222,7 +222,7 @@ impl Editor {
             return false;
         };
         let last_len = last.entity.read(cx).clean_visible_len();
-        selection.anchor
+        let forward = selection.anchor
             == CrossBlockSelectionEndpoint {
                 entity_id: first.entity.entity_id(),
                 offset: 0,
@@ -231,7 +231,20 @@ impl Editor {
                 == CrossBlockSelectionEndpoint {
                     entity_id: last.entity.entity_id(),
                     offset: last_len,
-                }
+                };
+        // 从文末往文首拖出来的全选（focus 在前）同样算「已经全选」：第二次 ⌘A
+        // 不重铺、也不把用户拖出的方向洗成正向。
+        let backward = selection.focus
+            == CrossBlockSelectionEndpoint {
+                entity_id: first.entity.entity_id(),
+                offset: 0,
+            }
+            && selection.anchor
+                == CrossBlockSelectionEndpoint {
+                    entity_id: last.entity.entity_id(),
+                    offset: last_len,
+                };
+        forward || backward
     }
 
     fn select_whole_block_text(&mut self, block: Entity<Block>, cx: &mut Context<Self>) {
@@ -752,14 +765,22 @@ impl Editor {
         let Some(end) = self.endpoint_for_source_offset(source_range.end, &mappings, cx) else {
             return;
         };
-        if start.entity_id != end.entity_id {
-            return;
-        }
-        let Some(block) = self.focusable_entity_by_id(start.entity_id) else {
+        // 跨块的组合替换（插入文本里带换行、重建投影后落进多块）：标记落到新文本
+        // 末尾所在的那一块。重建后插入段在尾块的起点就是块首，块内区间因此是
+        // 0..末端点——标记必须有块内载体，不然组合输入退化成逐字独立提交。
+        let (host_id, local) = if start.entity_id == end.entity_id {
+            (
+                start.entity_id,
+                start.offset.min(end.offset)..start.offset.max(end.offset),
+            )
+        } else {
+            (end.entity_id, 0..end.offset)
+        };
+        let Some(block) = self.focusable_entity_by_id(host_id) else {
             return;
         };
         block.update(cx, |block, cx| {
-            block.marked_range = Some(start.offset.min(end.offset)..start.offset.max(end.offset));
+            block.marked_range = Some(local);
             cx.notify();
         });
     }

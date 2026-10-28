@@ -852,4 +852,85 @@ mod tests {
             cx.notify();
         });
     }
+
+    /// 反向的全选也要短路：从文末往文首拖出的整篇选区，第二次 ⌘A 不该把选区
+    /// 重铺成正向（幂等的同时也不该动用户拖出来的方向）。
+    #[test]
+    fn select_all_short_circuits_on_a_reversed_full_selection() {
+        let mut cx = TestAppContext::single();
+        init_editor_test_app(&mut cx);
+        let editor =
+            cx.new(|cx| Editor::from_markdown(cx, "alpha\n\nbeta\n\ngamma".to_string(), None));
+
+        editor.update(&mut cx, |editor, cx| {
+            set_selection(editor, 2, 5, 0, 0, cx);
+            let before = editor.cross_block_selection;
+            editor.select_all_document_blocks(cx);
+            assert_eq!(
+                editor.cross_block_selection, before,
+                "反向全选该被短路，而不是重铺成正向"
+            );
+        });
+        cx.quit();
+    }
+
+    /// 跨块替换把含空行的新文本铺进多个块时，IME 标记不能静默丢掉：组合区间
+    /// 落到新文本末尾那块（焦点块）的块内区间，组合状态才有收尾的载体。
+    #[test]
+    fn ime_mark_survives_cross_block_replacement_spanning_blocks() {
+        let mut cx = TestAppContext::single();
+        init_editor_test_app(&mut cx);
+        let editor =
+            cx.new(|cx| Editor::from_markdown(cx, "alpha\n\nbeta\n\ngamma".to_string(), None));
+
+        editor.update(&mut cx, |editor, cx| {
+            set_selection(editor, 0, 2, 2, 2, cx);
+            assert!(editor.replace_cross_block_selection_with_text(
+                "X\n\nY",
+                Some(5..5),
+                true,
+                UndoCaptureKind::ImeComposition,
+                cx
+            ));
+
+            assert_eq!(editor.document.markdown_text(cx), "alX\n\nYmma");
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 2);
+            assert!(visible[0].entity.read(cx).marked_range.is_none());
+            // 插入文本 "X\n\nY" 里落在尾块（"Ymma"）内的部分只有 "Y"：
+            // 标记区间是块内 0..1，把后面的旧字也算进去就标到没被组合的字上了。
+            assert_eq!(
+                visible[1].entity.read(cx).marked_range,
+                Some(0..1),
+                "新文本末尾那块应持有块内标记区间，而不是全部静默放弃"
+            );
+        });
+        cx.quit();
+    }
+
+    /// 相对选区端点要收敛到新文本的字符边界。现有 IME 调用方经 utf16 换算天然
+    /// 对齐边界（本用例修前修后都绿，钉的是契约本身）：未来任何调用方给了落在
+    /// 多字节字符中间的区间时，映射出的源码区间也不许落在半个字上。
+    #[test]
+    fn cross_block_relative_selection_lands_on_char_boundaries() {
+        let mut cx = TestAppContext::single();
+        init_editor_test_app(&mut cx);
+        let editor =
+            cx.new(|cx| Editor::from_markdown(cx, "alpha\n\nbeta\n\ngamma".to_string(), None));
+
+        editor.update(&mut cx, |editor, cx| {
+            set_selection(editor, 0, 2, 2, 2, cx);
+            assert!(editor.replace_cross_block_selection_with_text(
+                "你好",
+                Some(1..1),
+                false,
+                UndoCaptureKind::ImeComposition,
+                cx
+            ));
+
+            // 相对位 1 落在「你」的中间，向左收敛到 0：光标停在插入文本的开头。
+            assert_eq!(editor.document.visible_blocks()[0].entity.read(cx).selected_range, 2..2);
+        });
+        cx.quit();
+    }
 }
