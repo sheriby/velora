@@ -85,22 +85,15 @@ impl Block {
         cx.emit(BlockEvent::RequestBlockDown);
     }
 
-    fn select_all_text(&mut self, cx: &mut Context<Self>) {
-        self.move_to(0, cx);
-        self.select_to(self.visible_len(), cx);
-    }
-
     pub(crate) fn on_select_all(
         &mut self,
         _: &SelectAll,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.show_source_line_numbers() {
-            self.select_all_text(cx);
-        } else {
-            cx.emit(BlockEvent::RequestRenderedSelectAll);
-        }
+        // 行号只是源码文档分块的外观：全选一律交给编辑器层，由它按视图
+        // 模式铺到整篇（源码模式下把每根分块都纳入跨块选区）。
+        cx.emit(BlockEvent::RequestRenderedSelectAll);
     }
 
     pub(crate) fn on_select_home(

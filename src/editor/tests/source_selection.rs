@@ -290,3 +290,48 @@ async fn a_source_caret_in_a_later_chunk_captures_its_buffer_offset(cx: &mut Tes
     );
 }
 
+
+#[gpui::test]
+async fn source_view_select_all_from_a_chunk_selects_the_whole_document(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = numbered_lines(1100);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.clone(), None));
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            let first = editor.document.root_blocks()[0].clone();
+            first.update(cx, |block, block_cx| {
+                block.on_select_all(&crate::components::SelectAll, window, block_cx);
+            });
+        });
+    });
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let ranges = selected_ranges(editor, cx);
+        assert_eq!(
+            ranges.len(),
+            editor.document.root_count(),
+            "源码视图里 Cmd+A 只选中了当前分块"
+        );
+        assert_eq!(ranges[0].start, 0);
+        assert_eq!(
+            ranges.last().map(|range| range.end),
+            editor
+                .document
+                .root_blocks()
+                .last()
+                .map(|block| block.read(cx).visible_len())
+        );
+    });
+    cx.dispatch_action(crate::components::Copy);
+    assert_eq!(
+        cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text())),
+        Some(source)
+    );
+}

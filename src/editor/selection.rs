@@ -330,6 +330,18 @@ impl Editor {
         self.workspace.search_navigation_selection = None;
         if self.view_mode != ViewMode::Rendered {
             self.rendered_select_all_cycle = None;
+            // 源码模式的分块只是投影：多块时全选铺到整篇；只有一块时
+            // 「整篇」与「块内」同一范围，保持块内全选、不设跨块选区。
+            if self.view_mode == ViewMode::Source {
+                let visible = self.document.visible_blocks();
+                if visible.len() == 1 {
+                    if let Some(block) = visible.first().map(|visible| visible.entity.clone()) {
+                        self.select_whole_block_text(block, cx);
+                    }
+                } else {
+                    self.select_all_document_blocks(cx);
+                }
+            }
             return;
         }
 
