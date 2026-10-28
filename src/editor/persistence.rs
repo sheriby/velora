@@ -116,30 +116,9 @@ impl StagedDocumentWrite {
 
     fn commit(self) -> std::io::Result<()> {
         std::fs::rename(&self.temporary, &self.target)?;
-        self.sync_parent_directory_after_rename();
+        crate::config::sync_parent_directory_after_rename(&self.target);
         Ok(())
     }
-
-    /// rename 的原子性只保证「旧或新二选一」，不保证「新」一定落盘：目录项变更
-    /// 没有刷下去的话，断电重启后文件可能回到旧内容，而 UI 已清脏标记、恢复
-    /// 快照也在成功路径被删——用户「保存成功过」的那一版就无副本地消失了。
-    /// rename 成功后对父目录做一次 sync；失败只记日志，这时报错反而把已经
-    /// 成功的保存说成坏的。
-    ///
-    /// macOS 的 fsync 不等价 F_FULLFSYNC（语义更弱），std 不暴露 fcntl，这里是
-    /// 尽力而为；Windows 刷目录句柄要 FILE_FLAG_BACKUP_SEMANTICS 打开，std
-    /// 没有通道，保持现状（NTFS 的元数据经日志提交）。
-    #[cfg(unix)]
-    fn sync_parent_directory_after_rename(&self) {
-        let Some(parent) = self.target.parent() else { return };
-        let sync_result = std::fs::File::open(parent).and_then(|directory| directory.sync_all());
-        if let Err(error) = sync_result {
-            eprintln!("同步保存目标的父目录失败 '{}': {error}", parent.display());
-        }
-    }
-
-    #[cfg(not(unix))]
-    fn sync_parent_directory_after_rename(&self) {}
 
     fn commit_checked(self, path: &Path, expected_version: u64) -> anyhow::Result<()> {
         let target = std::fs::canonicalize(path)
@@ -1155,7 +1134,55 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::{canonical_write_target, safe_code_fence, safe_code_fence_with_info, write_atomic};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+
+    /// rename 之后的父目录 sync 判据只准有一处（评审 P171）：文档保存提交与
+    /// 配置原子写都必须走 `config::sync_parent_directory_after_rename`。
+    /// 判据抄出第二份后，两处的取舍（报错只记日志、Windows 不刷）必然漂移，
+    /// 报修会以「某条写路径断电后丢提交」的面貌出现。
+    #[test]
+    fn parent_directory_sync_after_rename_is_a_single_shared_criterion() {
+        let config_source = include_str!("../config/mod.rs");
+        let persistence_source = include_str!("persistence.rs");
+        assert!(
+            config_source.contains("pub(crate) fn sync_parent_directory_after_rename("),
+            "共享的目录 sync 判据应定义在 config/mod.rs"
+        );
+        let write_body = config_source
+            .split_once("pub(crate) fn write_config_bytes_atomic")
+            .and_then(|(_, rest)| rest.split_once("\npub(crate) fn "))
+            .map(|(body, _)| body)
+            .expect("config/mod.rs 应有 write_config_bytes_atomic");
+        assert!(
+            write_body.contains("sync_parent_directory_after_rename("),
+            "配置原子写在 rename 成功后也要同步父目录"
+        );
+        assert!(
+            persistence_source.contains(concat!(
+                "crate::config::sync_parent_directory_after_re",
+                "name("
+            )),
+            "文档保存提交应走共享判据"
+        );
+        assert!(
+            !persistence_source.contains(concat!("open(par", "ent)")),
+            "目录 sync 的实现不许在 persistence.rs 留第二份"
+        );
+    }
+
+    /// 共享判据本身要容错：父目录存在、父目录已消失、路径没有父级三种情形
+    /// 都不许 panic、不许把 sync 失败上抛（调用方已提交成功，只能记日志）。
+    #[test]
+    fn parent_directory_sync_tolerates_missing_parents() {
+        let root = std::env::temp_dir().join(format!("velora-dirsynctest-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("note.md");
+        std::fs::write(&file, b"x").unwrap();
+        crate::config::sync_parent_directory_after_rename(&file);
+        crate::config::sync_parent_directory_after_rename(&root.join("missing/note.md"));
+        crate::config::sync_parent_directory_after_rename(Path::new("bare-name.md"));
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     /// 版本按规范化后的换行计算：同一份内容的 LF / CRLF / 裸 CR 必须同版本，
     /// 否则 AI 的读取记录会在换行风格变化后误判「内容已变化」。

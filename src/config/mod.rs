@@ -94,7 +94,10 @@ pub(crate) fn write_config_bytes_atomic(path: &Path, contents: &[u8]) -> std::io
     file.sync_all()?;
     drop(file);
     match std::fs::rename(&temp, path) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            sync_parent_directory_after_rename(path);
+            Ok(())
+        }
         Err(error) => {
             if let Err(cleanup_error) = std::fs::remove_file(&temp) {
                 eprintln!("无法清理配置临时文件 '{}'：{cleanup_error}", temp.display());
@@ -102,6 +105,31 @@ pub(crate) fn write_config_bytes_atomic(path: &Path, contents: &[u8]) -> std::io
             Err(error)
         }
     }
+}
+
+/// rename 成功后对父目录做一次 sync（评审 P171，判据单点）。
+///
+/// rename 的原子性只保证「旧或新二选一」，不保证「新」一定落盘：目录项变更
+/// 没有刷下去的话，断电重启后文件可能回到旧内容，而调用方已经清了脏标记、
+/// 删了恢复快照——用户「保存成功过」的那一版就无副本地消失了。
+///
+/// 失败只记日志不上抛：内容与目录项都已提交成功，报错反而把成功的写入说成坏的。
+///
+/// macOS 的 fsync 不等价 F_FULLFSYNC（语义更弱），std 不暴露 fcntl，这里是
+/// 尽力而为；Windows 刷目录句柄要 FILE_FLAG_BACKUP_SEMANTICS 打开，std
+/// 没有通道，保持现状（NTFS 的元数据经日志提交）。
+pub(crate) fn sync_parent_directory_after_rename(path: &Path) {
+    #[cfg(unix)]
+    {
+        let Some(parent) = path.parent() else { return };
+        if let Err(error) =
+            std::fs::File::open(parent).and_then(|directory| directory.sync_all())
+        {
+            eprintln!("同步父目录失败 '{}': {error}", parent.display());
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// 进程启动时刻：清扫残留临时文件的截止线基准。
