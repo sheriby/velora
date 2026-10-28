@@ -124,7 +124,10 @@ impl Editor {
                     return Ok(root_dir.join(format!("{base}.assets")));
                 }
 
-                for index in 0.. {
+                // 探测必须有上界：目录名空间被占满时不能在 UI 线程上无限循环，
+                // 到顶就报错走应用内模态。
+                const FOLDER_PROBE_LIMIT: u32 = 1000;
+                for index in 0..=FOLDER_PROBE_LIMIT {
                     let folder = if index == 0 {
                         "untitle.assets".to_string()
                     } else {
@@ -138,7 +141,9 @@ impl Editor {
                         continue;
                     }
                 }
-                unreachable!("unbounded search should always return");
+                Err(anyhow::anyhow!(
+                    "no free '{base}.assets' folder name after {FOLDER_PROBE_LIMIT} probes"
+                ))
             }
         }
     }
@@ -151,7 +156,7 @@ impl Editor {
         format!("{:08x}", hasher.finish() as u32)
     }
 
-    pub(crate) fn unique_file_path(dir: &Path, preferred_name: &str) -> PathBuf {
+    pub(crate) fn unique_file_path(dir: &Path, preferred_name: &str) -> anyhow::Result<PathBuf> {
         let preferred = Path::new(preferred_name);
         let stem = preferred
             .file_stem()
@@ -159,7 +164,10 @@ impl Editor {
             .filter(|stem| !stem.is_empty())
             .unwrap_or("image");
         let extension = preferred.extension().and_then(|ext| ext.to_str());
-        for index in 0.. {
+        // 探测必须有上界：文件名空间被占满时既不能在 UI 线程上无限循环，
+        // 也不能放弃防撞名直接覆盖既有文件，到顶就报错走应用内模态。
+        const NAME_PROBE_LIMIT: u32 = 1000;
+        for index in 0..=NAME_PROBE_LIMIT {
             let file_name = if index == 0 {
                 preferred_name.to_string()
             } else if let Some(extension) = extension {
@@ -169,10 +177,12 @@ impl Editor {
             };
             let candidate = dir.join(file_name);
             if !candidate.exists() {
-                return candidate;
+                return Ok(candidate);
             }
         }
-        unreachable!("unbounded search should always return");
+        Err(anyhow::anyhow!(
+            "no free file name for '{preferred_name}' after {NAME_PROBE_LIMIT} probes"
+        ))
     }
 
     pub(crate) fn path_parent_eq(left: &Path, right: &Path) -> bool {
@@ -212,7 +222,8 @@ impl Editor {
                     .file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or("image");
-                let target = Self::unique_file_path(&target_dir, file_name);
+                let target = Self::unique_file_path(&target_dir, file_name)
+                    .with_context(|| format!("failed to reserve a file name in '{}'", target_dir.display()))?;
                 fs::copy(path, &target).with_context(|| {
                     format!(
                         "failed to copy '{}' to '{}'",
@@ -229,7 +240,8 @@ impl Editor {
                     Self::pasted_image_hash(&image.bytes),
                     crate::editor::workspace::clipboard_image_extension(image.format)
                 );
-                let target = Self::unique_file_path(&target_dir, &file_name);
+                let target = Self::unique_file_path(&target_dir, &file_name)
+                    .with_context(|| format!("failed to reserve a file name in '{}'", target_dir.display()))?;
                 fs::write(&target, &image.bytes)
                     .with_context(|| format!("failed to write '{}'", target.display()))?;
                 Ok((target, behavior != ImagePasteBehavior::None))
@@ -242,12 +254,23 @@ impl Editor {
     }
 
     pub(crate) fn markdown_image_target(path: &str) -> String {
-        path.chars()
+        let escaped: String = path
+            .chars()
             .flat_map(|ch| match ch {
                 '\\' | '(' | ')' | '"' => ['\\', ch].into_iter().collect::<Vec<_>>(),
                 _ => [ch].into_iter().collect::<Vec<_>>(),
             })
-            .collect()
+            .collect();
+        // CommonMark 的裸目的地不许含空格，`\ ` 也不是合法转义：目的地址带空格
+        //（截图默认名、Windows 复制路径）时整体包 `<>`，应用内
+        // `angle_bracket_destination` 与导出侧 pulldown 都按规范剥壳。尖括号
+        // 内部不许出现未转义的 `<`/`>`，一并转义。
+        if escaped.contains(' ') {
+            let inner = escaped.replace('<', "\\<").replace('>', "\\>");
+            format!("<{inner}>")
+        } else {
+            escaped
+        }
     }
 
     pub(crate) fn markdown_image_alt(path: &Path) -> String {
@@ -458,8 +481,15 @@ impl Editor {
         if !inserted {
             // 图片文件已经落盘、文档却没接收（锚点不在树里等边角）：删掉刚建的
             // 文件，别在磁盘上留孤儿资源。
-            if let Some(path) = created_path {
-                let _ = std::fs::remove_file(&path);
+            if let Some(path) = created_path
+                && let Err(error) = std::fs::remove_file(&path)
+            {
+                // 清理失败多半是文件被占用（Windows 索引器）或权限问题：孤儿
+                // 文件会一直留在磁盘上，至少让它可排查。
+                eprintln!(
+                    "velora: 未能删除未接收的粘贴图片 {}：{error}",
+                    path.display()
+                );
             }
         }
 

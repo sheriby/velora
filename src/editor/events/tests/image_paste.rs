@@ -112,3 +112,87 @@ use std::path::{Path, PathBuf};
         });
     }
 
+    /// 目的地带空格时整体包 `<>`：裸目的地按 CommonMark 不许含空格，导出侧的
+    /// pulldown（严格 CommonMark）会断在空格处把整张图当字面文本。
+    #[test]
+    fn image_target_with_spaces_wraps_in_angle_brackets() {
+        assert_eq!(
+            Editor::markdown_image_target("./screen shot 1.png"),
+            "<./screen shot 1.png>"
+        );
+        // 无空格的路径维持原口径：只转义 `\ ( "`，不额外包尖括号。
+        assert_eq!(
+            Editor::markdown_image_target("./assets/图pic(1).png"),
+            "./assets/图pic\\(1\\).png"
+        );
+    }
+
+    /// 带空格文件名粘贴后的完整口径：应用内解析（渲染端）与导出侧 pulldown
+    /// 都要把它认回同一张图。
+    #[test]
+    fn pasted_image_markdown_with_spaces_parses_in_app_and_in_export() {
+        use crate::components::markdown::image::{ImageTarget, parse_standalone_image};
+        use pulldown_cmark::{Event, Options, Parser, Tag};
+
+        let markdown = format!(
+            "![shot]({})",
+            Editor::markdown_image_target("./screen shot 1.png")
+        );
+
+        let syntax = parse_standalone_image(&markdown).expect("应用内应认成图片");
+        assert_eq!(
+            syntax.target,
+            ImageTarget::Direct {
+                src: "./screen shot 1.png".to_string(),
+                title: None,
+            },
+            "应用内解析应剥掉尖括号拿回带空格的原始路径"
+        );
+
+        let image_destinations = Parser::new_ext(&markdown, Options::all())
+            .filter_map(|event| match event {
+                Event::Start(Tag::Image { dest_url, .. }) => Some(dest_url.to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            image_destinations,
+            vec!["./screen shot 1.png".to_string()],
+            "导出侧 pulldown（严格 CommonMark）应把尖括号目的地整体认作图片地址"
+        );
+    }
+
+    /// 探测有上界：目标目录里已存在一整套按序号命名的资产目录时，报错而不是
+    /// 无限探测（旧实现是 `for index in 0..` + `unreachable!`）。
+    #[gpui::test]
+    async fn image_target_dir_gives_up_after_bounded_probes(cx: &mut TestAppContext) {
+        let root = std::env::temp_dir().join(format!(
+            "velora-image-target-probe-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("probe root should be created");
+        for index in 0..=1000 {
+            let folder = if index == 0 {
+                "untitle.assets".to_string()
+            } else {
+                format!("untitle{index}.assets")
+            };
+            std::fs::create_dir_all(root.join(&folder)).expect("probe folder should be created");
+        }
+
+        let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, _cx| {
+            let result = editor.image_target_dir(
+                crate::config::ImagePasteBehavior::CopyToNamedAssetsFolder,
+                &root,
+                &crate::components::PastedImageSource::ClipboardImage(gpui::Image::from_bytes(
+                    gpui::ImageFormat::Png,
+                    Vec::new(),
+                )),
+            );
+            assert!(result.is_err(), "名字空间占满时应报错而不是继续探测");
+        });
+
+        std::fs::remove_dir_all(&root).expect("probe root should be removed");
+    }
+
