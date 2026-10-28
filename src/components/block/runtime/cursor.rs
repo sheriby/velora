@@ -176,7 +176,6 @@ impl Block {
             .and_then(|projection| projection.footnote_run_fully_covering_range(&range))
         {
             let raw = footnote_run.footnote.raw_markdown();
-            let raw_len = raw.len();
             let local_start = range
                 .start
                 .saturating_sub(footnote_run.display_range.start)
@@ -185,8 +184,19 @@ impl Block {
                 .end
                 .saturating_sub(footnote_run.display_range.start)
                 .min(footnote_run.display_range.len());
-            let mapped_start = (raw_len * local_start) / footnote_run.display_range.len().max(1);
-            let mapped_end = (raw_len * local_end) / footnote_run.display_range.len().max(1);
+            // 比例插值 + 字符边界收敛走 inline 侧的唯一实现（proportional_offset）：
+            // 这里曾抄了第二份公式且不收敛，多字节脚注 id 的落点会砸进字符内部，
+            // 后续对 markdown 源码切片在 release 下直接 panic。
+            let mapped_start = crate::components::markdown::inline::proportional_offset(
+                footnote_run.display_range.len(),
+                &raw,
+                local_start,
+            );
+            let mapped_end = crate::components::markdown::inline::proportional_offset(
+                footnote_run.display_range.len(),
+                &raw,
+                local_end,
+            );
             let map = self.record.title.markdown_offset_map();
             let run_markdown_start = map.visible_to_markdown_offset(footnote_run.clean_range.start);
             return run_markdown_start + mapped_start..run_markdown_start + mapped_end;

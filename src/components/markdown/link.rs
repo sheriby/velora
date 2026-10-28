@@ -335,7 +335,13 @@ pub(crate) fn parse_link_target(inner: &str) -> Option<(String, Option<String>)>
             && let Some(open_quote) = find_open_title_quote(inner, close_quote)
         {
             let destination = inner[..open_quote.saturating_sub(1)].trim_end();
-            let title = inner[open_quote + 1..close_quote].to_string();
+            // title 要做 CommonMark 反斜杠反转义（判据单点
+            // unescape_ascii_punctuation）：存储值是「解析后的语义」，写回时才
+            // 加转义。只做字面截取的话「解析 ∘ 序列化」不是对合——源码
+            // `ti\"tle` 存成 `ti\"tle`，写回转义成 `ti\\"tle`，每保存一次多
+            // 一层反斜杠，永不收敛（destination 侧的
+            // normalize_link_destination 早有同一步，title 漏了）。
+            let title = unescape_ascii_punctuation(&inner[open_quote + 1..close_quote]);
             if destination.is_empty() {
                 return None;
             }

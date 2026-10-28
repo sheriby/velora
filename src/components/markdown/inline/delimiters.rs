@@ -244,7 +244,10 @@ pub(crate) fn escaped_sequence_token_len(tokens: &[CharToken], index: usize) -> 
 /// `C:\Users`、`a\b` 这类后面跟普通字符的反斜杠保持原样，字节不动。
 /// 片段末尾的反斜杠看不见下一个片段的首字符（链接的 `[`、别的片段的 `*`），
 /// 保守起见转义。
-fn backslash_needs_escape(text: &str, index: usize) -> bool {
+///
+/// 链接 title 的写回转义（`escape_link_title`）也调这里：title 以 `"` 收口，
+/// 末尾的裸 `\` 会把收口引号一起吃掉，与正文片段末尾同一条保守答案。
+pub(crate) fn backslash_needs_escape(text: &str, index: usize) -> bool {
     match text[index + 1..].chars().next() {
         None => true,
         Some(next) => is_commonmark_escapable(next),
@@ -297,8 +300,13 @@ pub(crate) fn escape_literal_text_with_offset_map(
     let mut next_escaped = escaped_iter.next();
 
     while index < text.len() {
-        visible_to_markdown[index] = markdown.len();
         let ch = text[index..].chars().next().unwrap();
+        // 多字节字符的内部字节槽也要填上同一映射值：这张表按字节索引，内部槽
+        // 留在初始化的 0 上，反查会把光标/高亮打到段首。code span 版本按字节
+        // 恒等填充无洞，两份口径必须一致。
+        for slot in &mut visible_to_markdown[index..index + ch.len_utf8()] {
+            *slot = markdown.len();
+        }
         let start = markdown.len();
         if next_escaped == Some(index as u32) {
             markdown.push('\\');

@@ -317,6 +317,39 @@ pub(crate) struct CharToken {
     pub(crate) escaped_sequence: Option<std::ops::Range<u32>>,
 }
 
+/// 「外层样式折进内层片段」的唯一判据：逐位并布尔样式，强调写法标记由外层优先
+/// （外层定界符是用户写下的写法，内层重解析拿到的是缺外层语境的值）。
+/// [`NormalizeBuilder::emit_token`] 的逐 token 折叠与
+/// [`apply_extra_style_to_fragments`](links.rs) 的链接标签整段折叠都从这里取
+/// 答案——后者曾抄漏 emphasis_marker，`__[a](u)__` 一次保存就被改写成
+/// `[**a**](u)`。
+pub(crate) fn merge_outer_inline_style(mut inner: InlineStyle, outer: InlineStyle) -> InlineStyle {
+    if outer.bold {
+        inner.bold = true;
+    }
+    if outer.italic {
+        inner.italic = true;
+    }
+    if outer.underline {
+        inner.underline = true;
+    }
+    if outer.strikethrough {
+        inner.strikethrough = true;
+    }
+    if outer.highlight {
+        inner.highlight = true;
+    }
+    if outer.code {
+        inner.code = true;
+    }
+    if outer.has_script() {
+        inner.script = outer.script;
+    }
+    // 强调定界符的写法也要跟着样式往外传，不然 `_x_` 出来只剩「是斜体」这半个事实。
+    inner.emphasis_marker = outer.emphasis_marker.or(inner.emphasis_marker);
+    inner
+}
+
 /// Result of parsing a delimited inline region.
 pub(crate) struct ParseResult {
     next_index: usize,
@@ -335,6 +368,10 @@ pub(crate) struct NormalizeBuilder {
     /// 上一颗带转义身份的 token 的序列身份：同序列的连续 token 并进同一个
     /// 区间，不同序列（`\*\*` 的两颗星）保持各自一段。
     pub(crate) last_escaped_sequence: Option<std::ops::Range<u32>>,
+    /// 下一次**成功识别**的链接/自动链接语法领走的身份号（见
+    /// [`InlineLink`] 的 `syntax_id` 注释）：相邻两个同目标链接靠它保持
+    /// 不等，等值驱动的合并与序列化 run 分组才不会把它们塌成一个。
+    pub(crate) next_link_syntax_id: u32,
 }
 
 impl NormalizeBuilder {
@@ -345,6 +382,7 @@ impl NormalizeBuilder {
             normalized_len: 0,
             escaped_offsets: Vec::new(),
             last_escaped_sequence: None,
+            next_link_syntax_id: 0,
         }
     }
 
@@ -378,30 +416,7 @@ impl NormalizeBuilder {
         extra_style: InlineStyle,
         html_style: Option<HtmlInlineStyle>,
     ) {
-        let mut style = token.style;
-        if extra_style.bold {
-            style.bold = true;
-        }
-        if extra_style.italic {
-            style.italic = true;
-        }
-        if extra_style.underline {
-            style.underline = true;
-        }
-        if extra_style.strikethrough {
-            style.strikethrough = true;
-        }
-        if extra_style.highlight {
-            style.highlight = true;
-        }
-        if extra_style.code {
-            style.code = true;
-        }
-        if extra_style.has_script() {
-            style.script = extra_style.script;
-        }
-        // 强调定界符的写法也要跟着样式往外传，不然 `_x_` 出来只剩「是斜体」这半个事实。
-        style.emphasis_marker = extra_style.emphasis_marker.or(style.emphasis_marker);
+        let style = merge_outer_inline_style(token.style, extra_style);
         let html_style = merge_html_styles(html_style, token.html_style);
 
         let text = token.ch.to_string();
@@ -954,6 +969,13 @@ pub(crate) fn parse_footnote_reference(
     if tokens.get(index)?.ch != '[' || tokens.get(index + 1)?.ch != '^' {
         return None;
     }
+    // 前驱 `!` 是图片写法的开头（`![^1](x)` 的 alt 以 ^ 开头）：脚注让位给
+    // 图片路径，判据与链接分支同源（preceded_by_image_bang）。前驱 `]` 不在
+    // 此列——`[^a][^1]` 里第二个脚注的前驱就是上一个的 `]`，与链接的
+    // 三段式（`][`）形状不同。
+    if preceded_by_image_bang(tokens, index) {
+        return None;
+    }
 
     let mut cursor = index + 2;
     let end_index = loop {
@@ -1037,12 +1059,27 @@ pub(crate) fn parse_inline_link(
     if label_len == 0 {
         return None;
     }
+    // 与 CommonMark 对齐：链接不可嵌套、最内层优先。label 里已经解析出链接
+    // 片段说明外层吞掉了内层（`[a[b](c) d](e)`），此时无条件覆盖会让内层目标
+    // 从盘上净丢失——放弃这次外层识别，`[` 按字面走，原文交给内层链接。
+    if label_result
+        .tree
+        .fragments
+        .iter()
+        .any(|fragment| fragment.link.is_some())
+    {
+        return None;
+    }
     apply_extra_style_to_fragments(
         &mut label_result.tree.fragments,
         extra_style,
         extra_html_style,
     );
-    let link = located.link;
+    // 每次链接语法领一个身份号：相邻两个同目标链接靠它保持不等，合并判据
+    // （等值比较）才不会把 `[a](u)[b](u)` 并成一个片段（见 InlineLink 注释）。
+    let syntax_id = builder.next_link_syntax_id;
+    builder.next_link_syntax_id += 1;
+    let link = located.link.with_syntax_id(syntax_id);
 
     let normalized_start = builder.normalized_len;
 
@@ -1111,12 +1148,17 @@ pub(crate) fn parse_autolink(
     let end_index = locate_autolink(tokens, index)?;
     let target_tokens = &tokens[index + 1..end_index];
     let target = tokens_to_string(target_tokens);
+    // 身份号与 inline/reference 链接同一计数器：`[a](u)<u>` 这类相邻同目标
+    // 链接同样不许塌成一个片段。
+    let syntax_id = builder.next_link_syntax_id;
+    builder.next_link_syntax_id += 1;
     let fragments = vec![InlineFragment {
         text: target.clone(),
         style: extra_style,
         html_style: extra_html_style,
         link: Some(InlineLink::Autolink {
             target: target.clone(),
+            syntax_id,
         }),
         footnote: None,
         math: None,

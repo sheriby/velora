@@ -8,6 +8,13 @@ pub(crate) struct LocatedInlineLink {
     pub(crate) link: InlineLink,
 }
 
+/// `[` 的前驱是 `!`：这是图片写法 `![alt](src)` 的开头，这个 `[` 不自己开链接。
+/// 链接识别与脚注识别（`parse_footnote_reference`）共用这一份判据——脚注分支
+/// 曾不看前驱，`![^1](x)` 的 alt 被抢食成脚注引用。
+pub(crate) fn preceded_by_image_bang(tokens: &[CharToken], index: usize) -> bool {
+    index > 0 && tokens[index - 1].ch == '!'
+}
+
 pub(crate) fn locate_inline_link(
     tokens: &[CharToken],
     index: usize,
@@ -16,7 +23,9 @@ pub(crate) fn locate_inline_link(
     if tokens.get(index)?.ch != '[' {
         return None;
     }
-    if index > 0 && matches!(tokens[index - 1].ch, '!' | ']') {
+    // 前驱 `!` 是图片（见 preceded_by_image_bang）；前驱 `]` 是引用链接的
+    // `][` 连写（`[foo][bar]` 识别失败后不能把 `[bar](x)` 再读成新链接）。
+    if index > 0 && (preceded_by_image_bang(tokens, index) || tokens[index - 1].ch == ']') {
         return None;
     }
 
@@ -72,7 +81,11 @@ pub(crate) fn locate_inline_link(
             Some(LocatedInlineLink {
                 label_end,
                 end_index: url_end,
-                link: InlineLink::Inline { destination, title },
+                link: InlineLink::Inline {
+                    destination,
+                    title,
+                    syntax_id: 0,
+                },
             })
         }
         Some('[') => {
@@ -106,6 +119,7 @@ pub(crate) fn locate_inline_link(
                 link: InlineLink::Reference {
                     label: link_label,
                     destination,
+                    syntax_id: 0,
                 },
             })
         }
@@ -120,12 +134,19 @@ pub(crate) fn locate_inline_link(
                 link: InlineLink::Reference {
                     label: raw_label,
                     destination,
+                    syntax_id: 0,
                 },
             })
         }
     }
 }
 
+/// 独立 `<…>` 形状的自动链接识别。**有意**比 CommonMark 宽：只排除长得像
+/// HTML 标签的形状（含属性/自闭合/void 名/后文有配对闭标签），不校验 scheme、
+/// 不拒空格——`<报告.pdf>`、`<a:b>` 这类本地路径与短标签目标也要成为可点击
+/// 链接（`parses_any_standalone_autolink_and_preserves_syntax` 钉住这一口径）。
+/// 界面与 pulldown 导出因此对这几类输入分叉（导出按字面），是接受的代价，
+/// 不是漏判；要收紧判据必须先改产品口径并同步那条测试。
 pub(crate) fn locate_autolink(tokens: &[CharToken], index: usize) -> Option<usize> {
     if tokens.get(index)?.ch != '<' {
         return None;
@@ -388,28 +409,11 @@ pub(crate) fn apply_extra_style_to_fragments(
     extra_style: InlineStyle,
     extra_html_style: Option<HtmlInlineStyle>,
 ) {
+    // 样式合并判据与 emit_token 同源（merge_outer_inline_style）——这里曾
+    // 抄漏 emphasis_marker，`__[a](u)__` 的下划线写法到标签片段处丢失，
+    // 序列化按规范写回 `**`。
     for fragment in fragments {
-        if extra_style.bold {
-            fragment.style.bold = true;
-        }
-        if extra_style.italic {
-            fragment.style.italic = true;
-        }
-        if extra_style.underline {
-            fragment.style.underline = true;
-        }
-        if extra_style.strikethrough {
-            fragment.style.strikethrough = true;
-        }
-        if extra_style.highlight {
-            fragment.style.highlight = true;
-        }
-        if extra_style.code {
-            fragment.style.code = true;
-        }
-        if extra_style.has_script() {
-            fragment.style.script = extra_style.script;
-        }
+        fragment.style = merge_outer_inline_style(fragment.style, extra_style);
         fragment.html_style = merge_html_styles(extra_html_style, fragment.html_style);
     }
 }

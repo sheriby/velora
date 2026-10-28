@@ -256,6 +256,55 @@
     }
 
     #[test]
+    fn insertion_at_outer_end_of_terminal_bold_is_plain_text() {
+        // 边界插入「返回普通文本」是函数注释里写明的口径，code 族照做了，
+        // 粗斜体却延续片段样式——在强调句尾补一个句号会得到粗体句号，还得手动
+        // 切回。非默认样式在边界一律不延续。
+        let tree = InlineTextTree::from_markdown("**123**");
+        let result = tree.replace_visible_range(
+            tree.visible_len()..tree.visible_len(),
+            "456",
+            tree.attributes_for_insertion_at(tree.visible_len()),
+        );
+        assert_eq!(result.tree.serialize_markdown(), "**123**456");
+    }
+
+    #[test]
+    fn insertion_at_outer_start_of_terminal_bold_is_plain_text() {
+        let tree = InlineTextTree::from_markdown("**123**");
+        let result = tree.replace_visible_range(0..0, "0", tree.attributes_for_insertion_at(0));
+        assert_eq!(result.tree.serialize_markdown(), "0**123**");
+    }
+
+    #[test]
+    fn insertion_at_outer_end_of_terminal_underline_is_plain_text() {
+        // 下划线/上下标此前也落在「延续」分支，与 code 族不对称。
+        let tree = InlineTextTree::from_markdown("<u>123</u>");
+        let result = tree.replace_visible_range(
+            tree.visible_len()..tree.visible_len(),
+            "456",
+            tree.attributes_for_insertion_at(tree.visible_len()),
+        );
+        assert_eq!(result.tree.serialize_markdown(), "<u>123</u>456");
+    }
+
+    #[test]
+    fn footnote_branch_does_not_eat_image_syntax_with_caret_alt() {
+        // `[` 的处理先脚注后链接，脚注分支不像链接分支那样检查前驱 `!`——
+        // `![^1](img.png)` 被拆成字面 `!` + 脚注引用 + 字面括号，图片写法在
+        // 界面上碎成感叹号、上标和括号文本。`!` 前驱时脚注放弃识别，原文交给
+        // 图片路径。
+        let source = "![^1](img.png)";
+        let tree = InlineTextTree::from_markdown(source);
+        assert_eq!(tree.visible_text(), source);
+        assert!(
+            tree.fragments.iter().all(|fragment| fragment.footnote.is_none()),
+            "图片 alt 不该被读成脚注引用"
+        );
+        assert_eq!(tree.serialize_markdown(), source);
+    }
+
+    #[test]
     fn insertion_at_outer_start_of_terminal_strikethrough_is_plain_text() {
         let tree = InlineTextTree::from_markdown("~~123~~");
         let result = tree.replace_visible_range(0..0, "0", tree.attributes_for_insertion_at(0));

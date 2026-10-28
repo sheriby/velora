@@ -169,17 +169,34 @@ pub enum InlineMathDelimiter {
 }
 
 /// Link metadata attached to a formatted inline text fragment.
+///
+/// `syntax_id` 是解析器给**每次**成功的链接/自动链接语法分配的序号：链接是
+/// 纯值类型，目标完全相同的两个链接按字段比较恒等，normalize 与序列化 run
+/// 分组会把它们并成一个片段——保存时 `[a](u)[b](u)` 就写成 `[ab](u)`，两个
+/// 可独立编辑/点击的链接塌成一个。序号让等值比较把不同语法节点的链接分开；
+/// 它不参与渲染、命中与打开行为，克隆与拆分片段时随值一起走。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InlineLink {
     /// Inline destination and optional title from `[label](destination "title")`.
     Inline {
         destination: String,
         title: Option<String>,
+        syntax_id: u32,
     },
     /// Reference-style link resolved from `[label][ref]`-style syntax.
-    Reference { label: String, destination: String },
-    /// Autolink target from `<scheme:target>` or email-like syntax.
-    Autolink { target: String },
+    Reference {
+        label: String,
+        destination: String,
+        syntax_id: u32,
+    },
+    /// Autolink target from a standalone `<…>` shape. CommonMark 只认
+    /// `<scheme:…>` 与邮箱形，这里有意放宽（`parses_any_standalone_autolink`
+    /// 钉住）：`<报告.pdf>` 这类本地路径目标也要成为可点击链接，只有长得像
+    /// HTML 标签的才按字面走（见 `locate_autolink` 的判据）。
+    Autolink {
+        target: String,
+        syntax_id: u32,
+    },
 }
 
 /// Link target pair used by hit-testing and open-link prompts.
@@ -193,7 +210,7 @@ impl InlineLink {
     pub fn open_target(&self) -> &str {
         match self {
             Self::Inline { destination, .. } | Self::Reference { destination, .. } => destination,
-            Self::Autolink { target } => target,
+            Self::Autolink { target, .. } => target,
         }
     }
 
@@ -201,7 +218,7 @@ impl InlineLink {
         match self {
             Self::Inline { destination, .. } => destination,
             Self::Reference { label, .. } => label,
-            Self::Autolink { target } => target,
+            Self::Autolink { target, .. } => target,
         }
     }
 
@@ -233,7 +250,7 @@ impl InlineLink {
 
     pub(crate) fn editable_text(&self) -> Option<String> {
         match self {
-            Self::Inline { destination, title } => {
+            Self::Inline { destination, title, .. } => {
                 Some(format_inline_link_target(destination, title.as_deref()))
             }
             Self::Reference { label, .. } => Some(label.clone()),
@@ -247,6 +264,16 @@ impl InlineLink {
             Self::Reference { .. } => "]",
             Self::Autolink { .. } => ">",
         }
+    }
+
+    /// 给这次链接语法打上身份号（见 `syntax_id` 的枚举级注释）。
+    pub(crate) fn with_syntax_id(mut self, syntax_id: u32) -> Self {
+        match &mut self {
+            Self::Inline { syntax_id: slot, .. }
+            | Self::Reference { syntax_id: slot, .. }
+            | Self::Autolink { syntax_id: slot, .. } => *slot = syntax_id,
+        }
+        self
     }
 }
 
@@ -269,9 +296,15 @@ fn format_inline_link_target(destination: &str, title: Option<&str>) -> String {
 }
 
 fn escape_link_title(title: &str) -> String {
+    // 引号必须转义（否则提前闭合标题）；反斜杠只在「重新解析会被吃掉」时才转义，
+    // 判据与正文转义同源（backslash_needs_escape），`C:\Users` 这类标题才能
+    // 逐字节写回。曾经不问后文全量转义反斜杠，每个含 `\` 的标题每保存一次
+    // 就多一层 `\\`，永不收敛。
     let mut escaped = String::with_capacity(title.len());
-    for ch in title.chars() {
-        if matches!(ch, '\\' | '"') {
+    for (index, ch) in title.char_indices() {
+        if ch == '"' {
+            escaped.push('\\');
+        } else if ch == '\\' && backslash_needs_escape(title, index) {
             escaped.push('\\');
         }
         escaped.push(ch);

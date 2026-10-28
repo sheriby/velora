@@ -321,27 +321,12 @@ impl InlineTextTree {
         let mut visible_start = 0usize;
         let mut index = 0usize;
         while index < self.fragments.len() {
-            if let Some(footnote) = self.fragments[index].footnote.clone() {
-                output.push_str(&footnote.raw_markdown());
-                visible_start += self.fragments[index].text.len();
-                index += 1;
-                continue;
-            }
-
-            if let Some(math) = self.fragments[index].math.clone() {
-                output.push_str(&math.source);
-                visible_start += self.fragments[index].text.len();
-                index += 1;
-                continue;
-            }
-
+            // 脚注/公式片段不再被逐出 run：markdown 本身允许强调内含 `[^1]`/`$x$`，
+            // 逐出会把一个强调 span 拆成两段、脚注夹成裸文本（`**a**[^1]**b**`）。
+            // run 序列化器把它们原样嵌回当前栈内，前后不做栈切换。
             let link = self.fragments[index].link.clone();
             let mut end = index + 1;
-            while end < self.fragments.len()
-                && self.fragments[end].link == link
-                && self.fragments[end].footnote.is_none()
-                && self.fragments[end].math.is_none()
-            {
+            while end < self.fragments.len() && self.fragments[end].link == link {
                 end += 1;
             }
 
@@ -386,69 +371,11 @@ impl InlineTextTree {
         let mut visible_cursor = 0usize;
         let mut index = 0usize;
         while index < self.fragments.len() {
-            if let Some(footnote) = self.fragments[index].footnote.clone() {
-                let raw_markdown = footnote.raw_markdown();
-                let raw_len = raw_markdown.len();
-                let run_visible_len = self.fragments[index].text.len();
-                let run_start = output.len();
-                output.push_str(&raw_markdown);
-                let run_end = output.len();
-
-                for local_visible in 0..=run_visible_len {
-                    let mapped = if run_visible_len == 0 {
-                        0
-                    } else {
-                        (raw_len * local_visible) / run_visible_len
-                    };
-                    visible_to_markdown[visible_cursor + local_visible] = run_start + mapped;
-                }
-
-                markdown_to_visible.resize(run_end + 1, visible_cursor);
-                for local_markdown in 0..=raw_len {
-                    let mapped = if raw_len == 0 {
-                        0
-                    } else {
-                        (run_visible_len * local_markdown) / raw_len
-                    };
-                    markdown_to_visible[run_start + local_markdown] = visible_cursor + mapped;
-                }
-
-                visible_cursor += run_visible_len;
-                index += 1;
-                continue;
-            }
-
-            if let Some(math) = self.fragments[index].math.clone() {
-                let raw_markdown = math.source;
-                let raw_len = raw_markdown.len();
-                let run_visible_len = self.fragments[index].text.len();
-                let run_start = output.len();
-                output.push_str(&raw_markdown);
-                let run_end = output.len();
-
-                for local_visible in 0..=run_visible_len {
-                    visible_to_markdown[visible_cursor + local_visible] =
-                        run_start + local_visible.min(raw_len);
-                }
-
-                markdown_to_visible.resize(run_end + 1, visible_cursor);
-                for local_markdown in 0..=raw_len {
-                    markdown_to_visible[run_start + local_markdown] =
-                        visible_cursor + local_markdown.min(run_visible_len);
-                }
-
-                visible_cursor += run_visible_len;
-                index += 1;
-                continue;
-            }
-
+            // 与无映射序列化同一条 run 分组（脚注/公式嵌回 run 内），两条路径
+            // 的一致性由 serialize_markdown_matches_offset_map 用例守住。
             let link = self.fragments[index].link.clone();
             let mut end = index + 1;
-            while end < self.fragments.len()
-                && self.fragments[end].link == link
-                && self.fragments[end].footnote.is_none()
-                && self.fragments[end].math.is_none()
-            {
+            while end < self.fragments.len() && self.fragments[end].link == link {
                 end += 1;
             }
 
@@ -562,6 +489,8 @@ fn serialize_fragment_run_markdown(fragments: &[InlineFragment], escaped: &[u32]
 
         if let Some(math) = fragment.math.as_ref() {
             output.push_str(&math.source);
+        } else if let Some(footnote) = fragment.footnote.as_ref() {
+            output.push_str(&footnote.raw_markdown());
         } else if fragment.style.line_break {
             for _ in fragment.text.chars() {
                 output.push_str("<br>");
@@ -664,6 +593,8 @@ fn serialize_fragment_run_markdown_with_offset_map(
 
         let escaped = if let Some(math) = fragment.math.as_ref() {
             identity_text_with_offset_map(&math.source)
+        } else if let Some(footnote) = fragment.footnote.as_ref() {
+            footnote_offset_map(&fragment.text, &footnote.raw_markdown())
         } else if fragment.style.line_break {
             html_line_break_offset_map(fragment.text.chars().count())
         } else if fragment.style.code {
@@ -732,6 +663,35 @@ fn identity_text_with_offset_map(text: &str) -> InlineMarkdownOffsetMap {
         markdown: text.to_string(),
         visible_to_markdown: (0..=text.len()).collect(),
         markdown_to_visible: (0..=text.len()).collect(),
+    }
+}
+
+/// 比例插值 + 字符边界收敛的唯一实现。脚注 run 的可见文本（上标）与原文
+/// （`[^id]`）长度不等只能按比例近似，而脚注 id 允许 CJK，比例落点会砸进
+/// 多字节字符内部——任何拿去切片的代码在 release 下直接 panic。编辑侧
+/// `block/runtime/cursor.rs` 的脚注选区换算共用这一份，不许再抄第二份公式。
+pub(crate) fn proportional_offset(from_len: usize, target: &str, offset: usize) -> usize {
+    let mapped = if from_len == 0 {
+        0
+    } else {
+        target.len() * offset / from_len
+    };
+    clamp_to_char_boundary(target, mapped)
+}
+
+/// 脚注片段的可见文本 ↔ 原文映射：未解析时两者字节相同，比例插值退化为恒等；
+/// 解析成上标后按比例近似，落点统一过 [`proportional_offset`] 收敛到字符边界。
+fn footnote_offset_map(visible: &str, raw_markdown: &str) -> InlineMarkdownOffsetMap {
+    let visible_to_markdown = (0..=visible.len())
+        .map(|offset| proportional_offset(visible.len(), raw_markdown, offset))
+        .collect();
+    let markdown_to_visible = (0..=raw_markdown.len())
+        .map(|offset| proportional_offset(raw_markdown.len(), visible, offset))
+        .collect();
+    InlineMarkdownOffsetMap {
+        markdown: raw_markdown.to_string(),
+        visible_to_markdown,
+        markdown_to_visible,
     }
 }
 
@@ -899,11 +859,12 @@ impl InlineTextTree {
                 };
             }
 
-            // Typing at a delimited-fragment boundary should produce plain
-            // text, not extend the span past its visible closing/opening
-            // marker when the caret is outside.
+            // 边界插入一律是普通文本：光标落在显形记号的外侧（块首/块尾取外侧
+            // 亲和性），打出来的字却续进片段样式的话，`**粗体**|` 后补的句号
+            // 会变成粗体句号。判据是「非默认样式」一条——code/删除线/高亮先前
+            // 就这么特判，粗斜体/下划线/上下标漏了才不对称。
             if clamped == fragment_end && index + 1 == self.fragments.len() {
-                return if fragment.style.code || fragment.style.strikethrough || fragment.style.highlight {
+                return if fragment.style != InlineStyle::default() {
                     InlineInsertionAttributes::default()
                 } else {
                     InlineInsertionAttributes {
@@ -917,7 +878,7 @@ impl InlineTextTree {
             }
 
             if clamped == fragment_start && index == 0 {
-                return if fragment.style.code || fragment.style.strikethrough || fragment.style.highlight {
+                return if fragment.style != InlineStyle::default() {
                     InlineInsertionAttributes::default()
                 } else {
                     InlineInsertionAttributes {
