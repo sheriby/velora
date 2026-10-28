@@ -515,6 +515,17 @@ impl Block {
             return;
         }
 
+        if self.selected_range.is_empty() && self.display_text().is_empty() {
+            cx.emit(BlockEvent::RequestDelete);
+            return;
+        }
+
+        if self.selected_range.is_empty() && self.cursor_offset() == self.visible_len() {
+            // 块尾前向删除与源码分块同一语义：把下一块并进来（删除边界换行）。
+            cx.emit(BlockEvent::RequestMergeFromNext);
+            return;
+        }
+
         if self.selected_range.is_empty() {
             self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
             self.select_to(self.next_boundary(self.cursor_offset()), cx);

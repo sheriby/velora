@@ -439,6 +439,12 @@ impl Editor {
                 else {
                     return;
                 };
+                if next.read(cx).kind() == BlockKind::Table {
+                    // 表格的内容在 record.table 里，并进上一块会把它丢掉；
+                    // 块尾前向删除对表格就是整块删除。
+                    next.update(cx, |_next, cx| cx.emit(BlockEvent::RequestDelete));
+                    return;
+                }
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
 
                 let cursor_pos = block.read(cx).display_text().len();
