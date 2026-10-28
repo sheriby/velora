@@ -121,6 +121,10 @@ pub(crate) fn proxy_environment_plan(url: Option<&str>) -> Vec<(&'static str, Pr
 /// # Safety
 /// 只在启动早期与保存偏好之后调用（此时没有并发读环境变量的线程），
 /// 改的是本进程自己的环境变量。
+///
+/// 测试构建不编译：唯一调用方 `apply_environment_now` 同属非测试构建，
+/// 测试里编译它只会得到一条死代码警告。
+#[cfg(not(test))]
 fn apply_plan(plan: Vec<(&'static str, ProxyEnvAction)>) {
     for (key, action) in plan {
         match action {

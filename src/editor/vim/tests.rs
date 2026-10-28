@@ -2075,7 +2075,7 @@ async fn gn_selects_the_current_search_match(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn gN_selects_the_previous_search_match(cx: &mut TestAppContext) {
+async fn g_cap_n_selects_the_previous_search_match(cx: &mut TestAppContext) {
     let (editor, cx) = vim_editor(cx, "one two two");
     cx.simulate_keystrokes("/");
     cx.simulate_input("two");
