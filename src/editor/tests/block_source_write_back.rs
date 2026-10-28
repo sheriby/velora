@@ -2081,6 +2081,173 @@ async fn deleting_a_table_column_keeps_the_other_columns_padded_as_written(
     );
 }
 
+/// 删最后一列不许把每行的收尾管道一起剪掉。
+///
+/// 末列右边那根竖线就是收尾管道：照「格 + 右边竖线」剪，每行的 `|` 全没了——
+/// GFM 还解析得动，但用户原文的写法被静默改掉，且此后这张表所有列级操作都
+/// 认不出「外层两根竖线齐平」的形状，静默退化成整根块重写。
+#[gpui::test]
+async fn deleting_the_last_table_column_keeps_the_closing_pipe(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str =
+        "| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\n\n强调 __下划线__ 结尾\n";
+    let path = temp_markdown_path("write-back-table-last-column-delete");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.delete_table_column(&table, 1, cx);
+        });
+    });
+    redraw(cx);
+
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "删掉末列之后");
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "| 名称   |\r\n|:-------|\r\n| 苹果   |\r\n\r\n强调 __下划线__ 结尾\r\n",
+        "删末列把收尾管道一起剪掉了：{saved:?}"
+    );
+}
+
+/// 某一行行尾带空格，列操作不许整体退化成整根块重写。
+///
+/// 列级操作的管道判定以前要求末根竖线恰好在行尾字节上，行尾多敲的空格让它
+/// 判假，插列就静默退回整篇重投影：表外的 `__下划线__`、表内的列宽填充一起
+/// 被洗。修复后按行落笔，行尾空白原样保留。
+#[gpui::test]
+async fn trailing_whitespace_on_a_row_does_not_degrade_column_edits(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str =
+        "| 名称 | 数量 |  \n|:-----|-----:|\n| 苹果 | 3 |  \n\n强调 __下划线__ 结尾\n";
+    let path = temp_markdown_path("write-back-table-trailing-whitespace-column-add");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.append_table_column(&table, cx);
+        });
+    });
+    redraw(cx);
+
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "行尾带空格加一列之后");
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "| 名称 | 数量 |  |  \r\n|:-----|-----:|-----:|\r\n| 苹果 | 3 |  |  \r\n\r\n强调 __下划线__ 结尾\r\n",
+        "行尾空格让列操作退成整根块重写：{saved:?}"
+    );
+}
+
+/// 从对话框插入一张表，只许在插入点写新表的字节。
+///
+/// 这条以前直接 mark_dirty 整篇重投影：表外的 Setext、`__强调__`、既有表格的
+/// 列宽填充、CRLF 与末行换行全部被重新序列化洗掉。修复后走区间写回
+/// （仿 insert_ops 的 write_inserted_block_bytes），只有插入点那一段是新字节。
+#[gpui::test]
+async fn inserting_a_table_from_the_dialog_keeps_the_other_blocks_bytes_untouched(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "标题一\n======\n\n强调 __下划线__ 结尾\n\n| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\n";
+    let path = temp_markdown_path("write-back-table-dialog-insert");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let anchor = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| {
+                    root.read(cx).kind() == BlockKind::Paragraph
+                        && root.read(cx).display_text().contains("下划线")
+                })
+                .cloned()
+                .expect("夹具里应有强调那一段");
+            editor.table_insert_dialog =
+                Some(crate::editor::context_menu::TableInsertDialogState::new(
+                    crate::editor::context_menu::TableInsertTarget::After(anchor.entity_id()),
+                    1,
+                    2,
+                    cx,
+                ));
+            assert!(editor.insert_table_from_dialog(cx), "对话框应插入表格");
+        });
+    });
+    redraw(cx);
+
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "对话框插表之后");
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "标题一\r\n======\r\n\r\n强调 __下划线__ 结尾\r\n\r\n|  |  |\r\n| --- | --- |\r\n|  |  |\r\n\r\n| 名称   | 数量 |\r\n|:-------|-----:|\r\n| 苹果   |    3 |\r\n",
+        "插表把别的块的写法洗掉了：{saved:?}"
+    );
+}
+
 /// 表格移动一行 = 把这两行的文本互换，分隔行和别的字节都留在原地。
 ///
 /// 移动在源码里就是两行互换，长度一进一出，这张表占的总字节数不变。重拼整张表却会

@@ -557,6 +557,17 @@ impl Editor {
 
         let table = TableData::new_empty(dialog.body_rows, dialog.columns);
         let new_block = Self::new_table_block(cx, table);
+        // 插入字节位要在动树之前算好：After 拿锚点根块的区间尾，Append 落在
+        // 缓冲区末尾。算不出（锚点没有区间、目标块已不在树里）就退回整篇
+        // 重投影——宁可洗写法，不能把字节写错位置。
+        let insert_offset = match dialog.target {
+            TableInsertTarget::After(entity_id) => self
+                .document
+                .find_block_location(entity_id)
+                .and_then(|_| self.document.source_span_of(entity_id))
+                .map(|span| span.end),
+            TableInsertTarget::Append => Some(self.buffer.byte_len()),
+        };
 
         match dialog.target {
             TableInsertTarget::After(entity_id) => {
@@ -589,8 +600,7 @@ impl Editor {
         // A table inserted as the last block in its container leaves no line
         // below it, so in rendered mode the caret cannot move past the table.
         // Add a trailing empty paragraph to land on when nothing follows it.
-        self.ensure_trailing_paragraph_after_structural(&new_block, cx);
-
+        // 它要在表格字节落笔之后做：尾段落的空间就是按落笔后的缓冲区末尾补的。
         self.rebuild_table_runtimes(cx);
         if let Some(first_cell) = new_block
             .read(cx)
@@ -600,7 +610,48 @@ impl Editor {
         {
             self.focus_block(first_cell.entity_id());
         }
-        self.mark_dirty(cx);
+
+        // 仿照「插入代码块」的区间写回（insert_ops::write_inserted_block_bytes）：
+        // 只在插入点写「接缝 + 新表的 markdown」，后面的根块区间整体平移。
+        // 整篇 mark_dirty 的重投影会把别处的 `__强调__`、Setext、列宽填充
+        // 一起洗掉。写不出去（算不出字节位）才退回整篇重投影。
+        let written = match insert_offset {
+            Some(offset) if offset <= self.buffer.byte_len() => {
+                let markdown = self.document.block_markdown_source(&new_block, cx);
+                let before = match offset {
+                    0 => "",
+                    _ => match dialog.target {
+                        // 锚点根块的区间尾不含它自己的换行，接缝固定一个空行。
+                        // Append 落在缓冲区末尾：末尾已有几个换行决定还欠几个——
+                        // 已隔一个空行（`\n\n`）就不再补，别把空行越叠越多。
+                        TableInsertTarget::After(_) => "\n\n",
+                        TableInsertTarget::Append => match (
+                            self.buffer.byte_at(offset - 1),
+                            offset.checked_sub(2).and_then(|at| self.buffer.byte_at(at)),
+                        ) {
+                            (Some(b'\n'), Some(b'\n')) => "",
+                            (Some(b'\n'), _) => "\n",
+                            _ => "\n\n",
+                        },
+                    },
+                };
+                let text = format!("{before}{markdown}");
+                let applied = self.buffer.edit(offset..offset, &text);
+                self.record_buffer_edit(applied);
+                self.shift_root_spans_after(offset, text.len() as i64);
+                let start = offset + before.len();
+                self.document
+                    .set_source_span(new_block.entity_id(), start..start + markdown.len());
+                true
+            }
+            _ => false,
+        };
+        self.ensure_trailing_paragraph_after_structural(&new_block, cx);
+        if written {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.mark_dirty(cx);
+        }
         self.finalize_pending_undo_capture(cx);
         self.request_active_block_scroll_into_view(cx);
         cx.notify();

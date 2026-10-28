@@ -337,8 +337,7 @@ impl Editor {
         for (index, (line, text)) in lines.iter().enumerate() {
             let pipes = unescaped_pipe_offsets(text);
             // 只认「外层两根竖线齐平」的管道写法：缩进的、结尾还有杂字的都算不出插点。
-            let wrapped = pipes.first() == Some(&0) && pipes.last() == Some(&(text.len() - 1));
-            if !wrapped || pipes.len() != columns {
+            if !line_wrapped_in_pipes(text, &pipes) || pipes.len() != columns {
                 return false;
             }
             let cell = if index == 1 {
@@ -408,15 +407,24 @@ impl Editor {
             return false;
         }
         // 模型里那一列已经删了，所以源码里每行该比模型多一列、多一根竖线。
+        // 末列的剪点见下面循环里的说明。
+        let deleting_last_column = column == columns;
         let mut cuts: Vec<Range<usize>> = Vec::with_capacity(lines.len());
         for (line, text) in &lines {
             let pipes = unescaped_pipe_offsets(text);
-            let wrapped = pipes.first() == Some(&0) && pipes.last() == Some(&(text.len() - 1));
-            if !wrapped || pipes.len() != columns + 2 {
+            if !line_wrapped_in_pipes(text, &pipes) || pipes.len() != columns + 2 {
                 return false;
             }
             let line_start = self.buffer.line_range(*line).start;
-            cuts.push((line_start + pipes[column] + 1)..(line_start + pipes[column + 1] + 1));
+            if deleting_last_column {
+                // 末列右边那根竖线就是收尾管道：照「格内容 + 右边竖线」剪会把
+                // 收尾管道一起剪掉，此后这张表所有列级操作都认不出管道写法、
+                // 静默退化成整根块重写。改剪「左边竖线 + 格内容」，行尾留下
+                // 收尾管道；行尾空白不在剪口里，原样保留。
+                cuts.push((line_start + pipes[column])..(line_start + pipes[column + 1]));
+            } else {
+                cuts.push((line_start + pipes[column] + 1)..(line_start + pipes[column + 1] + 1));
+            }
         }
 
         let boundary = self.buffer.line_range(lines[lines.len() - 1].0).end;
@@ -526,8 +534,7 @@ impl Editor {
         let mut swaps: Vec<(usize, Range<usize>, Range<usize>, String, String)> = Vec::new();
         for (line, text) in &lines {
             let pipes = unescaped_pipe_offsets(text);
-            let wrapped = pipes.first() == Some(&0) && pipes.last() == Some(&(text.len() - 1));
-            if !wrapped || pipes.len() != columns + 1 {
+            if !line_wrapped_in_pipes(text, &pipes) || pipes.len() != columns + 1 {
                 return false;
             }
             let first_cell = (pipes[first] + 1)..pipes[first + 1];
@@ -1625,6 +1632,15 @@ impl Editor {
 /// 格内行内代码带竖线的行会被量出多余的槽位，映射与格子写回按错位切片。
 fn unescaped_pipe_offsets(line: &str) -> Vec<usize> {
     crate::components::markdown::table::cell_separator_positions(line)
+}
+
+/// 这一行是不是「外层两根竖线齐平」的管道写法：首根竖线顶在第 0 字节、末根
+/// 竖线紧贴行尾。行尾的空白不算数——用户在某一行末尾多敲的空格不该让插列、
+/// 删列、移列整个退回整根块重写，把表内外的原文写法一起洗掉。
+///
+/// 只在 `pipes` 非空且首根在第 0 字节时才碰行尾，`trim_end` 不会下溢。
+fn line_wrapped_in_pipes(line: &str, pipes: &[usize]) -> bool {
+    pipes.first() == Some(&0) && pipes.last() == Some(&(line.trim_end().len() - 1))
 }
 
 /// 分隔行里一格的新写法：换成 `alignment`，但这一格的宽度尽量不动。
