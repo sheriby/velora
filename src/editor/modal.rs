@@ -21,6 +21,11 @@ use super::{Editor, InfoDialogKind};
 // 分屏按固定组顺序绘制，弹窗必须另外按出现顺序决定遮挡层级。
 static NEXT_MODAL_LAYER: AtomicUsize = AtomicUsize::new(0);
 
+/// 弹层的层号发生器：模态与表格插入对话框共用一个计数，后开的盖在先开的上面。
+pub(crate) fn next_modal_layer() -> usize {
+    NEXT_MODAL_LAYER.fetch_add(1, Ordering::Relaxed)
+}
+
 /// 模态的显示内容 + 按钮语义。
 pub(crate) struct ModalSpec {
     pub(crate) title: SharedString,

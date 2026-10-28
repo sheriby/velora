@@ -1047,6 +1047,9 @@ impl I18nStringsDe {
             status_bar_word_count_suffix: self
                 .status_bar_word_count_suffix
                 .unwrap_or(defaults.status_bar_word_count_suffix),
+            status_bar_code_line_count_suffix: self
+                .status_bar_code_line_count_suffix
+                .unwrap_or(defaults.status_bar_code_line_count_suffix),
             status_bar_reading_time_suffix: self
                 .status_bar_reading_time_suffix
                 .unwrap_or(defaults.status_bar_reading_time_suffix),

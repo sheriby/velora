@@ -680,6 +680,8 @@ pub struct I18nStrings {
     pub status_bar_mode_rendered: String,
     /// Suffix shown after the word count number.
     pub status_bar_word_count_suffix: String,
+    /// Suffix shown after the code-block line count in the status bar.
+    pub status_bar_code_line_count_suffix: String,
     /// Suffix shown after the estimated reading time in minutes (roadmap B8).
     pub status_bar_reading_time_suffix: String,
     /// Nav label for the status bar preferences tab.

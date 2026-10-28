@@ -592,11 +592,12 @@ async fn inserting_table_at_document_end_adds_trailing_paragraph(cx: &mut TestAp
 
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
-            editor.table_insert_dialog = Some(crate::editor::context_menu::TableInsertDialogState {
-                target: crate::editor::context_menu::TableInsertTarget::Append,
-                body_rows: 2,
-                columns: 2,
-            });
+            editor.table_insert_dialog = Some(crate::editor::context_menu::TableInsertDialogState::new(
+                crate::editor::context_menu::TableInsertTarget::Append,
+                2,
+                2,
+                cx,
+            ));
             editor.on_confirm_table_insert_dialog(&ClickEvent::default(), window, cx);
         });
     });

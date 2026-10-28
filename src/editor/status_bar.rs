@@ -153,7 +153,7 @@ impl Editor {
                 div()
                     .text_size(px(d.status_bar_text_size))
                     .text_color(c.status_bar_text_dim)
-                    .child(format!("{lines} 行"))
+                    .child(format!("{lines} {}", strings.status_bar_code_line_count_suffix))
                     .into_any_element(),
             );
         } else if prefs.show_word_count {
@@ -520,6 +520,7 @@ fn is_cjk_char(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{count_words, document_has_long_source_block};
+    use crate::i18n::I18nStrings;
 
     /// 渲染侧必须让按钮调用派发函数。`.cursor_pointer()` 明示可点而函数体里只有
     /// `.on_hover`，配了 `action_id` 的按钮就是个静态装饰（评审必修 A2）。
@@ -576,6 +577,20 @@ mod tests {
     fn mixed_cjk_and_english() {
         assert_eq!(count_words("hello 世界"), 3);
         assert_eq!(count_words("你好 world foo"), 4);
+    }
+
+    /// 代码行数后缀走 i18n 表：以前 `format!("{lines} 行")` 把
+    /// 中文写死，英文界面看到中英混排。两份内置文案各钉一条。
+    #[test]
+    fn code_line_count_suffix_is_localised() {
+        assert_eq!(
+            I18nStrings::zh_cn().status_bar_code_line_count_suffix,
+            "行"
+        );
+        assert_eq!(
+            I18nStrings::en_us().status_bar_code_line_count_suffix,
+            "lines"
+        );
     }
 
     #[test]

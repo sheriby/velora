@@ -459,11 +459,14 @@ impl Editor {
                 .collect()
             }
             DocumentSubmenu::Paragraph => {
+                // 「这一档全是段落转换」是数组内容与 `as_block_target` 之间的约定。
+                // 约定只防君子：将来有人往这两个数组里加一条非段落命令，用
+                // expect 就是一打开右键菜单就 panic（产品路径）。按 None 处理
+                // 成灰行，违约的代价降级为「多一行点不动的菜单」。
                 let item = |command: DocumentMenuCommand| DocumentMenuRow::Item {
-                    enabled: self.block_kind_target_is_available(
-                        command.as_block_target().expect("这一档全是段落转换"),
-                        cx,
-                    ),
+                    enabled: command
+                        .as_block_target()
+                        .is_some_and(|target| self.block_kind_target_is_available(target, cx)),
                     name: command.row_name(),
                     command,
                 };
@@ -569,6 +572,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // 菜单占着焦点；先还回去，动作派发（Undo/Cut 那一族走 window 焦点）
+        // 才落在正文原本的那个块上。「插入表格」接下来会打开对话框，对话框
+        // 挂载时记下的归还目标也正是这个块。
+        self.restore_transient_overlay_focus(window, cx);
         // 「插入表格」要从菜单状态里取插入位置，收菜单的活由它自己那条路做。
         if !matches!(command, DocumentMenuCommand::InsertTable) {
             self.close_context_menu(cx);

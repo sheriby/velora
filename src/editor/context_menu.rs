@@ -37,6 +37,11 @@ pub(super) enum ContextMenuState {
     Document {
         position: Point<Pixels>,
         target: TableInsertTarget,
+        /// 菜单的焦点陷阱：打开后按键留在菜单上，不再打进遮罩后面的正文。
+        /// 没有它，开着菜单打字会改看不见的内容，vim 普通模式按键也会直接生效。
+        focus: FocusHandle,
+        /// 打开那一刻正文里握着焦点的控件；关闭时归还。`None` 表示还没挂载过。
+        restore_focus: Option<Option<WeakFocusHandle>>,
         /// 当前展开的二级菜单；None 表示只有主菜单。
         open_submenu: Option<DocumentSubmenu>,
         /// 鼠标正停在哪个二级菜单的父行上；None 表示没停在任何一条上。
@@ -110,6 +115,36 @@ pub(super) struct TableInsertDialogState {
     pub target: TableInsertTarget,
     pub body_rows: usize,
     pub columns: usize,
+    /// 对话框自己的焦点：这是真模态，打开后按键必须留在对话框里，
+    /// 不能打进遮罩后面的正文（vim 的 `dd`、回车换行都曾直接生效）。
+    pub focus: FocusHandle,
+    /// 四颗步进按钮各自的焦点：Tab 在它们之间轮转，Enter 激活当前那颗。
+    pub steppers: [FocusHandle; 4],
+    /// 打开那一刻正文里握着焦点的控件；关闭时归还。`None` 表示还没挂载过。
+    pub restore_focus: Option<Option<WeakFocusHandle>>,
+}
+
+impl TableInsertDialogState {
+    pub(super) fn new(
+        target: TableInsertTarget,
+        body_rows: usize,
+        columns: usize,
+        cx: &mut Context<Editor>,
+    ) -> Self {
+        Self {
+            target,
+            body_rows,
+            columns,
+            focus: cx.focus_handle(),
+            steppers: [
+                cx.focus_handle(),
+                cx.focus_handle(),
+                cx.focus_handle(),
+                cx.focus_handle(),
+            ],
+            restore_focus: None,
+        }
+    }
 }
 
 impl Editor {
@@ -140,6 +175,8 @@ impl Editor {
         self.context_menu = Some(ContextMenuState::Document {
             position,
             target,
+            focus: cx.focus_handle(),
+            restore_focus: None,
             open_submenu: None,
             parent_row_hovered: None,
             submenu_panel_hovered: false,
@@ -297,6 +334,18 @@ impl Editor {
         }
     }
 
+    /// 关掉插入对话框并把焦点还给打开前的控件。Esc（Dialog 的 Cancel）、
+    /// 点遮罩与「取消」按钮都走这里——它们拿得到 window，焦点只在
+    /// 这些路径上归还；其余路径由随后的动作自己落焦点。
+    pub(super) fn cancel_table_insert_dialog_with_focus(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.restore_transient_overlay_focus(window, cx);
+        self.close_table_insert_dialog(cx);
+    }
+
     fn close_context_menu(&mut self, cx: &mut Context<Self>) {
         self.context_menu_popup = None;
         let menu = self.context_menu.take();
@@ -310,6 +359,43 @@ impl Editor {
         }
     }
 
+    /// 把焦点还给打开瞬态浮层前的那个控件（正文菜单、表格插入对话框共用）。
+    ///
+    /// 这两个浮层打开时会抢走正文焦点挡按键；关闭路径里只有 Esc、点遮罩、
+    /// 点菜单行这几条拿得到 `window`，归还只在它们身上做。其余路径（各命令
+    /// 处理器）随后的动作自己会把焦点落到目标块上；什么都没落时焦点悬空，
+    /// 下一次点击自然恢复——按键不会落进正文，这正是焦点陷阱的目的。
+    pub(super) fn restore_transient_overlay_focus(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut holders: Vec<FocusHandle> = Vec::new();
+        let mut restores: Vec<Option<Option<WeakFocusHandle>>> = Vec::new();
+        if let Some(ContextMenuState::Document {
+            focus,
+            restore_focus,
+            ..
+        }) = self.context_menu.as_ref()
+        {
+            holders.push(focus.clone());
+            restores.push(restore_focus.clone());
+        }
+        if let Some(dialog) = self.table_insert_dialog.as_ref() {
+            holders.push(dialog.focus.clone());
+            restores.push(dialog.restore_focus.clone());
+        }
+        for (holder, restore) in holders.into_iter().zip(restores) {
+            if !(holder.is_focused(window) || holder.contains_focused(window, cx)) {
+                continue;
+            }
+            match restore.flatten().and_then(|focus| focus.upgrade()) {
+                Some(previous) => previous.focus(window, cx),
+                None => window.blur(cx),
+            }
+        }
+    }
+
     pub(super) fn close_document_menu_for_modal(
         &mut self,
         window: &mut Window,
@@ -320,6 +406,7 @@ impl Editor {
         {
             window.focus(&popup.return_focus, cx);
         }
+        self.restore_transient_overlay_focus(window, cx);
         self.close_context_menu(cx);
     }
 
@@ -402,9 +489,11 @@ impl Editor {
     pub(super) fn on_dismiss_context_menu_overlay(
         &mut self,
         _event: &MouseDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // 关掉之前先把焦点还给正文：遮罩吃掉的这一下鼠标不该顺带把焦点弄丢。
+        self.restore_transient_overlay_focus(window, cx);
         self.dismiss_contextual_overlays(cx);
     }
 
@@ -450,6 +539,9 @@ impl Editor {
             self.dismiss_contextual_overlays(cx);
             return;
         }
+        // Esc 是瞬态浮层（正文菜单、表格插入对话框）最主要的退出口，归还焦点
+        // 只在拿得到 window 的路径上做，这里是其中之一。
+        self.restore_transient_overlay_focus(window, cx);
         self.dismiss_contextual_overlays(cx);
         // escape 由全局快捷键路由到这里，浮层面板自己的 key_down 收不到。
         self.close_quick_open(cx);
@@ -466,11 +558,7 @@ impl Editor {
             return;
         };
         self.context_menu_submenu_close_task = None;
-        self.table_insert_dialog = Some(TableInsertDialogState {
-            target,
-            body_rows: 2,
-            columns: 2,
-        });
+        self.table_insert_dialog = Some(TableInsertDialogState::new(target, 2, 2, cx));
         cx.notify();
     }
 
@@ -480,10 +568,7 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(dialog) = self.table_insert_dialog.as_mut() {
-            dialog.body_rows = dialog.body_rows.saturating_sub(1).max(1);
-            cx.notify();
-        }
+        self.step_table_dialog_value(false, false, cx);
     }
 
     pub(super) fn on_table_rows_increment(
@@ -492,10 +577,7 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(dialog) = self.table_insert_dialog.as_mut() {
-            dialog.increment_rows();
-            cx.notify();
-        }
+        self.step_table_dialog_value(false, true, cx);
     }
 
     pub(super) fn on_table_columns_decrement(
@@ -504,10 +586,7 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(dialog) = self.table_insert_dialog.as_mut() {
-            dialog.columns = dialog.columns.saturating_sub(1).max(1);
-            cx.notify();
-        }
+        self.step_table_dialog_value(true, false, cx);
     }
 
     pub(super) fn on_table_columns_increment(
@@ -516,19 +595,36 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(dialog) = self.table_insert_dialog.as_mut() {
-            dialog.increment_columns();
-            cx.notify();
+        self.step_table_dialog_value(true, true, cx);
+    }
+
+    /// 对话框里一颗步进按钮的核心：鼠标点击与键盘 Enter（Confirm 动作）共用，
+    /// 钳制口径只在这一处。
+    fn step_table_dialog_value(
+        &mut self,
+        columns: bool,
+        increment: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dialog) = self.table_insert_dialog.as_mut() else {
+            return;
+        };
+        match (columns, increment) {
+            (false, true) => dialog.increment_rows(),
+            (false, false) => dialog.body_rows = dialog.body_rows.saturating_sub(1).max(1),
+            (true, true) => dialog.increment_columns(),
+            (true, false) => dialog.columns = dialog.columns.saturating_sub(1).max(1),
         }
+        cx.notify();
     }
 
     pub(super) fn on_cancel_table_insert_dialog(
         &mut self,
         _event: &ClickEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.close_table_insert_dialog(cx);
+        self.cancel_table_insert_dialog_with_focus(window, cx);
     }
 
     pub(super) fn on_confirm_table_insert_dialog(
@@ -703,7 +799,8 @@ impl Editor {
             return;
         };
         self.close_context_menu(cx);
-        self.insert_table_row(&table_block, cell.row, below, cx);
+        // 焦点落在「新行 × 右击的那一列」：插行不把用户的心智位置挪回行首。
+        self.insert_table_row(&table_block, cell.row, below, Some(cell), cx);
     }
 
     pub(super) fn on_insert_table_column_left(
@@ -733,7 +830,8 @@ impl Editor {
             return;
         };
         self.close_context_menu(cx);
-        self.insert_table_column(&table_block, cell.column, right, cx);
+        // 焦点落在「右击的那一行 × 新列」：插列后第一下输入不该污染表头。
+        self.insert_table_column(&table_block, cell.column, right, Some(cell), cx);
     }
 
     pub(super) fn on_delete_table_cell_row(
@@ -751,7 +849,19 @@ impl Editor {
         };
         self.close_context_menu(cx);
         if cell.is_header() {
-            self.delete_table_header_row(&table_block, cx);
+            // 仅剩表头的表上，「删除行」与轴菜单同语义：没有数据行可升，
+            // 删的就是整张表。静默什么都不做会让两个菜单同一动作两种结果。
+            let row_count = table_block
+                .read(cx)
+                .record
+                .table
+                .as_ref()
+                .map(|table| table.rows.len());
+            if row_count == Some(0) {
+                self.remove_table_block(&table_block, cx);
+            } else {
+                self.delete_table_header_row(&table_block, cx);
+            }
         } else if let Some(body_row) = cell.body_row_index() {
             self.delete_table_row(&table_block, body_row, cx);
         }

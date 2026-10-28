@@ -502,13 +502,22 @@ async fn typing_wikilink_opens_completion_and_enter_inserts_target(cx: &mut Test
 /// 插入表格对话框的步进器与 TableData::new_empty 都要有规模上限：
 /// 每格是一个块实体，无上限的 `+` 连点到 200×200 会同步建 4 万个块，
 /// 前台长时间冻结（评审 v0.2.6 维度二建议 22）。
-#[test]
-fn table_insert_dialog_steppers_saturate_at_safe_bounds() {
+#[gpui::test]
+fn table_insert_dialog_steppers_saturate_at_safe_bounds(cx: &mut gpui::TestAppContext) {
     use crate::components::markdown::table::TableData;
+    cx.update(|cx| {
     let mut dialog = crate::editor::context_menu::TableInsertDialogState {
         target: crate::editor::context_menu::TableInsertTarget::Append,
         body_rows: TableData::MAX_CREATED_ROWS - 1,
         columns: TableData::MAX_CREATED_COLUMNS - 1,
+        focus: cx.focus_handle(),
+        steppers: [
+            cx.focus_handle(),
+            cx.focus_handle(),
+            cx.focus_handle(),
+            cx.focus_handle(),
+        ],
+        restore_focus: None,
     };
     dialog.increment_rows();
     dialog.increment_rows();
@@ -529,6 +538,7 @@ fn table_insert_dialog_steppers_saturate_at_safe_bounds() {
     let table = TableData::new_empty(200, 200);
     assert_eq!(table.rows.len(), TableData::MAX_CREATED_ROWS);
     assert_eq!(table.header.len(), TableData::MAX_CREATED_COLUMNS);
+    });
 }
 
 /// 历史版本文件名是纳秒时间戳（记录端为防同毫秒覆盖用 `as_nanos()` 命名），
@@ -612,11 +622,12 @@ async fn inserting_a_table_through_the_dialog_can_be_undone(cx: &mut TestAppCont
     redraw(cx);
     let before = editor.read_with(cx, |editor, cx| editor.current_document_source(cx));
     editor.update(cx, |editor, cx| {
-        editor.table_insert_dialog = Some(crate::editor::context_menu::TableInsertDialogState {
-            target: crate::editor::context_menu::TableInsertTarget::Append,
-            body_rows: 1,
-            columns: 2,
-        });
+        editor.table_insert_dialog = Some(crate::editor::context_menu::TableInsertDialogState::new(
+            crate::editor::context_menu::TableInsertTarget::Append,
+            1,
+            2,
+            cx,
+        ));
         assert!(editor.insert_table_from_dialog(cx), "对话框应插入表格");
     });
     redraw(cx);

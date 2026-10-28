@@ -439,6 +439,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) status_bar_mode_source: Option<String>,
     pub(crate) status_bar_mode_rendered: Option<String>,
     pub(crate) status_bar_word_count_suffix: Option<String>,
+    pub(crate) status_bar_code_line_count_suffix: Option<String>,
     pub(crate) status_bar_reading_time_suffix: Option<String>,
     pub(crate) preferences_nav_status_bar: Option<String>,
     pub(crate) preferences_nav_window: Option<String>,

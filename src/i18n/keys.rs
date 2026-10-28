@@ -436,6 +436,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "status_bar_mode_source",
     "status_bar_mode_rendered",
     "status_bar_word_count_suffix",
+    "status_bar_code_line_count_suffix",
     "status_bar_reading_time_suffix",
     "preferences_nav_status_bar",
     "preferences_nav_window",

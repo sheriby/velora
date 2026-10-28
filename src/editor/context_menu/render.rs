@@ -1,5 +1,6 @@
 use super::*;
 use gpui_kit::assets::IconName;
+use gpui_kit::base::{Dialog, ElementExt as _, FocusTrapElement as _};
 use gpui_kit::component::{
     ActiveTheme as _, Icon,
     menu::{PopupMenu, PopupMenuItem},
@@ -79,6 +80,7 @@ impl Editor {
             ContextMenuState::Document {
                 position,
                 open_submenu,
+                focus: menu_focus,
                 ..
             } => {
                 let rows = self.document_menu_rows(cx);
@@ -142,6 +144,10 @@ impl Editor {
                     _ => None,
                 };
 
+                // 菜单要接管键盘：焦点落在面板上并登记焦点陷阱，打字、
+                // vim 普通模式按键都留在菜单里，不再打进遮罩后面的正文。
+                // Esc 走全局的 DismissTransientUi 绑定照常关闭并归还焦点。
+                let menu_focus = menu_focus.clone();
                 let overlay = div()
                     .id("editor-context-menu-overlay")
                     .absolute()
@@ -177,9 +183,38 @@ impl Editor {
                             .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
                                 cx.stop_propagation()
                             })
+                            .on_prepaint({
+                                // 与模态同一套做法：挂载的第一帧先记住正文里的焦点，
+                                // 再把焦点交给菜单；关闭路径负责归还。
+                                let owner = cx.entity().downgrade();
+                                move |_, window, cx| {
+                                    if let Err(error) = owner.update(cx, |editor, cx| {
+                                        let Some(ContextMenuState::Document {
+                                            focus,
+                                            restore_focus,
+                                            ..
+                                        }) = editor.context_menu.as_mut()
+                                        else {
+                                            return;
+                                        };
+                                        if restore_focus.is_some() {
+                                            return;
+                                        }
+                                        *restore_focus =
+                                            Some(window.focused(cx).map(|focus| focus.downgrade()));
+                                        let focus = focus.clone();
+                                        focus.focus(window, cx);
+                                    }) {
+                                        eprintln!("聚焦正文菜单失败：{error}");
+                                    }
+                                }
+                            })
+                            .focus_trap("editor-document-menu-focus-trap", &menu_focus)
                             .children(
                                 rows.into_iter()
-                                    .map(|row| self.render_document_menu_row(theme, &s, row, *open_submenu, cx)),
+                                    .map(|row| {
+                                        self.render_document_menu_row(theme, &s, row, *open_submenu, cx)
+                                    }),
                             ),
                     );
 
@@ -481,7 +516,7 @@ impl Editor {
     }
 
     pub(crate) fn render_table_insert_dialog_overlay(
-        &self,
+        &mut self,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
@@ -490,13 +525,38 @@ impl Editor {
         let d = &theme.dimensions;
         let t = &theme.typography;
         let s = cx.global::<I18nManager>().strings().clone();
+        let dialog_focus = dialog.focus.clone();
+        let [rows_dec, rows_inc, columns_dec, columns_inc] = dialog.steppers.clone();
+        let owner = cx.entity().downgrade();
+
+        // 键盘 Enter 激活当前那颗步进按钮：Confirm 动作在按钮上就地消费掉，
+        // 不再冒泡成整个对话框的「确认」。
+        let confirm_step = |owner: &gpui::WeakEntity<Editor>,
+                            columns: bool,
+                            increment: bool|
+         -> std::rc::Rc<dyn Fn(&gpui_kit::base::actions::Confirm, &mut Window, &mut App)> {
+            let owner = owner.clone();
+            std::rc::Rc::new(
+                move |_: &gpui_kit::base::actions::Confirm, _window, cx| {
+                    if let Err(error) = owner.update(cx, |editor, cx| {
+                        editor.step_table_dialog_value(columns, increment, cx);
+                    }) {
+                        eprintln!("步进表格行列失败：{error}");
+                    }
+                },
+            )
+        };
 
         let stepper =
             |id_prefix: &'static str,
              label: String,
              value: usize,
+             dec_focus: FocusHandle,
+             inc_focus: FocusHandle,
              on_dec: fn(&mut Editor, &ClickEvent, &mut Window, &mut Context<Editor>),
-             on_inc: fn(&mut Editor, &ClickEvent, &mut Window, &mut Context<Editor>)| {
+             on_inc: fn(&mut Editor, &ClickEvent, &mut Window, &mut Context<Editor>),
+             confirm_dec: std::rc::Rc<dyn Fn(&gpui_kit::base::actions::Confirm, &mut Window, &mut App)>,
+             confirm_inc: std::rc::Rc<dyn Fn(&gpui_kit::base::actions::Confirm, &mut Window, &mut App)>| {
                 div()
                     .flex()
                     .flex_col()
@@ -527,7 +587,16 @@ impl Editor {
                                     .hover(|this| this.bg(c.dialog_secondary_button_hover))
                                     .cursor_pointer()
                                     .text_color(c.dialog_secondary_button_text)
+                                    .track_focus(&dec_focus)
                                     .on_click(cx.listener(on_dec))
+                                    .on_action({
+                                        let confirm_dec = confirm_dec.clone();
+                                        move |event: &gpui_kit::base::actions::Confirm,
+                                              window,
+                                              cx| {
+                                            confirm_dec(event, window, cx)
+                                        }
+                                    })
                                     .child("-"),
                             )
                             .child(
@@ -560,142 +629,176 @@ impl Editor {
                                     .hover(|this| this.bg(c.dialog_secondary_button_hover))
                                     .cursor_pointer()
                                     .text_color(c.dialog_secondary_button_text)
+                                    .track_focus(&inc_focus)
                                     .on_click(cx.listener(on_inc))
+                                    .on_action({
+                                        let confirm_inc = confirm_inc.clone();
+                                        move |event: &gpui_kit::base::actions::Confirm,
+                                              window,
+                                              cx| {
+                                            confirm_inc(event, window, cx)
+                                        }
+                                    })
                                     .child("+"),
                             ),
                     )
             };
 
+        let panel = div()
+            .id("table-insert-dialog")
+            .w(px(d.dialog_width.min(d.table_insert_dialog_width)))
+            .max_w(relative(1.0))
+            .p(px(d.dialog_padding))
+            .flex()
+            .flex_col()
+            .gap(px(d.dialog_gap))
+            .bg(c.dialog_surface)
+            .border(px(d.dialog_border_width))
+            .border_color(c.dialog_border)
+            .rounded(px(d.dialog_radius))
+            .shadow_lg()
+            .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
+                cx.stop_propagation()
+            })
+            .on_prepaint({
+                // 与模态同一套做法：挂载的第一帧先记住正文里的焦点，再把焦点
+                // 交给对话框。没有它，回车与 vim 按键都会打进遮罩后面的正文。
+                let owner = owner.clone();
+                move |_, window, cx| {
+                    if let Err(error) = owner.update(cx, |editor, cx| {
+                        let Some(dialog) = editor.table_insert_dialog.as_mut() else {
+                            return;
+                        };
+                        if dialog.restore_focus.is_some() {
+                            return;
+                        }
+                        dialog.restore_focus =
+                            Some(window.focused(cx).map(|focus| focus.downgrade()));
+                        let focus = dialog.focus.clone();
+                        focus.focus(window, cx);
+                    }) {
+                        eprintln!("聚焦表格插入对话框失败：{error}");
+                    }
+                }
+            })
+            .child(
+                div()
+                    .text_size(px(t.dialog_title_size))
+                    .font_weight(t.dialog_title_weight.to_font_weight())
+                    .text_color(c.dialog_title)
+                    .child(s.table_insert_title.clone()),
+            )
+            .child(
+                div()
+                    .text_size(px(t.dialog_body_size))
+                    .font_weight(t.dialog_body_weight.to_font_weight())
+                    .text_color(c.dialog_body)
+                    .child(s.table_insert_description.clone()),
+            )
+            .child(stepper(
+                "table-body-rows",
+                s.table_insert_body_rows.clone(),
+                dialog.body_rows,
+                rows_dec,
+                rows_inc,
+                Self::on_table_rows_decrement,
+                Self::on_table_rows_increment,
+                confirm_step(&owner, false, false),
+                confirm_step(&owner, false, true),
+            ))
+            .child(stepper(
+                "table-columns",
+                s.table_insert_columns.clone(),
+                dialog.columns,
+                columns_dec,
+                columns_inc,
+                Self::on_table_columns_decrement,
+                Self::on_table_columns_increment,
+                confirm_step(&owner, true, false),
+                confirm_step(&owner, true, true),
+            ))
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(d.dialog_button_gap))
+                    .child(
+                        div()
+                            .id("cancel-table-insert-dialog")
+                            .h(px(d.dialog_button_height))
+                            .px(px(d.dialog_button_padding_x))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px((d.dialog_radius - 4.0).max(0.0)))
+                            .border(px(d.dialog_border_width))
+                            .border_color(c.dialog_border)
+                            .bg(c.dialog_secondary_button_bg)
+                            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                            .cursor_pointer()
+                            .text_size(px(t.dialog_button_size))
+                            .font_weight(t.dialog_button_weight.to_font_weight())
+                            .text_color(c.dialog_secondary_button_text)
+                            .on_click(cx.listener(Self::on_cancel_table_insert_dialog))
+                            .child(s.table_insert_cancel.clone()),
+                    )
+                    .child(
+                        div()
+                            .id("confirm-table-insert-dialog")
+                            .h(px(d.dialog_button_height))
+                            .px(px(d.dialog_button_padding_x))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px((d.dialog_radius - 4.0).max(0.0)))
+                            .bg(c.dialog_primary_button_bg)
+                            .hover(|this| this.bg(c.dialog_primary_button_hover))
+                            .cursor_pointer()
+                            .text_size(px(t.dialog_button_size))
+                            .font_weight(t.dialog_button_weight.to_font_weight())
+                            .text_color(c.dialog_primary_button_text)
+                            .on_click(cx.listener(Self::on_confirm_table_insert_dialog))
+                            .child(s.table_insert_confirm.clone()),
+                    ),
+            );
+
         Some(
-            div()
-                .id("table-insert-dialog-overlay")
-                .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                .bottom_0()
-                .occlude()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(c.dialog_backdrop)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(Self::on_dismiss_context_menu_overlay),
-                )
-                .child(
+            // 真模态走 Kit Dialog：焦点陷阱挡下外围按键、Esc 取消、Enter 确认、
+            // 遮罩可点，绘制层级也在补全/公式浮层之上——自绘 overlay 只挡鼠标。
+            Dialog::new(cx)
+                .focus_handle(dialog_focus)
+                .layer(crate::editor::modal::next_modal_layer(), true)
+                .backdrop(div().size_full().bg(c.dialog_backdrop))
+                .popup(
                     div()
                         .w_full()
                         .px(px(d.editor_padding))
                         .flex()
                         .justify_center()
-                        .child(
-                            div()
-                                .id("table-insert-dialog")
-                                .w(px(d.dialog_width.min(d.table_insert_dialog_width)))
-                                .max_w(relative(1.0))
-                                .p(px(d.dialog_padding))
-                                .flex()
-                                .flex_col()
-                                .gap(px(d.dialog_gap))
-                                .bg(c.dialog_surface)
-                                .border(px(d.dialog_border_width))
-                                .border_color(c.dialog_border)
-                                .rounded(px(d.dialog_radius))
-                                .shadow_lg()
-                                .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
-                                    cx.stop_propagation()
-                                })
-                                .child(
-                                    div()
-                                        .text_size(px(t.dialog_title_size))
-                                        .font_weight(t.dialog_title_weight.to_font_weight())
-                                        .text_color(c.dialog_title)
-                                        .child(s.table_insert_title.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(t.dialog_body_size))
-                                        .font_weight(t.dialog_body_weight.to_font_weight())
-                                        .text_color(c.dialog_body)
-                                        .child(s.table_insert_description.clone()),
-                                )
-                                .child(stepper(
-                                    "table-body-rows",
-                                    s.table_insert_body_rows.clone(),
-                                    dialog.body_rows,
-                                    Self::on_table_rows_decrement,
-                                    Self::on_table_rows_increment,
-                                ))
-                                .child(stepper(
-                                    "table-columns",
-                                    s.table_insert_columns.clone(),
-                                    dialog.columns,
-                                    Self::on_table_columns_decrement,
-                                    Self::on_table_columns_increment,
-                                ))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .justify_end()
-                                        .gap(px(d.dialog_button_gap))
-                                        .child(
-                                            div()
-                                                .id("cancel-table-insert-dialog")
-                                                .h(px(d.dialog_button_height))
-                                                .px(px(d.dialog_button_padding_x))
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .rounded(px((d.dialog_radius - 4.0).max(0.0)))
-                                                .border(px(d.dialog_border_width))
-                                                .border_color(c.dialog_border)
-                                                .bg(c.dialog_secondary_button_bg)
-                                                .hover(|this| {
-                                                    this.bg(c.dialog_secondary_button_hover)
-                                                })
-                                                .cursor_pointer()
-                                                .text_size(px(t.dialog_button_size))
-                                                .font_weight(
-                                                    t.dialog_button_weight.to_font_weight(),
-                                                )
-                                                .text_color(c.dialog_secondary_button_text)
-                                                .on_click(
-                                                    cx.listener(
-                                                        Self::on_cancel_table_insert_dialog,
-                                                    ),
-                                                )
-                                                .child(s.table_insert_cancel.clone()),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("confirm-table-insert-dialog")
-                                                .h(px(d.dialog_button_height))
-                                                .px(px(d.dialog_button_padding_x))
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .rounded(px((d.dialog_radius - 4.0).max(0.0)))
-                                                .bg(c.dialog_primary_button_bg)
-                                                .hover(|this| {
-                                                    this.bg(c.dialog_primary_button_hover)
-                                                })
-                                                .cursor_pointer()
-                                                .text_size(px(t.dialog_button_size))
-                                                .font_weight(
-                                                    t.dialog_button_weight.to_font_weight(),
-                                                )
-                                                .text_color(c.dialog_primary_button_text)
-                                                .on_click(
-                                                    cx.listener(
-                                                        Self::on_confirm_table_insert_dialog,
-                                                    ),
-                                                )
-                                                .child(s.table_insert_confirm.clone()),
-                                        ),
-                                ),
-                        ),
+                        .child(panel),
                 )
+                .on_ok({
+                    let owner = owner.clone();
+                    move |_, _window, cx| {
+                        if let Err(error) = owner.update(cx, |editor, cx| {
+                            editor.insert_table_from_dialog(cx);
+                        }) {
+                            eprintln!("确认表格插入失败：{error}");
+                        }
+                        false
+                    }
+                })
+                .on_cancel({
+                    let owner = owner.clone();
+                    move |_, window, cx| {
+                        if let Err(error) = owner.update(cx, |editor, cx| {
+                            editor.cancel_table_insert_dialog_with_focus(window, cx);
+                        }) {
+                            eprintln!("取消表格插入失败：{error}");
+                        }
+                        false
+                    }
+                })
                 .into_any_element(),
         )
     }

@@ -1,4 +1,5 @@
 use super::common::*;
+use gpui::point;
 use gpui::{Div, IntoElement, Render, Stateful, Styled};
 
 #[gpui::test]
@@ -355,7 +356,7 @@ async fn insert_table_row_below_header_writes_a_blank_line_after_the_delimiter(
 
     editor.update(cx, |editor, cx| {
         let table = editor.document.first_root().expect("table root").clone();
-        editor.insert_table_row(&table, 0, true, cx);
+        editor.insert_table_row(&table, 0, true, None, cx);
 
         assert_eq!(
             editor.buffer.text(),
@@ -384,7 +385,7 @@ async fn insert_table_row_above_a_body_row_keeps_the_other_lines_untouched(
 
     editor.update(cx, |editor, cx| {
         let table = editor.document.first_root().expect("table root").clone();
-        editor.insert_table_row(&table, 2, false, cx);
+        editor.insert_table_row(&table, 2, false, None, cx);
 
         assert_eq!(
             editor.buffer.text(),
@@ -413,7 +414,7 @@ async fn insert_table_column_left_copies_the_reference_alignment(cx: &mut TestAp
 
     editor.update(cx, |editor, cx| {
         let table = editor.document.first_root().expect("table root").clone();
-        editor.insert_table_column(&table, 1, false, cx);
+        editor.insert_table_column(&table, 1, false, None, cx);
 
         assert_eq!(
             editor.buffer.text(),
@@ -442,7 +443,7 @@ async fn insert_table_column_right_of_the_last_column_appends_the_cell(cx: &mut 
 
     editor.update(cx, |editor, cx| {
         let table = editor.document.first_root().expect("table root").clone();
-        editor.insert_table_column(&table, 1, true, cx);
+        editor.insert_table_column(&table, 1, true, None, cx);
 
         assert_eq!(
             editor.buffer.text(),
@@ -471,7 +472,7 @@ async fn inserting_a_table_row_can_be_undone(cx: &mut TestAppContext) {
 
     editor.update(cx, |editor, cx| {
         let table = editor.document.first_root().expect("table root").clone();
-        editor.insert_table_row(&table, 1, false, cx);
+        editor.insert_table_row(&table, 1, false, None, cx);
         assert_ne!(editor.buffer.text(), markdown);
         editor.undo_document(cx);
         assert_eq!(editor.buffer.text(), markdown);
@@ -584,6 +585,109 @@ async fn header_cell_menu_cannot_insert_above_the_header(cx: &mut TestAppContext
         editor.read_with(cx, |editor, _| editor.buffer.text()),
         ["| A | B |", "| --- | --- |", "|   |   |", "| 1 | 2 |"].join("\n")
     );
+}
+
+/// 仅剩表头的表上，单元格菜单的「删除行」与轴菜单同语义：没有数据行可升，
+/// 删的就是整张表。以前这里静默什么都不做，两个菜单同一动作
+/// 两种结果。
+#[gpui::test]
+async fn cell_menu_delete_row_on_a_header_only_table_removes_the_table(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "| 唯一表头 |\n| --- |".into(), None));
+    redraw(cx);
+    redraw(cx);
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor.document.first_root().expect("表").clone();
+            editor.context_menu =
+                Some(crate::editor::context_menu::ContextMenuState::TableCell {
+                    position: point(px(10.0), px(10.0)),
+                    table_block_id: table.entity_id(),
+                    cell: crate::components::TableCellPosition { row: 0, column: 0 },
+                });
+            editor.on_delete_table_cell_row(&ClickEvent::default(), window, cx);
+            let root = editor
+                .document
+                .first_root()
+                .expect("删表后应留一个空段落接住光标");
+            assert_eq!(
+                root.read(cx).kind(),
+                BlockKind::Paragraph,
+                "仅剩表头的表上「删除行」应删掉整张表"
+            );
+            assert!(root.read(cx).record.table.is_none());
+        });
+    });
+}
+
+/// 单元格菜单「在下方插入一行」，焦点落在「新行 × 右击的那一列」：
+/// 用户的心智位置不丢，插完接着打字打的是右击那格的正下方。
+#[gpui::test]
+async fn cell_menu_insert_row_below_focuses_the_clicked_column(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = ["| A | B |", "| --- | --- |", "| 1 | 2 |"].join("\n");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    redraw(cx);
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor.document.first_root().expect("表").clone();
+            editor.context_menu =
+                Some(crate::editor::context_menu::ContextMenuState::TableCell {
+                    position: point(px(10.0), px(10.0)),
+                    table_block_id: table.entity_id(),
+                    cell: crate::components::TableCellPosition { row: 1, column: 1 },
+                });
+            editor.on_insert_table_row_below(&ClickEvent::default(), window, cx);
+            let focused = editor
+                .active_entity_id
+                .expect("插入后应有一个焦点格");
+            let runtime = table.read(cx).table_runtime.as_ref().expect("运行时");
+            assert_eq!(
+                focused,
+                runtime.rows[1][1].entity_id(),
+                "插行后焦点应落在右击那一列的新行上"
+            );
+        });
+    });
+}
+
+/// 单元格菜单「在左侧插入一列」，焦点落在「右击的那一行 × 新列」：
+/// 第一下输入不许污染表头。
+#[gpui::test]
+async fn cell_menu_insert_column_focuses_the_clicked_row(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = ["| A | B |", "| --- | --- |", "| 1 | 2 |"].join("\n");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    redraw(cx);
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor.document.first_root().expect("表").clone();
+            editor.context_menu =
+                Some(crate::editor::context_menu::ContextMenuState::TableCell {
+                    position: point(px(10.0), px(10.0)),
+                    table_block_id: table.entity_id(),
+                    cell: crate::components::TableCellPosition { row: 1, column: 0 },
+                });
+            editor.on_insert_table_column_left(&ClickEvent::default(), window, cx);
+            let focused = editor
+                .active_entity_id
+                .expect("插入后应有一个焦点格");
+            let runtime = table.read(cx).table_runtime.as_ref().expect("运行时");
+            assert_eq!(
+                focused,
+                runtime.rows[0][0].entity_id(),
+                "插列后焦点应落在右击那一行的新列上，而不是表头"
+            );
+        });
+    });
 }
 
 #[gpui::test]

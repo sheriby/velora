@@ -442,7 +442,7 @@ impl I18nStrings {
             table_axis_move_row_up: "向上移动此行".into(),
             table_axis_move_row_down: "向下移动此行".into(),
             table_axis_delete_row: "删除此行".into(),
-            table_header_row: "标题行".into(),
+            table_header_row: "显示表头行（全局）".into(),
             table_cell_insert_row_above: "在上方插入行".into(),
             table_cell_insert_row_below: "在下方插入行".into(),
             table_cell_insert_column_left: "在左侧插入列".into(),
@@ -464,6 +464,7 @@ impl I18nStrings {
             status_bar_mode_source: "源码".into(),
             status_bar_mode_rendered: "渲染".into(),
             status_bar_word_count_suffix: "字".into(),
+            status_bar_code_line_count_suffix: "行".into(),
             status_bar_reading_time_suffix: "分钟阅读".into(),
             ..Self::en_us()
         };
@@ -1055,7 +1056,7 @@ impl I18nStrings {
             table_axis_move_row_up: "Move Row Up".into(),
             table_axis_move_row_down: "Move Row Down".into(),
             table_axis_delete_row: "Delete Row".into(),
-            table_header_row: "Header Row".into(),
+            table_header_row: "Show Table Headers (Global)".into(),
             table_cell_insert_row_above: "Insert Row Above".into(),
             table_cell_insert_row_below: "Insert Row Below".into(),
             table_cell_insert_column_left: "Insert Column Left".into(),
@@ -1078,6 +1079,7 @@ impl I18nStrings {
             status_bar_mode_source: "Source".into(),
             status_bar_mode_rendered: "Rendered".into(),
             status_bar_word_count_suffix: "words".into(),
+            status_bar_code_line_count_suffix: "lines".into(),
             status_bar_reading_time_suffix: "min read".into(),
             preferences_nav_status_bar: "Status Bar".into(),
             preferences_status_bar_enabled: "Show Status Bar".into(),

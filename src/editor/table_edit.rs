@@ -854,7 +854,7 @@ impl Editor {
         if columns == 0 {
             return;
         }
-        self.insert_table_column(table_block, columns - 1, true, cx);
+        self.insert_table_column(table_block, columns - 1, true, None, cx);
     }
 
     #[cfg(test)]
@@ -869,16 +869,21 @@ impl Editor {
             return;
         };
         // 表头是 visual 0；最后一行正文的 visual 行号就是 body 行数。
-        self.insert_table_row(table_block, body_rows, true, cx);
+        self.insert_table_row(table_block, body_rows, true, None, cx);
     }
 
     /// 在 `visual_row` 的上方或下方插入一行。表头之上没有行，`visual_row == 0`
     /// 且 `below == false` 时什么都不做。
+    ///
+    /// `anchor` 是触发插入的那一格（单元格菜单入口才有）：新行的焦点落在
+    /// 「新行 × 锚点列」，用户的心智位置不丢；轴柄入口传 `None`，焦点照旧
+    /// 落在新行首列。
     pub(super) fn insert_table_row(
         &mut self,
         table_block: &Entity<Block>,
         visual_row: usize,
         below: bool,
+        anchor: Option<TableCellPosition>,
         cx: &mut Context<Self>,
     ) {
         if self.is_read_only() {
@@ -909,12 +914,17 @@ impl Editor {
             block.record.table = Some(table.clone());
         });
         self.rebuild_table_runtimes(cx);
+        let anchor_column = anchor.map(|cell| cell.column);
         if let Some(cell) = table_block
             .read(cx)
             .table_runtime
             .as_ref()
             .and_then(|runtime| runtime.rows.get(new_visual_row - 1))
-            .and_then(|row| row.first())
+            .and_then(|row| match anchor_column {
+                // 锚点列越界（并发重建把行剪短了）就收进本行，焦点不许丢。
+                Some(column) => row.get(column.min(row.len().saturating_sub(1))),
+                None => row.first(),
+            })
         {
             self.focus_block(cell.entity_id());
         }
@@ -931,11 +941,16 @@ impl Editor {
     }
 
     /// 在 `column` 的左侧或右侧插入一列，对齐方式照抄这一列。
+    ///
+    /// `anchor` 是触发插入的那一格（单元格菜单入口才有）：新列的焦点落在
+    /// 「锚点行 × 新列」，第一下输入不会污染表头；轴柄入口传 `None`，焦点
+    /// 照旧落在表头的新列格。
     pub(super) fn insert_table_column(
         &mut self,
         table_block: &Entity<Block>,
         column: usize,
         right: bool,
+        anchor: Option<TableCellPosition>,
         cx: &mut Context<Self>,
     ) {
         if self.is_read_only() {
@@ -968,12 +983,19 @@ impl Editor {
             block.record.table = Some(table.clone());
         });
         self.rebuild_table_runtimes(cx);
-        if let Some(cell) = table_block
-            .read(cx)
-            .table_runtime
-            .as_ref()
-            .and_then(|runtime| runtime.header.get(new_column))
-        {
+        let anchor_row = anchor.map(|cell| cell.row);
+        if let Some(cell) = table_block.read(cx).table_runtime.as_ref().and_then(|runtime| {
+            match anchor_row {
+                // 锚点行是数据行才落数据行；那一行不存在（仅剩表头的表、
+                // 并发重建）就退回表头的新列格。
+                Some(row) if row > 0 => runtime
+                    .rows
+                    .get(row - 1)
+                    .and_then(|cells| cells.get(new_column))
+                    .or_else(|| runtime.header.get(new_column)),
+                _ => runtime.header.get(new_column),
+            }
+        }) {
             self.focus_block(cell.entity_id());
         }
         if self.write_back_table_column_insertion(table_block, new_column, column, cx) {

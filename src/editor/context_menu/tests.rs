@@ -4,6 +4,37 @@ mod tests {
     };
     use gpui::{AppContext, Point, TestAppContext, px};
 
+    /// 正文菜单的渲染在产品路径的每一帧上跑：这一份源码里不许有
+    /// unwrap/expect。以前「段落」二级菜单用
+    /// `as_block_target().expect(...)` 把「数组全是段落转换」这个字符串约定
+    /// 当运行时断言，谁往数组里加一条非段落命令，一打开右键菜单就 panic。
+    /// 轴菜单顶部那个「表头行」开关改的是全局偏好，文案必须
+    /// 写明，否则看起来像「这一张表显不显示表头」的单表开关。
+    #[test]
+    fn table_header_row_toggle_labels_its_global_scope() {
+        use crate::i18n::I18nStrings;
+        assert!(I18nStrings::zh_cn().table_header_row.contains("全局"));
+        assert!(I18nStrings::en_us().table_header_row.contains("Global"));
+    }
+
+    #[test]
+    fn product_menu_code_has_no_unwrap_or_expect() {
+        let source = include_str!("document_menu.rs");
+        // 测试模块自己可以用 unwrap；审计的只是产品代码那一段。
+        let product = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("测试模块之外应有产品代码");
+        assert!(
+            !product.contains(".expect("),
+            "产品路径出现了 expect：把失败处理成显式分支，不要让右键菜单 panic"
+        );
+        assert!(
+            !product.contains(".unwrap()"),
+            "产品路径出现了 unwrap：把失败处理成显式分支，不要让右键菜单 panic"
+        );
+    }
+
     #[test]
     fn reveal_command_targets_the_file_on_macos_and_windows_dir_on_linux() {
         let path = std::path::Path::new("/tmp/docs/pic.png");

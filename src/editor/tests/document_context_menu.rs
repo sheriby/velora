@@ -1224,6 +1224,122 @@ async fn the_shortcut_column_shows_the_users_own_binding(cx: &mut TestAppContext
     );
 }
 
+/// 正文菜单开着时必须接管键盘：焦点陷阱激活，打字落在菜单上
+/// 而不是遮罩后面的正文；Esc 关菜单并把焦点还回正文，继续打字落回原处。
+#[gpui::test]
+async fn the_open_document_menu_traps_keystrokes_and_returns_focus(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+    // 先让正文握着焦点：关菜单时才有东西可还。
+    let first_center = block_center(&editor, 0, cx);
+    cx.simulate_click(first_center, Modifiers::none());
+    redraw(cx);
+
+    right_click(&editor, 0, cx);
+    assert!(menu_is_open(&editor, cx), "前置：右键应打开正文菜单");
+    cx.update(|window, cx| {
+        assert!(
+            gpui_kit::base::active_focus_trap(window, cx).is_some(),
+            "正文菜单应登记焦点陷阱"
+        );
+    });
+    cx.simulate_keystrokes("zz");
+    redraw(cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        TWO_PARAGRAPHS,
+        "菜单开着时打字不许进遮罩后面的正文"
+    );
+
+    cx.simulate_keystrokes("escape");
+    redraw(cx);
+    assert!(!menu_is_open(&editor, cx), "Esc 应关闭正文菜单");
+    cx.simulate_keystrokes("x");
+    redraw(cx);
+    assert!(
+        buffer_text(&editor, cx).contains("x"),
+        "Esc 归还焦点后应能继续往正文里打字"
+    );
+}
+
+/// 表格插入对话框是真模态：焦点陷阱挡住外围按键，回车确认、
+/// Esc 取消，关闭后焦点归还正文。以前它只挡鼠标，回车与 vim 按键全都
+/// 直接打进遮罩后面的正文。
+#[gpui::test]
+async fn the_table_insert_dialog_is_a_real_modal(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+    let first_center = block_center(&editor, 0, cx);
+    cx.simulate_click(first_center, Modifiers::none());
+    redraw(cx);
+    right_click(&editor, 0, cx);
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.run_document_menu_command(DocumentMenuCommand::InsertTable, window, cx);
+        });
+    });
+    redraw(cx);
+    assert!(
+        editor
+            .read_with(cx, |editor, _| editor.table_insert_dialog.is_some()),
+        "前置：插入表格对话框应打开"
+    );
+    cx.update(|window, cx| {
+        assert!(
+            gpui_kit::base::active_focus_trap(window, cx).is_some(),
+            "表格插入对话框应登记焦点陷阱"
+        );
+    });
+    cx.simulate_keystrokes("zz");
+    redraw(cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        TWO_PARAGRAPHS,
+        "对话框开着时打字不许进遮罩后面的正文"
+    );
+
+    // 回车 = 确认：插表、关对话框。
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    assert!(
+        editor
+            .read_with(cx, |editor, _| editor.table_insert_dialog.is_none()),
+        "Enter 应确认并关闭对话框"
+    );
+    assert!(
+        buffer_text(&editor, cx).contains("|  |  |"),
+        "Enter 应把表格插进文档"
+    );
+
+    // 再开一次：Esc = 取消，焦点归还正文，继续打字落回原处。
+    right_click(&editor, 0, cx);
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.run_document_menu_command(DocumentMenuCommand::InsertTable, window, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("escape");
+    redraw(cx);
+    assert!(
+        editor
+            .read_with(cx, |editor, _| editor.table_insert_dialog.is_none()),
+        "Esc 应取消并关闭对话框"
+    );
+    cx.simulate_keystrokes("x");
+    redraw(cx);
+    assert!(
+        buffer_text(&editor, cx).contains("x"),
+        "Esc 归还焦点后应能继续往正文里打字"
+    );
+}
+
 /// 主面板每一行的行首图标（FP15）。三件事钉在一起：图标真的画出来且在面板之内、
 /// 「图标列 + 真实字宽 + 键位列 + 二级箭头」装得下面板内框、屏上那份面板的宽与按
 /// 当前语言量出来的几何一字不差。图标列漏算进 `row_width`，就是「一级标题」只剩
