@@ -79,3 +79,34 @@ jobs:
             --skip "loading_chunks::manual" \
             --skip an_edit_on_an_eight_mib_buffer_costs_nothing_proportional_to_the_text \
             --skip searching_a_ten_mib_document_stays_within_budget
+
+  features:
+    # 非默认 feature 组合的编译检查：默认矩阵只编 default 集合，语言门漏
+    # cfg（评审 P144 曾漏 17 个）在这里当场红。单 runner、只编译不测试。
+    name: Feature combos
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build core-only
+        run: cargo build --locked --no-default-features --features code-highlight-core
+
+      - name: Build config-only
+        run: cargo build --locked --no-default-features --features code-highlight-config
+
+      - name: Build official-only
+        run: cargo build --locked --no-default-features --features code-highlight-official

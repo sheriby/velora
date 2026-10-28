@@ -274,6 +274,11 @@ static CODE_HIGHLIGHT_REGISTRY: LazyLock<CodeHighlightRegistry> =
 #[cfg(feature = "code-highlight-core")]
 impl CodeHighlightRegistry {
     fn new() -> Self {
+        // core-only 构建没有任何语言可注册：mut 只在 official/config 启用时用得上。
+        #[cfg_attr(
+            not(any(feature = "code-highlight-official", feature = "code-highlight-config")),
+            allow(unused_mut)
+        )]
         let mut configs = HashMap::new();
         #[cfg(feature = "code-highlight-official")]
         maybe_insert_config(&mut configs, CodeLanguageKey::Rust, build_rust_config());
@@ -343,7 +348,11 @@ impl CodeHighlightRegistry {
     }
 }
 
-#[cfg(feature = "code-highlight-core")]
+// 只被 official/config 门住的语言构建函数调用：core-only 构建里是死代码。
+#[cfg(any(
+    feature = "code-highlight-official",
+    feature = "code-highlight-config"
+))]
 fn maybe_insert_config(
     configs: &mut HashMap<CodeLanguageKey, HighlightConfiguration>,
     key: CodeLanguageKey,
@@ -354,7 +363,10 @@ fn maybe_insert_config(
     }
 }
 
-#[cfg(feature = "code-highlight-core")]
+#[cfg(any(
+    feature = "code-highlight-official",
+    feature = "code-highlight-config"
+))]
 fn configure_highlights(
     language: tree_sitter::Language,
     name: &'static str,
@@ -385,6 +397,7 @@ fn build_rust_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_javascript_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_javascript::LANGUAGE.into(),
@@ -395,6 +408,7 @@ fn build_javascript_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_jsx_config() -> Option<HighlightConfiguration> {
     let query = format!(
         "{}\n{}",
@@ -410,6 +424,7 @@ fn build_jsx_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_typescript_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
@@ -420,6 +435,7 @@ fn build_typescript_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_tsx_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_typescript::LANGUAGE_TSX.into(),
@@ -430,6 +446,7 @@ fn build_tsx_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_json_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_json::LANGUAGE.into(),
@@ -440,6 +457,7 @@ fn build_json_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_markdown_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_md::LANGUAGE.into(),
@@ -450,6 +468,7 @@ fn build_markdown_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_bash_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_bash::LANGUAGE.into(),
@@ -460,6 +479,7 @@ fn build_bash_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_c_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_c::LANGUAGE.into(),
@@ -470,6 +490,7 @@ fn build_c_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_cpp_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_cpp::LANGUAGE.into(),
@@ -480,6 +501,7 @@ fn build_cpp_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_csharp_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_c_sharp::LANGUAGE.into(),
@@ -490,6 +512,7 @@ fn build_csharp_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_css_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_css::LANGUAGE.into(),
@@ -500,6 +523,7 @@ fn build_css_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_go_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_go::LANGUAGE.into(),
@@ -510,6 +534,7 @@ fn build_go_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_html_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_html::LANGUAGE.into(),
@@ -520,6 +545,7 @@ fn build_html_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_java_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_java::LANGUAGE.into(),
@@ -530,6 +556,7 @@ fn build_java_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_php_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_php::LANGUAGE_PHP.into(),
@@ -540,6 +567,7 @@ fn build_php_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_python_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_python::LANGUAGE.into(),
@@ -550,6 +578,7 @@ fn build_python_config() -> Option<HighlightConfiguration> {
     )
 }
 
+#[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
 fn build_ruby_config() -> Option<HighlightConfiguration> {
     configure_highlights(
         tree_sitter_ruby::LANGUAGE.into(),
