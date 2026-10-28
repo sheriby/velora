@@ -108,6 +108,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_single_quoted_and_parenthesized_image_titles() {
+        for (markdown, title) in [
+            ("![alt](./img.png 'caption text')", "caption text"),
+            ("![alt](./img.png (caption text))", "caption text"),
+            ("![alt](./img.png (caption (text)))", "caption (text)"),
+        ] {
+            let parsed = parse_standalone_image(markdown).expect("image syntax");
+            assert_eq!(
+                parsed.target,
+                ImageTarget::Direct {
+                    src: "./img.png".to_string(),
+                    title: Some(title.to_string()),
+                },
+                "{markdown}"
+            );
+        }
+    }
+
+    #[test]
     fn parses_reference_style_standalone_image() {
         let parsed =
             parse_standalone_image("![reference image][ref-image]").expect("reference image");

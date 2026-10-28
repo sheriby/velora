@@ -730,18 +730,11 @@ fn parse_image_target(inner: &str) -> Option<(String, Option<String>)> {
         return None;
     }
 
-    if inner.ends_with('"') {
-        let close_quote = inner.len() - 1;
-        if !is_escaped(inner, close_quote)
-            && let Some(open_quote) = find_open_title_quote(inner, close_quote)
-        {
-            let src = inner[..open_quote.saturating_sub(1)].trim_end();
-            let title = inner[open_quote + 1..close_quote].to_string();
-            if src.is_empty() {
-                return None;
-            }
-            return Some((normalize_image_source(src), Some(title)));
-        }
+    if let Some((src, title)) = super::link::split_target_title(inner) {
+        return Some((
+            normalize_image_source(src),
+            Some(super::link::unescape_ascii_punctuation(title)),
+        ));
     }
 
     Some((normalize_image_source(inner), None))
@@ -761,16 +754,6 @@ fn is_reference_definition_title_continuation(line: &str) -> bool {
     (trimmed.starts_with('"') && trimmed.ends_with('"'))
         || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
         || (trimmed.starts_with('(') && trimmed.ends_with(')'))
-}
-
-fn find_open_title_quote(input: &str, close_quote: usize) -> Option<usize> {
-    let bytes = input.as_bytes();
-    (0..close_quote).rev().find(|&index| {
-        bytes[index] == b'"'
-            && !is_escaped(input, index)
-            && index > 0
-            && bytes[index - 1].is_ascii_whitespace()
-    })
 }
 
 fn normalize_image_source(source: &str) -> String {

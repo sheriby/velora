@@ -52,6 +52,7 @@ pub(crate) fn locate_inline_link(
         Some('(') => {
             let url_start = label_end + 2;
             let mut paren_depth = 0usize;
+            let mut title_quote: Option<char> = None;
             cursor = url_start;
             let url_end = loop {
                 let token = tokens.get(cursor)?;
@@ -62,9 +63,22 @@ pub(crate) fn locate_inline_link(
                 }
 
                 match token.ch {
-                    '(' => paren_depth += 1,
-                    ')' if paren_depth == 0 => break cursor,
-                    ')' => paren_depth = paren_depth.saturating_sub(1),
+                    // 标题引号里的括号属于标题，不参与目的地的括号配平。
+                    // 开引号前必须有空白：紧贴目的地的引号是路径字符。
+                    '"' | '\''
+                        if title_quote.is_none()
+                            && paren_depth == 0
+                            && cursor > url_start
+                            && tokens[cursor - 1].ch.is_ascii_whitespace() =>
+                    {
+                        title_quote = Some(token.ch);
+                    }
+                    ch if Some(ch) == title_quote => title_quote = None,
+                    '(' if title_quote.is_none() => paren_depth += 1,
+                    ')' if title_quote.is_none() && paren_depth == 0 => break cursor,
+                    ')' if title_quote.is_none() => {
+                        paren_depth = paren_depth.saturating_sub(1);
+                    }
                     _ => {}
                 }
                 cursor += 1;

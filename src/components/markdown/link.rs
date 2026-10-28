@@ -389,27 +389,71 @@ pub(crate) fn parse_link_target(inner: &str) -> Option<(String, Option<String>)>
         return None;
     }
 
-    if inner.ends_with('"') {
-        let close_quote = inner.len() - 1;
-        if !super::image::is_escaped(inner, close_quote)
-            && let Some(open_quote) = find_open_title_quote(inner, close_quote)
-        {
-            let destination = inner[..open_quote.saturating_sub(1)].trim_end();
-            // title 要做 CommonMark 反斜杠反转义（判据单点
-            // unescape_ascii_punctuation）：存储值是「解析后的语义」，写回时才
-            // 加转义。只做字面截取的话「解析 ∘ 序列化」不是对合——源码
-            // `ti\"tle` 存成 `ti\"tle`，写回转义成 `ti\\"tle`，每保存一次多
-            // 一层反斜杠，永不收敛（destination 侧的
-            // normalize_link_destination 早有同一步，title 漏了）。
-            let title = unescape_ascii_punctuation(&inner[open_quote + 1..close_quote]);
-            if destination.is_empty() {
-                return None;
-            }
-            return Some((normalize_link_destination(destination), Some(title)));
-        }
+    if let Some((destination, title)) = split_target_title(inner) {
+        // title 要做 CommonMark 反斜杠反转义（判据单点
+        // unescape_ascii_punctuation）：存储值是「解析后的语义」，写回时才
+        // 加转义。只做字面截取的话「解析 ∘ 序列化」不是对合——源码
+        // `ti\"tle` 存成 `ti\"tle`，写回转义成 `ti\\"tle`，每保存一次多
+        // 一层反斜杠，永不收敛（destination 侧的
+        // normalize_link_destination 早有同一步，title 漏了）。
+        let title = unescape_ascii_punctuation(title);
+        return Some((normalize_link_destination(destination), Some(title)));
     }
 
     Some((normalize_link_destination(inner), None))
+}
+
+/// 把 `目标 标题` 拆成两段：标题的定界符可以是 `"`、`'` 或圆括号，
+/// 开定界符前必须有空白才认——`/url(a)` 的圆括号属于目的地。
+/// 圆括号标题按配平扫描，标题内部成对的括号不会截断。
+pub(crate) fn split_target_title(inner: &str) -> Option<(&str, &str)> {
+    let close = inner.chars().last()?;
+    let open = match close {
+        '"' => '"',
+        '\'' => '\'',
+        ')' => '(',
+        _ => return None,
+    };
+    let close_index = inner.len() - close.len_utf8();
+    if super::image::is_escaped(inner, close_index) {
+        return None;
+    }
+    let open_index = find_open_title_delimiter(inner, close_index, open)?;
+    let destination = inner[..open_index].trim_end();
+    if destination.is_empty() {
+        return None;
+    }
+    Some((destination, &inner[open_index + 1..close_index]))
+}
+
+fn find_open_title_delimiter(input: &str, close_index: usize, open: char) -> Option<usize> {
+    let bytes = input.as_bytes();
+    if open == '(' {
+        let mut depth = 0usize;
+        for index in (0..close_index).rev() {
+            if super::image::is_escaped(input, index) {
+                continue;
+            }
+            match bytes[index] {
+                b')' => depth += 1,
+                b'(' => {
+                    if depth == 0 {
+                        return (index > 0 && bytes[index - 1].is_ascii_whitespace())
+                            .then_some(index);
+                    }
+                    depth -= 1;
+                }
+                _ => {}
+            }
+        }
+        return None;
+    }
+    (0..close_index).rev().find(|&index| {
+        bytes[index] == open as u8
+            && !super::image::is_escaped(input, index)
+            && index > 0
+            && bytes[index - 1].is_ascii_whitespace()
+    })
 }
 
 fn normalize_link_destination(destination: &str) -> String {
@@ -454,16 +498,6 @@ fn is_reference_definition_title_continuation(line: &str) -> bool {
     (trimmed.starts_with('"') && trimmed.ends_with('"'))
         || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
         || (trimmed.starts_with('(') && trimmed.ends_with(')'))
-}
-
-fn find_open_title_quote(input: &str, close_quote: usize) -> Option<usize> {
-    let bytes = input.as_bytes();
-    (0..close_quote).rev().find(|&index| {
-        bytes[index] == b'"'
-            && !super::image::is_escaped(input, index)
-            && index > 0
-            && bytes[index - 1].is_ascii_whitespace()
-    })
 }
 
 fn find_unescaped_char(input: &str, start: usize, target: u8) -> Option<usize> {
@@ -513,6 +547,28 @@ mod tests {
                 destination: "https://first.example".to_string(),
                 title: Some("Caption".to_string()),
             })
+        );
+    }
+
+    #[test]
+    fn parses_single_quoted_and_parenthesized_titles() {
+        assert_eq!(
+            parse_link_target("/url '标题'"),
+            Some(("/url".to_string(), Some("标题".to_string())))
+        );
+        assert_eq!(
+            parse_link_target("/url (标题)"),
+            Some(("/url".to_string(), Some("标题".to_string())))
+        );
+        // 圆括号标题按配平扫描：标题内部成对的括号不截断。
+        assert_eq!(
+            parse_link_target("/url (a (b))"),
+            Some(("/url".to_string(), Some("a (b)".to_string())))
+        );
+        // 没有空白分隔的圆括号是目的地的一部分，不是标题。
+        assert_eq!(
+            parse_link_target("/url(带括号)"),
+            Some(("/url(带括号)".to_string(), None))
         );
     }
 

@@ -530,6 +530,37 @@
     }
 
     #[test]
+    fn link_title_quotes_do_not_end_the_target_early() {
+        let markdown = "[a](x \"ti)tle\")";
+        let tree = InlineTextTree::from_markdown(markdown);
+        assert_eq!(tree.visible_text(), "a");
+        assert_eq!(
+            tree.render_cache().link_hit_at(0),
+            Some(&InlineLinkHit {
+                prompt_target: "x".to_string(),
+                open_target: "x".to_string(),
+            })
+        );
+        assert_eq!(tree.serialize_markdown(), markdown);
+    }
+
+    #[test]
+    fn parses_single_quoted_and_parenthesized_link_titles() {
+        for markdown in ["[a](x 'title')", "[a](x (title))", "[a](x (a (b)))"] {
+            let tree = InlineTextTree::from_markdown(markdown);
+            assert_eq!(tree.visible_text(), "a", "{markdown}");
+            assert_eq!(
+                tree.render_cache().link_hit_at(0),
+                Some(&InlineLinkHit {
+                    prompt_target: "x".to_string(),
+                    open_target: "x".to_string(),
+                }),
+                "{markdown}"
+            );
+        }
+    }
+
+    #[test]
     fn parses_span_style_as_inline_html_not_link() {
         let markdown = "留意<span style='color:blue;'>磁盘预留空间、系统环境变量</span>等问题";
         let tree = InlineTextTree::from_markdown(markdown);
