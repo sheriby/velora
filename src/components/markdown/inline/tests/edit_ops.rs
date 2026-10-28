@@ -545,6 +545,25 @@
     }
 
     #[test]
+    fn empty_angle_target_is_a_link_but_invalid_angle_target_is_not() {
+        let empty = InlineTextTree::from_markdown("[a](<>)");
+        assert_eq!(
+            empty.render_cache().link_hit_at(0),
+            Some(&InlineLinkHit {
+                prompt_target: String::new(),
+                open_target: String::new(),
+            })
+        );
+
+        let invalid = InlineTextTree::from_markdown("[a](<a<b>)");
+        assert_eq!(
+            invalid.render_cache().link_hit_at(0),
+            None,
+            "未转义的尖括号目标不是合法链接"
+        );
+    }
+
+    #[test]
     fn parses_single_quoted_and_parenthesized_link_titles() {
         for markdown in ["[a](x 'title')", "[a](x (title))", "[a](x (a (b)))"] {
             let tree = InlineTextTree::from_markdown(markdown);

@@ -108,6 +108,19 @@ mod tests {
     }
 
     #[test]
+    fn empty_angle_image_target_is_empty_but_invalid_angle_target_is_not_an_image() {
+        let empty = parse_standalone_image("![alt](<>)").expect("empty target image");
+        assert_eq!(
+            empty.target,
+            ImageTarget::Direct {
+                src: String::new(),
+                title: None,
+            }
+        );
+        assert!(parse_standalone_image("![alt](<a<b>)").is_none());
+    }
+
+    #[test]
     fn parses_single_quoted_and_parenthesized_image_titles() {
         for (markdown, title) in [
             ("![alt](./img.png 'caption text')", "caption text"),
@@ -499,15 +512,10 @@ mod tests {
             }
         );
 
-        // 未转义的 `>` 结束不了尖括号目标：原样留下，交给文件系统判定存在与否。
-        let unescaped = parse_standalone_image("![blue angle](<assets/blue>card.png>)")
-            .expect("broken angle bracketed image");
-        assert_eq!(
-            unescaped.target,
-            ImageTarget::Direct {
-                src: "<assets/blue>card.png>".to_string(),
-                title: None,
-            }
+        // 未转义的 `>` 让尖括号目标整体不成立：回退字面文本，不当文件名。
+        assert!(
+            parse_standalone_image("![blue angle](<assets/blue>card.png>)").is_none(),
+            "未转义的尖括号目标被当成了图片目标"
         );
     }
 

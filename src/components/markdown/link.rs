@@ -397,10 +397,10 @@ pub(crate) fn parse_link_target(inner: &str) -> Option<(String, Option<String>)>
         // 一层反斜杠，永不收敛（destination 侧的
         // normalize_link_destination 早有同一步，title 漏了）。
         let title = unescape_ascii_punctuation(title);
-        return Some((normalize_link_destination(destination), Some(title)));
+        return Some((normalize_markdown_destination(destination)?, Some(title)));
     }
 
-    Some((normalize_link_destination(inner), None))
+    Some((normalize_markdown_destination(inner)?, None))
 }
 
 /// 把 `目标 标题` 拆成两段：标题的定界符可以是 `"`、`'` 或圆括号，
@@ -456,13 +456,23 @@ fn find_open_title_delimiter(input: &str, close_index: usize, open: char) -> Opt
     })
 }
 
-fn normalize_link_destination(destination: &str) -> String {
-    // 与图片同一处判据（`image::angle_bracket_destination`）：Markdown 的 `<…>`
-    // 目标内部允许空格，只不许出现未转义的 `<`、`>` 和换行。这里原先拿
-    // 「是不是受支持的自动链接目标」当剥尖括号的门槛，于是带空格的路径、
-    // 或门外的 scheme，尖括号被留在目标里 —— 同一个写法在图片那侧已经错过一次。
-    // 顺序也同图片一致：先剥尖括号再解反斜杠转义，反过来会把定界符自己解没。
-    unescape_ascii_punctuation(super::image::angle_bracket_destination(destination))
+/// 目的地归一（链接与图片共用）：`<…>` 内部允许空格，只不许出现未转义的
+/// `<`、`>` 与换行；`<>` 是合法的空目标。尖括号没闭合或内部非法时整条
+/// 目标不成立，不再把带尖括号的字面串当成文件名。
+pub(crate) fn normalize_markdown_destination(destination: &str) -> Option<String> {
+    let Some(inner) = destination.strip_prefix('<') else {
+        return Some(unescape_ascii_punctuation(destination));
+    };
+    let inner = inner.strip_suffix('>')?;
+    if inner.contains(['\n', '\r']) {
+        return None;
+    }
+    if inner.char_indices().any(|(offset, ch)| {
+        matches!(ch, '<' | '>') && !super::image::is_escaped(inner, offset)
+    }) {
+        return None;
+    }
+    Some(unescape_ascii_punctuation(inner))
 }
 
 /// 可转义集只认 `is_commonmark_escapable` 这一处判据（行内目标的换行符
@@ -532,8 +542,10 @@ mod tests {
             Some(("assets/a b.png".to_string(), Some("t".to_string())))
         );
         // 未转义的 `<`/`>` 与换行仍然不算尖括号目标：那本来就是没写完的写法。
-        assert_eq!(parse_link_target("<a<b>"), Some(("<a<b>".to_string(), None)));
-        assert_eq!(parse_link_target("<>"), Some(("<>".to_string(), None)));
+        // 内含未转义 `<` 的尖括号形式不是合法目标：整段链接不成立。
+        assert_eq!(parse_link_target("<a<b>"), None);
+        // `<>` 是合法的空目标，不是字面文件名。
+        assert_eq!(parse_link_target("<>"), Some((String::new(), None)));
     }
 
     #[test]

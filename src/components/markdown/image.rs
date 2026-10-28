@@ -105,8 +105,8 @@ impl ImageSyntax {
 /// （`src/export/html.rs:local_image_data_uri`）都走这里：以前两边各有一份 percent
 /// 解码和 `file:` 处理，同一个写法在正文里能显示、在导出里漏内联（报告 12）。
 pub(crate) fn resolve_image_source(source: &str, base_dir: Option<&Path>) -> ImageResolvedSource {
-    // 解析期已经剥过一次尖括号（`normalize_image_source`），这里再剥一次，让拿到
-    // 裸目标的调用方（HTML `<img>`、引用表、导出）共用同一条规则。
+    // 解析期已经剥过一次尖括号（`link::normalize_markdown_destination`），这里
+    // 再剥一次，让拿到裸目标的调用方（HTML `<img>`、引用表、导出）共用同一条规则。
     let destination = angle_bracket_destination(source);
 
     // 远程写法不做 percent 解码：`%20` 属于 URL 本身，请求时必须原样送出去。
@@ -732,12 +732,12 @@ fn parse_image_target(inner: &str) -> Option<(String, Option<String>)> {
 
     if let Some((src, title)) = super::link::split_target_title(inner) {
         return Some((
-            normalize_image_source(src),
+            super::link::normalize_markdown_destination(src)?,
             Some(super::link::unescape_ascii_punctuation(title)),
         ));
     }
 
-    Some((normalize_image_source(inner), None))
+    Some((super::link::normalize_markdown_destination(inner)?, None))
 }
 
 fn is_reference_definition_title_continuation(line: &str) -> bool {
@@ -756,11 +756,6 @@ fn is_reference_definition_title_continuation(line: &str) -> bool {
         || (trimmed.starts_with('(') && trimmed.ends_with(')'))
 }
 
-fn normalize_image_source(source: &str) -> String {
-    // 先剥尖括号再解转义：`<assets/blue\>card.png>` 里的 `\>` 在尖括号内部是合法的
-    // 转义，反过来先解转义会把定界符本身解没。
-    super::link::unescape_ascii_punctuation(angle_bracket_destination(source))
-}
 
 /// CommonMark 的 `<…>` 目标：内部允许空格，只不许出现未转义的 `<`、`>` 和换行。
 ///
@@ -775,8 +770,10 @@ pub(crate) fn angle_bracket_destination(source: &str) -> &str {
     else {
         return source;
     };
-    // `<>` 是空目标，CommonMark 不认，原样留给调用方判空。
-    if inner.is_empty() || inner.contains(['\n', '\r']) {
+    if inner.is_empty() {
+        return "";
+    }
+    if inner.contains(['\n', '\r']) {
         return source;
     }
     let bytes = inner.as_bytes();
