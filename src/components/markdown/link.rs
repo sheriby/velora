@@ -6,6 +6,19 @@ use super::image::normalize_reference_label;
 
 pub(crate) const EXTERNAL_LINK_SCHEMES: [&str; 5] = ["http:", "https:", "mailto:", "tel:", "ftp:"];
 
+/// 图片源的安全判据：在外链白名单之外，额外放行 `data:image/` 的位图数据
+/// URI；`data:image/svg+xml` 仍按不可信脚本容器拒绝（既有导出安全用例的
+/// 口径），`data:text/html` 之类同样拒绝。
+pub(crate) fn is_safe_image_url(value: &str) -> bool {
+    let normalized = value
+        .chars()
+        .filter(|character| !character.is_whitespace() && *character != '\0')
+        .collect::<String>()
+        .to_ascii_lowercase();
+    (normalized.starts_with("data:image/") && !normalized.starts_with("data:image/svg+xml"))
+        || is_safe_export_url(value)
+}
+
 pub(crate) fn is_safe_export_url(value: &str) -> bool {
     let normalized = value.chars().filter(|character| !character.is_whitespace() && *character != '\0')
         .collect::<String>().to_ascii_lowercase();

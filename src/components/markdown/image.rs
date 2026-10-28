@@ -103,7 +103,11 @@ pub(crate) fn resolve_image_source(source: &str, base_dir: Option<&Path>) -> Ima
     let destination = angle_bracket_destination(source);
 
     // 远程写法不做 percent 解码：`%20` 属于 URL 本身，请求时必须原样送出去。
-    if net::is_remote_image_source(destination) {
+    // 协议相对 `//host/x` 在这里补成 https，不能落到下面的本地路径分支。
+    if let Some(remote) = net::remote_image_uri(destination) {
+        return ImageResolvedSource::Remote(SharedUri::from(remote));
+    }
+    if destination.starts_with("data:image/") {
         return ImageResolvedSource::Remote(SharedUri::from(destination.to_string()));
     }
 

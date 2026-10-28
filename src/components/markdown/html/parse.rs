@@ -88,7 +88,7 @@ fn map_dom_node(node: &Handle, nodes: &mut Vec<HtmlNode>) {
         NodeData::Element { name, attrs, .. } => {
             let tag_name = name.local.to_string();
             let attrs = dom_attrs(&attrs.borrow());
-            if is_safe_tag(&tag_name) && !has_dangerous_attrs(&attrs) {
+            if is_safe_tag(&tag_name) && !has_dangerous_attrs(&tag_name, &attrs) {
                 let mut children = Vec::new();
                 map_dom_children(node, &mut children);
                 nodes.push(HtmlNode {
@@ -394,14 +394,22 @@ pub(crate) fn raw_node(raw_source: String) -> HtmlNode {
     }
 }
 
-pub(crate) fn has_dangerous_attrs(attrs: &[HtmlAttr]) -> bool {
+pub(crate) fn has_dangerous_attrs(tag_name: &str, attrs: &[HtmlAttr]) -> bool {
     attrs.iter().any(|attr| {
         attr.name.starts_with("on")
             || attr.value.as_deref().is_some_and(|value| {
-                matches!(
+                if !matches!(
                     attr.name.as_str(),
                     "href" | "src" | "action" | "formaction" | "xlink:href"
-                ) && !crate::components::markdown::link::is_safe_export_url(value)
+                ) {
+                    return false;
+                }
+                let safe = if attr.name == "src" && tag_name.eq_ignore_ascii_case("img") {
+                    crate::components::markdown::link::is_safe_image_url(value)
+                } else {
+                    crate::components::markdown::link::is_safe_export_url(value)
+                };
+                !safe
             })
     })
 }

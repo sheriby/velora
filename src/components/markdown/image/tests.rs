@@ -350,6 +350,22 @@ mod tests {
     }
 
     #[test]
+    fn protocol_relative_and_data_uri_images_resolve_as_remote_sources() {
+        match resolve_image_source("//cdn.example.com/a.png", None) {
+            ImageResolvedSource::Remote(uri) => {
+                assert_eq!(uri.to_string(), "https://cdn.example.com/a.png")
+            }
+            other => panic!("协议相对图片被当成 {other:?}"),
+        }
+        match resolve_image_source("data:image/png;base64,AAAA", None) {
+            ImageResolvedSource::Remote(uri) => {
+                assert_eq!(uri.to_string(), "data:image/png;base64,AAAA")
+            }
+            other => panic!("data URI 图片被当成 {other:?}"),
+        }
+    }
+
+    #[test]
     fn image_scan_recognizes_longer_and_indented_fences() {
         let definitions = parse_image_reference_definitions(
             "```md\n[inside]: /inside.png\n````\n\n[outside]: /outside.png\n\n   ```\n[also]: /also.png\n   ```",

@@ -28,6 +28,15 @@
     }
 
     #[test]
+    fn data_uri_image_src_is_semantic_but_data_href_is_not() {
+        let image = parse_html_document("<img src=\"data:image/png;base64,AAAA\">");
+        assert!(image.is_semantic(), "data:image 的图片被安全判据误杀");
+
+        let link = parse_html_document("<a href=\"data:text/html,x\">x</a>");
+        assert!(!link.is_semantic(), "data:text/html 的链接不该被放行");
+    }
+
+    #[test]
     fn unquoted_attribute_value_keeps_slashes() {
         let attrs = super::parse::parse_html_attrs(" href=x/y");
         assert_eq!(attrs[0].value.as_deref(), Some("x/y"));

@@ -12,6 +12,20 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
+    fn data_uri_image_survives_export() {
+        let html = render_html(
+            "![x](data:image/png;base64,AAAA)",
+            &Theme::default_theme(),
+            "data uri",
+        );
+        assert!(
+            body_only(&html).contains("src=\"data:image/png;base64,AAAA\""),
+            "data URI 图片被导出过滤掉：{}",
+            body_only(&html)
+        );
+    }
+
+    #[test]
     fn core_repair_inline_html_styles_keep_their_contents_and_nested_markdown() {
         let mut failures = Vec::new();
         for (source, expected) in [

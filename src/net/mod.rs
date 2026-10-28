@@ -54,10 +54,23 @@ pub(crate) fn install_http_client(cx: &mut App) {
 pub(crate) mod proxy;
 
 pub(crate) fn is_remote_image_source(source: &str) -> bool {
+    remote_image_uri(source).is_some()
+}
+
+/// 远程图片源归一：协议相对写法 `//host/x` 按 https 补全；http(s) 原样返回。
+/// `data:` 由调用方自己判断能否承载图片（见 `resolve_image_source`）。
+pub(crate) fn remote_image_uri(source: &str) -> Option<String> {
+    if let Some(rest) = source.strip_prefix("//")
+        && !rest.is_empty()
+        && !rest.starts_with('/')
+    {
+        return Some(format!("https:{source}"));
+    }
     http_client::Uri::from_str(source)
         .ok()
         .and_then(|uri| uri.scheme_str().map(str::to_owned))
         .is_some_and(|scheme| scheme == "http" || scheme == "https")
+        .then(|| source.to_string())
 }
 
 struct ReqwestTransportHttpClient {

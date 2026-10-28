@@ -1222,7 +1222,7 @@ pub(crate) fn parse_inline_html_container(
     reference_definitions: &LinkReferenceDefinitions,
 ) -> Option<usize> {
     let tag = locate_inline_html_open_tag(tokens, index)?;
-    if tag.self_closing || !is_inline_tag(&tag.name) || has_dangerous_attrs(&tag.attrs) {
+    if tag.self_closing || !is_inline_tag(&tag.name) || has_dangerous_attrs(&tag.name, &tag.attrs) {
         return None;
     }
 
@@ -1265,7 +1265,7 @@ pub(crate) fn parse_inline_html_void_break(
     if void_inline_html_tag(&tag.name)? != VoidInlineHtmlKind::LineBreak {
         return None;
     }
-    if has_dangerous_attrs(&tag.attrs) {
+    if has_dangerous_attrs(&tag.name, &tag.attrs) {
         return None;
     }
     builder.emit_line_break(

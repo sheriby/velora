@@ -246,7 +246,7 @@ fn sanitize_url_events(events: &mut Vec<(Event<'_>, Range<usize>)>, base_dir: Op
                 *dest_url = CowStr::from(replacement);
                 true
             } else {
-                crate::components::markdown::link::is_safe_export_url(dest_url)
+                crate::components::markdown::link::is_safe_image_url(dest_url)
             };
             wrappers.push(safe);
             safe
