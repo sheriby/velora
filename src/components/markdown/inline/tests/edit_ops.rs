@@ -1347,3 +1347,24 @@
         }
         assert!(failures.is_empty(), "手动格式不能在导出时变成字面记号：{failures:?}");
     }
+
+#[test]
+fn deeply_nested_inline_html_falls_back_to_literal_text() {
+    let depth = 100;
+    let markdown = format!("{}x{}", "<u>".repeat(depth), "</u>".repeat(depth));
+    let tree = InlineTextTree::from_markdown(&markdown);
+    assert!(
+        tree.visible_text().contains("<u>"),
+        "超过递归上限的容器标签没有按字面输出"
+    );
+}
+
+#[test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+fn extremely_deep_inline_html_does_not_overflow_the_stack() {
+    let depth = 12_000;
+    let markdown = format!("{}x{}", "<u>".repeat(depth), "</u>".repeat(depth));
+    let tree = InlineTextTree::from_markdown(&markdown);
+    assert!(tree.visible_text().contains('x'));
+    assert!(tree.visible_text().contains("<u>"));
+}

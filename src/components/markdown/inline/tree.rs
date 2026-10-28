@@ -1127,6 +1127,7 @@ impl InlineTextTree {
             &mut builder,
             false,
             reference_definitions,
+            0,
         );
         let mut tree = InlineTextTree::from_fragments(builder.fragments);
         // 转义带来的字面字符在输出树里换了位置，跟着这次解析的偏移表一起搬过去。

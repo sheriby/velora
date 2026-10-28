@@ -593,6 +593,10 @@ fn escaped_sequence_at(
 /// the normalized inline tree.  Matching delimiters are consumed (dropped);
 /// unmatched ones are emitted as literal text.  Nested styles are handled by
 /// recursive calls that accumulate `extra_style`.
+/// 行内递归的深度上限：容器标签与定界符都走递归下降，恶意/超长嵌套
+/// （几万层 `<u>`）会直接爆栈。超限后剩余的标签按字面文本输出。
+const MAX_INLINE_NESTING_DEPTH: usize = 64;
+
 pub(crate) fn parse_until(
     tokens: &[CharToken],
     mut index: usize,
@@ -602,6 +606,7 @@ pub(crate) fn parse_until(
     builder: &mut NormalizeBuilder,
     inside_code: bool,
     reference_definitions: &LinkReferenceDefinitions,
+    depth: usize,
 ) -> ParseResult {
     let body_start = index;
     while index < tokens.len() {
@@ -728,6 +733,7 @@ pub(crate) fn parse_until(
                     extra_html_style,
                     builder,
                     reference_definitions,
+                    depth + 1,
                 )
             {
                 index = next_index;
@@ -749,7 +755,9 @@ pub(crate) fn parse_until(
             }
 
             if let Some(delimiter) = match_open_delimiter(tokens, index) {
-                if has_closing_delimiter(tokens, index, delimiter) {
+                if depth < MAX_INLINE_NESTING_DEPTH
+                    && has_closing_delimiter(tokens, index, delimiter)
+                {
                     let mark = builder.mark();
                     for token in &tokens[index..index + delimiter.token_len()] {
                         builder.drop_token(token);
@@ -765,6 +773,7 @@ pub(crate) fn parse_until(
                         builder,
                         is_code_delim,
                         reference_definitions,
+                        depth + 1,
                     );
                     if parsed.closed {
                         index = parsed.next_index;
@@ -1220,7 +1229,11 @@ pub(crate) fn parse_inline_html_container(
     extra_html_style: Option<HtmlInlineStyle>,
     builder: &mut NormalizeBuilder,
     reference_definitions: &LinkReferenceDefinitions,
+    depth: usize,
 ) -> Option<usize> {
+    if depth >= MAX_INLINE_NESTING_DEPTH {
+        return None;
+    }
     let tag = locate_inline_html_open_tag(tokens, index)?;
     if tag.self_closing || !is_inline_tag(&tag.name) || has_dangerous_attrs(&tag.name, &tag.attrs) {
         return None;
@@ -1246,6 +1259,7 @@ pub(crate) fn parse_inline_html_container(
         builder,
         false,
         reference_definitions,
+        depth + 1,
     );
     for token in &tokens[close_start..=close_end] {
         builder.drop_token(token);
