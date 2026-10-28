@@ -52,13 +52,39 @@ pub(crate) fn write_config_file_atomic(path: &Path, contents: &str) -> std::io::
     write_config_bytes_atomic(path, contents.as_bytes())
 }
 
+/// 保存类临时文件的命名判据（单点）：`.原名.velora-<uuid>.tmp`。生成（写入方）
+/// 与识别（启动清扫、监听过滤）都必须走同一组常量——口径抄出第二份必然漂移，
+/// 报修会以「清扫误删 / 过滤漏放」的面貌出现。
+const SAVE_TEMP_MARKER: &str = ".velora-";
+const SAVE_TEMP_SUFFIX: &str = ".tmp";
+
+pub(crate) fn save_temp_file_name(original_file_name: &str) -> String {
+    format!(
+        ".{original_file_name}{SAVE_TEMP_MARKER}{}{SAVE_TEMP_SUFFIX}",
+        uuid::Uuid::new_v4()
+    )
+}
+
+pub(crate) fn is_save_temp_file_name(file_name: &str) -> bool {
+    let Some(stripped) = file_name
+        .strip_prefix('.')
+        .and_then(|rest| rest.strip_suffix(SAVE_TEMP_SUFFIX))
+    else {
+        return false;
+    };
+    match stripped.rsplit_once(SAVE_TEMP_MARKER) {
+        Some((original, stamp)) => !original.is_empty() && !stamp.is_empty(),
+        None => false,
+    }
+}
+
 pub(crate) fn write_config_bytes_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let file_name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let temp = path.with_file_name(format!(".{file_name}.velora-{}.tmp", uuid::Uuid::new_v4()));
+    let temp = path.with_file_name(save_temp_file_name(&file_name));
     let mut file = std::fs::File::create(&temp)?;
     // 建出就收紧：临时文件里同样是配置全文，不留给 umask 一个可读窗口。
     #[cfg(unix)]
@@ -76,6 +102,63 @@ pub(crate) fn write_config_bytes_atomic(path: &Path, contents: &[u8]) -> std::io
             Err(error)
         }
     }
+}
+
+/// 进程启动时刻：清扫残留临时文件的截止线基准。
+fn process_started_at() -> std::time::SystemTime {
+    static STARTED_AT: std::sync::OnceLock<std::time::SystemTime> = std::sync::OnceLock::new();
+    *STARTED_AT.get_or_init(std::time::SystemTime::now)
+}
+
+/// 清扫的安全余量：一个在途写入（本进程的，或并行另一个实例的）从建出临时
+/// 文件到 rename 完成只有毫秒到秒级。截止线再往回拉 60 秒，保证「还可能是
+/// 谁的在途写入」的文件一个都不删——代价是崩溃后 60 秒内重启的残留要等下一
+/// 次开根再清，比误删在途写入便宜得多。
+const SWEEP_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// 清扫残留的保存临时文件：进程被强杀、断电时 Drop 兜不住，
+/// 含全文的 `.velora-*.tmp` 会永远留在用户目录里，被同步盘上传、被监听当成
+/// 变更事件。只删「名字匹配判据 && mtime 早于启动时刻减去安全余量」的文件。
+pub(crate) fn sweep_stale_save_temporaries(dir: &Path) -> usize {
+    let started = process_started_at();
+    let before = started
+        .checked_sub(SWEEP_GRACE)
+        .unwrap_or(std::time::UNIX_EPOCH);
+    sweep_stale_save_temporaries_before(dir, before)
+}
+
+pub(crate) fn sweep_stale_save_temporaries_before(
+    dir: &Path,
+    before: std::time::SystemTime,
+) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // 用 symlink_metadata 判目录：不跟进符号链接，避免链接环与链接目标的
+        // 内容被当成待清对象。
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.is_dir() {
+            removed += sweep_stale_save_temporaries_before(&path, before);
+            continue;
+        }
+        let matches_pattern = is_save_temp_file_name(&entry.file_name().to_string_lossy());
+        if !matches_pattern {
+            continue;
+        }
+        let stale = metadata
+            .modified()
+            .ok()
+            .is_some_and(|modified| modified < before);
+        if stale && std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 pub(crate) const RECENT_FILES_LIMIT: usize = 20;
@@ -215,6 +298,11 @@ impl VeloraConfigDirs {
 
     pub(crate) fn app_config_file(&self) -> PathBuf {
         self.root.join("config.toml")
+    }
+
+    /// 配置根目录：启动清扫残留临时文件用（session.json 的临时文件落在这里）。
+    pub(crate) fn config_dir(&self) -> &Path {
+        &self.root
     }
 
     pub(crate) fn recovery_dir(&self) -> PathBuf {
@@ -696,9 +784,10 @@ fn is_empty_json_value(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        RECENT_FILES_LIMIT, VeloraConfigDirs, parse_jsonc_value, prune_empty_json_values,
-        read_recent_files_with_dirs, record_recent_file_with_dirs, remove_recent_file_with_dirs,
-        sanitize_config_file_stem, strip_jsonc_comments,
+        RECENT_FILES_LIMIT, VeloraConfigDirs, is_save_temp_file_name, parse_jsonc_value,
+        prune_empty_json_values, read_recent_files_with_dirs, record_recent_file_with_dirs,
+        remove_recent_file_with_dirs, sanitize_config_file_stem, strip_jsonc_comments,
+        sweep_stale_save_temporaries_before,
     };
     use super::preferences::{
         load_or_create_app_preferences_with_dirs_and_locales, update_app_preferences_with_dirs,
@@ -1020,6 +1109,96 @@ mod tests {
             final_preferences.autosave_debounce_ms, 839,
             "后台线程的最后一笔不得被回滚"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// 生成与识别必须同口径：写出去的每一个临时名都要被认出来，用户文件
+    /// （含以点开头的隐藏文件）一个都不许误认（判据单点）。
+    #[test]
+    fn save_temp_file_names_round_trip_through_the_matcher() {
+        for original in ["note.md", "session.json", "有 空格 与 中文.md", ".hidden"] {
+            let temp = super::save_temp_file_name(original);
+            assert!(
+                is_save_temp_file_name(&temp),
+                "自己生成的临时名必须被认出来：{temp}"
+            );
+        }
+        for not_ours in [
+            "note.md",
+            ".note.md",
+            ".note.md.tmp",
+            ".note.md.velora-.tmp",
+            "note.md.velora-abc.tmp",
+            ".note.md.velora-abc.txt",
+            ".note.md.velora-abc.tmp.bak",
+            "velora-abc.tmp",
+        ] {
+            assert!(
+                !is_save_temp_file_name(not_ours),
+                "用户侧文件不许被当成保存临时文件：{not_ours}"
+            );
+        }
+    }
+
+    /// 清扫只删「名字匹配 && mtime 早于截止线」的残留：在途写入（mtime 新）
+    /// 与用户文件都不能动，子目录里的残留也要清到（工作区是嵌套目录）。
+    #[test]
+    fn sweep_deletes_only_stale_save_temp_files() {
+        let root =
+            std::env::temp_dir().join(format!("velora-sweep-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let stale = root.join(".note.md.velora-11111111-1111-4111-8111-111111111111.tmp");
+        std::fs::write(&stale, b"half written").unwrap();
+        let fresh = root.join(".note.md.velora-22222222-2222-4222-8222-222222222222.tmp");
+        std::fs::write(&fresh, b"in flight").unwrap();
+        let user_file = root.join("note.md");
+        std::fs::write(&user_file, b"user content").unwrap();
+        let nested = root.join("sub");
+        std::fs::create_dir_all(&nested).unwrap();
+        let nested_stale =
+            nested.join(".other.md.velora-33333333-3333-4333-8333-333333333333.tmp");
+        std::fs::write(&nested_stale, b"half written").unwrap();
+
+        let cutoff = std::time::SystemTime::now();
+        let mark = |path: &Path, time: std::time::SystemTime| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(time)
+                .unwrap();
+        };
+        // 两边的 mtime 都显式拨：不依赖文件系统时间戳粒度（粗粒度的盘会把
+        // 「创建于截止线之后」截断成之前，测试就随盘抖动）。
+        let hour = std::time::Duration::from_secs(3600);
+        mark(&stale, cutoff - hour);
+        mark(&fresh, cutoff + hour);
+        mark(&nested_stale, cutoff - hour);
+
+        let removed = sweep_stale_save_temporaries_before(&root, cutoff);
+        assert_eq!(removed, 2, "两个过期的残留要清掉");
+        assert!(!stale.exists(), "过期的残留临时文件该被清掉");
+        assert!(!nested_stale.exists(), "子目录里的残留也要清到");
+        assert!(fresh.exists(), "在途写入（mtime 新）不许动");
+        assert!(user_file.exists(), "用户文件不许动");
+
+        // 公开入口的截止线是「启动时刻 − 60 秒安全余量」：测试进程启动后的
+        // 一切写入（哪怕名字像残留）都不能动，只有早于余量的才清。
+        let old_stale = root.join(".note.md.velora-44444444-4444-4444-8444-444444444444.tmp");
+        std::fs::write(&old_stale, b"crashed run").unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&old_stale)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(7200))
+            .unwrap();
+        let recent = root.join(".note.md.velora-55555555-5555-5555-8555-555555555555.tmp");
+        std::fs::write(&recent, b"just written").unwrap();
+        let removed = super::sweep_stale_save_temporaries(&root);
+        assert_eq!(removed, 1, "只清早于安全余量的那份");
+        assert!(!old_stale.exists());
+        assert!(recent.exists(), "本进程写入的临时文件不许动");
+
         let _ = std::fs::remove_dir_all(root);
     }
 

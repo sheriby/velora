@@ -120,6 +120,18 @@ fn restore_recovery_windows(cx: &mut App, restored: &AtomicBool) {
     if restored.swap(true, Ordering::SeqCst) {
         return;
     }
+    // 启动清扫：进程被强杀、断电时保存临时文件留在原地，Drop 只
+    // 兜得住正常退出。配置根与恢复目录都只有浅浅一层，同步扫一遍不到一毫秒；
+    // 截止线带安全余量，在途写入不会被误删。
+    if let Ok(dirs) = config::VeloraConfigDirs::from_system() {
+        let config_root = dirs.config_dir().to_path_buf();
+        let recovery_dir = dirs.recovery_dir();
+        let removed = config::sweep_stale_save_temporaries(&config_root)
+            + config::sweep_stale_save_temporaries(&recovery_dir);
+        if removed > 0 {
+            eprintln!("清扫了 {removed} 个残留的保存临时文件（配置目录）");
+        }
+    }
     let snapshots = match config::read_recovery_snapshots() {
         Ok(snapshots) => snapshots,
         Err(error) => {

@@ -1162,3 +1162,291 @@ async fn autosave_on_writes_the_edited_file_and_clears_the_dirty_flag(cx: &mut T
         "rename 之后不该留下临时文件，实测 {leftovers:?}"
     );
 }
+
+/// 一篇撞上外部修改冲突，不能把整个窗口其余文档的自动保存与恢复快照一起冻结
+/// 快照不覆盖磁盘、无覆盖风险，冲突只该挡冲突那一篇的磁盘提交。
+#[gpui::test]
+async fn autosave_keeps_saving_other_documents_during_an_external_change_conflict(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let first_path = temp_markdown_path("conflict-freeze-first");
+    let second_path = temp_markdown_path("conflict-freeze-second");
+    fs::write(&first_path, "alpha").expect("write first document");
+    fs::write(&second_path, "beta").expect("write second document");
+    let cleanup_first = first_path.clone();
+    let cleanup_second = second_path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup_first);
+        let _ = fs::remove_file(cleanup_second);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let first_path = first_path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(first_path))
+    });
+    let first_recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(first_recovery_id);
+    });
+    edit_first_block(&editor, cx, "edited alpha");
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(second_path.clone(), window, cx);
+        });
+    });
+    edit_first_block(&editor, cx, "edited beta");
+
+    // 外部把第一篇改掉，让自动保存先撞上一处冲突。
+    fs::write(&first_path, "external alpha").expect("write external changes");
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.has_external_autosave_conflict(),
+            "外部修改要先撞出一处冲突"
+        );
+    });
+    assert_eq!(
+        fs::read_to_string(&first_path).expect("read first document"),
+        "external alpha",
+        "冲突的那一篇不能被覆盖"
+    );
+
+    // 冲突未解除时继续在第二篇打字：第二篇的快照与写盘必须照常走。
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(second_path.clone(), window, cx);
+        });
+    });
+    edit_first_block(&editor, cx, "second round beta");
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs::read_to_string(&second_path).expect("read second document"),
+        "second round beta",
+        "一篇冲突不能冻结其余文档的自动保存"
+    );
+    assert_eq!(
+        fs::read_to_string(&first_path).expect("read first document again"),
+        "external alpha",
+        "冲突在解除前必须继续拦着那一篇"
+    );
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.has_external_autosave_conflict());
+    });
+}
+
+/// 防抖到点发现输入法组合还挂着：本轮取消后必须重排下一轮，否则用户在组合态
+/// 停手离开的话，恢复快照与文件写全部停更到下一次编辑事件为止。
+#[gpui::test]
+async fn autosave_reschedules_when_composition_is_still_open_at_the_debounce(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("ime-autosave-reschedule");
+    fs::write(&path, "alpha").expect("write initial markdown");
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup_path);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(path))
+    });
+    let recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(recovery_id);
+    });
+    // 先留一处未保存修改，让一轮自动保存排上（此刻还没有组合态）。
+    edit_first_block(&editor, cx, "pending");
+    let block = editor.read_with(cx, |editor, _cx| {
+        editor.document.first_root().expect("paragraph").clone()
+    });
+    block.update(cx, |block, _cx| block.selected_range = 7..7);
+    // 防抖窗口内进入输入法组合：到点的那一轮会发现组合还挂着。
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            <Block as EntityInputHandler>::replace_and_mark_text_in_range(
+                block,
+                None,
+                "zh",
+                Some(7..7),
+                window,
+                block_cx,
+            );
+        });
+    });
+
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.autosave_task.is_some(),
+            "组合挂着时被顶掉的那一轮必须重排下一轮"
+        );
+    });
+    assert_eq!(
+        fs::read_to_string(&path).expect("read markdown during composition"),
+        "alpha",
+        "组合态下不该写盘"
+    );
+}
+
+/// 关窗保存撞上外部修改：要走带「重载 / 另存为」解除入口的冲突记录，不该
+/// 双路上报（侧栏红字 + 闭包外再弹一块纯展示模态）。
+#[gpui::test]
+async fn close_save_failure_records_the_conflict_instead_of_double_reporting(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let first_path = temp_markdown_path("close-conflict-first");
+    let second_path = temp_markdown_path("close-conflict-second");
+    fs::write(&first_path, "alpha").expect("write first document");
+    fs::write(&second_path, "beta").expect("write second document");
+    let cleanup_first = first_path.clone();
+    let cleanup_second = second_path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup_first);
+        let _ = fs::remove_file(cleanup_second);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let first_path = first_path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(first_path))
+    });
+    let first_recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(first_recovery_id);
+    });
+    edit_first_block(&editor, cx, "edited alpha");
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(second_path.clone(), window, cx);
+        });
+    });
+    edit_first_block(&editor, cx, "edited beta");
+
+    // 外部把第一篇改掉：关窗保存会在版本校验上撞冲突。
+    fs::write(&first_path, "external alpha").expect("write external changes");
+    editor.update_in(cx, |editor, window, cx| {
+        editor.save_dirty_workspace_documents_and_close(window, cx);
+    });
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.has_external_autosave_conflict(),
+            "关窗保存撞上外部修改要走冲突入口，而不是普通「保存失败」"
+        );
+        assert!(
+            editor.show_unsaved_changes_dialog,
+            "没保存成不能静默继续关窗"
+        );
+        assert!(!editor.pending_close_after_save);
+    });
+    assert_eq!(
+        fs::read_to_string(&first_path).expect("read first document"),
+        "external alpha",
+        "被拦下的保存不能动盘上那一份"
+    );
+}
+
+/// 另存为落到一篇已被外部改动的已打开标签上：要走冲突入口（重载 / 另存为），
+/// 不能只弹一块没有解除入口的「保存失败」。
+#[gpui::test]
+async fn save_as_onto_an_externally_changed_open_tab_offers_the_conflict_entry(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let alpha_path = temp_markdown_path("save-as-conflict-alpha");
+    let beta_path = temp_markdown_path("save-as-conflict-beta");
+    fs::write(&alpha_path, "alpha").expect("write alpha");
+    fs::write(&beta_path, "beta").expect("write beta");
+    let cleanup_alpha = alpha_path.clone();
+    let cleanup_beta = beta_path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup_alpha);
+        let _ = fs::remove_file(cleanup_beta);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let alpha_path = alpha_path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(alpha_path))
+    });
+    let alpha_recovery = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(alpha_recovery);
+    });
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(beta_path.clone(), window, cx);
+        });
+    });
+    // beta 标签还干净时，外部把 beta 改掉。
+    fs::write(&beta_path, "beta 被外部改了").expect("write external beta");
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(alpha_path.clone(), window, cx);
+        });
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.save_document_as(window, cx);
+    });
+    cx.run_until_parked();
+    assert!(cx.did_prompt_for_new_path(), "另存为要弹路径选择");
+    cx.simulate_new_path_selection(|_| Some(beta_path.clone()));
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.has_external_autosave_conflict(),
+            "另存为撞上目标被外部改动要走冲突入口"
+        );
+    });
+    assert_eq!(
+        fs::read_to_string(&beta_path).expect("read beta"),
+        "beta 被外部改了",
+        "被拦下的另存为不能动盘上那一份"
+    );
+}
+
+/// 监听溢出（need_rescan）之后，打开中的干净文档也要补一次磁盘比对：
+/// 树是新的、正文停在旧版上而用户毫无感知，是丢事件窗口里最隐蔽的损失。
+#[gpui::test]
+async fn workspace_rescan_rechecks_open_clean_documents(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("rescan-recheck");
+    fs::write(&path, "alpha").expect("write initial markdown");
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup_path);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(path))
+    });
+    // 丢失窗口里外部改了这篇干净文档：正常的事件流没了，只剩 Rescan。
+    fs::write(&path, "外部改了").expect("write external changes");
+
+    editor.update(cx, |editor, cx| editor.on_workspace_watch_rescan(cx));
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            "外部改了",
+            "重扫要把打开中干净文档的正文补齐"
+        );
+    });
+}

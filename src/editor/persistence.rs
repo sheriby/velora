@@ -53,7 +53,9 @@ fn autosave_temp_path(path: &Path) -> PathBuf {
         .file_name()
         .map(|name| name.to_string_lossy())
         .unwrap_or_default();
-    path.with_file_name(format!(".{name}.velora-{}.tmp", uuid::Uuid::new_v4()))
+    // 命名判据的单点在 config::save_temp_file_name：启动清扫与监听过滤按同一
+    // 口径识别这些文件。
+    path.with_file_name(crate::config::save_temp_file_name(&name))
 }
 
 /// Atomic save (roadmap G1): write to a sibling temp file, fsync, then rename
@@ -113,8 +115,31 @@ impl StagedDocumentWrite {
     }
 
     fn commit(self) -> std::io::Result<()> {
-        std::fs::rename(&self.temporary, &self.target)
+        std::fs::rename(&self.temporary, &self.target)?;
+        self.sync_parent_directory_after_rename();
+        Ok(())
     }
+
+    /// rename 的原子性只保证「旧或新二选一」，不保证「新」一定落盘：目录项变更
+    /// 没有刷下去的话，断电重启后文件可能回到旧内容，而 UI 已清脏标记、恢复
+    /// 快照也在成功路径被删——用户「保存成功过」的那一版就无副本地消失了。
+    /// rename 成功后对父目录做一次 sync；失败只记日志，这时报错反而把已经
+    /// 成功的保存说成坏的。
+    ///
+    /// macOS 的 fsync 不等价 F_FULLFSYNC（语义更弱），std 不暴露 fcntl，这里是
+    /// 尽力而为；Windows 刷目录句柄要 FILE_FLAG_BACKUP_SEMANTICS 打开，std
+    /// 没有通道，保持现状（NTFS 的元数据经日志提交）。
+    #[cfg(unix)]
+    fn sync_parent_directory_after_rename(&self) {
+        let Some(parent) = self.target.parent() else { return };
+        let sync_result = std::fs::File::open(parent).and_then(|directory| directory.sync_all());
+        if let Err(error) = sync_result {
+            eprintln!("同步保存目标的父目录失败 '{}': {error}", parent.display());
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn sync_parent_directory_after_rename(&self) {}
 
     fn commit_checked(self, path: &Path, expected_version: u64) -> anyhow::Result<()> {
         let target = std::fs::canonicalize(path)
@@ -279,15 +304,24 @@ impl Editor {
             });
             return;
         }
+        // 外部修改冲突不在这里拦：冲突是「这一篇写不了」，不是
+        // 「全窗口都停下」。冲突文档的磁盘提交由版本校验挡着（快照照常写，
+        // 不覆盖磁盘、无覆盖风险），其余文档的快照与写盘必须继续，否则用户在
+        // 另一篇打字，崩溃即丢全部未保存内容。
         if self.pending_close_after_save
             || self.autosave_task.is_some()
-            || self.has_external_autosave_conflict()
             || self.has_marked_document_text(cx)
             || (!self.document_dirty && !self.has_dirty_workspace_documents() && !self.has_dirty_split_documents(cx) && !self.has_untitled_documents(cx))
         {
             return;
         }
+        self.spawn_autosave_round(cx);
+    }
 
+    /// 排一轮自动保存（防抖 + 快照 + 写盘）。`schedule_autosave` 把守卫收口后
+    /// 走这里；组合态重试也直接走这里——那一次恰恰要绕开组合守卫（见
+    /// `AutosaveTick::RetryAfterComposition`）。
+    fn spawn_autosave_round(&mut self, cx: &mut Context<Self>) {
         let editor = cx.entity().downgrade();
         self.autosave_task = Some(cx.spawn(
             async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -297,10 +331,26 @@ impl Editor {
                     .timer(std::time::Duration::from_millis(debounce))
                     .await;
 
-                let snapshot = editor
+                enum AutosaveTick {
+                    Save(Vec<PendingAutosaveDocument>, u64),
+                    /// 到点发现输入法组合还挂着：本轮取消，但要重排下一轮。
+                    /// 组合可能一直挂着（用户停手离开），不重排的话恢复快照与
+                    /// 文件写全部停更，直到下一次编辑事件为止。
+                    RetryAfterComposition,
+                    Idle,
+                }
+                let tick = editor
                     .update(cx, |editor, cx| {
                         if editor.has_marked_document_text(cx) {
-                            return None;
+                            let has_unsaved = editor.document_dirty
+                                || editor.has_dirty_workspace_documents()
+                                || editor.has_dirty_split_documents(cx)
+                                || editor.has_untitled_documents(cx);
+                            return if has_unsaved {
+                                AutosaveTick::RetryAfterComposition
+                            } else {
+                                AutosaveTick::Idle
+                            };
                         }
                         let autosave_writes = crate::config::EditorSettings::autosave(cx);
                         let mut documents = editor
@@ -335,15 +385,28 @@ impl Editor {
                             recovery, path: None, write_file: false, file_version: None, bytes: None,
                         }));
                         if documents.is_empty() {
-                            return None;
+                            return AutosaveTick::Idle;
                         }
-                        Some((documents, editor.document_revision))
+                        AutosaveTick::Save(documents, editor.document_revision)
                     })
-                    .ok()
-                    .flatten();
-                let Some((documents, revision)) = snapshot else {
-                    let _ = editor.update(cx, |editor, _cx| editor.autosave_task = None);
-                    return;
+                    .ok();
+                let (documents, revision) = match tick {
+                    Some(AutosaveTick::Save(documents, revision)) => (documents, revision),
+                    Some(AutosaveTick::RetryAfterComposition) => {
+                        let _ = editor.update(cx, |editor, cx| {
+                            editor.autosave_task = None;
+                            // 不走 schedule_autosave：它的组合守卫会把这次重排
+                            // 立刻退回去，而等待组合结束正是重排的全部目的。
+                            if !editor.pending_close_after_save {
+                                editor.spawn_autosave_round(cx);
+                            }
+                        });
+                        return;
+                    }
+                    Some(AutosaveTick::Idle) | None => {
+                        let _ = editor.update(cx, |editor, _cx| editor.autosave_task = None);
+                        return;
+                    }
                 };
 
                 let documents_for_write = documents.clone();
@@ -351,82 +414,65 @@ impl Editor {
                     .background_executor()
                     .spawn(async move {
                         let mut prepared = Vec::new();
+                        let mut conflicts = Vec::new();
                         for document in documents_for_write {
-                            // 失败时把真正出问题的文件路径一起带回去：冲突要记在
-                            // 那个文件上，而不是第一个有路径的标签。
                             let failing_path = document.path.clone();
-                            crate::config::save_recovery_snapshot(&document.recovery)
-                                .map_err(|error| (failing_path.clone(), error))?;
+                            // 一篇失败不再拖垮整批：出问题的这一篇
+                            // 跳过磁盘提交，其余文档的快照与写盘照常走。
+                            if let Err(error) = crate::config::save_recovery_snapshot(&document.recovery) {
+                                conflicts.push((failing_path, error));
+                                prepared.push(None);
+                                continue;
+                            }
                             let disk_raw = match (document.path.as_deref(), document.file_version)
                             {
-                                (Some(path), Some(expected_version)) => verify_file_version(
-                                    path,
-                                    expected_version,
-                                )
-                                .map_err(|error| (failing_path.clone(), error))?,
+                                (Some(path), Some(expected_version)) => {
+                                    match verify_file_version(path, expected_version) {
+                                        Ok(raw) => raw,
+                                        Err(error) => {
+                                            conflicts.push((Some(path.to_path_buf()), error));
+                                            prepared.push(None);
+                                            continue;
+                                        }
+                                    }
+                                }
                                 _ => Vec::new(),
                             };
-                            let staged = if let Some(path) = document.path.as_ref().filter(|_| document.write_file) {
+                            let mut staged = None;
+                            if let Some(path) = document.path.as_ref().filter(|_| document.write_file) {
                                 // 优先写缓冲区字节；后台那一页按磁盘上的形状重新编码
                                 // （见 `autosave_payload`），CRLF/UTF-16/GB18030 文档
                                 // 经 autosave 不能被洗成 LF/UTF-8。
                                 let payload = autosave_payload(&document, &disk_raw);
-                                let staged = StagedDocumentWrite::prepare(path, &payload)
-                                    .map_err(|error| (failing_path.clone(), anyhow::Error::from(error)))?;
-                                if let (Some(path), Some(expected_version)) =
-                                    (document.path.as_deref(), document.file_version)
-                                {
-                                    verify_file_version(path, expected_version)
-                                        .map_err(|error| (failing_path.clone(), error))?;
+                                match StagedDocumentWrite::prepare(path, &payload) {
+                                    Ok(staged_write) => {
+                                        if let (Some(path), Some(expected_version)) =
+                                            (document.path.as_deref(), document.file_version)
+                                            && let Err(error) =
+                                                verify_file_version(path, expected_version)
+                                        {
+                                            conflicts.push((Some(path.to_path_buf()), error));
+                                            prepared.push(None);
+                                            continue;
+                                        }
+                                        staged = Some((staged_write, payload));
+                                    }
+                                    Err(error) => {
+                                        conflicts.push((failing_path, anyhow::Error::from(error)));
+                                        prepared.push(None);
+                                        continue;
+                                    }
                                 }
-                                Some((staged, payload))
-                            } else {
-                                None
-                            };
+                            }
                             prepared.push(staged);
                         }
-                        Ok::<_, (Option<PathBuf>, anyhow::Error)>(prepared)
+                        (prepared, conflicts)
                     })
                     .await;
                 editor
                     .update(cx, move |editor, cx| {
                         editor.autosave_task = None;
-                        let prepared = match write_result {
-                            Ok(prepared) => prepared,
-                            Err((failing_path, error)) => {
-                                if editor.document_revision != revision {
-                                    editor.schedule_autosave(cx);
-                                    return;
-                                }
-                                let external_change = is_external_change(&error);
-                                let detail = error.to_string();
-                                eprintln!("failed to save recovery snapshot: {detail}");
-                                if external_change {
-                                    // 优先用真正失败的文件路径；只有旧路径拿不到时才
-                                    // 退回第一个有路径的标签。
-                                    let conflict_path = failing_path.or_else(|| {
-                                        documents.iter().find_map(|document| document.path.clone())
-                                    });
-                                    if let Some(conflict_path) = conflict_path {
-                                        editor.report_external_change_conflict(
-                                            conflict_path,
-                                            detail.clone(),
-                                            cx,
-                                        );
-                                    }
-                                } else {
-                                    editor.report_workspace_file_error(detail.clone(), cx);
-                                    // 一趟失败只出**一个**框：冲突那一类由
-                                    // `report_external_change_conflict` 出（带「重载 /
-                                    // 另存为」的解除入口），这一支补的是纯写盘失败。
-                                    let title =
-                                        cx.global::<I18nManager>().strings().save_failed_title.clone();
-                                    editor.show_message_modal(title, detail.clone(), cx);
-                                }
-                                return;
-                            }
-                        };
-
+                        let (prepared, conflicts) = write_result;
                         if editor.document_revision != revision {
                             for document in &documents {
                                 let is_open = if document.path.is_none() {
@@ -446,12 +492,29 @@ impl Editor {
                         }
 
                         let mut saved_documents = Vec::new();
-                        // 一趟里的失败先收集再上报：`show_modal` 是**替换**语义，逐条
-                        // 弹框会把带「重载 / 另存为」的冲突框顶成只剩一块「好」的
-                        // 「保存失败」，而后续每一趟自动保存又因冲突早退——用户再也
-                        // 看不到解除入口。有冲突只出冲突框，其余纯写盘失败走红字。
+                        // 一趟里的失败先收集再上报：`show_modal` 是**替换**语义，
+                        // 逐条弹框会把带「重载 / 另存为」的冲突框顶成只剩一块「好」
+                        // 的「保存失败」。有冲突只出冲突框；冲突槽位已被占着就不再
+                        // 重弹（自动保存每轮都会重新撞上同一个冲突），纯写盘失败
+                        // 一趟只补一块「保存失败」，其余走红字。
                         let mut conflict: Option<(PathBuf, String)> = None;
                         let mut write_failures: Vec<String> = Vec::new();
+                        // 准备阶段收集的失败：外部修改那一类进冲突入口，其余算纯
+                        // 写盘失败；冲突的那一篇本轮没有暂存写（prepared 里是
+                        // None），别的文档不受牵连。
+                        for (failing_path, error) in conflicts {
+                            if is_external_change(&error) {
+                                // 优先用真正失败的文件路径；只有旧路径拿不到时才
+                                // 退回第一个有路径的标签。
+                                let conflict_path = failing_path
+                                    .or_else(|| documents.iter().find_map(|document| document.path.clone()));
+                                if let Some(conflict_path) = conflict_path {
+                                    conflict.get_or_insert((conflict_path, error.to_string()));
+                                }
+                            } else {
+                                write_failures.push(error.to_string());
+                            }
+                        }
                         #[cfg(test)]
                         if let Some(hook) = editor.save_commit_hook.take() {
                             hook(editor, cx);
@@ -504,8 +567,24 @@ impl Editor {
                                 bytes: Some(saved_bytes),
                             });
                         }
+                        let mut write_failures = write_failures.into_iter();
                         if let Some((path, detail)) = conflict {
-                            editor.report_external_change_conflict(path, detail, cx);
+                            // 冲突槽位已被占着（用户还没解除上一处）就不再重弹：
+                            // show_modal 是替换语义，自动保存每一轮都重弹的话，
+                            // 那个解除入口永远关不掉。红字仍在，这一篇的磁盘提交
+                            // 也仍被版本校验挡着。
+                            if editor.has_external_autosave_conflict() {
+                                eprintln!("外部修改冲突仍未解除 '{}'：{detail}", path.display());
+                            } else {
+                                editor.report_external_change_conflict(path, detail, cx);
+                            }
+                        } else if let Some(first) = write_failures.next() {
+                            // 一趟只出**一个**框：有冲突出冲突框（带解除入口），
+                            // 没有冲突才补一块纯写盘失败的「保存失败」。
+                            editor.report_workspace_file_error(first.clone(), cx);
+                            let title =
+                                cx.global::<I18nManager>().strings().save_failed_title.clone();
+                            editor.show_message_modal(title, first, cx);
                         }
                         for detail in write_failures {
                             editor.report_workspace_file_error(detail, cx);
@@ -587,21 +666,36 @@ impl Editor {
                     Ok::<_, anyhow::Error>(prepared)
                 })
                 .await;
+            // 错误详情先取出来：实体没了（窗口已销毁）时应用内上报没机会跑，
+            // 跨窗口静态入口要用。
+            let failure_detail = write_result
+                .as_ref()
+                .err()
+                .map(|error| (is_external_change(error), error.to_string()));
 
-            let (close_window, error_detail) = editor
+            let update_outcome = editor
                 .update(cx, move |editor, cx| {
                     editor.autosave_task = None;
                     let prepared = match write_result {
                         Ok(prepared) => prepared,
                         Err(error) => {
-                            let external_change = is_external_change(&error);
                             let detail = error.to_string();
                             editor.pending_close_after_save = false;
                             editor.show_unsaved_changes_dialog = true;
-                            editor.report_workspace_file_error(detail.clone(), cx);
                             eprintln!("failed to save workspace documents: {detail}");
+                            // 「盘上内容变了 / 读不到」与自动保存撞上的同类问题走
+                            // 同一个带解除入口的冲突记录，不再只给一块纯展示的
+                            // 消息模态。错误详情不再往闭包外递第二份重复弹框——
+                            // show_modal 是替换语义，再弹会把冲突框顶掉。
+                            if let Some(external) = error.downcast_ref::<ExternalChange>() {
+                                editor.report_external_change_conflict(external.path.clone(), detail, cx);
+                            } else {
+                                editor.report_workspace_file_error(detail.clone(), cx);
+                                let title = cx.global::<I18nManager>().strings().save_failed_title.clone();
+                                editor.show_message_modal(title, detail, cx);
+                            }
                             cx.notify();
-                            return (false, Some((external_change, detail)));
+                            return false;
                         }
                     };
                     if editor.document_revision != revision {
@@ -609,7 +703,7 @@ impl Editor {
                         editor.pending_close_after_save = false;
                         editor.show_unsaved_changes_dialog = true;
                         cx.notify();
-                        return (false, None);
+                        return false;
                     }
 
                     let mut saved_documents = Vec::new();
@@ -661,16 +755,19 @@ impl Editor {
                         editor.pending_close_after_save = false;
                         editor.show_unsaved_changes_dialog = true;
                         cx.notify();
-                        return (false, None);
+                        return false;
                     }
                     editor.pending_close_after_save = false;
                     editor.show_unsaved_changes_dialog = false;
-                    (true, None)
-                })
-                .unwrap_or((false, None));
-            if let Some((external_change, detail)) = error_detail {
-                // 窗口已经没了的话，`show_async_message_modal` 会把这条写进 stderr：
-                // 保存失败不许静默消失。
+                    true
+                });
+            let update_succeeded = update_outcome.is_ok();
+            let close_window = update_outcome.unwrap_or(false);
+            // 实体没了才走这里：窗口活着时错误已在应用内报过，重复弹只会把带
+            // 解除入口的框顶掉。错误不许静默消失。
+            if !update_succeeded
+                && let Some((external_change, detail)) = failure_detail
+            {
                 if external_change {
                     Self::show_external_change_error(window_handle, detail, cx);
                 } else {
@@ -949,25 +1046,39 @@ impl Editor {
             let result = weak_editor.update(cx, move |this, cx| {
                 this.complete_save_request(path, identity, saved_text, markdown, cx)
             }).and_then(|result| result);
-            if let Err(err) = result {
-                if let Err(error) = weak_editor_for_write_error.update(cx, |editor, _| editor.pending_tab_close_after_save.clear()) {
-                    eprintln!("取消草稿标签关闭失败：{error}");
+                if let Err(err) = result {
+                    if let Err(error) = weak_editor_for_write_error.update(cx, |editor, _| editor.pending_tab_close_after_save.clear()) {
+                        eprintln!("取消草稿标签关闭失败：{error}");
+                    }
+                    if should_close_after_save
+                        && let Err(error) = weak_editor_for_write_error
+                            .update(cx, |this, cx| this.abort_pending_close_after_save(cx))
+                    {
+                        eprintln!("无法取消保存后的关闭请求：{error}");
+                    }
+                    let detail = err.to_string();
+                    // 另存为撞上的「目标已被外部改动 / 读不到」与手动保存同类，
+                    // 走带「重载 / 另存为」解除入口的冲突记录，不走「保存失败」
+                    // 三个失败源共用一条通道时不能只看文案。
+                    let external_target = err
+                        .downcast_ref::<ExternalChange>()
+                        .map(|external| external.path.clone());
+                    if let Some(external_path) = external_target {
+                        if let Err(error) = weak_editor_for_write_error.update(cx, move |editor, cx| {
+                            editor.report_external_change_conflict(external_path, detail, cx);
+                        }) {
+                            eprintln!("无法报告另存为的外部修改冲突：{error}");
+                        }
+                        return;
+                    }
+                    if let Err(error) = weak_editor_for_write_error.update(cx, move |this, cx| {
+                        let title = cx.global::<I18nManager>().strings().save_failed_title.clone();
+                        this.show_message_modal(title, detail.clone(), cx);
+                    }) {
+                        eprintln!("无法显示保存失败：{error}");
+                    }
+                    return;
                 }
-                if should_close_after_save
-                    && let Err(error) = weak_editor_for_write_error
-                        .update(cx, |this, cx| this.abort_pending_close_after_save(cx))
-                {
-                    eprintln!("无法取消保存后的关闭请求：{error}");
-                }
-                let detail = err.to_string();
-                if let Err(error) = weak_editor_for_write_error.update(cx, move |this, cx| {
-                    let title = cx.global::<I18nManager>().strings().save_failed_title.clone();
-                    this.show_message_modal(title, detail.clone(), cx);
-                }) {
-                    eprintln!("无法显示保存失败：{error}");
-                }
-                return;
-            }
 
             let _ = cx.update_window(
                 window_handle,

@@ -153,6 +153,7 @@ impl Editor {
         // 切换工作区 = 换一套工作集：不属于新根目录的标签必须收起
         // （此前换了工作区之后顶栏还留着上一个工作区的标签）。
         let same_root = self.workspace.root.as_ref() == Some(&root);
+        let sweep_root = root.clone();
         self.workspace.root = Some(root);
         if !same_root {
             self.stop_ai_task(cx);
@@ -187,6 +188,21 @@ impl Editor {
         self.sync_workspace_file_tree(cx);
         self.sync_workspace_outline(cx);
         self.ensure_workspace_watcher(cx);
+        // 开根时清一遍残留的保存临时文件：进程被强杀、断电时
+        // Drop 兜不住，含正文的 `.velora-*.tmp` 会一直留在用户目录里。后台跑，
+        // 不占开根这一帧；截止线带 60 秒安全余量，还可能是谁的在途写入的
+        // 文件一个都不删。
+        cx.background_executor()
+            .spawn(async move {
+                let removed = crate::config::sweep_stale_save_temporaries(&sweep_root);
+                if removed > 0 {
+                    eprintln!(
+                        "清扫了 {removed} 个残留的保存临时文件（工作区「{}」）",
+                        sweep_root.display()
+                    );
+                }
+            })
+            .detach();
         self.persist_session(cx);
         cx.notify();
     }
@@ -267,15 +283,48 @@ impl Editor {
     pub(crate) fn on_workspace_watch_rescan(&mut self, cx: &mut Context<Self>) {
         if self.split_workspace.is_some() {
             for group in self.split_groups() {
-                group.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+                group.update(cx, |editor, cx| {
+                    editor.refresh_workspace_tree(cx);
+                    editor.recheck_open_documents_after_rescan(cx);
+                });
+                self.sync_shared_groups(group.entity_id(), cx);
             }
         } else {
             self.refresh_workspace_tree(cx);
+            self.recheck_open_documents_after_rescan(cx);
+        }
+    }
+
+    /// 监听溢出（need_rescan）窗口里丢掉的变更事件无处可补：树靠重扫能追上，
+    /// 打开中的干净文档却会停在旧正文上且毫无提示——树是新的、正文是旧的，
+    /// 用户会毫无感知地基于陈旧内容继续阅读甚至编辑。对每个打开的文档补一次
+    /// 重载比对：内部跳过脏文档与 manual 策略，版本一致就是空转。
+    fn recheck_open_documents_after_rescan(&mut self, cx: &mut Context<Self>) {
+        let mut paths: Vec<PathBuf> = self
+            .workspace
+            .open_documents
+            .iter()
+            .map(|tab| tab.path.clone())
+            .collect();
+        if let Some(current) = self.file_path.clone() {
+            paths.push(current);
+        }
+        for path in paths {
+            self.reload_externally_changed_document(&path, cx);
         }
     }
 
     /// 合并文件事件，只更新变动路径，避免保存一次就重新遍历整个工作区。
     pub(crate) fn schedule_workspace_tree_refresh(&mut self, path: &Path, cx: &mut Context<Self>) {
+        // 自己的保存临时文件不进刷新队列：temp 通常已被 rename
+        // 掉，读了也是 NotFound 空转。识别判据与生成共用一处，这里是对监听
+        // 闭包之外所有入口的防御性过滤。
+        if path
+            .file_name()
+            .is_some_and(|name| crate::config::is_save_temp_file_name(&name.to_string_lossy()))
+        {
+            return;
+        }
         if !self
             .workspace
             .root
@@ -553,4 +602,80 @@ impl Editor {
         cx.notify();
     }
 
+}
+
+#[cfg(test)]
+mod watcher_noise_tests {
+    use crate::editor::Editor;
+
+    fn init_test_app(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+    }
+
+    /// 自己的保存临时文件不制造文件树刷新噪声：autosave 每轮
+    /// prepare/rename 都会造一串临时文件事件，树刷新读了也是 NotFound 空转。
+    /// 这里直接断言刷新队列的入口过滤；监听闭包侧的过滤走同一判据
+    /// （config::is_save_temp_file_name）。
+    #[gpui::test]
+    async fn autosave_temp_files_do_not_schedule_tree_refreshes(cx: &mut gpui::TestAppContext) {
+        init_test_app(cx);
+        let root =
+            std::env::temp_dir().join(format!("velora-tree-noise-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create workspace root");
+
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| {
+            editor.workspace.root = Some(root.clone());
+            let temp = root.join(format!(".note.md.velora-{}.tmp", uuid::Uuid::new_v4()));
+            editor.schedule_workspace_tree_refresh(&temp, cx);
+            assert!(
+                editor.workspace.pending_changed_paths.is_empty(),
+                "自己的临时文件不该进树刷新队列"
+            );
+            let normal = root.join("note.md");
+            editor.schedule_workspace_tree_refresh(&normal, cx);
+            assert_eq!(
+                editor.workspace.pending_changed_paths.len(),
+                1,
+                "普通文件仍要刷新"
+            );
+        });
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// 监听建立失败要进应用内通道（侧栏红字），不能只写 stderr：外部修改检测
+    /// 整体静默失效时用户毫无感知。
+    #[gpui::test]
+    async fn watcher_unavailability_is_reported_into_the_workspace_error_slot(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test_app(cx);
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "内容".to_string(), None));
+        let missing =
+            std::env::temp_dir().join(format!("velora-missing-watch-{}", uuid::Uuid::new_v4()));
+        let error = notify::Error::io(std::io::Error::from(std::io::ErrorKind::NotFound));
+
+        editor.update(cx, |editor, cx| {
+            crate::editor::watcher::note_watcher_unavailable(&missing, &error, editor, cx);
+        });
+
+        editor.read_with(cx, |editor, _cx| {
+            let detail = editor
+                .workspace
+                .file_error
+                .clone()
+                .expect("监听失败要进应用内红字");
+            assert!(detail.contains("无法监听"), "要说明后果与位置：{detail}");
+            assert!(
+                detail.contains(missing.to_string_lossy().as_ref()),
+                "红字里要有根目录：{detail}"
+            );
+        });
+    }
 }
