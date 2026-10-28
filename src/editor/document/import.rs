@@ -259,12 +259,12 @@ impl Editor {
             if cursor.is_document_start
                 && index == 0
                 && roots.is_empty()
-                && line.trim_end_matches('\r') == "---"
+                && crate::components::markdown::frontmatter::is_front_matter_fence_line(line)
             {
                 let mut close = None;
                 for candidate in 1..lines.len() {
                     let candidate_line = &lines[candidate];
-                    if candidate_line.trim_end_matches('\r') == "---" {
+                    if crate::components::markdown::frontmatter::is_front_matter_fence_line(candidate_line) {
                         close = Some(candidate);
                         break;
                     }
@@ -273,7 +273,9 @@ impl Editor {
                         // 再往后还没等到闭合就放弃。
                         let closes_next = lines
                             .get(candidate + 1)
-                            .is_some_and(|next| next.trim_end_matches('\r') == "---");
+                            .is_some_and(|next| {
+                                crate::components::markdown::frontmatter::is_front_matter_fence_line(next)
+                            });
                         if closes_next {
                             close = Some(candidate + 1);
                         }

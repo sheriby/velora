@@ -111,13 +111,13 @@ fn markdown_options() -> Options {
 fn split_front_matter(markdown: &str) -> Option<(String, &str)> {
     let mut lines = markdown.split_inclusive('\n');
     let opening = lines.next()?;
-    if opening.trim_end_matches(['\r', '\n']) != "---" {
+    if !crate::components::markdown::frontmatter::is_front_matter_fence_line(opening) {
         return None;
     }
     let mut consumed = opening.len();
     let mut body = String::new();
     for line in lines {
-        if line.trim_end_matches(['\r', '\n']) == "---" {
+        if crate::components::markdown::frontmatter::is_front_matter_fence_line(line) {
             consumed += line.len();
             return Some((front_matter_table_html(&body), &markdown[consumed..]));
         }

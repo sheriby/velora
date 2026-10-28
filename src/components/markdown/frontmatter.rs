@@ -5,6 +5,12 @@
 //! 刻意不做完整 YAML 解析：front matter 展示只承担一眼能读的元数据概览，
 //! 编辑与保存始终针对原始字节。
 
+/// 一行是不是 front matter 的围栏行（`---`，允许 CRLF）。导入、导出与
+/// 主体剥除三处共用这一条判据。
+pub(crate) fn is_front_matter_fence_line(line: &str) -> bool {
+    line.trim_end_matches(['\r', '\n']) == "---"
+}
+
 /// 剥掉文档开头的 `---` 围栏对，返回围栏内的 YAML 主体。
 /// 围栏不完整（没有关闭行）时原样返回。
 pub(crate) fn front_matter_body(raw: &str) -> String {
@@ -27,6 +33,11 @@ pub(crate) fn parse_front_matter_rows(body: &str) -> Vec<(String, Vec<String>)> 
     for line in body.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
+            continue;
+        }
+        // YAML 文档标记与注释不是上一项的值：把它们填进属性卡会显示成
+        // 由分隔符/注释文本组成的假值行。
+        if trimmed == "---" || trimmed == "..." || trimmed.starts_with('#') {
             continue;
         }
         if !line.starts_with([' ', '\t'])
@@ -68,6 +79,19 @@ mod tests {
         assert_eq!(front_matter_body("---\nname: x\n---"), "name: x");
         assert_eq!(front_matter_body("---\r\nname: x\r\n---"), "name: x");
         assert_eq!(front_matter_body("name: x"), "name: x");
+    }
+
+    #[test]
+    fn parse_front_matter_rows_skips_document_markers_and_comments() {
+        let body = "name: x\n---\n...\n# note\nnext: y";
+        assert_eq!(
+            parse_front_matter_rows(body),
+            vec![
+                ("name".to_string(), vec!["x".to_string()]),
+                ("next".to_string(), vec!["y".to_string()]),
+            ],
+            "YAML 文档标记与注释被当成了上一个 key 的值"
+        );
     }
 
     #[test]
