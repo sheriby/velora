@@ -220,3 +220,30 @@ async fn code_language_input_clears_language_when_empty(cx: &mut TestAppContext)
     });
 }
 
+
+#[gpui::test]
+async fn multibyte_code_language_ime_range_is_clamped(cx: &mut TestAppContext) {
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::CodeBlock {
+                    language: Some("中文".into()),
+                },
+                InlineTextTree::plain("code"),
+            ),
+        )
+    });
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        block.update(cx, |block, cx| {
+            block.replace_code_language_text_in_range(1..2, "x", None, false, cx);
+        })
+    }));
+    assert!(result.is_ok(), "多字节语言名里的字节偏移直接 panic");
+    assert_eq!(
+        block.read_with(cx, |block, _cx| block.code_language_text().to_string()),
+        "x中文",
+        "字节偏移没有收敛到字符边界"
+    );
+}

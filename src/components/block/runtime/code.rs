@@ -246,7 +246,16 @@ impl Block {
 
         let current = self.code_language_text().to_string();
         let old_marked_range = self.code_language_marked_range.clone();
-        let range = range.start.min(current.len())..range.end.min(current.len());
+        // 入口自己收敛：长度钳制、倒置交换、端点退到字符边界。多字节语言名
+        // （中文/韩文）里按字节偏移切字符串会直接 panic。
+        let mut start = range.start.min(current.len());
+        let mut end = range.end.min(current.len());
+        if start > end {
+            std::mem::swap(&mut start, &mut end);
+        }
+        let start = crate::components::markdown::inline::clamp_to_char_boundary(&current, start);
+        let end = crate::components::markdown::inline::clamp_to_char_boundary(&current, end);
+        let range = start..end;
         let inserted = new_text.replace("\r\n", " ").replace(['\r', '\n'], " ");
         let mut raw_next = String::new();
         raw_next.push_str(&current[..range.start]);
