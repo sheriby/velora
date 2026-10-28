@@ -363,6 +363,15 @@ mod tests {
     }
 
     #[test]
+    fn code_span_end_ignores_backslash_escapes_inside_the_span() {
+        // 代码段内的反斜杠是字面字符，闭合反引号前的 `\` 不改变闭合位置。
+        assert_eq!(
+            crate::components::markdown::image::inline_code_span_end("`a\\`|b`", 0),
+            Some(4)
+        );
+    }
+
+    #[test]
     fn parses_image_destination_written_on_the_next_line() {
         let definitions = parse_image_reference_definitions("[Ref Image]:\n./next.png");
         assert_eq!(

@@ -363,7 +363,9 @@ pub(crate) fn parse_html_attrs(source: &str) -> Vec<HtmlAttr> {
             } else if peek_char(source, index).is_some() {
                 let value_start = index;
                 while let Some(ch) = peek_char(source, index) {
-                    if ch.is_whitespace() || ch == '/' {
+                    // 未加引号的值只被空白结束：`/` 是合法值字符（`src=a/b.png`），
+                    // 自闭合标签的尾斜杠由标签尾判定，不在这里切值。
+                    if ch.is_whitespace() {
                         break;
                     }
                     index += ch.len_utf8();

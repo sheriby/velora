@@ -320,7 +320,8 @@ fn inline_code_span_end(markdown: &str, start: usize) -> Option<usize> {
     let run_len = opening_end - start;
     let mut cursor = opening_end;
     while cursor < bytes.len() {
-        if bytes[cursor] == b'`' && !is_escaped(markdown, cursor) {
+        // 代码段内反斜杠是普通字符：闭合反引号不看前一位是不是转义前缀。
+        if bytes[cursor] == b'`' {
             let mut end = cursor;
             while end < bytes.len() && bytes[end] == b'`' {
                 end += 1;

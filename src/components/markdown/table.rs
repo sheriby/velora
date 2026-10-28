@@ -653,19 +653,10 @@ pub(crate) fn cell_separator_positions(text: &str) -> Vec<usize> {
 }
 
 /// 从 `start` 起找**恰好** `run_len` 个连续反引号的闭合串（CommonMark：长度不等
-/// 不算闭合），返回闭合串起点。找到闭合之前反斜杠按「尚未确认在代码段内」处理：
-/// `\` + 可转义字符吃掉下一位，与外层扫描同一判据。
+/// 不算闭合），返回闭合串起点。代码段内反斜杠是普通字符：闭合反引号前的 `\`
+/// 不解除闭合，与外层扫描「只有开栏反引号能被转义」同一判据。
 fn find_closing_backtick_run(chars: &[char], mut start: usize, run_len: usize) -> Option<usize> {
-    let is_punctuation = |index: usize| -> bool {
-        chars
-            .get(index)
-            .is_some_and(|ch| crate::components::markdown::inline::is_commonmark_escapable(*ch))
-    };
     while start < chars.len() {
-        if chars[start] == '\\' && is_punctuation(start + 1) {
-            start += 2;
-            continue;
-        }
         if chars[start] == '`' {
             let mut end = start;
             while end < chars.len() && chars[end] == '`' {

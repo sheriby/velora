@@ -28,6 +28,12 @@
     }
 
     #[test]
+    fn unquoted_attribute_value_keeps_slashes() {
+        let attrs = super::parse::parse_html_attrs(" href=x/y");
+        assert_eq!(attrs[0].value.as_deref(), Some("x/y"));
+    }
+
+    #[test]
     fn parses_standalone_html_image_block() {
         let image = parse_html_image_block(
             "<img src=\"./xxx/abc.png\" alt=\"alt text\" style=\"zoom:80%;\" />",

@@ -1,7 +1,7 @@
 mod tests {
     use super::super::{
         TableColumnAlignment, TableColumnLayout, TableData, cell_chrome_width,
-        collect_pipeless_table_region, collect_root_table_candidate_region,
+        cell_separator_positions, collect_pipeless_table_region, collect_root_table_candidate_region,
         is_root_table_candidate_line, measure_preferred_column_widths, parse_root_table_region,
         parse_table_region, serialize_table_markdown_lines,
     };
@@ -319,6 +319,13 @@ mod tests {
                 "| A \\| B | value |".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn code_span_closes_before_a_backslash_escaped_backtick() {
+        // 代码段内反斜杠是普通字符：闭合反引号前的 `\` 不解除闭合，
+        // 紧随其后的 `|` 必须是格分隔符。
+        assert_eq!(cell_separator_positions("`a\\`|b`"), vec![4]);
     }
 
     #[test]
