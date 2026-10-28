@@ -45,11 +45,20 @@ async fn typing_does_not_rescan_status_bar_statistics_every_key(cx: &mut TestApp
     }
     redraw(cx);
     let total = editor.update(cx, |editor, cx| editor.cached_total_word_count(cx));
-    editor.read_with(cx, |editor, _| {
+    editor.read_with(cx, |editor, cx| {
+        let expected = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| {
+                crate::editor::status_bar::count_words(
+                    &visible.entity.read(cx).display_text(),
+                )
+            })
+            .sum::<usize>();
         assert_eq!(
-            total,
-            crate::editor::status_bar::count_words(&editor.buffer.text()),
-            "静默窗口后补算的字数必须与当前文本一致"
+            total, expected,
+            "静默窗口后补算的字数必须与当前可见文本一致"
         );
     });
     let after = editor.read_with(cx, |editor, _| editor.word_count_scans.get());

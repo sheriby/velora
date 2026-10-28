@@ -95,9 +95,28 @@ impl Editor {
             }
         }
         self.word_count_scans.set(self.word_count_scans.get() + 1);
-        let count = count_words(&self.buffer.text());
+        let count = self.visible_word_count(cx);
         self.word_count_cache.set(Some((revision, count)));
         count
+    }
+
+    /// 整篇词数与选区词数同用可见文本口径：Markdown 记号、表格管道与分隔行
+    /// 都不进词数。表格单元格不在可见块快照里，单独从表记录累加。
+    fn visible_word_count(&self, cx: &gpui::App) -> usize {
+        let mut total = 0usize;
+        for visible in self.document.visible_blocks() {
+            let block = visible.entity.read(cx);
+            if block.kind() == crate::components::BlockKind::Table {
+                if let Some(table) = block.record.table.as_ref() {
+                    for cell in table.header.iter().chain(table.rows.iter().flatten()) {
+                        total += count_words(&cell.visible_text());
+                    }
+                    continue;
+                }
+            }
+            total += count_words(&block.display_text());
+        }
+        total
     }
 
     pub(super) fn render_status_bar(
@@ -521,6 +540,7 @@ fn is_cjk_char(ch: char) -> bool {
 mod tests {
     use super::{count_words, document_has_long_source_block};
     use crate::i18n::I18nStrings;
+    use gpui::AppContext as _;
 
     /// 渲染侧必须让按钮调用派发函数。`.cursor_pointer()` 明示可点而函数体里只有
     /// `.on_hover`，配了 `action_id` 的按钮就是个静态装饰（评审必修 A2）。
@@ -554,6 +574,26 @@ mod tests {
         assert!(!document_has_long_source_block(&long_line));
         assert!(document_has_long_source_block(&just_over));
         assert!(document_has_long_source_block(&multi_line_long));
+    }
+
+    #[gpui::test]
+    async fn total_word_count_uses_visible_text(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let editor = cx.new(|cx| {
+            crate::components::Editor::from_markdown(
+                cx,
+                "| a | b |\n| --- | --- |\n| 1 | 2 |\n\n**bold** [text](https://example.com)"
+                    .to_string(),
+                None,
+            )
+        });
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.cached_total_word_count(cx),
+                6,
+                "整篇词数按源码数了表格管道与 Markdown 记号"
+            );
+        });
     }
 
     #[test]

@@ -6,7 +6,6 @@
 //! 的就和磁盘上的文件差一行。
 
 use super::common::*;
-use crate::editor::status_bar::count_words;
 
 /// Setext 标题 + 填充过的表格：重新序列化会少一行、改字节数。
 const LOSSY_READ_DOC: &str = concat!(
@@ -93,7 +92,9 @@ async fn the_status_bar_counts_the_file_text(cx: &mut TestAppContext) {
             editor.cached_total_word_count(cx),
         )
     });
-    assert_eq!(shown, count_words(&buffer_text), "字数不是按文件内容算的");
+    // 可见文本：标题 2 + 表格四格 7 + 正文「正文 one two」4。
+    // 源码口径会多算表格管道、分隔行与 Markdown 记号。
+    assert_eq!(shown, 13, "整篇词数没有按可见文本统计");
     assert_ne!(
         buffer_text, serialized,
         "夹具得是「重新序列化会改写形状」的写法，否则这条断言测不出东西"
