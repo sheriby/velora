@@ -350,6 +350,19 @@ mod tests {
     }
 
     #[test]
+    fn image_scan_recognizes_longer_and_indented_fences() {
+        let definitions = parse_image_reference_definitions(
+            "```md\n[inside]: /inside.png\n````\n\n[outside]: /outside.png\n\n   ```\n[also]: /also.png\n   ```",
+        );
+        assert!(!definitions.contains_key("inside"));
+        assert!(!definitions.contains_key("also"));
+        assert_eq!(
+            definitions.get("outside").map(|definition| definition.src.as_str()),
+            Some("/outside.png")
+        );
+    }
+
+    #[test]
     fn parses_image_destination_written_on_the_next_line() {
         let definitions = parse_image_reference_definitions("[Ref Image]:\n./next.png");
         assert_eq!(

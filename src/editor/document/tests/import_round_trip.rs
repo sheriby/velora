@@ -718,6 +718,32 @@
     }
 
     #[gpui::test]
+    async fn indented_code_after_a_definition_is_not_a_title(cx: &mut TestAppContext) {
+        let source = "[a]: /url\n    \"title\"";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert!(
+                visible.iter().any(|visible| {
+                    visible.entity.read(cx).kind() == BlockKind::CodeBlock { language: None }
+                        && visible.entity.read(cx).display_text() == "\"title\""
+                }),
+                "四空格的续行被定义吞成了标题：{:?}",
+                visible
+                    .iter()
+                    .map(|visible| {
+                        (
+                            visible.entity.read(cx).kind(),
+                            visible.entity.read(cx).display_text().to_string(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn plain_text_after_an_unfinished_definition_stays_a_paragraph(
         cx: &mut TestAppContext,
     ) {

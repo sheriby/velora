@@ -464,15 +464,7 @@ pub(crate) fn is_footnote_definition_start(line: &str) -> bool {
 }
 
 pub(crate) fn is_reference_definition_title_continuation(line: &str) -> bool {
-    let (_, indent_bytes) = leading_indent_columns_and_bytes(line);
-    if indent_bytes == 0 {
-        return false;
-    }
-
-    let trimmed = line[indent_bytes..].trim();
-    (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-        || (trimmed.starts_with('(') && trimmed.ends_with(')'))
+    crate::components::markdown::link::is_reference_definition_title_continuation(line)
 }
 
 pub(crate) fn is_block_html_start(line: &str) -> bool {

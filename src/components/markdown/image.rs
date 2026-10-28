@@ -8,13 +8,6 @@ use gpui::SharedUri;
 use crate::file_url::{local_path_from_file_url, percent_decode_or_raw, strip_file_scheme_prefix};
 use crate::net;
 
-/// Active fenced code block while scanning for image reference definitions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct FenceInfo {
-    ch: char,
-    len: usize,
-}
-
 /// HTML block start that suppresses reference-definition scanning.
 enum HtmlBlockStart {
     /// HTML comment beginning with `<!--`.
@@ -445,7 +438,7 @@ pub(crate) fn parse_image_reference_definitions(markdown: &str) -> ImageReferenc
         let line = normalized_refs[index];
 
         if let Some(fence) = active_fence {
-            if is_reference_scan_closing_fence(line, fence) {
+            if super::link::is_reference_scan_closing_fence(line, fence) {
                 active_fence = None;
             }
             index += 1;
@@ -470,10 +463,9 @@ pub(crate) fn parse_image_reference_definitions(markdown: &str) -> ImageReferenc
             continue;
         }
 
-        if let Some(fence) = parse_reference_scan_opening_fence(line) {
-            if !is_reference_scan_closing_fence(line, fence) {
-                active_fence = Some(fence);
-            }
+        if let Some(fence) = super::link::parse_reference_scan_opening_fence(line) {
+            // 围栏行只能由后续行闭合；这里若当它是闭合，紧随的内容会漏扫成定义。
+            active_fence = Some(fence);
             index += 1;
             continue;
         }
@@ -567,7 +559,7 @@ fn parse_image_reference_definition(
 
     if !target.is_empty()
         && let Some(next_line) = lines.get(start + consumed)
-        && is_reference_definition_title_continuation(next_line)
+        && super::link::is_reference_definition_title_continuation(next_line)
     {
         target.push(' ');
         target.push_str(next_line.trim());
@@ -644,33 +636,6 @@ fn strip_reference_scan_list_marker(line: &str) -> Option<&str> {
     Some(&rest[digit_len + 2..])
 }
 
-fn parse_reference_scan_opening_fence(line: &str) -> Option<FenceInfo> {
-    let trimmed = line.trim_end();
-    let ch = trimmed.chars().next()?;
-    if !matches!(ch, '`' | '~') {
-        return None;
-    }
-    let len = trimmed.chars().take_while(|current| *current == ch).count();
-    let rest = &trimmed[ch.len_utf8() * len..];
-    if ch == '`' && rest.contains('`') {
-        return None;
-    }
-    (len >= 3).then_some(FenceInfo { ch, len })
-}
-
-fn is_reference_scan_closing_fence(line: &str, opener: FenceInfo) -> bool {
-    let trimmed = line.trim_end();
-    if !trimmed.starts_with(opener.ch) {
-        return false;
-    }
-
-    let run_len = trimmed
-        .chars()
-        .take_while(|current| *current == opener.ch)
-        .count();
-    run_len == opener.len && trimmed[opener.ch.len_utf8() * run_len..].trim().is_empty()
-}
-
 fn parse_reference_scan_html_block_start(line: &str) -> Option<HtmlBlockStart> {
     let rest = line.trim_start().trim_end();
     if rest.starts_with("<!--") {
@@ -738,22 +703,6 @@ fn parse_image_target(inner: &str) -> Option<(String, Option<String>)> {
     }
 
     Some((super::link::normalize_markdown_destination(inner)?, None))
-}
-
-fn is_reference_definition_title_continuation(line: &str) -> bool {
-    let indent_bytes = line
-        .chars()
-        .take_while(|ch| matches!(ch, ' ' | '\t'))
-        .map(char::len_utf8)
-        .sum::<usize>();
-    if indent_bytes == 0 {
-        return false;
-    }
-
-    let trimmed = line[indent_bytes..].trim();
-    (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-        || (trimmed.starts_with('(') && trimmed.ends_with(')'))
 }
 
 

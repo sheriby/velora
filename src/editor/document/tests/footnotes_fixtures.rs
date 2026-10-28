@@ -247,11 +247,23 @@
         });
         reference_editor.update(cx, |editor, cx| {
             let visible = editor.document.visible_blocks();
-            assert_eq!(visible.len(), 1);
+            assert_eq!(
+                visible.len(),
+                2,
+                "四空格缩进的下一行是缩进代码块，不是定义的标题续行"
+            );
             assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::RawMarkdown);
             assert_eq!(
-                editor.document.markdown_text(cx),
-                "[id]: http://example.com/\n    \"Title\""
+                visible[1].entity.read(cx).kind(),
+                BlockKind::CodeBlock { language: None }
+            );
+            assert_eq!(visible[1].entity.read(cx).display_text(), "\"Title\"");
+            assert_eq!(
+                editor
+                    .link_reference_definitions
+                    .get("id")
+                    .map(|definition| (definition.destination.as_str(), definition.title.as_deref())),
+                Some(("http://example.com/", None))
             );
         });
 

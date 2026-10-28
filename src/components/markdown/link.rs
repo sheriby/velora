@@ -19,7 +19,7 @@ pub(crate) fn is_safe_export_url(value: &str) -> bool {
 
 /// Active fenced code block while scanning for link reference definitions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct FenceInfo {
+pub(crate) struct FenceInfo {
     ch: char,
     len: usize,
 }
@@ -92,9 +92,8 @@ pub(crate) fn parse_link_reference_definitions(markdown: &str) -> LinkReferenceD
         }
 
         if let Some(fence) = parse_reference_scan_opening_fence(line) {
-            if !is_reference_scan_closing_fence(line, fence) {
-                active_fence = Some(fence);
-            }
+            // 围栏行只能由后续行闭合；这里若当它是闭合，紧随的内容会漏扫成定义。
+            active_fence = Some(fence);
             index += 1;
             continue;
         }
@@ -250,8 +249,13 @@ fn strip_reference_scan_list_marker(line: &str) -> Option<&str> {
     Some(&rest[digit_len + 2..])
 }
 
-fn parse_reference_scan_opening_fence(line: &str) -> Option<FenceInfo> {
+pub(crate) fn parse_reference_scan_opening_fence(line: &str) -> Option<FenceInfo> {
     let trimmed = line.trim_end();
+    let (indent_columns, indent_bytes) = reference_scan_indent(trimmed);
+    if indent_columns > 3 {
+        return None;
+    }
+    let trimmed = &trimmed[indent_bytes..];
     let ch = trimmed.chars().next()?;
     if !matches!(ch, '`' | '~') {
         return None;
@@ -264,8 +268,13 @@ fn parse_reference_scan_opening_fence(line: &str) -> Option<FenceInfo> {
     (len >= 3).then_some(FenceInfo { ch, len })
 }
 
-fn is_reference_scan_closing_fence(line: &str, opener: FenceInfo) -> bool {
+pub(crate) fn is_reference_scan_closing_fence(line: &str, opener: FenceInfo) -> bool {
     let trimmed = line.trim_end();
+    let (indent_columns, indent_bytes) = reference_scan_indent(trimmed);
+    if indent_columns > 3 {
+        return false;
+    }
+    let trimmed = &trimmed[indent_bytes..];
     if !trimmed.starts_with(opener.ch) {
         return false;
     }
@@ -274,7 +283,23 @@ fn is_reference_scan_closing_fence(line: &str, opener: FenceInfo) -> bool {
         .chars()
         .take_while(|current| *current == opener.ch)
         .count();
-    run_len == opener.len && trimmed[opener.ch.len_utf8() * run_len..].trim().is_empty()
+    run_len >= opener.len && trimmed[opener.ch.len_utf8() * run_len..].trim().is_empty()
+}
+
+/// 行首空白折算成列：空格 1 列、制表符补到 4 列的整数倍。引用扫描与真正的
+/// 块解析共用「最多 3 列」这一条缩进口径。
+fn reference_scan_indent(line: &str) -> (usize, usize) {
+    let mut columns = 0usize;
+    let mut bytes = 0usize;
+    for ch in line.chars() {
+        match ch {
+            ' ' => columns += 1,
+            '\t' => columns += 4 - (columns % 4),
+            _ => break,
+        }
+        bytes += ch.len_utf8();
+    }
+    (columns, bytes)
 }
 
 fn parse_reference_scan_html_block_start(line: &str) -> Option<HtmlBlockStart> {
@@ -494,13 +519,9 @@ pub(crate) fn unescape_ascii_punctuation(input: &str) -> String {
     output
 }
 
-fn is_reference_definition_title_continuation(line: &str) -> bool {
-    let indent_bytes = line
-        .chars()
-        .take_while(|ch| matches!(ch, ' ' | '\t'))
-        .map(char::len_utf8)
-        .sum::<usize>();
-    if indent_bytes == 0 {
+pub(crate) fn is_reference_definition_title_continuation(line: &str) -> bool {
+    let (indent_columns, indent_bytes) = reference_scan_indent(line);
+    if indent_columns == 0 || indent_columns > 3 {
         return false;
     }
 
@@ -558,6 +579,45 @@ mod tests {
             Some(&LinkReferenceDefinition {
                 destination: "https://first.example".to_string(),
                 title: Some("Caption".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn reference_scan_recognizes_longer_and_indented_fences() {
+        let definitions = parse_link_reference_definitions(
+            "```md\n[inside]: /inside\n````\n\n[outside]: /outside\n\n   ```\n[also]: /also\n   ```\n\n[last]: /last",
+        );
+        assert!(!definitions.contains_key("inside"));
+        assert!(!definitions.contains_key("also"));
+        assert_eq!(
+            definitions.get("outside").map(|definition| definition.destination.as_str()),
+            Some("/outside")
+        );
+        assert_eq!(
+            definitions.get("last").map(|definition| definition.destination.as_str()),
+            Some("/last")
+        );
+    }
+
+    #[test]
+    fn title_continuation_stops_before_indented_code() {
+        let definitions = parse_link_reference_definitions("[a]: /url\n    \"title\"\n[b]: /b");
+        assert_eq!(
+            definitions.get("a"),
+            Some(&LinkReferenceDefinition {
+                destination: "/url".to_string(),
+                title: None,
+            })
+        );
+        assert!(definitions.contains_key("b"));
+
+        let indented_title = parse_link_reference_definitions("[a]: /url\n   \"title\"");
+        assert_eq!(
+            indented_title.get("a"),
+            Some(&LinkReferenceDefinition {
+                destination: "/url".to_string(),
+                title: Some("title".to_string()),
             })
         );
     }
