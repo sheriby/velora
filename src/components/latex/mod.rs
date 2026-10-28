@@ -560,7 +560,74 @@ fn latex_cache_dir() -> anyhow::Result<PathBuf> {
     let dir = root.join("latex-svg");
     fs::create_dir_all(&dir)
         .with_context(|| format!("failed to create LaTeX SVG cache '{}'", dir.display()))?;
+    // 首次解析（每进程一次）顺手清一遍：草稿每键都是新键，每个中间态都落一个
+    // SVG，没有清理就会无限增长（评审 P217）。
+    prune_latex_svg_cache(&dir, LATEX_SVG_CACHE_MAX_FILES);
     Ok(dir)
+}
+
+/// 磁盘缓存的条数上限：进程内 LRU 已是 256，磁盘留两倍的余量。
+const LATEX_SVG_CACHE_MAX_FILES: usize = 512;
+
+/// 写缓存残留的安全余量：一个在途渲染从建出 `.tmp` 到 rename 只有毫秒级，且
+/// 可能来自并行运行的另一个实例。截止线前的 `.tmp` 一个都不删。
+const LATEX_TMP_SWEEP_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// 清理 LaTeX SVG 磁盘缓存，返回删除的文件数：
+/// 超出 `max_files` 的 `.svg` 按 mtime 最旧先删；超过安全余量的 `.tmp`（写缓存
+/// 时崩溃/断电的产物，永远不会成为有效档）一并清掉。文件与目录统计失败按
+/// 「没得清」处理——清理失败不该挡住渲染路径，下次首解析还会再来。
+fn prune_latex_svg_cache(dir: &std::path::Path, max_files: usize) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut svg_files: Vec<(std::path::PathBuf, std::time::SystemTime)> = Vec::new();
+    let mut stale_tmps: Vec<std::path::PathBuf> = Vec::new();
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !entry.metadata().map(|meta| meta.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .ok()
+            .and_then(|meta| meta.modified().ok());
+        match path.extension().and_then(|extension| extension.to_str()) {
+            Some("svg") => {
+                if let Some(modified) = modified {
+                    svg_files.push((path, modified));
+                }
+            }
+            Some("tmp") => {
+                let stale = modified
+                    .is_some_and(|modified| match now.duration_since(modified) {
+                        Ok(age) => age > LATEX_TMP_SWEEP_GRACE,
+                        Err(_) => false,
+                    });
+                if stale {
+                    stale_tmps.push(path);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut removed = stale_tmps.len();
+    for path in stale_tmps {
+        if let Err(error) = fs::remove_file(&path) {
+            eprintln!("清理 LaTeX 缓存临时文件 '{}' 失败：{error}", path.display());
+        }
+    }
+    if svg_files.len() > max_files {
+        svg_files.sort_by_key(|(_, modified)| *modified);
+        let excess = svg_files.len() - max_files;
+        for (path, _) in svg_files.into_iter().take(excess) {
+            if fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
 }
 
 fn svg_color(color: Hsla) -> String {
@@ -645,6 +712,85 @@ mod tests {
         let second = render_inline_math_svg(&formula, Hsla::default(), 17.0).unwrap();
         assert_eq!(first, second);
         assert_eq!(LATEX_LAYOUT_COUNT.with(std::cell::Cell::get) - before, 1);
+    }
+
+    /// 磁盘缓存必须有清理入口（评审 P217）：草稿每键都是新键，每个中间态都在
+    /// 缓存目录永久落一个 SVG，没有清理就会无限增长。条数超限删最旧的。
+    #[test]
+    fn latex_svg_disk_cache_prunes_the_oldest_beyond_the_cap() {
+        let root =
+            std::env::temp_dir().join(format!("velora-latex-prune-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let stamp = |path: &std::path::Path, age_secs: u64| {
+            let time =
+                std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs);
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(time)
+                .unwrap();
+        };
+        let key = |index: u64| root.join(format!("key{index:016x}.svg"));
+        for index in 0..3u64 {
+            std::fs::write(key(index), "<svg></svg>").unwrap();
+            // key0 最旧，key2 最新。
+            stamp(&key(index), 3600 * (3 - index));
+        }
+        // 干扰项：别的文件与新鲜 .tmp（可能是另一实例的在途写入）不许动。
+        let stranger = root.join("notes.txt");
+        std::fs::write(&stranger, "keep").unwrap();
+        let fresh_tmp = root.join("key_abc.svg.123.tmp");
+        std::fs::write(&fresh_tmp, "in flight").unwrap();
+        stamp(&fresh_tmp, 0);
+
+        assert_eq!(prune_latex_svg_cache(&root, 2), 1, "只删超出上限的那份");
+        assert!(!key(0).exists(), "最旧的该被清掉");
+        assert!(key(1).exists() && key(2).exists(), "未超限的新档要留下");
+        assert!(stranger.exists(), "非缓存文件不许动");
+        assert!(fresh_tmp.exists(), "新鲜的 .tmp 可能是在途写入，不许动");
+
+        // 未超限时空转；目录不存在也不 panic。
+        assert_eq!(prune_latex_svg_cache(&root, 2), 0);
+        assert_eq!(
+            prune_latex_svg_cache(
+                &root.join(format!("missing-{}", uuid::Uuid::new_v4())),
+                2
+            ),
+            0
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// 崩溃/断电留下的写缓存 .tmp 残留过了安全余量要清：它们永远不会成为
+    /// 有效档，也不占 .svg 的条数上限。
+    #[test]
+    fn latex_svg_disk_cache_sweeps_stale_tmp_debris() {
+        let root = std::env::temp_dir().join(format!(
+            "velora-latex-tmp-sweep-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let stale = root.join("key_1234.svg.999.tmp");
+        std::fs::write(&stale, "half written").unwrap();
+        let fresh = root.join("key_5678.svg.999.tmp");
+        std::fs::write(&fresh, "in flight").unwrap();
+        let hour = std::time::Duration::from_secs(3600);
+        for (path, age) in [(&stale, hour), (&fresh, std::time::Duration::ZERO)] {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() - age)
+                .unwrap();
+        }
+
+        assert_eq!(prune_latex_svg_cache(&root, 8), 1, "只清过期的 .tmp");
+        assert!(!stale.exists(), "过期的 .tmp 残留该被清掉");
+        assert!(fresh.exists(), "在途写入不许动");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
