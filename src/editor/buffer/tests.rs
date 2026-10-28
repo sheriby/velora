@@ -608,3 +608,20 @@ fn chunk_starts_index_matches_a_linear_scan() {
         offsets.push(start);
     }
 }
+
+#[test]
+fn invalid_edit_ranges_are_clamped_instead_of_panicking() {
+    let mut buffer = TextBuffer::from_text("abc");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        buffer.edit(10..12, "x");
+    }));
+    assert!(result.is_ok(), "越界编辑直接 panic");
+    assert_eq!(buffer.text(), "abcx");
+
+    let mut buffer = TextBuffer::from_text("你a");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        buffer.edit(1..3, "x");
+    }));
+    assert!(result.is_ok(), "端点落在多字节字符中间时直接 panic");
+    assert_eq!(buffer.text(), "xa");
+}

@@ -650,6 +650,23 @@ impl TextBuffer {
     ///
     /// 这是全编辑器唯一的文本写入口——块树、撤销、保存都必须经过它，
     /// 这样「未被编辑的字节不会被改写」才是结构性质而不是约定。
+    /// 编辑区间兜底：越界钳到文末、起点大于终点交换、端点退到字符边界。
+    /// 正常路径不该走到这里，钳位只保证坏区间不把缓冲区打崩。
+    fn clamp_edit_range(&self, range: Range<usize>, total: usize) -> Range<usize> {
+        let mut start = range.start.min(total);
+        let mut end = range.end.min(total);
+        if start > end {
+            std::mem::swap(&mut start, &mut end);
+        }
+        while start > 0 && !self.is_char_boundary(start) {
+            start -= 1;
+        }
+        while end > start && !self.is_char_boundary(end) {
+            end -= 1;
+        }
+        start..end
+    }
+
     pub(crate) fn edit(&mut self, range: Range<usize>, text: &str) -> AppliedEdit {
         if let Some(shared) = &self.shared {
             let mut content = shared.borrow_mut();
@@ -658,14 +675,15 @@ impl TextBuffer {
             return edit;
         }
         let total = self.byte_len();
-        assert!(
-            range.start <= range.end && range.end <= total,
-            "编辑区间越界：{range:?}，缓冲区长度 {total}"
-        );
-        debug_assert!(
-            self.is_char_boundary(range.start) && self.is_char_boundary(range.end),
-            "编辑端点落在多字节字符中间：{range:?}"
-        );
+        let clamped = self.clamp_edit_range(range.clone(), total);
+        if clamped != range {
+            // 上游区间过期或端点落在字符中间：钳位后继续，别让一次坏区间
+            // 把整窗打崩；日志留给排查越界来源。
+            eprintln!(
+                "velora: 编辑区间 {range:?} 非法（缓冲区 {total} 字节），已钳位为 {clamped:?}"
+            );
+        }
+        let range = clamped;
 
         let removed = self.slice(range.clone());
         self.revision = self.revision.wrapping_add(1);
