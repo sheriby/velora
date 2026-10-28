@@ -1,6 +1,29 @@
 use super::*;
 
 impl Editor {
+    /// 本块在可见序里的位置；不可见块按旧口径当 0 号（折叠区块发不出这些事件，
+    /// 0 号只是兜底）。查增量索引 O(1)，不克隆可见块表。
+    fn current_visible_index_of(&self, entity_id: EntityId) -> usize {
+        self.document
+            .visible_index_for_entity_id(entity_id)
+            .unwrap_or(0)
+    }
+
+    /// 按方向取可见序里相邻的块，跳过画不出东西的块（与
+    /// `vertical_neighbor_index` 同一条规则）。只要一个实体，不为它整篇克隆。
+    fn vertical_neighbor_entity(
+        &self,
+        entity_id: EntityId,
+        delta: isize,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<crate::editor::Block>> {
+        let from = self.current_visible_index_of(entity_id);
+        let visible = self.document.visible_blocks();
+        let target_index =
+            self.vertical_neighbor_index(visible, from, delta, cx)?;
+        visible.get(target_index).map(|visible| visible.entity.clone())
+    }
+
     /// Handles all block-originated editor events against the current cached
     /// visible-order snapshot.
     pub(crate) fn on_block_event(
@@ -97,8 +120,7 @@ impl Editor {
         // 实测 17ms，占满一次按键。身份序列是 `Copy` 的 `EntityId`，比它便宜两个
         // 数量级；「前一根/后一根实体」只有结构事件要。
         if matches!(event, BlockEvent::Changed) {
-            let visible_ids_before = self.document.visible_block_ids();
-            self.on_block_changed(block, &visible_ids_before, cx);
+            self.on_block_changed(block, cx);
             return;
         }
 
@@ -116,11 +138,6 @@ impl Editor {
                 | BlockEvent::RequestDelete
         )
         .then(|| self.document.root_layout());
-        let visible_before = self.document.flatten_visible_blocks();
-        let current_visible_index = visible_before
-            .iter()
-            .position(|visible| visible.entity.entity_id() == block.entity_id())
-            .unwrap_or(0);
 
         match event {
             // 文本改动在函数开头就转给 `on_block_changed` 了：这个空分支只为
@@ -349,10 +366,23 @@ impl Editor {
                 cx.notify();
             }
             BlockEvent::RequestMergeIntoPrev { content } => {
+                // 只要「前一块」这一个实体：查增量可见索引即可，整篇克隆是
+                // O(文档) 的句柄账单。
+                let current_visible_index = self
+                    .document
+                    .visible_index_for_entity_id(block.entity_id())
+                    .unwrap_or(0);
                 if current_visible_index == 0 {
                     return;
                 }
-                let prev = visible_before[current_visible_index - 1].entity.clone();
+                let Some(prev) = self
+                    .document
+                    .visible_blocks()
+                    .get(current_visible_index - 1)
+                    .map(|visible| visible.entity.clone())
+                else {
+                    return;
+                };
                 let quote_related = self.block_is_quote_structure_related(&block, cx)
                     || self.block_is_quote_structure_related(&prev, cx);
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
@@ -400,10 +430,15 @@ impl Editor {
             BlockEvent::RequestMergeFromNext => {
                 // 源码分块文档：块尾前向删除，把下一块并入本块（即删除
                 // 块边界换行）。光标落在接缝处。
-                let Some(next) = visible_before.get(current_visible_index + 1) else {
+                let current_visible_index = self.current_visible_index_of(block.entity_id());
+                let Some(next) = self
+                    .document
+                    .visible_blocks()
+                    .get(current_visible_index + 1)
+                    .map(|visible| visible.entity.clone())
+                else {
                     return;
                 };
-                let next = next.entity.clone();
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
 
                 let cursor_pos = block.read(cx).display_text().len();
@@ -611,6 +646,7 @@ impl Editor {
             BlockEvent::RequestPasteImage { .. }
             | BlockEvent::RequestReplaceCrossBlockSelection { .. } => {}
             BlockEvent::RequestIndent => {
+                let current_visible_index = self.current_visible_index_of(block.entity_id());
                 if current_visible_index == 0 {
                     return;
                 }
@@ -618,8 +654,15 @@ impl Editor {
                 let Some(location) = self.document.find_block_location(block.entity_id()) else {
                     return;
                 };
+                let Some(target_parent) = self
+                    .document
+                    .visible_blocks()
+                    .get(current_visible_index - 1)
+                    .map(|visible| visible.entity.clone())
+                else {
+                    return;
+                };
                 let current_kind = block.read(cx).kind();
-                let target_parent = visible_before[current_visible_index - 1].entity.clone();
                 if !current_kind.can_nest_under(&target_parent.read(cx).kind()) {
                     return;
                 }
@@ -845,13 +888,12 @@ impl Editor {
             BlockEvent::RequestTableCellMoveHorizontal { .. }
             | BlockEvent::RequestTableCellMoveVertical { .. } => {}
             BlockEvent::RequestFocusPrev { preferred_x } => {
-                let Some(target_index) =
-                    self.vertical_neighbor_index(&visible_before, current_visible_index, -1, cx)
+                let Some(target) =
+                    self.vertical_neighbor_entity(block.entity_id(), -1, cx)
                 else {
                     return;
                 };
 
-                let target = visible_before[target_index].entity.clone();
                 // Entering a table from below lands in a body cell instead of
                 // the non-editable table container.
                 if target.read(cx).kind() == BlockKind::Table
@@ -870,9 +912,7 @@ impl Editor {
                 cx.notify();
             }
             BlockEvent::RequestFocusNext { preferred_x } => {
-                let Some(target_index) =
-                    self.vertical_neighbor_index(&visible_before, current_visible_index, 1, cx)
-                else {
+                let Some(target) = self.vertical_neighbor_entity(block.entity_id(), 1, cx) else {
                     // A trailing multi-line block (code, math, ...) has nowhere
                     // below to move to, so give it a paragraph to land on and
                     // focus that, matching how a trailing table behaves.
@@ -886,13 +926,15 @@ impl Editor {
                         self.ensure_trailing_paragraph_after_structural(&block, cx);
                         self.mark_dirty(cx);
                         self.finalize_pending_undo_capture(cx);
-                        let visible = self.document.flatten_visible_blocks();
-                        if let Some(landing) = visible
-                            .iter()
-                            .position(|v| v.entity.entity_id() == block.entity_id())
-                            .and_then(|index| visible.get(index + 1))
-                            .map(|v| v.entity.clone())
-                        {
+                        // 补完段落重新按增量索引找落点：新块此刻已在可见快照里。
+                        let landing = self
+                            .document
+                            .visible_index_for_entity_id(block.entity_id())
+                            .and_then(|index| {
+                                self.document.visible_blocks().get(index + 1)
+                            })
+                            .map(|visible| visible.entity.clone());
+                        if let Some(landing) = landing {
                             self.focus_block(landing.entity_id());
                             landing.update(cx, |landing, cx| landing.move_to(0, cx));
                             cx.notify();
@@ -901,7 +943,6 @@ impl Editor {
                     return;
                 };
 
-                let target = visible_before[target_index].entity.clone();
                 // Entering a table from above lands in a header cell instead of
                 // the non-editable table container.
                 if target.read(cx).kind() == BlockKind::Table
@@ -920,13 +961,10 @@ impl Editor {
                 cx.notify();
             }
             BlockEvent::RequestBlockUp => {
-                let Some(target_index) =
-                    self.vertical_neighbor_index(&visible_before, current_visible_index, -1, cx)
-                else {
+                let Some(target) = self.vertical_neighbor_entity(block.entity_id(), -1, cx) else {
                     return;
                 };
 
-                let target = visible_before[target_index].entity.clone();
                 if target.read(cx).kind() == BlockKind::Table
                     && self.focus_table_entry_cell(&target, false, cx)
                 {
@@ -937,13 +975,10 @@ impl Editor {
                 cx.notify();
             }
             BlockEvent::RequestBlockDown => {
-                let Some(target_index) =
-                    self.vertical_neighbor_index(&visible_before, current_visible_index, 1, cx)
-                else {
+                let Some(target) = self.vertical_neighbor_entity(block.entity_id(), 1, cx) else {
                     return;
                 };
 
-                let target = visible_before[target_index].entity.clone();
                 if target.read(cx).kind() == BlockKind::Table
                     && self.focus_table_entry_cell(&target, true, cx)
                 {
@@ -958,8 +993,9 @@ impl Editor {
                     return;
                 }
                 let quote_related = self.block_is_quote_structure_related(&block, cx);
+                let current_visible_index = self.current_visible_index_of(block.entity_id());
                 let is_last_visible_leaf =
-                    visible_before.len() == 1 && block.read(cx).children.is_empty();
+                    self.document.visible_blocks().len() == 1 && block.read(cx).children.is_empty();
                 if is_last_visible_leaf {
                     if block.read(cx).kind() == BlockKind::Paragraph {
                         Self::reset_block_cursor(&block, 0, cx);
@@ -977,14 +1013,16 @@ impl Editor {
                     .root_ancestor_of(block.entity_id())
                     .unwrap_or_else(|| block.clone());
 
-                let visible_before_ids = visible_before
-                    .iter()
-                    .map(|visible| visible.entity.entity_id())
-                    .collect::<Vec<_>>();
                 let focus_candidate = if current_visible_index > 0 {
-                    Some(visible_before_ids[current_visible_index - 1])
+                    self.document
+                        .visible_blocks()
+                        .get(current_visible_index - 1)
+                        .map(|visible| visible.entity.entity_id())
                 } else {
-                    visible_before_ids.get(current_visible_index + 1).copied()
+                    self.document
+                        .visible_blocks()
+                        .get(current_visible_index + 1)
+                        .map(|visible| visible.entity.entity_id())
                 };
 
                 let adopted_children = crate::editor::tree::DocumentTree::take_children(&block, cx);
@@ -1033,10 +1071,26 @@ impl Editor {
                 self.close_menu_bar(cx);
                 self.clear_table_axis_preview(cx);
                 self.clear_table_axis_selection(cx);
+                // 活动样式的切换只涉及两块：旧活动目标摘输入态（光标、占位符、
+                // 行内投影），新块亮起来。旧实现逐块 notify 整篇可见块——flatten
+                // 是 O(文档) 克隆，逐块 notify 是 O(文档) 实体写，每次点击全付。
+                // 焦点在渲染期落地时 `window.focus` 本就会让整窗重排，前后两块
+                // 之外的通知是纯浪费。旧目标可能是表格格子（从表里点出去），
+                // `focusable_entity_by_id` 认得出。
+                let previous_active = self
+                    .active_entity_id
+                    .or(self.pending_focus)
+                    .filter(|entity_id| *entity_id != block.entity_id())
+                    .and_then(|entity_id| self.focusable_entity_by_id(entity_id));
                 self.focus_block(block.entity_id());
-                for visible in self.document.flatten_visible_blocks() {
-                    visible.entity.update(cx, |_, cx| cx.notify());
+                let mut refreshed = 1u64;
+                if let Some(previous) = previous_active {
+                    previous.update(cx, |_, cx| cx.notify());
+                    refreshed += 1;
                 }
+                block.update(cx, |_, cx| cx.notify());
+                self.focus_transfer_block_updates
+                    .set(self.focus_transfer_block_updates.get() + refreshed);
                 cx.notify();
             }
             BlockEvent::RequestRenderedSelectAll => {}
@@ -1050,12 +1104,7 @@ impl Editor {
     /// 它与结构事件分开走，因为这里只需要「可见序列有没有变」：整篇克隆
     /// `VisibleBlock` 要付每个 Entity 句柄的引用计数与 LeakDetector 登记，
     /// 10 MiB 档一次 17ms，占满一次按键。
-    fn on_block_changed(
-        &mut self,
-        block: Entity<crate::editor::Block>,
-        visible_ids_before: &[EntityId],
-        cx: &mut Context<Self>,
-    ) {
+    fn on_block_changed(&mut self, block: Entity<crate::editor::Block>, cx: &mut Context<Self>) {
         // 用户改了文档：换投影交还的阅读位置按旧字节记账，一律作废。
         self.cancel_pending_view_mode_scroll();
         let kind_changed = self.writes_through_the_buffer() && {
@@ -1067,6 +1116,18 @@ impl Editor {
         // 前提是每一次缓冲区写入都被记账，这条不变式在这里收口（组已开时
         // prepare 是空操作，打字的 Coalescible 组不受影响）。
         self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+        // 结构在这一笔里动没动，由本函数内仅有的三个结构帮手直接作证，不再拿
+        // 整篇可见序列逐位比对——旧比对每键付一次 O(文档) 身份序列分配加一次
+        // O(文档) 全量比较（16 万块 ≈ 每键几十万次无谓工作）。三个帮手是闭集，
+        // 就写在本函数里：
+        // 1. `insert_list_group_separator_before` 返回 true 当且仅当插了分隔块；
+        // 2. `materialize_empty_callout_shortcut` 返回 Some 当且仅当补了正文块
+        //    （早退分支在任何改动之前）；
+        // 3. `normalize_rendered_quote_structure` 的区域重投影（`reuse_leaf=false`，
+        //    恒换实体）与整篇兜底都会换掉区域实体。
+        // 其余帮手（补全刷新、行元数据刷新、引用元数据重建）只动实体字段或
+        // 快照元数据，不碰可见序列。
+        let mut structure_mutated = false;
         // [[ 补全跟随编辑刷新（依据本次编辑后的文本与光标）。
         self.update_wikilink_completion_for_block(&block, cx);
         // `\` 公式补全同上：数学块/行内公式里的反斜杠命令。
@@ -1079,10 +1140,12 @@ impl Editor {
             block.take_numbered_list_restart_requested()
         });
         if should_restart_numbered_list {
-            self.insert_list_group_separator_before(block.entity_id(), cx);
+            structure_mutated |=
+                self.insert_list_group_separator_before(block.entity_id(), cx);
         }
 
         let callout_focus_target = self.materialize_empty_callout_shortcut(&block, cx);
+        structure_mutated |= callout_focus_target.is_some();
 
         let should_normalize_quote =
             block.update(cx, |block, _cx| {
@@ -1095,20 +1158,14 @@ impl Editor {
             && self.changed_block_needs_runtime_context_refresh(&block, cx);
         if should_normalize_quote {
             self.normalize_rendered_quote_structure(&block, cx);
+            structure_mutated = true;
         }
         if let Some(focus_id) = callout_focus_target {
             self.focus_block(focus_id);
         }
         // 文本改动按区间写回缓冲区，未编辑的块因此保住原有字节。前提是这次
         // 事件没动结构：根块序列一变，区间就整体错位，只能退回整篇重投影。
-    let structure_unchanged = {
-        let after = self.document.visible_blocks();
-        after.len() == visible_ids_before.len()
-        && after
-            .iter()
-            .zip(visible_ids_before)
-            .all(|(visible, entity_id)| visible.entity.entity_id() == *entity_id)
-    };
+        let structure_unchanged = !structure_mutated;
         // 拆块的切分不落笔：光标之后那截是下一个块的源码，写出去就是「先删一遍
         // 再写回一遍」——本块的区间塌成零宽，紧随的结构写回就没区间可用，只能
         // 整篇重投影。留着区间，那一步才只改这一段。

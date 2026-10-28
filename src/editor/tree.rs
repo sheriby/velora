@@ -134,8 +134,8 @@ pub(super) struct DocumentTree {
     pub(crate) snapshot_nanos: std::cell::Cell<u64>,
     /// 计数器：整篇可见块列表被克隆了几块（`flatten_visible_blocks`）。克隆一块要付
     /// 一次 Entity 引用计数与 LeakDetector 登记；10 MiB 档 159,683 块克隆一次实测
-    /// 17ms、占满一次按键，而按键只需要拿它比「可见序列有没有变」——所以打字时这个
-    /// 数必须是 0，比身份序列（`visible_block_ids`）去。
+    /// 17ms、占满一次按键。按键路径不需要它：结构动没动由变更帮手直接作证
+    /// （见 `on_block_changed`），所以打字时这个数必须是 0。
     pub(crate) visible_blocks_cloned: std::cell::Cell<u64>,
     /// 行元数据（`VisibleTreeSnapshot::row_spacing` 那一份）的版本：可见列表
     /// 同步整棵重排、增量追加、或某一块的行标记（`is_toc`/`had_toc`）翻面时 +1。
@@ -345,24 +345,13 @@ impl DocumentTree {
     }
 
     /// 整篇可见块列表的克隆。要付每个 Entity 句柄的引用计数与 LeakDetector 登记，
-    /// 只能用在真正需要「前一根/后一根实体」的结构事件上；只想比序列变没变的地方
-    /// 用 [`Self::visible_block_ids`]。
+    /// 只能用在真正需要「前一根/后一根实体」的结构事件上；「序列变没变」这类问题
+    /// 由各变更帮手自己作证（见 `on_block_changed` 的结构闭集），不再整篇比对。
     pub(super) fn flatten_visible_blocks(&self) -> Vec<VisibleBlock> {
         self.visible_blocks_cloned
             .set(self.visible_blocks_cloned.get() + self.snapshot.visible.len() as u64);
         self.snapshot.visible.clone()
     }
-
-    /// 可见列表的身份序列（`EntityId` 是 `Copy`）。与 [`Self::flatten_visible_blocks`]
-    /// 相比，克隆与比较都不碰引用计数，10 MiB 档便宜两个数量级。
-    pub(super) fn visible_block_ids(&self) -> Vec<EntityId> {
-        self.snapshot
-            .visible
-            .iter()
-            .map(|visible| visible.entity.entity_id())
-            .collect()
-    }
-
 
     pub(super) fn focused_block_entity_id(&self, window: &Window, cx: &App) -> Option<EntityId> {
         self.snapshot

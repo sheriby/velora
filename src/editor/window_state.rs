@@ -1021,15 +1021,39 @@ impl Editor {
         let lines = self.buffer.lines_and_line_starts(
             &known.iter().map(|(_, offset)| *offset).collect::<Vec<_>>(),
         );
+        // 每个按键都走这里，写实体前先比值：行号没变的块（最常见——打字不改
+        // 行数，只有编辑点之后的块才平移）不再付实体写锁，两趟写只剩真正变了
+        // 的块。
         for ((index, _), (line_index, _)) in known.iter().zip(&lines) {
-            blocks[*index].update(cx, |block, _cx| block.set_source_line_start(line_index + 1));
+            let line_number = line_index + 1;
+            let block = &blocks[*index];
+            if block.read(cx).source_line_start() == line_number {
+                continue;
+            }
+            self.source_line_gutter_block_writes
+                .set(self.source_line_gutter_block_writes.get() + 1);
+            block.update(cx, |block, _cx| block.set_source_line_start(line_number));
         }
         // 行号栏宽度基准跟着总行数走：编辑增删行后各块同步更新，栏宽保持
-        // 全文档一致（此前 512 上下行号对不齐）。
+        // 全文档一致（此前 512 上下行号对不齐）。基准是全文档一个值、reading_mode
+        // 是共享 Rc：两者都没换（行内打字正是如此）时这一趟也是零写。
         let basis = self.buffer.line_count();
+        let reading_mode = self.reading_mode.clone();
         for block in &blocks {
+            let needs_update = block.read_with(cx, |block, _cx| {
+                block.source_line_gutter_basis() != basis
+                    || block
+                        .reading_mode
+                        .as_ref()
+                        .is_none_or(|mode| !std::rc::Rc::ptr_eq(mode, &reading_mode))
+            });
+            if !needs_update {
+                continue;
+            }
+            self.source_line_gutter_block_writes
+                .set(self.source_line_gutter_block_writes.get() + 1);
             block.update(cx, |block, _cx| {
-                block.reading_mode = Some(self.reading_mode.clone());
+                block.reading_mode = Some(reading_mode.clone());
                 block.set_source_line_gutter_basis(basis);
             });
         }

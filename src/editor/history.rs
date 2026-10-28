@@ -859,6 +859,7 @@ impl Editor {
         self.skip_next_resync |= wrote_region;
         self.resync_buffer_from_projection(cx);
         let selection_snapshot = self.capture_source_selection_snapshot(cx);
+        let mut replaced_roots: Vec<Entity<Block>> = Vec::new();
         let reprojected = root
             .as_ref()
             .and_then(|root| {
@@ -867,13 +868,76 @@ impl Editor {
                     .iter()
                     .position(|block| block.entity_id() == root.entity_id())
             })
-            .and_then(|index| self.reproject_root_region(index, cx));
+            .and_then(|index| {
+                // 重投影把 1 根换成 N 根：借总根数差把换上来的根收齐，收尾只接
+                // 这一段的运行时上下文（与 workspace/split/shared.rs 的区域重投影
+                // 收尾同一条路）。
+                let old_count = self.document.root_blocks().len();
+                let region_lines = self.reproject_root_region(index, cx)?;
+                let new_count = self.document.root_blocks().len();
+                replaced_roots.extend(
+                    self.document
+                        .root_blocks()
+                        .iter()
+                        .skip(index)
+                        .take(new_count + 1 - old_count)
+                        .cloned(),
+                );
+                Some(region_lines)
+            });
         if reprojected.is_none() {
             let roots = self.rebuild_root_blocks_from_buffer(cx);
             self.document.replace_roots(roots, cx);
+            // 整篇重建：表格与注册表都由 rebuild_table_runtimes 兜底——它收尾
+            // 本来就会整篇重建注册表，旧代码在这之后又直接重建了一次，等于每次
+            // 调用都白付两遍整篇。
+            self.rebuild_table_runtimes(cx);
+        } else {
+            // 区域重投影：区间外的块与表格原样活着，整篇 table_cells 清空重建与
+            // 整篇注册表重建只该在「这一笔真的碰了定义行/脚注引用」时付。判据
+            // 复用每键路径那把屏（`changed_block_needs_runtime_context_refresh`，
+            // 底下是 `contains_reference_definition_marker`），不另立第二份口径。
+            self.clear_table_axis_preview(cx);
+            self.clear_table_axis_selection(cx);
+            let mut refresh_references = false;
+            for region_root in &replaced_roots {
+                refresh_references |=
+                    self.changed_block_needs_runtime_context_refresh(region_root, cx);
+            }
+            if refresh_references {
+                self.rebuild_table_runtimes(cx);
+            } else {
+                // 旧区域实体换掉了：它们留下的敏感集登记与格子绑定先收走，再把
+                // 换上来的块接上现有注册表（base_dir、引用表、阅读模式）。
+                if let Some(old_root) = root.as_ref() {
+                    let mut stale = vec![old_root.clone()];
+                    while let Some(block) = stale.pop() {
+                        let block_state = block.read(cx);
+                        stale.extend(block_state.children.iter().cloned());
+                        if let Some(runtime) = &block_state.table_runtime {
+                            for cell in
+                                runtime.header.iter().chain(runtime.rows.iter().flatten())
+                            {
+                                self.table_cells.remove(&cell.entity_id());
+                            }
+                        }
+                        self.runtime_context_sensitive_blocks
+                            .remove(&block.entity_id());
+                    }
+                }
+                let base_dir = self.local_link_base_dir();
+                let mut region_blocks = replaced_roots.clone();
+                while let Some(block) = region_blocks.pop() {
+                    region_blocks.extend(block.read(cx).children.iter().cloned());
+                    let table = block.read(cx).record.table.clone();
+                    if let Some(table) = table {
+                        self.install_table_runtime_for_block(&block, &table, cx);
+                    }
+                    self.sync_runtime_context_for_block(&block, base_dir.as_deref(), cx);
+                }
+                self.sync_table_axis_visuals(cx);
+            }
         }
-        self.rebuild_table_runtimes(cx);
-        self.rebuild_image_runtimes(cx);
         self.apply_selection_snapshot_in_current_mode(&selection_snapshot, cx);
         self.pending_scroll_active_block_into_view = true;
         self.pending_scroll_recheck_after_layout = true;

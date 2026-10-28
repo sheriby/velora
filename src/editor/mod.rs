@@ -281,6 +281,19 @@ pub struct Editor {
     /// 编辑目标那一块上，所以正常情况这个数必须是 0——它随文档长度长，就说明每帧
     /// 都在为状态栏的选区文本扫全篇（10 MiB 档 159,683 块）。
     status_bar_selection_block_reads: std::cell::Cell<u64>,
+    /// 计数器：焦点转移（`RequestFocus`）时逐块 notify 了几个块。活动样式的切换只
+    /// 涉及前后两个块（旧活动目标摘输入态、新块亮起来），所以这个数只该是 1 或 2；
+    /// 它随文档长度长，就说明每次点击都在对整篇可见块逐个 notify（10 MiB 档一次
+    /// 点击 16 万次实体写，外加一次整篇克隆）。
+    focus_transfer_block_updates: std::cell::Cell<u64>,
+    /// 计数器：源码/代码文档行号刷新（`refresh_source_line_starts`）实际写了几个块
+    /// 实体。行号与栏宽基准没变的块不该被写——打字不改行号时这个数必须是 0；它随
+    /// 按键涨，就说明每次按键都在对全部根块做两趟无条件实体写。
+    source_line_gutter_block_writes: std::cell::Cell<u64>,
+    /// 计数器：整表记录同步（`sync_table_record_from_runtime`）次数。一次要读全部
+    /// 格子实体并克隆整张 `TableData`。格子内打字只改一格，只该增量写那一格；这个
+    /// 数随打字涨，就说明每键都在为单格编辑克隆整张表（百行百列表上线性放大）。
+    table_record_full_syncs: std::cell::Cell<u64>,
     /// 性能诊断：四类全文遍数的累计耗时（纳秒），只给基准用例与诊断读。
     source_serialization_nanos: std::cell::Cell<u64>,
     source_mapping_nanos: std::cell::Cell<u64>,
@@ -967,6 +980,9 @@ impl Editor {
             autosave_guard_block_reads: std::cell::Cell::default(),
             outline_root_blocks_cloned: std::cell::Cell::default(),
             status_bar_selection_block_reads: std::cell::Cell::default(),
+            focus_transfer_block_updates: std::cell::Cell::default(),
+            source_line_gutter_block_writes: std::cell::Cell::default(),
+            table_record_full_syncs: std::cell::Cell::default(),
             prev_mounted_run: None,
             scroll_settle_frames: 0,
             cold_fill_frames: 0,

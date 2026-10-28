@@ -1,6 +1,6 @@
     use super::super::Editor;
     use crate::components::{
-        Block, BlockEvent, BlockKind,
+        Block, BlockEvent, BlockKind, InlineTextTree,
         ExitCodeBlock, Newline,
     };
     use gpui::{App, AppContext, Entity, TestAppContext};
@@ -585,3 +585,81 @@
         });
     }
 
+
+/// 格子里打字只改一格：不许为它把整张表的记录克隆一遍（读全部格子实体 +
+/// 重建整份 `TableData`，百行百列表上单格打字付整表的克隆钱）。整表同步保留给
+/// 结构操作做正确性兜底。
+#[gpui::test]
+async fn typing_in_a_table_cell_does_not_resync_the_whole_table_record(
+    cx: &mut TestAppContext,
+) {
+    let cx = cx.add_empty_window();
+    let editor = cx.new(|cx| {
+        Editor::from_markdown(cx, "| 甲 | 乙 |\n| --- | --- |\n| 丙 | 丁 |\n".to_string(), None)
+    });
+
+    let cell = editor.read_with(cx, |editor, _cx| {
+        editor
+            .table_cells
+            .values()
+            .find(|binding| {
+                binding.position == crate::components::TableCellPosition { row: 1, column: 0 }
+            })
+            .map(|binding| binding.cell.clone())
+            .expect("夹具该有 (1,0) 格子")
+    });
+
+    let before = editor.read_with(cx, |editor, _cx| editor.table_record_full_syncs.get());
+    cell.update(cx, |cell, cx| {
+        cell.replace_text_in_visible_range(0..0, "X", None, false, cx);
+    });
+    let after = editor.read_with(cx, |editor, _cx| editor.table_record_full_syncs.get());
+    assert_eq!(
+        after - before,
+        0,
+        "格子里打字触发了整表记录同步（应只增量写活动格）"
+    );
+
+    // 行为等价：记录里这一格的内容必须跟上（保存与结构操作读的是它）。
+    editor.update(cx, |editor, cx| {
+        let table = editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|block| block.read(cx).kind() == BlockKind::Table)
+            .cloned()
+            .expect("夹具该有表格块");
+        let table_data = table
+            .read(cx)
+            .record
+            .table
+            .clone()
+            .expect("表格块该有记录");
+        assert_eq!(table_data.rows[0][0].visible_text(), "X丙");
+        assert_eq!(table_data.rows[0][1].visible_text(), "丁", "别的格子被同步弄脏了");
+    });
+
+    // 正控：结构操作（格子里回车 → 表后插段落）仍走整表同步兜底。
+    let before_structural = editor.read_with(cx, |editor, _cx| {
+        editor.table_record_full_syncs.get()
+    });
+    cell.update(cx, |_cell, cx| {
+        cx.emit(BlockEvent::RequestNewline {
+            trailing: InlineTextTree::plain(String::new()),
+            source_already_mutated: false,
+        });
+    });
+    let after_structural = editor.read_with(cx, |editor, _cx| {
+        editor.table_record_full_syncs.get()
+    });
+    assert_eq!(
+        after_structural - before_structural,
+        1,
+        "结构操作前的整表同步兜底丢了"
+    );
+    editor.update(cx, |editor, cx| {
+        let roots = editor.document.root_blocks();
+        assert_eq!(roots.len(), 2, "表后该多出一个空段落");
+        assert_eq!(roots[1].read(cx).kind(), BlockKind::Paragraph);
+    });
+}

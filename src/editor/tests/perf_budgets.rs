@@ -2474,3 +2474,179 @@ async fn large_code_document_opens_within_budget(cx: &mut TestAppContext) {
         })
         .expect("editor window should be open");
 }
+
+/// 引用容器里的无源码区间 Raw 块打字，不许按「定义类宽口径」无条件整篇重建
+/// 引用注册表。Raw/HTML/FrontMatter 的内容就是缓冲区字节：复用与有区间块同一把
+/// 尺（`contains_reference_definition_marker`，定义必含 `]:`、脚注引用必含 `[^`）
+/// 扫块自身文本即可，10 MiB 档一次 766ms 的重建不该随打字付。
+#[gpui::test]
+async fn typing_in_a_container_raw_block_does_not_rebuild_the_reference_registry(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let markdown = "> Quote with broken table:\n> | A |\n> | --- | --- |\n> | 1 |";
+    let editor = cx.update(|cx| cx.new(|cx| Editor::from_markdown(cx, markdown.to_string(), None)));
+    cx.run_until_parked();
+
+    let raw = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).kind() == BlockKind::RawMarkdown)
+            .expect("夹具该有引用容器内的 RawMarkdown 子块")
+            .entity
+            .clone()
+    });
+    assert!(
+        editor
+            .read_with(cx, |editor, _cx| editor.document.source_span_of(raw.entity_id()).is_none()),
+        "夹具的 Raw 子块带了源码区间，这条闸门量不到宽口径那一档"
+    );
+
+    let before = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    raw.update(cx, |block, cx| {
+        block.replace_text_in_visible_range(0..0, "x", None, false, cx);
+    });
+    cx.run_until_parked();
+    let after = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    assert_eq!(
+        after, before,
+        "引用容器里的 Raw 块打字触发了整篇引用注册表重建"
+    );
+
+    // 正控：Raw 块里真的写进脚注引用记号（`[^`）就必须重建——Raw 的内容就是
+    // 缓冲区字节，注册表解析器读得到它。
+    let before_marker = after;
+    raw.update(cx, |block, cx| {
+        block.replace_text_in_visible_range(0..0, "[^n]", None, false, cx);
+    });
+    cx.run_until_parked();
+    let after_marker =
+        editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    assert!(
+        after_marker > before_marker,
+        "Raw 块引入脚注引用却没重建引用注册表"
+    );
+}
+
+/// 引用容器内的结构编辑（合并）不许无条件整篇重建引用注册表：`normalize_
+/// rendered_quote_structure` 的旧尾部是 `rebuild_table_runtimes`（内部本来就
+/// 整篇重建注册表）+ 又一次直接 `rebuild_image_runtimes`——一次合并付两遍。
+/// 区域里没有定义记号（`]:`/`[^`）时注册表不可能变，只该把换上来的块接上现有
+/// 注册表。
+#[gpui::test]
+async fn quote_break_without_reference_markers_skips_the_registry_rebuild(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    // 定义行与引用式图片在引用区域外：注册表非空、且与这次合并无关。
+    let markdown =
+        "![图][asset]\n\n[asset]: ./assets/a.png\n\n> 引用第一行\n> 引用第二行\n";
+    let editor = cx.update(|cx| cx.new(|cx| Editor::from_markdown(cx, markdown.to_string(), None)));
+    cx.run_until_parked();
+
+    let image_src_before = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .root_blocks()
+            .first()
+            .and_then(|block| block.read(cx).image_runtime())
+            .map(|runtime| runtime.src.clone())
+    });
+    assert_eq!(
+        image_src_before.as_deref(),
+        Some("./assets/a.png"),
+        "夹具的引用式图片没解开，这条闸门测错了东西"
+    );
+
+    let before = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    editor.update(cx, |editor, cx| {
+        // 拆引用是 normalize_rendered_quote_structure 的直接触发口（合并走的是
+        // 子块路径，而这个夹具的整段引用是单块多行标题）。
+        let quote = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).kind() == BlockKind::Quote)
+            .map(|visible| visible.entity.clone())
+            .expect("夹具该有一个引用块");
+        editor.focus_block(quote.entity_id());
+        quote.update(cx, |_block, cx| cx.emit(BlockEvent::RequestQuoteBreak));
+    });
+    cx.run_until_parked();
+
+    let (after, image_src_after) = editor.read_with(cx, |editor, cx| {
+        (
+            editor.reference_registry_rebuilds.get(),
+            editor
+                .document
+                .root_blocks()
+                .first()
+                .and_then(|block| block.read(cx).image_runtime())
+                .map(|runtime| runtime.src.clone()),
+        )
+    });
+    assert_eq!(
+        after, before,
+        "引用内合并在区域没有定义记号时也整篇重建了引用注册表"
+    );
+    assert_eq!(
+        image_src_after.as_deref(),
+        Some("./assets/a.png"),
+        "跳过重建后引用式图片反而解不开了"
+    );
+    editor.read_with(cx, |editor, cx| {
+        // 拆引用行为不变：原引用文本还在，后面多出一个空引用接手。
+        let quote_kinds = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .filter(|visible| visible.entity.read(cx).quote_depth > 0)
+            .map(|visible| {
+                (
+                    visible.entity.read(cx).kind(),
+                    visible.entity.read(cx).display_text().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            quote_kinds.iter().any(|(kind, text)| {
+                *kind == BlockKind::Quote && text == "引用第一行\n引用第二行"
+            }),
+            "原引用的内容被拆引用动了：{quote_kinds:?}"
+        );
+        assert!(
+            quote_kinds.len() >= 2,
+            "拆引用没在后面补新引用：{quote_kinds:?}"
+        );
+    });
+
+    // 正控：区域里真的有定义记号（`[^`）时必须照旧重建。
+    let markdown_with_marker =
+        "![图][asset]\n\n[asset]: ./assets/a.png\n\n> 引用第一行 [^note]\n> 引用第二行\n";
+    let editor_marker = cx.update(|cx| {
+        cx.new(|cx| Editor::from_markdown(cx, markdown_with_marker.to_string(), None))
+    });
+    cx.run_until_parked();
+    let before_marker = editor_marker
+        .read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    editor_marker.update(cx, |editor, cx| {
+        let quote = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).kind() == BlockKind::Quote)
+            .map(|visible| visible.entity.clone())
+            .expect("夹具该有一个引用块");
+        editor.focus_block(quote.entity_id());
+        quote.update(cx, |_block, cx| cx.emit(BlockEvent::RequestQuoteBreak));
+    });
+    cx.run_until_parked();
+    let after_marker = editor_marker
+        .read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    assert!(
+        after_marker > before_marker,
+        "区域里带定义记号的合并没有重建引用注册表"
+    );
+}

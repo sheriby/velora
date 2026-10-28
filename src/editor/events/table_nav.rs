@@ -65,10 +65,11 @@ impl Editor {
         to_block_start: bool,
         cx: &mut Context<Self>,
     ) {
-        let visible = self.document.flatten_visible_blocks();
-        let Some(index) = visible
-            .iter()
-            .position(|visible| visible.entity.entity_id() == table_block.entity_id())
+        // 只要「表的上/下一个块」这一个实体：查增量可见索引，不为它整篇克隆
+        // 可见块表（表边缘导航是高频按键，克隆是 O(文档) 的句柄账单）。
+        let Some(index) = self
+            .document
+            .visible_index_for_entity_id(table_block.entity_id())
         else {
             return;
         };
@@ -78,7 +79,7 @@ impl Editor {
             Some(index + 1)
         };
         let Some(target) = target_index
-            .and_then(|target_index| visible.get(target_index))
+            .and_then(|target_index| self.document.visible_blocks().get(target_index))
             .map(|visible| visible.entity.clone())
         else {
             return;
@@ -182,7 +183,9 @@ impl Editor {
 
         match event {
             BlockEvent::Changed => {
-                self.sync_table_record_from_runtime(&binding.table_block, cx);
+                // 格子内打字只动一格：增量把活动格写回 TableData 对应槽位，
+                // 整表克隆留给结构操作兜底。
+                self.sync_table_cell_record_from_runtime(&binding, cx);
                 if self.changed_block_needs_runtime_context_refresh(&binding.cell, cx) {
                     self.rebuild_image_runtimes(cx);
                 }

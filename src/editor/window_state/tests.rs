@@ -1,6 +1,7 @@
 mod tests {
     use crate::file_url::resolve_local_link_path;
     use super::super::{LinkTarget, classify_link_target, heading_line_for_anchor};
+    use crate::components::Newline;
     use crate::editor::Editor;
     use gpui::TestAppContext;
     use std::fs;
@@ -401,5 +402,83 @@ mod tests {
                 "应用内算出的 {slug:?} 没被导出使用：{exported_ids:?}"
             );
         }
+    }
+
+    /// 源码/代码文档的行号刷新不许为「值没变」的块写实体：每个按键都走这里，
+    /// 旧实现对全部根块无条件两趟实体写（行号一趟、reading_mode + 栏宽基准一趟），
+    /// 打字延迟直接受文档大小支配。行内打字（不改行数）两趟都必须是零。
+    #[gpui::test]
+    async fn typing_within_a_line_does_not_rewrite_source_line_gutters(
+        cx: &mut TestAppContext,
+    ) {
+        init_app(cx);
+        // 超过 512 行才分出第二块：闸门要量到「多块各写两趟」的旧成本。
+        let markdown = (0..600)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown, None));
+        editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+        let root_count = editor.read_with(cx, |editor, _cx| editor.document.root_count());
+        assert!(root_count >= 2, "夹具行数没分出第二块，这条闸门量不到多块写");
+
+        let before = editor
+            .read_with(cx, |editor, _cx| editor.source_line_gutter_block_writes.get());
+        editor.update(cx, |editor, cx| {
+            let first = editor.document.root_blocks()[0].clone();
+            editor.focus_block(first.entity_id());
+            first.update(cx, |block, cx| {
+                block.replace_text_in_visible_range(0..0, "x", None, false, cx);
+            });
+        });
+        let after = editor
+            .read_with(cx, |editor, _cx| editor.source_line_gutter_block_writes.get());
+        assert_eq!(
+            after - before,
+            0,
+            "行内打字重写了 {} 次行号/基准实体（值都没变）",
+            after - before
+        );
+
+        // 行号语义守卫：短路不许让行号错位。回车增行后，各块行号
+        // 必须严格递增、栏宽基准等于全文档行数。
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                let first = editor.document.root_blocks()[0].clone();
+                editor.focus_block(first.entity_id());
+                first.update(cx, |block, block_cx| {
+                    let tail = block.visible_len();
+                    block.move_to(tail, block_cx);
+                    block.on_newline(&Newline, window, block_cx);
+                });
+            });
+        });
+        let after_enter = editor
+            .read_with(cx, |editor, _cx| editor.source_line_gutter_block_writes.get());
+        assert!(
+            after_enter > after,
+            "回车增行后行号/基准实体一次都没写（{} 次），计数器是死的，这条闸门量不到东西",
+            after_enter - after
+        );
+        editor.read_with(cx, |editor, cx| {
+            let blocks = editor.document.root_blocks();
+            let starts = blocks
+                .iter()
+                .map(|block| block.read(cx).source_line_start())
+                .collect::<Vec<_>>();
+            let bases = blocks
+                .iter()
+                .map(|block| block.read(cx).source_line_gutter_basis())
+                .collect::<Vec<_>>();
+            assert!(
+                starts.windows(2).all(|pair| pair[1] > pair[0]),
+                "回车后行号没续上：{starts:?}"
+            );
+            assert_eq!(bases[0], editor.buffer.line_count(), "栏宽基准没跟行数走");
+            assert!(
+                bases.iter().all(|basis| *basis == bases[0]),
+                "各块的栏宽基准不一致：{bases:?}"
+            );
+        });
     }
 }

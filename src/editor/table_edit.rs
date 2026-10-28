@@ -803,6 +803,8 @@ impl Editor {
         table_block: &Entity<Block>,
         cx: &mut Context<Self>,
     ) {
+        self.table_record_full_syncs
+            .set(self.table_record_full_syncs.get() + 1);
         let Some(runtime) = table_block.read(cx).table_runtime.clone() else {
             return;
         };
@@ -833,6 +835,59 @@ impl Editor {
                 rows,
                 alignments,
             });
+        });
+    }
+
+    /// 打字路径的增量同步：只把活动格的行内树写回 `TableData` 对应槽位。
+    ///
+    /// 整表同步要读全部格子实体并重建整份 `TableData`，百行百列表上单格打字
+    /// 付的是整表的克隆钱。格子内打字只改一格，整表一致靠两条不变式维持：
+    /// 每次格子编辑各自同步自己那格，结构操作前后整表同步兜底。槽位或形状
+    /// 对不上（刚做完结构操作、格子绑定还没跟上）就退回整表同步。
+    pub(super) fn sync_table_cell_record_from_runtime(
+        &mut self,
+        binding: &TableCellBinding,
+        cx: &mut Context<Self>,
+    ) {
+        let position = binding.position;
+        let slot_exists = binding.table_block.read_with(cx, |block, _cx| {
+            let Some(table) = block.record.table.as_ref() else {
+                return false;
+            };
+            if position.row == 0 {
+                position.column < table.header.len()
+            } else {
+                table
+                    .rows
+                    .get(position.row - 1)
+                    .is_some_and(|row| position.column < row.len())
+            }
+        });
+        let runtime_has_cell = binding.table_block.read_with(cx, |block, _cx| {
+            block
+                .table_runtime
+                .as_ref()
+                .and_then(|runtime| runtime.cell(position))
+                .is_some()
+        });
+        if !slot_exists || !runtime_has_cell {
+            self.sync_table_record_from_runtime(&binding.table_block, cx);
+            return;
+        }
+        let cell_title = binding.cell.read(cx).record.title.clone();
+        binding.table_block.update(cx, move |block, _cx| {
+            let Some(table) = block.record.table.as_mut() else {
+                return;
+            };
+            if position.row == 0 {
+                if let Some(slot) = table.header.get_mut(position.column) {
+                    *slot = cell_title;
+                }
+            } else if let Some(row) = table.rows.get_mut(position.row - 1)
+                && let Some(slot) = row.get_mut(position.column)
+            {
+                *slot = cell_title;
+            }
         });
     }
 

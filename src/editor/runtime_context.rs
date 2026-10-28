@@ -45,24 +45,37 @@ impl Editor {
                     })
                 });
             }
-            // 其余无区间块（列表项、引用容器的子块）退回**原来的**宽口径（宁可多重建
-            // 一次，也别漏掉定义行的更新）。这一档里两类都要看：
-            // 1. 定义类的块无条件算「可能改」（`FootnoteDefinition` 这类块的行内树标题
-            //    就是标签本身，既没有 `]:` 也没有 `[^`——容器里的脚注定义是子块，改标签
-            //    时只能靠这一条认出来，闸门
-            //    `renaming_a_footnote_definition_sub_block_refreshes_the_registry`）；
-            // 2. 行内树片段里出现 `[` 或 `<`。
-            return block.read_with(cx, |block, _cx| {
-                if matches!(
-                    block.kind(),
-                    BlockKind::RawMarkdown
-                        | BlockKind::FrontMatter
-                        | BlockKind::HtmlBlock
-                        | BlockKind::FootnoteDefinition
-                        | BlockKind::Table
-                ) {
-                    return true;
+            // 其余无区间块（列表项、引用容器的子块）按块类分档：
+            // 1. Raw/HTML/FrontMatter 的内容就是缓冲区字节，注册表解析器读得到它
+            //    ——与有区间块同一把尺（`contains_reference_definition_marker`）扫
+            //    块自身文本。旧口径对这几类无条件算「可能改」，编辑挂在这些块里的
+            //    每个键都付一次整篇重建；
+            // 2. 脚注定义子块的行内树标题就是标签本身（既没有 `]:` 也没有 `[^`），
+            //    改没改标签直接对注册表现状查键：标签还指向本块 = 没变；查不到或
+            //    指向别块（改名、新建、重名）= 要重建。清单里没有它的定义（不在
+            //    引用容器里的定义不进注册表）时保持旧口径的「要重建」；
+            // 3. 表格容器自身没有源码区间意味着它在容器里，编辑它是结构性的，
+            //    保持宽口径；
+            // 4. 其余（列表项、段落子块）退回行内树片段那份宽口径（宁可多重建
+            //    一次，也别漏掉定义行的更新）。
+            let kind = block.read(cx).kind().clone();
+            match kind {
+                BlockKind::Table => return true,
+                BlockKind::RawMarkdown | BlockKind::HtmlBlock | BlockKind::FrontMatter => {
+                    return block.read_with(cx, |block, _cx| {
+                        contains_reference_definition_marker(&block.display_text())
+                    });
                 }
+                BlockKind::FootnoteDefinition => {
+                    let id = block.read(cx).record.title.visible_text().to_string();
+                    return match self.footnote_registry.bindings.get(&id) {
+                        Some(binding) => binding.definition_entity_id != block.entity_id(),
+                        None => true,
+                    };
+                }
+                _ => {}
+            }
+            return block.read_with(cx, |block, _cx| {
                 block.record.title.fragments.iter().any(|fragment| {
                     fragment.link.is_some()
                         || fragment.footnote.is_some()
@@ -408,6 +421,6 @@ impl Editor {
 /// 冒号），脚注引用必含 `[^`。围栏或 HTML 块里出现的这些字面量会被算进来——那是
 /// **故意**的过近似：代价是多重建一次，换来的是不必在这里重放解析器的跨行状态
 /// （围栏、HTML 注释、容器前缀）。判据只有这一处，解析器那边是真正认定定义的地方。
-fn contains_reference_definition_marker(source: &str) -> bool {
+pub(super) fn contains_reference_definition_marker(source: &str) -> bool {
     source.contains("]:") || source.contains("[^")
 }
