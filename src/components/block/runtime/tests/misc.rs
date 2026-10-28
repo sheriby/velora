@@ -570,3 +570,33 @@ async fn quote_line_block_syntax_recognizes_indented_fences(cx: &mut TestAppCont
     });
     let _ = block;
 }
+
+#[gpui::test]
+async fn empty_layout_vertical_focus_returns_fallback_instead_of_underflow(
+    cx: &mut TestAppContext,
+) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::plain("abc"),
+            ),
+        )
+    });
+    block.update(cx, |block, _cx| {
+        block.last_layout = Some(std::sync::Arc::new(Vec::new()));
+    });
+
+    let offset = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        block.read_with(cx, |block, _cx| {
+            block.entry_offset_for_vertical_focus(true, None)
+        })
+    }));
+    assert_eq!(
+        offset.ok(),
+        Some(3),
+        "空排版让末行焦点计算下溢 panic；应回退到文末"
+    );
+}

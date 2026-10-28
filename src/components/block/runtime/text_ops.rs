@@ -458,13 +458,17 @@ impl Block {
         prefer_last_line: bool,
         preferred_x: Option<Pixels>,
     ) -> usize {
-        let Some(lines) = self.last_layout.as_deref() else {
-            return if prefer_last_line {
-                self.visible_len()
-            } else {
-                0
-            };
+        let fallback = if prefer_last_line {
+            self.visible_len()
+        } else {
+            0
         };
+        let Some(lines) = self.last_layout.as_deref() else {
+            return fallback;
+        };
+        if lines.is_empty() {
+            return fallback;
+        }
 
         let text = self.display_text();
         let ranges = self.shared_hard_line_ranges();
