@@ -663,3 +663,104 @@ async fn typing_in_a_table_cell_does_not_resync_the_whole_table_record(
         assert_eq!(roots[1].read(cx).kind(), BlockKind::Paragraph);
     });
 }
+
+    /// ragged 表（某行格子比表头少，合并单元格的历史文档）上按 → 越过最后
+    /// 一格时要离开表格，不能静默不动。
+    #[gpui::test]
+    async fn horizontal_move_on_a_ragged_table_leaves_the_table(cx: &mut TestAppContext) {
+        let editor = cx.new(|cx| {
+            Editor::from_markdown(
+                cx,
+                "| a | b | c |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n\n尾段\n".to_string(),
+                None,
+            )
+        });
+        editor.update(cx, |editor, cx| {
+            let table = editor.document.root_blocks()[0].clone();
+            let last_cell = {
+                let runtime = table
+                    .read(cx)
+                    .table_runtime
+                    .as_ref()
+                    .expect("原生表格应有运行时");
+                runtime.rows[0][1].clone()
+            };
+            // 模拟合并单元格：把最后一行截成两格。
+            table.update(cx, |block, _cx| {
+                if let Some(runtime) = block.table_runtime.as_mut() {
+                    runtime.rows[0].pop();
+                }
+            });
+            let trailing_block = editor.document.root_blocks()[1].entity_id();
+            editor.focus_block(last_cell.entity_id());
+            let binding = editor
+                .table_cell_binding(last_cell.entity_id())
+                .expect("最后一行第二格应有绑定");
+            assert_eq!(
+                binding.position,
+                crate::components::TableCellPosition { row: 1, column: 1 },
+                "夹具选错了格子"
+            );
+            editor.on_table_cell_event(
+                binding,
+                &BlockEvent::RequestTableCellMoveHorizontal { delta: 1 },
+                cx,
+            );
+            assert_ne!(
+                editor.active_entity_id,
+                Some(last_cell.entity_id()),
+                "焦点还停在原格：右移静默失败"
+            );
+            assert_eq!(
+                editor.active_entity_id,
+                Some(trailing_block),
+                "越过 ragged 表尾后应把焦点交给相邻块"
+            );
+        });
+    }
+
+    /// ragged 表上垂直移动：目标行短于表头时列号按该行实际格数钳制。
+    #[gpui::test]
+    async fn vertical_move_on_a_ragged_table_clamps_to_the_short_row(cx: &mut TestAppContext) {
+        let editor = cx.new(|cx| {
+            Editor::from_markdown(
+                cx,
+                "| a | b | c |\n| --- | --- | --- |\n| 1 | 2 | 3 |".to_string(),
+                None,
+            )
+        });
+        editor.update(cx, |editor, cx| {
+            let table = editor.document.root_blocks()[0].clone();
+            let header_cell = {
+                let runtime = table
+                    .read(cx)
+                    .table_runtime
+                    .as_ref()
+                    .expect("原生表格应有运行时");
+                runtime.header[2].clone()
+            };
+            table.update(cx, |block, _cx| {
+                if let Some(runtime) = block.table_runtime.as_mut() {
+                    runtime.rows[0].pop();
+                }
+            });
+            editor.focus_block(header_cell.entity_id());
+            let binding = editor
+                .table_cell_binding(header_cell.entity_id())
+                .expect("表头第三格应有绑定");
+            editor.on_table_cell_event(
+                binding,
+                &BlockEvent::RequestTableCellMoveVertical { delta: 1 },
+                cx,
+            );
+            let focused = editor
+                .active_entity_id
+                .and_then(|id| editor.table_cell_binding(id))
+                .expect("落点应仍在表格里");
+            assert_eq!(
+                focused.position,
+                crate::components::TableCellPosition { row: 1, column: 1 },
+                "短行上的列号没有按该行格数钳制"
+            );
+        });
+    }

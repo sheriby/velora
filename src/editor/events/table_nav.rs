@@ -114,30 +114,54 @@ impl Editor {
         let Some(runtime) = table_block.read(cx).table_runtime.clone() else {
             return;
         };
-        let columns = runtime.header.len();
         let total_rows = 1 + runtime.rows.len();
-        if columns == 0 || total_rows == 0 {
-            return;
+        // 行优先的实有格子序：ragged 表（某行比表头少格）不能按表头宽度做
+        // 线性算术，否则落点会算到一个不存在的格子上、静默不动。
+        let row_len = |row: usize| Self::table_cell_row_len(&runtime, row);
+        let mut linear = position.column;
+        for row in 0..position.row.min(total_rows) {
+            linear += row_len(row);
         }
-
-        let linear = position.row * columns + position.column;
+        let total_cells: usize = (0..total_rows).map(row_len).sum();
         let next = if delta < 0 {
             linear.checked_sub(delta.unsigned_abs() as usize)
         } else {
             linear.checked_add(delta as usize)
         };
-        let Some(next) = next else {
+        let Some(next) = next.filter(|next| *next < total_cells) else {
+            // 越过表格边缘：把焦点交给相邻块（与垂直方向同一条口径）。
+            self.focus_block_adjacent_to_table(
+                table_block,
+                if delta < 0 { -1 } else { 1 },
+                false,
+                cx,
+            );
             return;
         };
-        if next >= total_rows * columns {
-            return;
+        let mut remaining = next;
+        for row in 0..total_rows {
+            let len = row_len(row);
+            if remaining < len {
+                let _ = self.focus_table_cell_position(
+                    table_block,
+                    TableCellPosition {
+                        row,
+                        column: remaining,
+                    },
+                    cx,
+                );
+                return;
+            }
+            remaining -= len;
         }
+    }
 
-        let next_position = TableCellPosition {
-            row: next / columns,
-            column: next % columns,
-        };
-        let _ = self.focus_table_cell_position(table_block, next_position, cx);
+    fn table_cell_row_len(runtime: &crate::components::TableRuntime, row: usize) -> usize {
+        if row == 0 {
+            runtime.header.len()
+        } else {
+            runtime.rows.get(row - 1).map_or(0, Vec::len)
+        }
     }
 
     pub(crate) fn focus_table_cell_vertical_neighbor(
@@ -163,10 +187,15 @@ impl Editor {
             return;
         };
 
-        let next_position = TableCellPosition {
-            row: next_row,
-            column: position.column.min(runtime.header.len().saturating_sub(1)),
+        let Some(column) = Self::table_cell_row_len(&runtime, next_row)
+            .checked_sub(1)
+            .map(|last| position.column.min(last))
+        else {
+            // 目标行一个格子都没有（畸形表）：交给相邻块，别原地不动。
+            self.focus_block_adjacent_to_table(table_block, delta, false, cx);
+            return;
         };
+        let next_position = TableCellPosition { row: next_row, column };
         let _ = self.focus_table_cell_position(table_block, next_position, cx);
     }
 
