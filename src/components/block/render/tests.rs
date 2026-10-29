@@ -335,6 +335,23 @@ mod tests {
         assert!(language_bounds.right() < copy_bounds.left());
         assert!(language_bounds.size.width <= px(156.0));
     }
+    /// 装饰必须在链接/脚注的提前 return 之前应用：排在后面时这两个分支
+    /// 永远拿不到下划线，条件里的 link/footnote 判据成了死代码。
+    #[test]
+    fn mixed_inline_visual_path_applies_decoration_before_early_returns() {
+        let source = include_str!("inline_visuals.rs");
+        let start = source
+            .find("fn render_inline_text_segment")
+            .expect("混合路径的分段渲染函数");
+        let body = &source[start..];
+        let underline = body.find(".underline()").expect("混合路径没有下划线样式");
+        let footnote_branch = body.find("\"hover-footnote\"").expect("脚注悬停分支");
+        assert!(
+            underline < footnote_branch,
+            "下划线应在脚注/链接的提前 return 之前应用"
+        );
+    }
+
     /// 混合可视路径（带行内公式/上下标的段落）必须应用斜体与删除线：
     /// 这两条样式曾经只存在于 run 路径，聚焦前后外观跳变。
     #[test]

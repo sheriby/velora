@@ -822,6 +822,23 @@ impl Block {
             element = element.relative().top(px(script_offset));
         }
 
+        // 装饰位与文本 run 路径同源（`InlineStyle::text_decoration`），必须在
+        // 链接/脚注的提前 return 之前应用：排在后面时这两个分支永远拿不到
+        // 下划线，判据里的 link/footnote 形同虚设。漏了斜体与删除线时，聚焦
+        // 前后外观也会跳变。
+        let decoration = span
+            .style
+            .text_decoration(span.link.is_some(), span.footnote.is_some(), false);
+        if decoration.underline {
+            element = element.underline();
+        }
+        if decoration.italic {
+            element = element.italic();
+        }
+        if decoration.strikethrough {
+            element = element.line_through();
+        }
+
         // 悬停预览（roadmap C8/C9）：脚注显示脚注标签；链接显示目标与
         // 存在性。tooltip 闭包仅在悬停时执行，存在性检查零常驻开销。
         if let Some(footnote) = span.footnote.as_ref() {
@@ -856,20 +873,6 @@ impl Block {
                 .into_any_element();
         }
 
-        // 装饰位与文本 run 路径同源（`InlineStyle::text_decoration`）：混合可视
-        // 路径漏了斜体与删除线时，聚焦前后外观会跳变。
-        let decoration = span
-            .style
-            .text_decoration(span.link.is_some(), span.footnote.is_some(), false);
-        if decoration.underline {
-            element = element.underline();
-        }
-        if decoration.italic {
-            element = element.italic();
-        }
-        if decoration.strikethrough {
-            element = element.line_through();
-        }
         if span.style.code {
             element = element
                 .rounded(px(theme.dimensions.code_bg_radius))
