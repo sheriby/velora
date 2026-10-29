@@ -317,24 +317,28 @@ impl Editor {
             .as_ref()
             .map(|state| state.query.trim().to_lowercase())
             .unwrap_or_default();
-        let mut files = self.workspace_openable_files();
-        if !query.is_empty() {
-            files.retain(|path| {
+        // 只读过滤：10k 文件的名单逐键克隆一次是纯分配，克隆只该发生在
+        // 进入结果的那十几条上。
+        let mut files: Vec<&PathBuf> = self
+            .workspace_openable_file_refs()
+            .filter(|path| {
+                if query.is_empty() {
+                    return true;
+                }
                 let name = path
                     .file_name()
                     .map(|name| name.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
                 fuzzy_contains(&name, &query)
-            });
-            // Shorter names first: they tend to be the closer matches.
-            files.sort_by_key(|path| {
-                path.file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default()
-                    .len()
-            });
+            })
+            .collect();
+        if !query.is_empty() {
+            files.sort_by_cached_key(|path| quick_open_rank(path, &query));
         }
         files.truncate(12);
+        // 只读借用到此为止：进入结果的这十几条才克隆。
+        let files: Vec<PathBuf> = files.into_iter().cloned().collect();
+        let files = files;
         if let Some(state) = self.quick_open.as_mut() {
             state.results = files;
             state.selected = state.selected.min(state.results.len().saturating_sub(1));
@@ -390,6 +394,42 @@ impl Editor {
 }
 
 /// Case-insensitive in-order subsequence containment.
+/// 快速切换候选的排序键：前缀命中 > 词边界命中 > 子串命中 > 仅模糊命中；
+/// 同层看首命中位置、再短名优先，最后按名字保稳定。
+fn quick_open_rank(path: &std::path::Path, query: &str) -> (u8, usize, usize, String) {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let length = name.len();
+    let (tier, position) = if query.is_empty() || name.starts_with(query) {
+        (0, 0)
+    } else if let Some(position) = name.find(query) {
+        let word_boundary = position > 0
+            && name[..position]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| !ch.is_alphanumeric());
+        ((if word_boundary { 1 } else { 2 }), position)
+    } else {
+        (3, fuzzy_first_match_index(&name, query).unwrap_or(usize::MAX))
+    };
+    (tier, position, length, name)
+}
+
+/// 模糊子序列命中的首字符下标；不匹配时 `None`。
+fn fuzzy_first_match_index(name: &str, query: &str) -> Option<usize> {
+    let mut candidates = name.char_indices();
+    let mut first = None;
+    for query_char in query.chars() {
+        let (index, _) = candidates
+            .by_ref()
+            .find(|(_, candidate)| candidate.to_lowercase().eq(query_char.to_lowercase()))?;
+        first.get_or_insert(index);
+    }
+    first
+}
+
 fn fuzzy_contains(name: &str, query: &str) -> bool {
     let mut candidates = name.chars();
     for query_char in query.chars() {
@@ -412,6 +452,24 @@ mod tests {
     use super::fuzzy_contains;
 
     #[test]
+    #[test]
+    fn quick_open_ranking_prefers_prefix_and_word_boundaries() {
+        use super::quick_open_rank;
+        use std::path::Path;
+        let mut names = vec![
+            "xsettings.rs",
+            "asset_setters.rs",
+            "settings.rs",
+            "my_settings.rs",
+        ];
+        names.sort_by_cached_key(|name| quick_open_rank(Path::new(name), "sett"));
+        assert_eq!(
+            names,
+            vec!["settings.rs", "my_settings.rs", "asset_setters.rs", "xsettings.rs"],
+            "前缀命中应先于词边界、词边界先于中间子串"
+        );
+    }
+
     fn fuzzy_contains_matches_in_order_case_insensitively() {
         assert!(fuzzy_contains("main.rs", "mrs"));
         assert!(fuzzy_contains("main.rs", "MAIN"));

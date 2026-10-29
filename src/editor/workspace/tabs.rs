@@ -588,17 +588,14 @@ impl Editor {
         self.text_files_on_disk()
     }
 
-    pub(crate) fn workspace_openable_files(&self) -> Vec<PathBuf> {
-        self.workspace
-            .files_on_disk
-            .iter()
-            .filter(|path| {
-                is_markdown_file(path)
-                    || is_code_file(path)
-                    || crate::components::Block::has_supported_image_extension(path)
-            })
-            .cloned()
-            .collect()
+    /// 可打开文件的只读视图：快速切换每敲一个字符过滤一遍，逐条克隆整份
+    /// 名单是 10k 文件级的分配，只应克隆进入结果的那十几条。
+    pub(crate) fn workspace_openable_file_refs(&self) -> impl Iterator<Item = &PathBuf> {
+        self.workspace.files_on_disk.iter().filter(|path| {
+            is_markdown_file(path)
+                || is_code_file(path)
+                || crate::components::Block::has_supported_image_extension(path)
+        })
     }
 
     /// 工作区里可作替换目标 / 双链候选的文本文件（Markdown + 代码）。
