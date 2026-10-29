@@ -16,9 +16,17 @@ use html5ever::tendril::fmt::UTF8;
 
 use super::html::{Handle, Node, NodeData, parse_html_fragment, serialize_handle};
 
+/// 剪贴板 HTML 的大小上限。超过这条线不再转换：整页复制（几十 MB）在转换
+/// 管线上要秒级；纯文本 flavor 通常就是同一份内容。Windows 读剪贴板时已按
+/// 同一上限截断，这里再兜住 macOS（那边读进内存后原先没有任何上限）。
+pub(crate) const MAX_CLIPBOARD_HTML_BYTES: usize = 2 * 1024 * 1024;
+
 /// Converts an HTML fragment into Markdown. `text_fallback` is returned
 /// unchanged when the fragment carries no convertible structure.
 pub(crate) fn html_to_markdown_or(html: &str, text_fallback: &str) -> String {
+    if html.len() > MAX_CLIPBOARD_HTML_BYTES {
+        return text_fallback.to_string();
+    }
     let converted = convert(html);
     let converted = converted.trim();
     let plain = text_fallback.trim();
@@ -61,7 +69,7 @@ fn read_pasteboard_html(pasteboard: cocoa::base::id, expected_change: u64) -> Op
             return None;
         }
         let length: usize = msg_send![data, length];
-        if length == 0 {
+        if length == 0 || length > MAX_CLIPBOARD_HTML_BYTES {
             return None;
         }
         let bytes: *const u8 = msg_send![data, bytes];
@@ -102,7 +110,7 @@ pub(crate) fn clipboard_html(expected_change: u64) -> Option<String> {
             }
             let handle = HGLOBAL(GetClipboardData(format).ok()?.0);
             let length = GlobalSize(handle);
-            if length == 0 || length > 2 * 1024 * 1024 {
+            if length == 0 || length > MAX_CLIPBOARD_HTML_BYTES {
                 return None;
             }
             let bytes = GlobalLock(handle);
@@ -612,6 +620,26 @@ mod tests {
             super::cf_html_fragment(payload)
         );
     }
+
+    /// 超过上限的 HTML 直接退回纯文本 flavor：整页复制（几十 MB）在转换
+    /// 管线上要秒级，而纯文本通常就是同一份内容。
+    #[test]
+    fn oversized_html_falls_back_to_the_plain_flavor() {
+        let html = format!(
+            "<p>{}</p>",
+            "x".repeat(super::MAX_CLIPBOARD_HTML_BYTES + 1)
+        );
+        assert_eq!(
+            super::html_to_markdown_or(&html, "plain fallback"),
+            "plain fallback",
+            "超限 HTML 仍走了转换管线"
+        );
+        // 正控：上限内的 HTML 照常转换。
+        assert!(
+            super::html_to_markdown_or("<p><b>bold</b></p>", "plain").contains("**bold**"),
+            "上限内的 HTML 被误判成超限"
+        );
+    }
 }
 
 #[cfg(any(test, target_os = "windows"))]
@@ -657,4 +685,5 @@ fn offset(payload: &[u8], header_end: usize, key: &str) -> Option<usize> {
         let value = line.strip_prefix(key)?.strip_prefix(':')?;
         value.trim().parse().ok()
     })
+
 }
