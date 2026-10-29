@@ -709,6 +709,26 @@ impl Editor {
                 .unwrap_or(0),
         };
         self.workspace.search_active_index = Some(next);
+        if self.workspace.search_scope == crate::editor::workspace::WorkspaceSearchScope::Document
+        {
+            // 列表里高亮的那一行就是「当前命中」：把文档侧的活动命中一起搬过去，
+            // 并把 Enter 的落点钉在它身上（pending = 跳到当前，而不是再前进一格）。
+            // 否则 ↑/↓ 只动了列表，Enter 从旧命中继续走，同一套按键两个语义。
+            let range = self
+                .workspace
+                .search_results
+                .get(next)
+                .and_then(|hit| hit.source_range.clone());
+            let hit_index = range.as_ref().and_then(|range| {
+                self.document_matches(cx).as_ref()?.iter().position(|hit| &hit.range == range)
+            });
+            if let Some(hit_index) = hit_index {
+                self.workspace.document_active_index = Some(hit_index);
+                self.workspace.document_active_range = range;
+                self.workspace.document_match_jump_pending = true;
+                self.sync_document_search_highlights(cx);
+            }
+        }
         self.reveal_workspace_search_hit(next);
         cx.notify();
         true

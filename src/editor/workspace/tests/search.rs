@@ -3141,3 +3141,49 @@ async fn document_scope_result_count_reads_the_full_hit_table(cx: &mut TestAppCo
         );
     });
 }
+
+/// 文档范围的结果列表按 ↑/↓ 后，Enter 必须跳到列表里高亮的那一处：
+/// 列表导航与查询框导航共用同一份「当前命中」。
+#[gpui::test]
+async fn document_list_navigation_moves_the_active_hit(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let markdown = "needle one\n\nneedle two\n\nneedle three\n".repeat(1);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, markdown, None)
+    });
+    editor.update(cx, |editor, cx| {
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Document;
+        editor.workspace.search_query = "needle".into();
+        let hits = editor.document_matches(cx).expect("命中表");
+        assert!(hits.len() >= 3, "夹具应有至少三处命中");
+        let text = editor.buffer.text();
+        let projected = editor.project_document_hits(
+            &hits,
+            &text,
+            std::path::Path::new("current.md"),
+            "current.md",
+            200,
+        );
+        editor.workspace.search_results = projected;
+
+        // 先跳到第 2 处。
+        editor.find_next_document_match(false, cx);
+        editor.find_next_document_match(false, cx);
+        assert_eq!(editor.workspace.document_active_index, Some(1));
+
+        // 列表里按 ↑ 回到第一行，再按 Enter：应跳到第一处，
+        // 而不是从旧命中继续前进到第三处。
+        editor.navigate_workspace_search_results("up", cx);
+        editor.find_next_document_match(false, cx);
+        assert_eq!(
+            editor.workspace.document_active_range,
+            Some(hits[0].range.clone()),
+            "Enter 跳的是旧命中的下一个，而不是列表高亮那一行"
+        );
+        assert_eq!(editor.workspace.document_active_index, Some(0));
+    });
+}
