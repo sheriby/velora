@@ -181,7 +181,7 @@ use std::path::{Path, PathBuf};
         }
 
         let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
-        editor.update(cx, |editor, _cx| {
+        editor.update(cx, |_editor, _cx| {
             let result = Editor::image_target_dir_for(
                 crate::config::ImagePasteBehavior::CopyToNamedAssetsFolder,
                 &root,
