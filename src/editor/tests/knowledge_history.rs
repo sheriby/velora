@@ -834,3 +834,51 @@ async fn file_history_overlay_restores_version_as_unsaved_edit(cx: &mut TestAppC
     });
     let _ = std::fs::remove_file(&path);
 }
+
+/// 双链补全没有匹配项时，Enter 不能被吞掉：它就是普通换行。
+#[gpui::test]
+async fn enter_with_an_empty_wikilink_completion_inserts_a_newline(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-wlc-empty-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    std::fs::write(root.join("alpha.md"), "").expect("write alpha");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    cx.run_until_parked();
+    let alpha = root.join("alpha.md");
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(alpha, window, cx);
+        });
+    });
+    editor.update(cx, |editor, _cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        editor.focus_block(block.entity_id());
+    });
+    redraw(cx);
+    cx.simulate_input("[[zzz");
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("wikilink-completion").is_some(),
+        "输入 [[查询 后补全浮层应打开（哪怕没有匹配）"
+    );
+    assert!(
+        cx.debug_bounds("wikilink-entry-0").is_none(),
+        "夹具里不该有匹配项"
+    );
+
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.buffer.text().contains('\n'),
+            "空补全时 Enter 被吞掉了，换行没进缓冲区：{:?}",
+            editor.buffer.text()
+        );
+    });
+    let _ = std::fs::remove_dir_all(root);
+}

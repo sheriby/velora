@@ -4,7 +4,6 @@ use std::path::PathBuf;
 
 use gpui::{AnyElement, Window};
 
-use super::workspace::is_markdown_document;
 use super::Editor;
 use crate::theme::Theme;
 
@@ -23,6 +22,32 @@ pub(crate) struct WikilinkCompletion {
 
 /// 补全列表容量：浮动列表最多 8 行，超出靠继续输入收敛。
 const WIKILINK_COMPLETION_LIMIT: usize = 8;
+
+/// 双链补全候选排序：前缀命中 > 词边界命中 > 子串命中，同级按文件名。
+/// 必须在截断之前调用：先截断再排序时候选取决于走盘顺序。
+fn rank_wikilink_completion(results: &mut [PathBuf], query_lower: &str) {
+    results.sort_by_key(|path| {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let stem = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let rank = if query_lower.is_empty() || stem.starts_with(query_lower) {
+            0
+        } else if stem
+            .split(['-', '_', ' ', '.'])
+            .any(|part| !part.is_empty() && part.starts_with(query_lower))
+        {
+            1
+        } else {
+            2
+        };
+        (rank, name)
+    });
+}
 
 impl Editor {
     /// 块文本变化后刷新 `[[` 补全（`on_block_event` 的 Changed 分支调用）。
@@ -53,10 +78,12 @@ impl Editor {
         }
 
         let query_lower = query.to_lowercase();
+        // 候选范围与 `open_wikilink` 的可打开范围一致（工作区文本文件，不限于
+        // Markdown）；先收集全部匹配、按匹配质量排序，最后才截断——截断在排序
+        // 之前时，候选取决于走盘顺序，前缀命中可能整体缺席。
         let mut results: Vec<PathBuf> = self
             .workspace_text_files()
             .into_iter()
-            .filter(|path| is_markdown_document(path))
             .filter(|path| {
                 query_lower.is_empty()
                     || path
@@ -64,13 +91,9 @@ impl Editor {
                         .map(|name| name.to_string_lossy().to_lowercase())
                         .is_some_and(|name| name.contains(&query_lower))
             })
-            .take(WIKILINK_COMPLETION_LIMIT)
             .collect();
-        results.sort_by_key(|path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().to_lowercase())
-                .unwrap_or_default()
-        });
+        rank_wikilink_completion(&mut results, &query_lower);
+        results.truncate(WIKILINK_COMPLETION_LIMIT);
 
         let unchanged = self.wikilink_completion.as_ref().is_some_and(|state| {
             state.block_id == block.entity_id()
@@ -146,6 +169,16 @@ impl Editor {
                 true
             }
             "enter" => {
+                let has_results = self
+                    .wikilink_completion
+                    .as_ref()
+                    .is_some_and(|state| !state.results.is_empty());
+                if !has_results {
+                    // 空结果时 Enter 是用户的换行键，不是确认键：关掉浮层但放行，
+                    // 别把「[[不存在的名字」之后的换行整个吞掉。
+                    self.close_wikilink_completion(cx);
+                    return false;
+                }
                 let selected = self
                     .wikilink_completion
                     .as_ref()
@@ -321,5 +354,35 @@ impl Editor {
                 .children(rows)
                 .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod ranking_tests {
+    use super::rank_wikilink_completion;
+    use std::path::PathBuf;
+
+    /// 前缀命中排第一，其次词边界命中，最后才是任意位置的子串；
+    /// 同级按文件名。截断发生在排序之后，前缀命中不会被走盘顺序挤掉。
+    #[test]
+    fn wikilink_completion_ranks_prefix_matches_before_substrings() {
+        let mut results: Vec<PathBuf> = [
+            "zzz-alpha.md",
+            "xalpha.md",
+            "notes-alpha.md",
+            "alpha.md",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+        rank_wikilink_completion(&mut results, "alpha");
+        let names: Vec<&str> = results
+            .iter()
+            .map(|path| path.file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["alpha.md", "notes-alpha.md", "zzz-alpha.md", "xalpha.md"]
+        );
     }
 }
