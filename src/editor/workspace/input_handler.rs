@@ -286,6 +286,64 @@ pub(crate) fn collect_node_ids(nodes: &[WorkspaceTreeNode], ids: &mut HashSet<St
     }
 }
 
+/// 大纲节点 id 带行号，标题上方增删一行就会让整棵树换一套 id；展开与选中按
+/// id 记账，换 id 等于把状态清空再按默认层级重铺。重拼前后各按文档序取一份
+/// 标题清单，用「层级 + 文字」在旧清单里顺序对位，把状态迁到新 id 上。
+pub(crate) fn migrate_outline_state(
+    expanded: &mut HashSet<String>,
+    selected: &mut Option<WorkspaceSelection>,
+    previous: &[WorkspaceTreeNode],
+    next: &[WorkspaceTreeNode],
+) {
+    fn signatures(nodes: &[WorkspaceTreeNode], out: &mut Vec<(String, u8, String)>) {
+        for node in nodes {
+            if let WorkspaceTreeKind::Heading { level, .. } = node.kind {
+                out.push((node.id.clone(), level, node.label.clone()));
+            }
+            signatures(&node.children, out);
+        }
+    }
+    let mut old = Vec::new();
+    signatures(previous, &mut old);
+    if old.is_empty() {
+        return;
+    }
+    let mut new = Vec::with_capacity(old.len());
+    signatures(next, &mut new);
+
+    let mut mapping = HashMap::new();
+    let mut cursor = 0;
+    for (new_id, level, label) in &new {
+        while let Some((old_id, old_level, old_label)) = old.get(cursor) {
+            cursor += 1;
+            if old_level == level && old_label == label {
+                mapping.insert(old_id.as_str(), new_id.as_str());
+                break;
+            }
+        }
+    }
+    if mapping.is_empty() {
+        return;
+    }
+    if expanded
+        .iter()
+        .any(|id| mapping.get(id.as_str()).is_some_and(|next| *next != id))
+    {
+        *expanded = expanded
+            .iter()
+            .map(|id| match mapping.get(id.as_str()) {
+                Some(next) if is_outline_node_id(id) => (*next).to_string(),
+                _ => id.clone(),
+            })
+            .collect();
+    }
+    if let Some(WorkspaceSelection::Outline(id)) = selected.as_ref()
+        && let Some(next) = mapping.get(id.as_str())
+    {
+        *selected = Some(WorkspaceSelection::Outline((*next).to_string()));
+    }
+}
+
 pub(crate) fn is_outline_node_id(id: &str) -> bool {
     id.starts_with("outline:")
 }

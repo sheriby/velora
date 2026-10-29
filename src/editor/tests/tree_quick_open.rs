@@ -1192,3 +1192,116 @@ async fn outline_arrows_toggle_nested_headings_without_navigating(cx: &mut TestA
         );
     });
 }
+
+/// 大纲节点 id 由行号生成：标题上方增删一行会让所有 id 位移，整树重拼后
+/// 展开集合按 id 对不上被清账、选中态归零，再按默认层级重新展开——用户
+/// 折叠好的子节会被重新撑开。行号位移但标题序列没变时必须把状态迁过去。
+#[gpui::test]
+async fn outline_expansion_survives_inserting_a_line_above_the_headings(
+    cx: &mut TestAppContext,
+) {
+    use crate::editor::workspace::{WorkspaceSelection, WorkspaceTab, stable_node_hash};
+    init_editor_test_app(cx);
+    let source = "前言\n\n# 章一\n\n正文甲\n\n## 子节\n\n正文乙\n\n### 孙节\n\n正文丙\n\n# 章二\n\n正文丁\n";
+    let (editor, visual) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    editor.update(visual, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = WorkspaceTab::Outline;
+        editor.sync_workspace_outline(cx);
+        cx.notify();
+    });
+    for _ in 0..3 {
+        redraw(visual);
+    }
+    let row = |visual: &mut VisualTestContext, line| {
+        let selector = format!(
+            "workspace-node-{}",
+            stable_node_hash(&format!("outline:{line}"))
+        );
+        visual.debug_bounds(Box::leak(selector.into_boxed_str()))
+    };
+    // 先折叠子节（孙节随之隐藏），再选中章二，制造一份「非默认」的大纲状态。
+    let subsection = row(visual, 6).expect("子节的大纲行");
+    visual.simulate_click(
+        gpui::point(subsection.left() + px(14.0 + 16.0), subsection.center().y),
+        Modifiers::none(),
+    );
+    for _ in 0..3 {
+        redraw(visual);
+    }
+    assert!(row(visual, 10).is_none(), "前置：子节已折叠，孙节应隐藏");
+    let second = row(visual, 14).expect("章二的大纲行");
+    visual.simulate_click(second.center(), Modifiers::none());
+    for _ in 0..3 {
+        redraw(visual);
+    }
+
+    // 在第一个段落末尾回车：标题行号整体加一，标题序列与层级都没变。
+    editor.update(visual, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        let end = block.read(cx).display_text().len();
+        block.update(cx, |block, cx| block.move_to(end, cx));
+        editor.focus_block(block.entity_id());
+    });
+    redraw(visual);
+    visual.simulate_keystrokes("enter");
+    for _ in 0..4 {
+        redraw(visual);
+    }
+
+    let (chapter_line, subsection_line, child_line, second_line) =
+        editor.read_with(visual, |editor, cx| {
+            let markdown = editor.document.markdown_text(cx);
+            let line_of = |needle: &str| {
+                markdown
+                    .lines()
+                    .position(|line| line == needle)
+                    .unwrap_or_else(|| panic!("插入后找不到标题：{needle}"))
+            };
+            (
+                line_of("# 章一"),
+                line_of("## 子节"),
+                line_of("### 孙节"),
+                line_of("# 章二"),
+            )
+        });
+    assert_ne!(subsection_line, 6, "前置：标题行号确实被顶开了");
+    assert!(
+        !editor.read_with(visual, |editor, _| editor
+            .workspace
+            .expanded
+            .contains("outline:0")),
+        "旧行号的展开记录不该还留在集合里"
+    );
+    // 章一原本是展开的：状态必须迁到新 id 上，子节行才还能看见。
+    assert!(
+        editor.read_with(visual, |editor, _| editor
+            .workspace
+            .expanded
+            .contains(&format!("outline:{chapter_line}"))),
+        "章一的展开状态应迁到新行号的 id 上"
+    );
+    assert!(
+        row(visual, subsection_line).is_some(),
+        "章一仍应展开：子节行不该消失"
+    );
+    assert!(
+        !editor.read_with(visual, |editor, _| editor
+            .workspace
+            .expanded
+            .contains(&format!("outline:{subsection_line}"))),
+        "被折叠的子节不该被默认层级重新展开"
+    );
+    assert!(
+        row(visual, child_line).is_none(),
+        "子节仍应是折叠的：孙节不该重新出现"
+    );
+    assert_eq!(
+        editor.read_with(visual, |editor, _| editor.workspace.selected.clone()),
+        Some(WorkspaceSelection::Outline(format!(
+            "outline:{second_line}"
+        ))),
+        "选中态也应跟着标题迁移，不能归零"
+    );
+}

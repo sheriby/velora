@@ -1011,6 +1011,7 @@ impl Editor {
         {
             return;
         }
+        let fresh_document = self.workspace.outline_stale;
         let roots = self.document.root_blocks().to_vec();
         self.outline_root_blocks_cloned
             .set(self.outline_root_blocks_cloned.get() + roots.len() as u64);
@@ -1120,7 +1121,7 @@ impl Editor {
                 .set(self.outline_full_rescans.get() + 1);
             let source = self.buffer.text();
             rescanned_lines = self.buffer.line_count();
-            self.install_outline(build_outline_tree(&source));
+            self.install_outline(build_outline_tree(&source), fresh_document);
             self.outline_rebuilds.set(self.outline_rebuilds.get() + 1);
         } else if changed {
             let mut headings: Vec<OutlineHeading> = Vec::new();
@@ -1133,7 +1134,7 @@ impl Editor {
             // 10 MiB 文档上是一次按键 130ms，而「在标题里打字」正是每键都来的
             // 那种改动。层级或行号动了（加标题、上方多/少了一行）才重拼。
             if !self.relabel_outline_in_place(&headings) {
-                self.install_outline(nest_outline_headings(&headings));
+                self.install_outline(nest_outline_headings(&headings), fresh_document);
                 self.outline_rebuilds.set(self.outline_rebuilds.get() + 1);
             }
         }
@@ -1200,11 +1201,24 @@ impl Editor {
         true
     }
 
-    fn install_outline(&mut self, outline: Vec<WorkspaceTreeNode>) {
+    /// `fresh_document` 是「这份大纲属于刚切过来的文档」。只有那时才铺默认
+    /// 展开层级，也只有那时不需要从上一棵树迁移状态：同一份文档的增量重拼
+    /// 若再按默认层展开一遍，用户亲手折叠的子节会被重新撑开。
+    fn install_outline(&mut self, outline: Vec<WorkspaceTreeNode>, fresh_document: bool) {
+        if !fresh_document {
+            migrate_outline_state(
+                &mut self.workspace.expanded,
+                &mut self.workspace.selected,
+                &self.workspace.outline_tree,
+                &outline,
+            );
+        }
         prune_outline_state(&mut self.workspace, &outline);
         // Expand headings down to H3 by default so the outline is usable
         // without clicking through every level; users can still collapse.
-        expand_outline_to_level(&outline, 2, &mut self.workspace.expanded);
+        if fresh_document {
+            expand_outline_to_level(&outline, 2, &mut self.workspace.expanded);
+        }
         self.workspace.toc_entries = flatten_outline_entries(&outline);
         self.toc_state_version = self.toc_state_version.wrapping_add(1);
         self.workspace.outline_tree = outline;
