@@ -2689,3 +2689,28 @@ async fn quote_break_without_reference_markers_skips_the_registry_rebuild(
         "区域里带定义记号的合并没有重建引用注册表"
     );
 }
+
+/// 公式块里 `$$` 前后的文字段每帧都会重走一遍行内 Markdown 解析；源码不变
+/// 时结果恒同。缓存按源码串建好之后，静止帧的解析次数必须是 0。
+#[gpui::test]
+async fn math_blocks_do_not_reparse_text_segments_on_every_frame(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "$$x^2$$ 说明文字\n\n正文\n".into(), None)
+    });
+    // 让公式块失焦：阅读态才走分段渲染。
+    editor.update(cx, |editor, _cx| {
+        let body = editor.document.root_blocks()[1].clone();
+        editor.focus_block(body.entity_id());
+    });
+    redraw(cx);
+    redraw(cx);
+    let before = crate::components::math_text_parse_count();
+    redraw(cx);
+    let after = crate::components::math_text_parse_count();
+    assert_eq!(
+        after - before,
+        0,
+        "静止帧重复解析了公式块里的文字段"
+    );
+}

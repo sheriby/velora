@@ -199,6 +199,9 @@ pub struct Block {
     pub(super) cursor_blink_task: Option<Task<()>>,
     // 语法未完成时沿用成功源码；SVG 仍按当前主题与字号取缓存。
     pub(super) math_edit_preview_source: Option<String>,
+    /// 公式源码里 `$$` 前后文字段的可见文本，按源码串缓存：这些文字段每帧都要
+    /// 重新走一遍行内 Markdown 解析，而源码不变时结果恒同。
+    pub(super) math_text_segment_cache: Option<(String, Vec<SharedString>)>,
     /// Cached projection used to show editable inline delimiters for the
     /// currently touched inline span(s).
     pub(crate) projection: Option<ExpandedInlineProjection>,
@@ -378,6 +381,7 @@ impl Block {
             vertical_motion_x: None,
             cursor_blink_task: None,
             math_edit_preview_source: None,
+            math_text_segment_cache: None,
             projection: None,
             hide_markdown_markers: crate::config::EditorSettings::hide_markdown_markers(cx),
             projection_cache_key: None,

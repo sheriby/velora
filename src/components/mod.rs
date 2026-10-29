@@ -21,6 +21,12 @@ pub(crate) mod markdown;
 pub(crate) mod mermaid;
 
 pub use crate::editor::Editor;
+
+/// 测试探针：公式块文字段行内解析次数（静止帧应为 0）。
+#[cfg(test)]
+pub(crate) fn math_text_parse_count() -> u64 {
+    block::math_text_probe::parses()
+}
 #[allow(unused_imports)]
 pub(crate) use crate::editor::InfoDialogKind;
 pub use actions::*;

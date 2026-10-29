@@ -13,6 +13,8 @@ mod runtime;
 mod state;
 
 pub(crate) use render::HoverPreviewTooltip;
+#[cfg(test)]
+pub(crate) use render::math_text_probe;
 pub(crate) use crate::components::markdown::code_highlight::*;
 pub(crate) use crate::components::markdown::footnote::*;
 pub(crate) use crate::components::markdown::image::*;

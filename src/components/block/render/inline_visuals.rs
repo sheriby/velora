@@ -135,22 +135,24 @@ impl Block {
         let raw = self
             .record
             .raw_fallback
-            .as_deref()
-            .unwrap_or_else(|| self.display_text());
+            .clone()
+            .unwrap_or_else(|| self.display_text().to_string());
 
-        let content = match self.render_math_source(raw, theme, editing, cx) {
+        let content = match self.render_math_source(&raw, theme, editing, cx) {
             Some(content) => {
-                if editing && self.math_edit_preview_source.as_deref() != Some(raw) {
-                    self.math_edit_preview_source = Some(raw.to_string());
+                if editing && self.math_edit_preview_source.as_deref() != Some(raw.as_str()) {
+                    self.math_edit_preview_source = Some(raw);
                 }
                 content
             }
             // 半截命令是正常输入过程，不用错误条替换正在阅读的预览。
-            None => self
-                .math_edit_preview_source
-                .as_deref()
-                .and_then(|source| self.render_math_source(source, theme, true, cx))
-                .unwrap_or_else(|| div().into_any_element()),
+            None => {
+                let fallback = self.math_edit_preview_source.clone();
+                fallback
+                    .as_deref()
+                    .and_then(|source| self.render_math_source(source, theme, true, cx))
+                    .unwrap_or_else(|| div().into_any_element())
+            }
         };
         let container = div().w_full();
         let container = if let Some(ordinal) = self.math_ordinal {
@@ -182,7 +184,7 @@ impl Block {
     }
 
     fn render_math_source(
-        &self,
+        &mut self,
         raw: &str,
         theme: &Theme,
         editing: bool,
@@ -208,6 +210,45 @@ impl Block {
 
         // 分段渲染整个源码跨度：公式归公式，`$$` 前后的文字照常显示（旧实现只取
         // 第一个公式体，闭合 `$$` 之后的内容被解析器丢掉，cases/03-formula-tail.md）。
+        //
+        // 文字段每帧都要重走一遍行内 Markdown 解析，而源码不变时结果恒同：按源码串
+        // 缓存可见文本，编辑才重算。
+        let text_count = segments
+            .iter()
+            .filter(|segment| {
+                matches!(
+                    segment,
+                    crate::components::latex::DisplayMathSegment::Text { .. }
+                )
+            })
+            .count();
+        let cache_current = self
+            .math_text_segment_cache
+            .as_ref()
+            .is_some_and(|(cached, texts)| cached == raw && texts.len() == text_count);
+        if !cache_current {
+            let texts: Vec<SharedString> = segments
+                .iter()
+                .filter_map(|segment| match segment {
+                    crate::components::latex::DisplayMathSegment::Text { markdown } => {
+                        #[cfg(test)]
+                        math_text_probe::note_parse();
+                        Some(SharedString::from(
+                            crate::components::InlineTextTree::from_markdown(markdown)
+                                .visible_text(),
+                        ))
+                    }
+                    _ => None,
+                })
+                .collect();
+            self.math_text_segment_cache = Some((raw.to_string(), texts));
+        }
+        let text_texts = self
+            .math_text_segment_cache
+            .as_ref()
+            .map(|(_, texts)| texts.as_slice())
+            .unwrap_or_default();
+        let mut text_index = 0usize;
         let mut content = Vec::new();
         for segment in segments {
             let element = match segment {
@@ -275,15 +316,17 @@ impl Block {
                             .into_any_element(),
                     }
                 }
-                crate::components::latex::DisplayMathSegment::Text { markdown } => div()
-                    .w_full()
-                    .text_size(px(t.text_size))
-                    .line_height(relative(t.text_line_height))
-                    .text_color(c.text_default)
-                    .child(SharedString::from(
-                        crate::components::InlineTextTree::from_markdown(&markdown).visible_text(),
-                    ))
-                    .into_any_element(),
+                crate::components::latex::DisplayMathSegment::Text { .. } => {
+                    let visible = text_texts.get(text_index).cloned().unwrap_or_default();
+                    text_index += 1;
+                    div()
+                        .w_full()
+                        .text_size(px(t.text_size))
+                        .line_height(relative(t.text_line_height))
+                        .text_color(c.text_default)
+                        .child(visible)
+                        .into_any_element()
+                }
             };
             content.push(element);
         }

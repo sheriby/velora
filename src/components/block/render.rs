@@ -406,3 +406,19 @@ mod hover_label_tests {
         let _ = std::fs::remove_dir_all(root);
     }
 }
+
+/// thread-local 探针：公式块里 `$$` 前后文字段的行内解析次数。静止帧应为 0，
+/// 并行用例各数各的。
+#[cfg(test)]
+pub(crate) mod math_text_probe {
+    use std::cell::Cell;
+    thread_local! {
+        static MATH_TEXT_PARSES: Cell<u64> = const { Cell::new(0) };
+    }
+    pub(crate) fn note_parse() {
+        MATH_TEXT_PARSES.with(|counter| counter.set(counter.get() + 1));
+    }
+    pub(crate) fn parses() -> u64 {
+        MATH_TEXT_PARSES.with(|counter| counter.get())
+    }
+}
