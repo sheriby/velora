@@ -813,8 +813,19 @@ impl Block {
                 .into_any_element();
         }
 
-        if span.style.underline || span.link.is_some() || span.footnote.is_some() {
+        // 装饰位与文本 run 路径同源（`InlineStyle::text_decoration`）：混合可视
+        // 路径漏了斜体与删除线时，聚焦前后外观会跳变。
+        let decoration = span
+            .style
+            .text_decoration(span.link.is_some(), span.footnote.is_some(), false);
+        if decoration.underline {
             element = element.underline();
+        }
+        if decoration.italic {
+            element = element.italic();
+        }
+        if decoration.strikethrough {
+            element = element.line_through();
         }
         if span.style.code {
             element = element

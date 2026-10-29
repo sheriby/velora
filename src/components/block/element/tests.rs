@@ -1230,3 +1230,82 @@ fn repeated_prepaint_preserves_measured_text_lines(cx: &mut TestAppContext) {
         );
     });
 }
+
+    /// 行内装饰位（斜体/删除线/下划线）由 `InlineStyle::text_decoration` 单点
+    /// 产出，两条渲染路径共用：run 路径在这里钉住，混合可视路径取同一份判据
+    ///（以前混合路径漏了斜体与删除线，聚焦前后外观跳变）。
+    #[gpui::test]
+    async fn text_decoration_flags_cover_italic_strikethrough_and_links(
+        cx: &mut TestAppContext,
+    ) {
+        let mut style = crate::components::InlineStyle::default();
+        style.italic = true;
+        style.strikethrough = true;
+        let decoration = style.text_decoration(false, false, false);
+        assert!(decoration.italic, "斜体位丢了");
+        assert!(decoration.strikethrough, "删除线位丢了");
+        assert!(!decoration.underline);
+
+        let link = style.text_decoration(true, false, false);
+        assert!(link.underline, "链接在两条路径都要有下划线");
+        let footnote = style.text_decoration(false, true, false);
+        assert!(footnote.underline, "脚注引用在两条路径都要有下划线");
+        let marked = style.text_decoration(false, false, true);
+        assert!(marked.underline, "IME 标记区间在 run 路径要有下划线");
+
+        let cx = cx.add_empty_window();
+        cx.update(|_window, cx| {
+            crate::theme::ThemeManager::init(cx);
+        });
+        let theme = cx.update(|_window, cx| {
+            cx.global::<crate::theme::ThemeManager>().current_arc()
+        });
+        let block = cx.new(|cx| {
+            Block::with_record(
+                cx,
+                BlockRecord::new(
+                    BlockKind::Paragraph,
+                    InlineTextTree::from_markdown("*斜体* 与 ~~删除线~~ 与 [链接](https://a.b)"),
+                ),
+            )
+        });
+        block.read_with(cx, |block, _cx| {
+            let text: SharedString = block.display_text().to_string().into();
+            let base = TextRun {
+                run: gpui::TextRun {
+                    len: text.len(),
+                    font: font(".SystemUIFont"),
+                    color: theme.colors.text_default,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                },
+                font_size: None,
+            };
+            let runs = super::build_text_runs(
+                block,
+                &text,
+                &base,
+                px(1.0),
+                theme.colors.text_link,
+                theme.colors.code_text,
+                true,
+                "Menlo",
+                px(13.0),
+                theme.colors.comment_bg,
+            );
+            assert!(
+                runs.iter()
+                    .any(|run| run.font.style == gpui::FontStyle::Italic),
+                "run 路径丢了斜体"
+            );
+            assert!(
+                runs.iter().any(|run| run.strikethrough.is_some()),
+                "run 路径丢了删除线"
+            );
+            assert!(
+                runs.iter().any(|run| run.underline.is_some()),
+                "run 路径丢了链接下划线"
+            );
+        });
+    }

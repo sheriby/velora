@@ -272,7 +272,8 @@ pub(crate) fn build_text_runs(
         if inline_style.bold && font.weight < FontWeight::BOLD {
             font.weight = FontWeight::BOLD;
         }
-        if inline_style.italic {
+        let decoration = inline_style.text_decoration(is_link, is_footnote, is_marked);
+        if decoration.italic {
             font.style = FontStyle::Italic;
         }
 
@@ -293,17 +294,17 @@ pub(crate) fn build_text_runs(
         {
             run_color = html_css_color_to_hsla(color, run_color);
         }
-        let underline = (inline_style.underline || is_marked || is_link || is_footnote).then_some(
-            UnderlineStyle {
-                color: Some(run_color),
-                thickness: underline_thickness,
-                wavy: false,
-            },
-        );
-        let strikethrough = inline_style.strikethrough.then_some(StrikethroughStyle {
+        let underline = decoration.underline.then_some(UnderlineStyle {
             color: Some(run_color),
             thickness: underline_thickness,
+            wavy: false,
         });
+        let strikethrough = decoration
+            .strikethrough
+            .then_some(StrikethroughStyle {
+                color: Some(run_color),
+                thickness: underline_thickness,
+            });
 
         // Inline code is painted as separate rounded fragments below the text.
         let mut background_color = base_run.background_color;

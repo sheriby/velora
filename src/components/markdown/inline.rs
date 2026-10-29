@@ -41,6 +41,30 @@ pub struct InlineStyle {
     pub line_break: bool,
 }
 
+/// 行内片段的两条渲染路径（文本 run / 混合可视 div）共用的装饰位。
+/// 加新样式时两处都从这里取，别再各自搬一份布尔值。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct InlineTextDecoration {
+    pub italic: bool,
+    pub strikethrough: bool,
+    pub underline: bool,
+}
+
+impl InlineStyle {
+    pub(crate) fn text_decoration(
+        &self,
+        has_link: bool,
+        has_footnote: bool,
+        marked: bool,
+    ) -> InlineTextDecoration {
+        InlineTextDecoration {
+            italic: self.italic,
+            strikethrough: self.strikethrough,
+            underline: self.underline || has_link || has_footnote || marked,
+        }
+    }
+}
+
 /// Vertical script style for simple Markdown extension syntax.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InlineScript {

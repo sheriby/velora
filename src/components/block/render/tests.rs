@@ -335,4 +335,18 @@ mod tests {
         assert!(language_bounds.right() < copy_bounds.left());
         assert!(language_bounds.size.width <= px(156.0));
     }
+    /// 混合可视路径（带行内公式/上下标的段落）必须应用斜体与删除线：
+    /// 这两条样式曾经只存在于 run 路径，聚焦前后外观跳变。
+    #[test]
+    fn mixed_inline_visual_path_applies_italic_and_strikethrough() {
+        let source = include_str!("inline_visuals.rs");
+        assert!(
+            source.contains(".italic()"),
+            "混合可视路径没有斜体样式"
+        );
+        assert!(
+            source.contains(".line_through()"),
+            "混合可视路径没有删除线样式"
+        );
+    }
 }
