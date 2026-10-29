@@ -1442,19 +1442,27 @@ impl Render for Block {
                 }
             }
             BlockKind::HtmlBlock => {
-                let html = self.record.html.as_ref().cloned().unwrap_or_else(|| {
-                    crate::components::parse_html_document(
-                        self.record
-                            .raw_fallback
-                            .as_deref()
-                            .unwrap_or_else(|| self.display_text()),
-                    )
-                });
+                // 解析好的文档只按引用渲染：每帧深克隆整棵树（光标闪烁、悬停、
+                // 选区变化都会重绘）要付一次 O(节点数) 的分配。只有还没有解析
+                // 结果时才现场解析一份本地文档。
+                let parsed;
+                let html = match self.record.html.as_ref() {
+                    Some(document) => document,
+                    None => {
+                        parsed = crate::components::parse_html_document(
+                            self.record
+                                .raw_fallback
+                                .as_deref()
+                                .unwrap_or_else(|| self.display_text()),
+                        );
+                        &parsed
+                    }
+                };
                 focused_base
                     .text_size(px(t.text_size))
                     .text_color(c.text_default)
                     .line_height(relative(t.text_line_height))
-                    .child(self.render_html_document(&html, &theme, cx))
+                    .child(self.render_html_document(html, &theme, cx))
                     .into_any_element()
             }
             BlockKind::MathBlock => {
