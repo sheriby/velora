@@ -452,7 +452,6 @@ mod tests {
     use super::fuzzy_contains;
 
     #[test]
-    #[test]
     fn quick_open_ranking_prefers_prefix_and_word_boundaries() {
         use super::quick_open_rank;
         use std::path::Path;
@@ -470,6 +469,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn fuzzy_contains_matches_in_order_case_insensitively() {
         assert!(fuzzy_contains("main.rs", "mrs"));
         assert!(fuzzy_contains("main.rs", "MAIN"));
