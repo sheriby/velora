@@ -283,18 +283,13 @@ impl TableColumnLayout {
         theme: &Theme,
         cx: &App,
     ) -> Self {
-        // 列宽/换行按字号估算，必须用与绘制一致的字号（含界面缩放）。
-        let fonts = crate::config::EditorSettings::scaled_fonts(cx);
-        let preferred_widths = measure_preferred_column_widths(
+        let preferred_widths = measure_preferred_column_widths_with_reuse(
             table,
             window,
             theme,
-            &fonts,
-            crate::config::EditorSettings::show_table_headers(cx),
-        )
-        .into_iter()
-        .map(f32::from)
-        .collect::<Vec<_>>();
+            cx,
+            |_| None,
+        );
         Self::from_preferred_widths(&preferred_widths, table_width, minimum_column_width(theme))
     }
 
@@ -417,17 +412,84 @@ impl TableRuntime {
     }
 }
 
+/// 测出每列的首选内容宽（[`TableColumnLayout::from_preferred_widths`] 的输入）。
+///
+/// `reuse` 返回 `Some(宽)` 的列沿用该值、不再进 shape：表格只编辑一格时，
+/// 其余列的内容与宽度毫无变化，不必为它们付全表 shape（评审 P145）。
+/// `TableColumnLayout::measure` 是 `|_| None` 的特例。
+pub(crate) fn measure_preferred_column_widths_with_reuse(
+    table: &TableData,
+    window: &mut Window,
+    theme: &Theme,
+    cx: &App,
+    reuse: impl Fn(usize) -> Option<f32>,
+) -> Vec<f32> {
+    // 列宽/换行按字号估算，必须用与绘制一致的字号（含界面缩放）。
+    let fonts = crate::config::EditorSettings::scaled_fonts(cx);
+    measure_preferred_column_widths(
+        table,
+        window,
+        theme,
+        &fonts,
+        crate::config::EditorSettings::show_table_headers(cx),
+        reuse,
+    )
+    .into_iter()
+    .map(f32::from)
+    .collect::<Vec<_>>()
+}
+
+/// 每列「测量相关内容」的指纹（评审 P145）：可见文本 + 参与 run 分段的
+/// span 布局（code/bold/italic）。指纹不变 = 该列首选宽不变，可直接沿用
+/// 备忘。只遍历 span 做哈希，不进文本系统，比 shape 便宜几个量级。
+pub(crate) fn column_content_fingerprints(table: &TableData) -> Vec<u64> {
+    use std::hash::{Hash, Hasher};
+    let cell_fingerprint = |cell: &InlineTextTree| -> u64 {
+        let mut hasher = std::hash::DefaultHasher::new();
+        let cache = cell.render_cache();
+        cache.visible_text().hash(&mut hasher);
+        for span in cache.spans() {
+            span.range.start.hash(&mut hasher);
+            span.range.end.hash(&mut hasher);
+            span.style.code.hash(&mut hasher);
+            span.style.bold.hash(&mut hasher);
+            span.style.italic.hash(&mut hasher);
+        }
+        hasher.finish()
+    };
+    let column_count = table.header.len().max(1);
+    let mut fingerprints = vec![0u64; column_count];
+    let mut mix = |column: usize, cell: u64| {
+        fingerprints[column] = fingerprints[column].wrapping_mul(31).wrapping_add(cell);
+    };
+    for (column, cell) in table.header.iter().enumerate() {
+        mix(column, cell_fingerprint(cell));
+    }
+    for row in &table.rows {
+        for (column, cell) in row.iter().enumerate().take(column_count) {
+            mix(column, cell_fingerprint(cell));
+        }
+    }
+    fingerprints
+}
+
 fn measure_preferred_column_widths(
     table: &TableData,
     window: &mut Window,
     theme: &Theme,
     fonts: &FontPreferences,
     style_headers: bool,
+    reuse: impl Fn(usize) -> Option<f32>,
 ) -> Vec<Pixels> {
     let column_count = table.header.len().max(1);
     let mut preferred_widths = vec![Pixels::ZERO; column_count];
+    let reusable: Vec<Option<f32>> = (0..column_count).map(reuse).collect();
 
     for (column, cell) in table.header.iter().enumerate() {
+        if let Some(width) = reusable[column] {
+            preferred_widths[column] = px(width);
+            continue;
+        }
         preferred_widths[column] = preferred_widths[column].max(measure_cell_preferred_width(
             cell,
             style_headers,
@@ -439,6 +501,9 @@ fn measure_preferred_column_widths(
 
     for row in &table.rows {
         for (column, cell) in row.iter().enumerate().take(column_count) {
+            if reusable[column].is_some() {
+                continue;
+            }
             preferred_widths[column] = preferred_widths[column].max(measure_cell_preferred_width(
                 cell, false, window, theme, fonts,
             ));
@@ -580,7 +645,7 @@ fn cell_chrome_width(theme: &Theme) -> Pixels {
     px(theme.dimensions.table_cell_padding_x * 2.0 + 2.0)
 }
 
-fn minimum_column_width(theme: &Theme) -> f32 {
+pub(crate) fn minimum_column_width(theme: &Theme) -> f32 {
     theme.dimensions.table_cell_padding_x * 2.0 + theme.typography.text_size * 4.0 + 2.0
 }
 

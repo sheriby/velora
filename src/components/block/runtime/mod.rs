@@ -241,6 +241,9 @@ pub struct Block {
     pub(crate) column_layout_memo: Option<ColumnLayoutMemo>,
     #[cfg(test)]
     pub(crate) column_layout_measurements: u64,
+    /// 列宽测量记账（评审 P145 用例）：累计实际 shape 过的**列**数。
+    #[cfg(test)]
+    pub(crate) column_columns_measured: u64,
     collapsed_caret_affinity: CollapsedCaretAffinity,
     /// When true, block-level shortcuts and inline formatting are
     /// suppressed; the block stores raw text for source-mode editing.
@@ -393,6 +396,8 @@ impl Block {
             column_layout_memo: None,
             #[cfg(test)]
             column_layout_measurements: 0,
+            #[cfg(test)]
+            column_columns_measured: 0,
             collapsed_caret_affinity: CollapsedCaretAffinity::Default,
             edit_mode,
             show_source_line_numbers: false,
@@ -858,7 +863,7 @@ impl LongLinePlan {
     }
 }
 
-/// 表格列宽备忘的键：主题代数 + 字号 + 容器宽 + 表内容本身。
+/// 表格列宽备忘的键：主题代数 + 字号 + 容器宽 + 每列内容指纹。
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ColumnLayoutMemo {
     pub theme_fingerprint: u64,
@@ -866,7 +871,11 @@ pub(crate) struct ColumnLayoutMemo {
     pub text_size_bits: u32,
     pub width_bits: u32,
     pub font_fingerprint: u64,
-    pub table: crate::components::markdown::table::TableData,
+    /// 每列测量相关内容的指纹（`column_content_fingerprints`）：编辑只重测
+    /// 变化的列（评审 P145）。
+    pub column_fingerprints: Vec<u64>,
+    /// 与指纹同序的每列首选内容宽（`from_preferred_widths` 的输入）。
+    pub column_preferred_widths: Vec<f32>,
     pub layout: crate::components::markdown::table::TableColumnLayout,
 }
 

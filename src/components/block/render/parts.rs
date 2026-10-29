@@ -33,8 +33,9 @@ impl Block {
 
     /// 表格列宽备忘（性能）：`measure` 会对每格做 no-wrap `shape_text`，此前
     /// 每帧全量重测——文档打开后每次悬停/点击触发的重绘都拖着 O(单元格) 的
-    /// 文字排版，Windows DirectWrite 上尤其明显。键（主题代数/字号/容器宽/表内容）均未变时整帧
-    /// 零 shape。
+    /// 文字排版，Windows DirectWrite 上尤其明显。键（主题代数/字号/容器宽/每列
+    /// 内容指纹）均未变时整帧零 shape；键未变但某列内容变了时只重测那一列
+    /// （评审 P145），其余列沿用备忘首选宽。
     pub(crate) fn cached_table_column_layout(
         &mut self,
         table_width: f32,
@@ -42,7 +43,7 @@ impl Block {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<TableColumnLayout> {
-        let table = self.record.table.clone()?;
+        let table = self.record.table.as_ref()?;
         use std::hash::{Hash, Hasher};
         let fonts = crate::config::EditorSettings::scaled_fonts(cx);
         let base_font = window.text_style().font();
@@ -64,28 +65,73 @@ impl Block {
         let width_bits = table_width.to_bits();
         let code_size_bits = theme.typography.code_size.to_bits();
         let text_size_bits = theme.typography.text_size.to_bits();
+        let column_fingerprints =
+            crate::components::markdown::table::column_content_fingerprints(table);
+        let keys_unchanged = |memo: &ColumnLayoutMemo| {
+            memo.theme_fingerprint == theme_fingerprint
+                && memo.code_size_bits == code_size_bits
+                && memo.text_size_bits == text_size_bits
+                && memo.width_bits == width_bits
+                && memo.font_fingerprint == font_fingerprint
+        };
 
         if let Some(memo) = self.column_layout_memo()
-            && memo.theme_fingerprint == theme_fingerprint
-            && memo.code_size_bits == code_size_bits
-            && memo.text_size_bits == text_size_bits
-            && memo.width_bits == width_bits
-            && memo.font_fingerprint == font_fingerprint
-            && memo.table == table
+            && keys_unchanged(memo)
+            && memo.column_fingerprints == column_fingerprints
         {
             return Some(memo.layout.clone());
         }
 
+        // 键都没变时按列沿用首选宽，只重测内容变化的列；任何键变了全量重测
+        // ——旧宽是旧口径（字体/字号/容器宽）量出来的，跨键混用会量错。
+        // 指纹与宽度先克隆出来：测量期间不持有备忘借用。
+        let (reuse, measured_columns) = match self.column_layout_memo() {
+            Some(memo) if keys_unchanged(memo)
+                && memo.column_fingerprints.len() == column_fingerprints.len() =>
+            {
+                let memo_fingerprints = memo.column_fingerprints.clone();
+                let memo_widths = memo.column_preferred_widths.clone();
+                let changed = (0..column_fingerprints.len())
+                    .filter(|column| memo_fingerprints[*column] != column_fingerprints[*column])
+                    .count();
+                let fingerprints = column_fingerprints.clone();
+                let reuse = move |column: usize| {
+                    if memo_fingerprints[column] == fingerprints[column] {
+                        memo_widths.get(column).copied()
+                    } else {
+                        None
+                    }
+                };
+                (Some(reuse), changed)
+            }
+            _ => (None, column_fingerprints.len()),
+        };
+
+        let preferred = crate::components::markdown::table::measure_preferred_column_widths_with_reuse(
+            table,
+            window,
+            theme,
+            cx,
+            move |column| reuse.as_ref().and_then(|reuse| reuse(column)),
+        );
         #[cfg(test)]
-        { self.column_layout_measurements += 1; }
-        let layout = TableColumnLayout::measure(&table, table_width, window, theme, cx);
+        {
+            self.column_layout_measurements += 1;
+            self.column_columns_measured += measured_columns as u64;
+        }
+        let layout = crate::components::markdown::table::TableColumnLayout::from_preferred_widths(
+            &preferred,
+            table_width,
+            crate::components::markdown::table::minimum_column_width(theme),
+        );
         self.set_column_layout_memo(ColumnLayoutMemo {
             theme_fingerprint,
             code_size_bits,
             text_size_bits,
             width_bits,
             font_fingerprint,
-            table,
+            column_fingerprints,
+            column_preferred_widths: preferred,
             layout: layout.clone(),
         });
         Some(layout)

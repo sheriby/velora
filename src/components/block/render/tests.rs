@@ -44,7 +44,7 @@ mod tests {
             });
             assert_eq!(second.unwrap().fraction(0), 0.5, "同键调用应命中备忘而非重测");
 
-            // 表内容变化：备忘必须被替换成基于新内容的条目。
+            // 表内容变化：备忘必须被替换成基于新内容的条目（按列指纹记账）。
             block.update(cx, |block, cx| {
                 let changed = table_for(["much_wider_column", "2"]);
                 block.record.table = Some(changed.clone());
@@ -52,7 +52,11 @@ mod tests {
                 let memo = block
                     .column_layout_memo()
                     .expect("测量后应写入备忘");
-                assert_eq!(memo.table, changed, "表内容变化后备忘必须失效重测");
+                let expected = crate::components::markdown::table::column_content_fingerprints(&changed);
+                assert_eq!(
+                    memo.column_fingerprints, expected,
+                    "表内容变化后备忘必须换上新指纹"
+                );
             });
         });
     }
@@ -65,6 +69,62 @@ mod tests {
         assert_eq!(numbered_list_marker(0, 12, ')'), "12)");
         assert_eq!(numbered_list_marker(1, 2, ')'), "b)");
         assert_eq!(numbered_list_marker(2, 4, ')'), "\u{2163})");
+    }
+
+    /// 编辑一格只重测那一列（评审 P145）：列内容指纹未变的列沿用备忘首选
+    /// 宽，不再为它们付 shape。100 行×30 列的表格里敲一个字符，旧实现要
+    /// 重测全部 3000 格。
+    #[gpui::test]
+    async fn table_column_edit_remeasures_only_the_changed_column(cx: &mut TestAppContext) {
+        use crate::components::markdown::table::parse_table_region;
+        let cx = cx.add_empty_window();
+        cx.update(|window, cx| {
+            crate::theme::ThemeManager::init(cx);
+            // 块里现在有 Kit 按钮：渲染前先把 Kit 主题桥接起来。
+            crate::ui::init(cx);
+            let theme = cx.global::<super::ThemeManager>().current_arc();
+            let lines: Vec<String> = "| a | b |\n| --- | --- |\n| one | two |"
+                .lines()
+                .map(str::to_string)
+                .collect();
+            let block = cx.new(|cx| {
+                Block::with_record(
+                    cx,
+                    BlockRecord::table(parse_table_region(&lines).expect("table parses")),
+                )
+            });
+
+            block.update(cx, |block, cx| {
+                block.cached_table_column_layout(760.0, &theme, window, cx);
+            });
+            let baseline = block.read_with(cx, |block, _| block.column_columns_measured);
+            assert_eq!(baseline, 2, "首次测量按列记账：两列都要量");
+
+            // 只改第二列的一格：只有第二列该重测。
+            block.update(cx, |block, cx| {
+                if let Some(table) = block.record.table.as_mut() {
+                    table.rows[0][1] = crate::components::InlineTextTree::plain("much wider cell");
+                }
+                block.cached_table_column_layout(760.0, &theme, window, cx);
+            });
+            let after_edit = block.read_with(cx, |block, _| block.column_columns_measured);
+            assert_eq!(
+                after_edit - baseline,
+                1,
+                "只该重测被编辑的那一列，实际重测了 {} 列",
+                after_edit - baseline
+            );
+
+            // 内容再无变化：备忘整帧命中，列计数不再涨。
+            block.update(cx, |block, cx| {
+                block.cached_table_column_layout(760.0, &theme, window, cx);
+            });
+            assert_eq!(
+                block.read_with(cx, |block, _| block.column_columns_measured),
+                after_edit,
+                "同键调用应整帧命中备忘"
+            );
+        });
     }
 
     #[test]
