@@ -1180,4 +1180,56 @@ mod tests {
             }
         });
     }
+    /// 跨格替换之后撤销：文本回来，格内那一截选区也要回来。
+    #[gpui::test]
+    async fn undoing_a_cross_cell_replacement_restores_the_cell_selection(
+        cx: &mut TestAppContext,
+    ) {
+        init_editor_test_app(cx);
+        let source = "| ab | cd |\n| --- | --- |\n| ef | gh |";
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, source.to_string(), None)
+        });
+        redraw(cx);
+        editor.update(cx, |editor, cx| {
+            let table = editor.document.root_blocks()[0].clone();
+            editor.select_table_text_range(
+                table.entity_id(),
+                crate::editor::TableTextPosition {
+                    cell: crate::components::TableCellPosition { row: 0, column: 0 },
+                    offset: 1,
+                    whole_cell: false,
+                },
+                crate::editor::TableTextPosition {
+                    cell: crate::components::TableCellPosition { row: 0, column: 1 },
+                    offset: 1,
+                    whole_cell: false,
+                },
+                cx,
+            );
+            assert!(editor.replace_cross_block_selection_with_text(
+                "X",
+                None,
+                false,
+                UndoCaptureKind::NonCoalescible,
+                cx
+            ));
+            assert_eq!(editor.buffer.text(), "| aX | d |\n| --- | --- |\n| ef | gh |");
+            editor.undo_document(cx);
+            assert_eq!(editor.buffer.text(), source);
+            let selection = editor
+                .table_text_selection
+                .expect("撤销之后表格文本选区应恢复");
+            assert_eq!(
+                selection.anchor.cell,
+                crate::components::TableCellPosition { row: 0, column: 0 }
+            );
+            assert_eq!(selection.anchor.offset, 1);
+            assert_eq!(
+                selection.focus.cell,
+                crate::components::TableCellPosition { row: 0, column: 1 }
+            );
+            assert_eq!(selection.focus.offset, 1);
+        });
+    }
 }
