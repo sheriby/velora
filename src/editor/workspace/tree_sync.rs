@@ -939,7 +939,7 @@ impl Editor {
         let Some(target_index) = self.document.visible_index_for_entity_id(entity_id) else {
             return Vec::new();
         };
-        let visible = self.document.visible_blocks().to_vec();
+        let visible = self.document.visible_blocks();
         let mut covering: Vec<(u8, EntityId)> = Vec::new();
         for visible_block in visible.iter().take(target_index) {
             let block = visible_block.entity.read(cx);
