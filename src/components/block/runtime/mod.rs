@@ -172,8 +172,6 @@ pub struct Block {
     pub(crate) foldable: bool,
     /// 图片宽度缩放因子，1.0 = 默认。
     pub(crate) image_width_factor: f32,
-    /// Pending `[[wikilink]]` click target (roadmap C3).
-    pub(crate) wikilink_target: Option<String>,
     pub selection_reversed: bool,
     /// 跨块/跨格逻辑切片保留干净坐标，显示范围在当前投影下即时派生。
     pub(crate) editor_selection_clean_range: Option<Range<usize>>,
@@ -355,7 +353,6 @@ impl Block {
             folded: false,
             foldable: false,
             image_width_factor: 1.0,
-            wikilink_target: None,
             selection_reversed: false,
             editor_selection_clean_range: None,
             document_selection_active: None,

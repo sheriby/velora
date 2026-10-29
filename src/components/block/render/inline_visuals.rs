@@ -854,37 +854,32 @@ impl Block {
         // falls through and focuses the block for editing. The wrapper element
         // gates the hand cursor on that same modifier, matching the normal-text
         // path where links render through `BlockTextElement`.
-        // `[[wikilink]]` 词渲染为链接样式，点击打开/创建工作区内同名文件
-        // （roadmap C3）。
+        // `[[wikilink]]` 词渲染为链接样式；与同块普通链接同一口径，只有
+        // Cmd/Ctrl+click 才打开/创建目标，普通单击落回编辑——否则想点进词里
+        // 放光标、或拖选结束停在词上的那一下释放，都会直接跳走。
         if span.link.is_none()
             && !span.style.code
             && let Some(target) = wikilink_target(text)
         {
             let wikilink_color = theme.colors.text_link;
-            let wikilink_element = element
+            let element = element
+                .debug_selector(|| "inline-wikilink-segment".to_string())
                 .text_color(wikilink_color)
-                .cursor_pointer()
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(move |block, _event, _window, _cx| {
-                        block.wikilink_target = Some(target.clone());
+                    cx.listener(move |_block, event: &MouseDownEvent, _window, cx| {
+                        if event.modifiers.secondary() {
+                            cx.stop_propagation();
+                            cx.emit(BlockEvent::RequestOpenWikilink {
+                                target: target.clone(),
+                            });
+                        }
                     }),
-                )
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(
-                        move |block, event: &gpui::MouseUpEvent, _window, cx| {
-                            if event.click_count >= 1 {
-                                let target = block.wikilink_target.take();
-                                if let Some(target) = target {
-                                    cx.emit(BlockEvent::RequestOpenWikilink { target });
-                                }
-                            }
-                        },
-                    ),
-                )
-                .into_any_element();
-            return wikilink_element;
+                );
+            return LinkFollowCursor {
+                child: element.into_any_element(),
+            }
+            .into_any_element();
         }
 
         if let Some(link) = span.link.clone() {

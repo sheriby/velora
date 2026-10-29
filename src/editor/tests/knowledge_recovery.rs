@@ -1,6 +1,70 @@
 use super::common::*;
 use super::loading_chunks::chunk_boundary_source;
 
+/// 混合可视块里的 `[[wikilink]]` 与同块普通链接同一口径：Cmd/Ctrl+click 才
+/// 打开，普通单击落回编辑。此前 wikilink 单击即打开——想点进词里放光标、
+/// 或拖选结束停在词上的那一下释放，都会直接跳走。
+#[gpui::test]
+async fn wikilink_in_a_mixed_block_requires_the_modifier_to_open(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = temp_fixture_dir().join(format!(
+        "velora-wikilink-modifier-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create root");
+    let target = root.join("alpha.md");
+    fs::write(&target, "# alpha\n").expect("write target");
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "[[alpha]] $x$\n\n正文\n".to_string(), None)
+    });
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    cx.run_until_parked();
+    // 混合只在未聚焦时渲染：先让焦点落在第二块，第一块才会走可视分段路径。
+    let focus_body = |editor: &mut Editor| {
+        let body = editor.document.root_blocks()[1].clone();
+        editor.focus_block(body.entity_id());
+    };
+    editor.update(cx, |editor, _cx| focus_body(editor));
+    redraw(cx);
+    redraw(cx);
+    let point = cx
+        .debug_bounds("inline-wikilink-segment")
+        .map(|bounds| bounds.center())
+        .expect("wikilink 分段该有几何");
+
+    cx.simulate_click(point, Modifiers::none());
+    cx.run_until_parked();
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.file_path.is_none(),
+            "普通单击不该打开 wikilink 目标：{:?}",
+            editor.file_path
+        );
+        assert_eq!(
+            editor.active_entity_id,
+            editor.document.root_blocks().first().map(|block| block.entity_id()),
+            "普通单击应把光标放进这一块"
+        );
+    });
+
+    editor.update(cx, |editor, _cx| focus_body(editor));
+    redraw(cx);
+    redraw(cx);
+    cx.simulate_click(point, Modifiers::secondary_key());
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.file_path.as_deref(),
+            Some(crate::file_url::canonical_path(&target).as_path()),
+            "Cmd/Ctrl+click 应打开 wikilink 目标"
+        );
+    });
+    let _ = fs::remove_dir_all(root);
+}
+
 #[gpui::test]
 async fn wikilink_creates_missing_file_at_workspace_root(cx: &mut TestAppContext) {
     cx.update(|cx| {
