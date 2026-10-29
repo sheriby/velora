@@ -500,3 +500,47 @@ async fn steady_frames_reuse_the_cached_paint_theme(cx: &mut TestAppContext) {
         after - before
     );
 }
+
+/// AI 评审标记按行区间二分命中：每个挂载行最多比较一个标记，
+/// 不再逐行扫全部标记（标记多时是挂载行数×标记数的比较）。
+#[gpui::test]
+async fn ai_review_marks_are_located_by_row_range(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..200)
+        .map(|index| format!("段落 {index}\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, markdown, None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, _cx| {
+        let spans: Vec<_> = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .filter_map(|visible| {
+                editor
+                    .document
+                    .source_span_of(visible.entity.entity_id())
+            })
+            .collect();
+        editor.ai_review_marks = spans
+            .into_iter()
+            .map(|span| crate::editor::ai_assistant::inline_review::ReviewMark {
+                range: span,
+                kind: crate::editor::ai_assistant::inline_review::MarkKind::Added,
+                edits: 0..0,
+            })
+            .collect();
+    });
+    redraw(cx);
+    crate::editor::ai_assistant::AI_REVIEW_MARK_PROBES
+        .with(|probes| probes.set(0));
+    redraw(cx);
+    let probes = crate::editor::ai_assistant::AI_REVIEW_MARK_PROBES
+        .with(|probes| probes.get());
+    assert!(
+        probes <= 500,
+        "一帧比较了 {probes} 个评审标记：仍在逐行扫全部标记"
+    );
+}

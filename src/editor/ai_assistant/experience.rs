@@ -38,6 +38,12 @@ impl ReviewDocument {
     }
 }
 
+// 评审标记渲染时检查了几个标记（测试用）：按行区间二分时应每行最多一个。
+#[cfg(test)]
+thread_local! {
+    pub(crate) static AI_REVIEW_MARK_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl Editor {
     pub(super) fn ai_review_can_accept(&self, document: Option<&str>, partial: bool) -> bool {
         let Some(session) = self.ai_session.as_ref() else {
@@ -291,6 +297,10 @@ impl Editor {
             can_accept: self.ai_review_can_accept(Some(id), true),
         };
         tracked.update(cx, |editor, _| {
+            // 渲染期按行区间二分找命中的标记，依赖「按起点有序」这个不变量：
+            // 在这里排一次，别让每一行每帧再扫一遍全部标记。
+            let mut marks = marks;
+            marks.sort_by_key(|mark| mark.range.start);
             editor.ai_review_marks = marks;
             editor.ai_review_binding = Some(binding);
         });
@@ -460,15 +470,32 @@ impl Editor {
         let Some(blocks) = self.document.visible_blocks().get(visible) else {
             return element;
         };
-        let spans = blocks
-            .iter()
-            .filter_map(|block| self.document.source_span_of(block.entity.entity_id()))
-            .collect::<Vec<_>>();
-        let Some(mark) = self.ai_review_marks.iter().find(|mark| {
-            spans
-                .iter()
-                .any(|span| span.start < mark.range.end && mark.range.start < span.end)
-        }) else {
+        // 这一行覆盖的字节区间：不建 Vec，逐块累出最小起点/最大终点。
+        let mut row_range: Option<(usize, usize)> = None;
+        for block in blocks {
+            let Some(span) = self.document.source_span_of(block.entity.entity_id()) else {
+                continue;
+            };
+            row_range = Some(match row_range {
+                None => (span.start, span.end),
+                Some((start, end)) => (start.min(span.start), end.max(span.end)),
+            });
+        }
+        let Some((row_start, row_end)) = row_range else {
+            return element;
+        };
+        // 标记按起点有序：第一个「终点越过行首」的标记就是唯一候选（hunk 互不
+        // 重叠），再确认它的起点在行尾之前。
+        let candidate = self
+            .ai_review_marks
+            .partition_point(|mark| mark.range.end <= row_start);
+        #[cfg(test)]
+        AI_REVIEW_MARK_PROBES.with(|probes| probes.set(probes.get() + 1));
+        let Some(mark) = self
+            .ai_review_marks
+            .get(candidate)
+            .filter(|mark| mark.range.start < row_end)
+        else {
             return element;
         };
         let color = if mark.kind == MarkKind::Removed {

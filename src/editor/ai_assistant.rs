@@ -27,6 +27,8 @@ use gpui_kit::component::{
 mod apply;
 mod context;
 mod experience;
+#[cfg(test)]
+pub(crate) use experience::AI_REVIEW_MARK_PROBES;
 mod messages;
 pub(in crate::editor) mod inline_review;
 mod render;
