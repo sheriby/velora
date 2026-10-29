@@ -718,6 +718,56 @@ async fn command_palette_accepts_non_ascii_typing(cx: &mut TestAppContext) {
     });
 }
 
+/// IME 组词期间命令面板不刷新候选：组词中间态只改输入框显示，列表仍按上一次
+/// 提交的查询过滤；提交的那次变更才收敛到最终文本。
+///
+/// gpui-base 0.7.3 里 `replace_and_mark_text_in_range` 只 notify、不发
+/// Change，所有 Change 都在清掉 marked range 之后才发，所以「组词碎片喂给
+/// 列表」在当前实现下不可达；用例钉住这个契约，库若改回组词期发 Change，
+/// 这里会变红。
+#[gpui::test]
+async fn command_palette_skips_list_filtering_while_ime_is_composing(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::app_menu::init(cx));
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "# a\n".into(), None));
+    cx.update(|window, cx| {
+        window.activate_window();
+        editor.update(cx, |editor, cx| editor.toggle_command_palette(window, cx));
+    });
+    redraw(cx);
+    let (input, total) = editor.read_with(cx, |editor, cx| {
+        let state = editor.command_palette.as_ref().expect("前置：面板已打开");
+        let total = state.list.read(cx).matched_count();
+        (state.input.clone(), total)
+    });
+    assert!(total > 0, "前置：面板列着命令");
+
+    // 组词中间态：标记范围覆盖刚插入的原文，输入框显示 zzzz。
+    input.update_in(cx, |input, window, cx| {
+        input.replace_and_mark_text_in_range(None, "zzzz", None, window, cx)
+    });
+    redraw(cx);
+    let (matched, query) = editor.read_with(cx, |editor, cx| {
+        let list = editor.command_palette.as_ref().expect("面板").list.read(cx);
+        (list.matched_count(), list.query(cx).to_string())
+    });
+    assert_eq!(matched, total, "组词中间态不该过滤候选");
+    assert_eq!(query, "", "组词结束前列表查询应保持原值");
+
+    // 上屏：替换掉标记范围，这一次变更把最终文本喂给列表。
+    input.update_in(cx, |input, window, cx| {
+        input.replace_text_in_range(Some(0..4), "zzzz", window, cx)
+    });
+    redraw(cx);
+    let (matched, query) = editor.read_with(cx, |editor, cx| {
+        let list = editor.command_palette.as_ref().expect("面板").list.read(cx);
+        (list.matched_count(), list.query(cx).to_string())
+    });
+    assert_eq!(query, "zzzz", "上屏后列表应按最终文本过滤");
+    assert_eq!(matched, 0, "没有任何命令匹配 zzzz");
+}
+
 #[gpui::test]
 async fn inserting_a_table_through_the_dialog_can_be_undone(cx: &mut TestAppContext) {
     // 审查发现：表格插入对话框不进撤销栈（其它表格操作都进），Ctrl+Z 要么什么
