@@ -1565,9 +1565,29 @@ impl Render for Block {
                 focused_base.w_full().child(child).into_any_element()
             }
             BlockKind::Paragraph if !self.toc_entries.is_empty() => {
-                // `[TOC]` 占位段落渲染为可点击目录（roadmap C2）。条目按层级
-                // 缩进，点击跳转到对应标题行。
+                // 聚焦的目录块回到普通段落文本：块里得有文本元素，光标、输入
+                // 与 IME 才有落脚点；失焦时才画成可点击的目录行（roadmap C2）。
                 let text_size = t.text_size;
+                if focused {
+                    focused_base
+                        .text_size(px(t.text_size))
+                        .text_color(c.text_default)
+                        .line_height(relative(t.text_line_height))
+                        .child(self.render_text_or_mixed_inline_visuals(
+                            &theme,
+                            focused,
+                            is_placeholder,
+                            None,
+                            None,
+                            c.text_default,
+                            t.text_size,
+                            FontWeight::NORMAL,
+                            cx,
+                        ))
+                        .into_any_element()
+                } else {
+                // `[TOC]` 占位段落渲染为可点击目录。条目按层级缩进，点击跳转到
+                // 对应标题行。
                 let rows: Vec<AnyElement> = self
                     .toc_entries
                     .iter()
@@ -1602,6 +1622,7 @@ impl Render for Block {
                     .line_height(relative(t.text_line_height))
                     .children(rows)
                     .into_any_element()
+                }
             }
             BlockKind::Paragraph
             | BlockKind::Comment

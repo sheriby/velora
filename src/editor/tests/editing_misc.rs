@@ -678,3 +678,35 @@ async fn an_empty_unfocused_paragraph_drops_its_stale_geometry(cx: &mut TestAppC
         );
     });
 }
+
+/// `[TOC]` 块聚焦后要回到普通段落文本：以前聚焦仍只画目录行，块里没有文本
+/// 元素——看不到光标、打字没有可见回显，也没法把 `[TOC]` 改成别的文字。
+#[gpui::test]
+async fn focused_toc_block_falls_back_to_editable_text(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "# Title\n\n[TOC]\n\nbody";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown.into(), None));
+    redraw(cx);
+    let toc_block = editor.read_with(cx, |editor, _| editor.document.root_blocks()[1].clone());
+    editor.update(cx, |editor, _cx| editor.focus_block(toc_block.entity_id()));
+    redraw(cx);
+    redraw(cx);
+    editor.read_with(cx, |_editor, cx| {
+        let block = toc_block.read(cx);
+        assert!(
+            block.active_range_or_cursor_bounds().is_some(),
+            "聚焦的目录块要有光标几何（文本元素在）"
+        );
+    });
+
+    cx.simulate_input("x");
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        assert!(
+            editor.document.markdown_text(cx).contains("x[TOC]"),
+            "聚焦的目录块应能直接编辑：{:?}",
+            editor.document.markdown_text(cx)
+        );
+    });
+}
