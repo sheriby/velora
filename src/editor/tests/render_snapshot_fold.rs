@@ -478,3 +478,25 @@ async fn broken_image_placeholder_stays_compact_inside_the_column(cx: &mut TestA
         bounds.right()
     );
 }
+
+/// 稳态帧不许深拷渲染主题：约 200 个字段的 Theme 每帧克隆一份，与热路径
+/// 用 Arc 的设计直接冲突。设置不变时应当复用缓存。
+#[gpui::test]
+async fn steady_frames_reuse_the_cached_paint_theme(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "alpha\n\nbeta".to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+    let before = editor.read_with(cx, |editor, _cx| editor.paint_theme_clones.get());
+    for _ in 0..3 {
+        redraw(cx);
+    }
+    let after = editor.read_with(cx, |editor, _cx| editor.paint_theme_clones.get());
+    assert_eq!(
+        after, before,
+        "稳态帧又深拷了 {} 份主题",
+        after - before
+    );
+}

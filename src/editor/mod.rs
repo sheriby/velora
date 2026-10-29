@@ -330,6 +330,11 @@ pub struct Editor {
     /// 上一次铺过的跨块选区。拖动时两端所在块没换、文档没重建，就只重铺两端：
     /// 中间的块目标区间一直是整块，不必每次 move 都读一遍实体。
     last_selection_visuals: Option<NormalizedCrossBlockSelection>,
+    /// 渲染用主题缓存：（派生主题 Arc, 套了界面字号的主题 Arc）。派生主题不变时
+    /// 直接复用，别每帧深拷一份约 200 字段的 Theme。
+    paint_theme_cache: std::cell::RefCell<Option<(Arc<crate::theme::Theme>, Arc<crate::theme::Theme>)>>,
+    /// 计数器：渲染主题真正深拷了几次（测试用）。设置不动的帧应当是 0。
+    paint_theme_clones: std::cell::Cell<u64>,
     /// 铺高亮时的「文档选区世代」（`document_selection_active` 的 Rc 指针）。
     /// 文档重建后块都是新实体，世代变了就必须全量重铺。
     last_selection_visuals_epoch: Option<std::rc::Rc<std::cell::Cell<bool>>>,
@@ -1019,6 +1024,8 @@ impl Editor {
             pending_save_then: None,
             last_selection_visuals: None,
             last_selection_visuals_epoch: None,
+            paint_theme_cache: std::cell::RefCell::new(None),
+            paint_theme_clones: std::cell::Cell::new(0),
             last_selection_visuals_revision: 0,
             drop_replace_restore_focus: None,
             modal: None,

@@ -687,6 +687,27 @@ fn footnote_group_shell(
 }
 
 impl Editor {
+    /// 渲染用主题：派生主题 + 界面字号。派生主题（含字号/缩放指纹）不变时
+    /// 复用上次的结果，避免每帧深拷整份 Theme。
+    pub(super) fn cached_paint_theme(
+        &self,
+        layout_theme: &std::sync::Arc<crate::theme::Theme>,
+        cx: &App,
+    ) -> std::sync::Arc<crate::theme::Theme> {
+        if let Some((derived, with_ui)) = self.paint_theme_cache.borrow().as_ref()
+            && std::sync::Arc::ptr_eq(derived, layout_theme)
+        {
+            return with_ui.clone();
+        }
+        let mut theme = layout_theme.as_ref().clone();
+        crate::config::EditorSettings::apply_ui_typography(cx, &mut theme);
+        let theme = std::sync::Arc::new(theme);
+        self.paint_theme_clones
+            .set(self.paint_theme_clones.get() + 1);
+        *self.paint_theme_cache.borrow_mut() = Some((layout_theme.clone(), theme.clone()));
+        theme
+    }
+
     /// 计数器：行计划重建路上每读一个块实体加一。闸门看的就是它——见
     /// `row_plan_rebuild_reads_only_the_headings_not_every_block`。
     pub(crate) fn count_row_plan_block_read(&self) {

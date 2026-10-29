@@ -103,10 +103,10 @@ impl Render for Editor {
         );
 
         let layout_theme = cx.global::<ThemeManager>().derived_theme(cx);
-        let mut theme = layout_theme.as_ref().clone();
+        // 字号设置 + 界面缩放（⌘+/⌘-/⌘0）都套在这份派生里；派生不变时直接
+        // 复用缓存，不每帧深拷一份约 200 字段的 Theme。
+        let theme = self.cached_paint_theme(&layout_theme, cx);
         let fonts = crate::config::EditorSettings::fonts(cx);
-        // 字号设置 + 界面缩放（⌘+/⌘-/⌘0）由这一个派生负责，文档块共用。
-        crate::config::EditorSettings::apply_ui_typography(cx, &mut theme);
         let body_font_family = if fonts.markdown_family == "theme" {
             &theme.typography.body_font_family
         } else {
