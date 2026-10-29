@@ -196,3 +196,69 @@ use std::path::{Path, PathBuf};
         std::fs::remove_dir_all(&root).expect("probe root should be removed");
     }
 
+    /// 没有文档路径也没有工作区根时，粘贴图片不落进进程当前目录：给提示，
+    /// 让用户先保存文档或打开工作区（以前退回 CWD，文件随启动方式漂移，
+    /// 文档一换位置引用全断）。
+    #[gpui::test]
+    async fn untitled_document_without_workspace_does_not_write_images_into_cwd(
+        cx: &mut TestAppContext,
+    ) {
+        // 隔离用户偏好：默认资产目录是 `assets/`，测试不能在仓库根下落文件。
+        let config_root = std::env::temp_dir().join(format!(
+            "velora-image-cwd-config-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let _config = crate::config::override_test_config_root(&config_root);
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) = cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, "正文".to_string(), None)
+        });
+        let bytes = b"pasted-image-bytes".to_vec();
+        let file_name = format!(
+            "{}-{}.png",
+            crate::config::today_local_date(),
+            Editor::pasted_image_hash(&bytes)
+        );
+        let cwd = std::env::current_dir().expect("cwd");
+        let cwd_targets = [cwd.join(&file_name), cwd.join("assets").join(&file_name)];
+        for target in &cwd_targets {
+            let _ = std::fs::remove_file(target);
+        }
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| {
+                let block = editor.document.root_blocks()[0].clone();
+                editor.on_block_event(
+                    block,
+                    &crate::components::BlockEvent::RequestPasteImage {
+                        leading: InlineTextTree::plain("正".to_string()),
+                        source: crate::components::PastedImageSource::ClipboardImage(
+                            gpui::Image::from_bytes(gpui::ImageFormat::Png, bytes.clone()),
+                        ),
+                        trailing: InlineTextTree::plain("文".to_string()),
+                    },
+                    cx,
+                );
+            });
+        });
+        for target in &cwd_targets {
+            assert!(
+                !target.exists(),
+                "图片被写进了进程当前目录：{}",
+                target.display()
+            );
+        }
+        let title = cx.update(|_window, cx| {
+            cx.global::<crate::i18n::I18nManager>()
+                .strings()
+                .image_paste_failed_title
+                .clone()
+        });
+        editor.read_with(cx, |editor, _cx| {
+            let spec = editor.modal_spec().expect("没有落脚点要有提示");
+            assert_eq!(spec.title, title);
+        });
+    }

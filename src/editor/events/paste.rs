@@ -87,7 +87,12 @@ impl Editor {
         ) {
             return Ok(root);
         }
-        std::env::current_dir().context("failed to resolve current working directory")
+        // 没有文档路径也没有工作区根时，图片没有「文档旁边」可落。退回进程当前
+        // 目录会让文件位置随启动方式漂移（可能是 `/` 或应用包目录），文档一旦
+        // 保存到别处引用全断——先让用户给文档一个位置。
+        anyhow::bail!(
+            "文档还没有保存位置：先保存文档或打开一个工作区，再粘贴图片"
+        )
     }
 
     pub(crate) fn image_paste_base_dir(
