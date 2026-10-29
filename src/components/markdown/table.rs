@@ -276,6 +276,10 @@ impl TableColumnLayout {
             .unwrap_or_else(|| 1.0 / self.fractions.len().max(1) as f32)
     }
 
+    /// 全量测量（不复用任何列）。生产路径走
+    /// `measure_preferred_column_widths_with_reuse`（列宽备忘要按列沿用），
+    /// 这里只剩测试断言在用。
+    #[cfg(test)]
     pub fn measure(
         table: &TableData,
         table_width: f32,

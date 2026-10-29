@@ -85,6 +85,7 @@ impl Block {
         // 键都没变时按列沿用首选宽，只重测内容变化的列；任何键变了全量重测
         // ——旧宽是旧口径（字体/字号/容器宽）量出来的，跨键混用会量错。
         // 指纹与宽度先克隆出来：测量期间不持有备忘借用。
+        #[cfg_attr(not(test), allow(unused_variables))]
         let (reuse, measured_columns) = match self.column_layout_memo() {
             Some(memo) if keys_unchanged(memo)
                 && memo.column_fingerprints.len() == column_fingerprints.len() =>

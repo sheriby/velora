@@ -464,7 +464,7 @@ pub(crate) fn is_footnote_definition_start(line: &str) -> bool {
 }
 
 pub(crate) fn is_reference_definition_title_continuation(line: &str) -> bool {
-    crate::components::markdown::link::is_reference_definition_title_continuation(line)
+    crate::components::markdown::references::is_reference_definition_title_continuation(line)
 }
 
 pub(crate) fn is_block_html_start(line: &str) -> bool {
@@ -563,7 +563,7 @@ pub(crate) fn collect_reference_definition_region(lines: &[String], start: usize
         && reference_definition_label_unfinished(&lines[start])
         && lines
             .get(index)
-            .is_some_and(|next| crate::components::markdown::link::valid_reference_target_line(next))
+            .is_some_and(|next| crate::components::markdown::references::valid_reference_target_line(next))
         && !looks_like_root_block_start(lines, index)
     {
         index += 1;
