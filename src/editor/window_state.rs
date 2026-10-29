@@ -755,16 +755,22 @@ impl Editor {
                 settle_frames: Self::VIEW_MODE_SCROLL_SETTLE_FRAMES,
             });
         }
-        // 渲染块的源码偏移要走与选区快照同源的换算；映射缺失时退回按块内
-        // 偏移直接读（代码块等 raw 编辑的块本就是同一坐标）。
-        let offset = self
-            .source_mapping_for_entity(id, cx)
-            .map(|mapping| {
+        // 渲染块的源码偏移要走与选区快照同源的换算。映射缺失时只有 raw/代码块
+        // 能按块内偏移直接读（它们本来就是同一坐标）；普通渲染块的显示文本与
+        // 源码不等长（`1)`→`1.`、`__粗__`→`**粗**`），硬拼会落进记号中间，退回块首。
+        let offset = match self.source_mapping_for_entity(id, cx) {
+            Some(mapping) => {
                 let content = block.current_range_to_markdown_range(local..local).start;
                 let last = mapping.content_to_source.len().saturating_sub(1);
                 mapping.full_source_range.start + mapping.content_to_source[content.min(last)]
-            })
-            .unwrap_or(identity);
+            }
+            None if block.uses_raw_text_editing() || block.kind().is_code_block() => identity,
+            None => {
+                self.view_anchor_mapping_fallbacks
+                    .set(self.view_anchor_mapping_fallbacks.get() + 1);
+                span.start
+            }
+        };
         Some(ViewModeScrollAnchor {
             offset,
             settle_frames: Self::VIEW_MODE_SCROLL_SETTLE_FRAMES,

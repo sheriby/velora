@@ -335,6 +335,9 @@ pub struct Editor {
     paint_theme_cache: std::cell::RefCell<Option<(Arc<crate::theme::Theme>, Arc<crate::theme::Theme>)>>,
     /// 计数器：渲染主题真正深拷了几次（测试用）。设置不动的帧应当是 0。
     paint_theme_clones: std::cell::Cell<u64>,
+    /// 计数器：换模式取视口锚点时，非 raw 块拿不到源码映射而退回块首的次数。
+    /// 正常文档应当为 0；只增说明某类块一直缺映射，锚点精度退化。
+    view_anchor_mapping_fallbacks: std::cell::Cell<u64>,
     /// 铺高亮时的「文档选区世代」（`document_selection_active` 的 Rc 指针）。
     /// 文档重建后块都是新实体，世代变了就必须全量重铺。
     last_selection_visuals_epoch: Option<std::rc::Rc<std::cell::Cell<bool>>>,
@@ -1026,6 +1029,7 @@ impl Editor {
             last_selection_visuals_epoch: None,
             paint_theme_cache: std::cell::RefCell::new(None),
             paint_theme_clones: std::cell::Cell::new(0),
+            view_anchor_mapping_fallbacks: std::cell::Cell::new(0),
             last_selection_visuals_revision: 0,
             drop_replace_restore_focus: None,
             modal: None,

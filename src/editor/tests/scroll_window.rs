@@ -1455,3 +1455,36 @@ async fn scrolling_above_the_restored_row_releases_the_mount_floor(cx: &mut Test
         );
     });
 }
+
+/// 带行内记号的渲染块换到源码模式：视口锚点必须走源码映射，
+/// 不能退回「显示偏移当源码偏移」的兜底（那会落进记号中间）。
+#[gpui::test]
+async fn switching_to_source_mode_uses_the_source_mapping_for_a_markup_block(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let markdown = (0..200)
+        .map(|index| format!("段落 {index} __粗__ `code`\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, markdown, None)
+    });
+    redraw(cx);
+    redraw(cx);
+    editor.update(cx, |editor, _cx| {
+        let mut offset = editor.scroll_handle.offset();
+        offset.y = gpui::px(-600.0);
+        editor.scroll_handle.set_offset(offset);
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.view_anchor_mapping_fallbacks.get(),
+            0,
+            "带行内记号的块拿不到源码映射：视口锚点退回了块首"
+        );
+    });
+}
