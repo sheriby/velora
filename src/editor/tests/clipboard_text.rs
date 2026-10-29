@@ -594,3 +594,63 @@ async fn pasting_into_a_plain_text_code_file_stays_plain_text(cx: &mut TestAppCo
         );
     }
 }
+
+/// 「复制为纯文本」按源码里的块间距还原分段：空行分隔的块之间留一个空行，
+/// 紧排的列表项仍是一行接一行。只按块边界补 `\n` 会把段落边界抹平。
+#[gpui::test]
+async fn copy_as_plain_text_keeps_paragraph_gaps_between_blocks(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor("标题\n\n第一段\n\n- 甲\n- 乙\n", cx);
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let (first_id, last_id, last_len) = {
+            let visible = editor.document.visible_blocks();
+            let last = &visible[3].entity;
+            (
+                visible[0].entity.entity_id(),
+                last.entity_id(),
+                last.read(cx).clean_visible_len(),
+            )
+        };
+        editor.cross_block_selection = Some(crate::editor::CrossBlockSelection {
+            anchor: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: first_id,
+                offset: 0,
+            },
+            focus: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: last_id,
+                offset: last_len,
+            },
+        });
+        cx.notify();
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.selected_plain_text(cx).as_deref(),
+            Some("标题\n\n第一段\n\n甲\n乙"),
+            "段落之间的空行在纯文本里也要保留"
+        );
+    });
+}
+
+/// 「复制为 Markdown」取活动块的选区：文档前部残留的选区不能顶替当前光标处。
+#[gpui::test]
+async fn copy_as_markdown_ignores_a_lingering_selection_on_a_non_active_block(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor("first\n\nsecond", cx);
+    redraw(cx);
+    select(&editor, 1, 0..6, cx);
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.visible_blocks()[0].entity.clone();
+        first.update(cx, |block, _cx| block.selected_range = 0..5);
+    });
+    cx.dispatch_action(CopyAsMarkdown);
+    redraw(cx);
+    assert_eq!(
+        clipboard_text(cx).as_deref(),
+        Some("second"),
+        "复制取的是活动块的选区，不是文档前部残留的那一段"
+    );
+}

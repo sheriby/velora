@@ -993,9 +993,10 @@ impl Editor {
         if let Some(selection) = self.normalized_cross_block_selection(cx) {
             let visible = self.document.visible_blocks();
             let mut text = String::new();
-            let mut wrote_chunk = false;
+            let mut previous: Option<&Entity<Block>> = None;
             for index in selection.start_index..=selection.end_index {
-                let block = visible.get(index)?.entity.read(cx);
+                let entity = &visible.get(index)?.entity;
+                let block = entity.read(cx);
                 let len = block.clean_visible_len();
                 let range = if selection.start_index == selection.end_index {
                     selection.start.offset.min(len)..selection.end.offset.min(len)
@@ -1011,13 +1012,13 @@ impl Editor {
                 if range.is_empty() {
                     continue;
                 }
-                if wrote_chunk {
-                    text.push('\n');
+                if let Some(previous) = previous {
+                    text.push_str(self.plain_text_separator_between(previous, entity));
                 }
                 text.push_str(&plain[range]);
-                wrote_chunk = true;
+                previous = Some(entity);
             }
-            return wrote_chunk.then_some(text);
+            return (!text.is_empty()).then_some(text);
         }
         let active_id = self.active_entity_id.or(self.pending_focus)?;
         let entity = self.focusable_entity_by_id(active_id)?;
@@ -1029,6 +1030,32 @@ impl Editor {
         let plain = block.record.title.visible_text();
         let range = clamp_range_to_char_boundaries(&plain, clean);
         (!range.is_empty()).then(|| plain[range].to_owned())
+    }
+
+    /// 纯文本复制时相邻两块之间隔几行：看源码里两块区间之间有几个换行。
+    /// 空行分隔的段落补一个空行；紧排的列表项、引用行仍是一行。子块没有
+    /// 自己的区间（区间挂在根上），退回单换行——容器里本来就是一行接一行。
+    fn plain_text_separator_between(
+        &self,
+        previous: &Entity<Block>,
+        next: &Entity<Block>,
+    ) -> &'static str {
+        let (Some(previous_span), Some(next_span)) = (
+            self.document.source_span_of(previous.entity_id()),
+            self.document.source_span_of(next.entity_id()),
+        ) else {
+            return "\n";
+        };
+        let total = self.buffer.byte_len();
+        let start = previous_span.end.min(total);
+        let end = next_span.start.max(start).min(total);
+        let newlines = self
+            .buffer
+            .slice(start..end)
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count();
+        if newlines >= 2 { "\n\n" } else { "\n" }
     }
 
     /// Returns the markdown text of the current selection, whether cross-block
@@ -1046,36 +1073,38 @@ impl Editor {
             }
         }
 
-        // Fall back to a single block with a non-collapsed selection range.
-        // P7：untracked 读——每帧全文档扫描时跳过 accessed 集合插入
-        // （160k 块 × ~0.2µs 的纯追踪开销曾是稳态帧的大头）。
-        for entity in self.single_block_selection_candidates() {
-            let block = entity.read_untracked(cx);
-            if block.selected_range.is_empty() {
-                continue;
-            }
-            // 源码/代码块编的就是原文：可见文本逐字节就是文件里那几个。再走一遍
-            // Markdown 序列化会把 `\.` 翻成 `\\.`、`\_` 翻成 `\\_`（那层转义
-            // 只对渲染块有意义：它要防「可见文本重新解析」时变味）。
-            if block.uses_raw_text_editing() {
-                let display = block.display_text();
-                let range = clamp_range_to_char_boundaries(display, block.selected_range.clone());
-                if !range.is_empty() {
-                    return Some(display[range].to_owned());
-                }
-                continue;
-            }
-            let markdown_range =
-                block.current_range_to_markdown_range(block.selected_range.clone());
-            let full_markdown = block.record.title.serialize_markdown();
-            // markdown 空间换算得到的偏移可能落在多字节字符内部，直接切片会 panic。
-            let range = clamp_range_to_char_boundaries(&full_markdown, markdown_range.clone());
-            if !range.is_empty() {
-                return Some(full_markdown[range].to_owned());
-            }
+        // 单块选区只可能在**活动编辑目标**那一块上（换焦点时残影会被收掉）：
+        // 有活动块时它的选区就是唯一真相，空选区 = 没有选区，不再全篇找残影。
+        // 「找当前选区」与状态栏共用这一处判据，别让两份扫描各自优化。
+        if let Some(active_id) = self.active_entity_id.or(self.pending_focus) {
+            return self
+                .focusable_entity_by_id(active_id)
+                .and_then(|entity| Self::single_block_markdown_selection(&entity, cx));
         }
+        self.single_block_selection_candidates()
+            .find_map(|entity| Self::single_block_markdown_selection(entity, cx))
+    }
 
-        None
+    /// 一块自己的选区对应的 Markdown 源码；空选区或换算不出区间时 `None`。
+    fn single_block_markdown_selection(entity: &Entity<Block>, cx: &App) -> Option<String> {
+        let block = entity.read_untracked(cx);
+        if block.selected_range.is_empty() {
+            return None;
+        }
+        // 源码/代码块编的就是原文：可见文本逐字节就是文件里那几个。再走一遍
+        // Markdown 序列化会把 `\.` 翻成 `\\.`、`\_` 翻成 `\\_`（那层转义
+        // 只对渲染块有意义：它要防「可见文本重新解析」时变味）。
+        if block.uses_raw_text_editing() {
+            let display = block.display_text();
+            let range = clamp_range_to_char_boundaries(display, block.selected_range.clone());
+            return (!range.is_empty()).then(|| display[range].to_owned());
+        }
+        let markdown_range =
+            block.current_range_to_markdown_range(block.selected_range.clone());
+        let full_markdown = block.record.title.serialize_markdown();
+        // markdown 空间换算得到的偏移可能落在多字节字符内部，直接切片会 panic。
+        let range = clamp_range_to_char_boundaries(&full_markdown, markdown_range.clone());
+        (!range.is_empty()).then(|| full_markdown[range].to_owned())
     }
 
     fn single_block_selection_candidates(&self) -> impl Iterator<Item = &Entity<Block>> {
