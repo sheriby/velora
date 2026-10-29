@@ -445,12 +445,63 @@ async fn review_save_and_close_keeps_tabs_when_a_write_fails(cx: &mut TestAppCon
         }
         let closing = editor.workspace.open_documents.clone();
         editor.finish_close_workspace_tabs(&closing, true, window, cx);
+    }));
+    // 缓存标签的读盘与暂存转后台：等一轮再谈结果。
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
         assert_eq!(editor.workspace.open_documents.len(), 2);
         assert_eq!(editor.workspace.open_documents[1].markdown, "edited");
         assert!(editor.workspace.open_documents[1].dirty);
         assert!(!editor.workspace.open_documents[0].dirty);
         assert!(editor.modal_is_open());
-    }));
+    });
+}
+
+/// 关闭多个缓存标签时，读盘校验与临时文件暂存不在调用线程上做完：受理返回时
+/// 文件还是旧内容，后台一轮之后才更新。批量关闭不再是一串同步整篇 IO。
+#[gpui::test]
+async fn closing_cached_tabs_defers_their_writes_to_the_background(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "close-cached-background");
+    let first = root.join("first.md");
+    fs::write(&first, "old one").unwrap();
+    let second = root.join("second.md");
+    fs::write(&second, "old two").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            for (path, previous, next) in [
+                (&first, "old one", "new one"),
+                (&second, "old two", "new two"),
+            ] {
+                editor.workspace.open_documents.push(super::super::WorkspaceDocumentTab {
+                    path: path.clone(),
+                    recovery_id: uuid::Uuid::new_v4(),
+                    file_version: crate::editor::persistence::file_content_version(previous),
+                    markdown: next.into(),
+                    file_shape: None,
+                    dirty: true,
+                    preview: false,
+                    view: None,
+                });
+            }
+            let closing = editor.workspace.open_documents.clone();
+            editor.finish_close_workspace_tabs(&closing, true, window, cx);
+        });
+    });
+    assert_eq!(
+        fs::read_to_string(&first).unwrap(),
+        "old one",
+        "受理后就把缓存标签同步写完了：批量关闭的 IO 还在调用线程上"
+    );
+    assert_eq!(fs::read_to_string(&second).unwrap(), "old two");
+    cx.run_until_parked();
+    assert_eq!(fs::read_to_string(&first).unwrap(), "new one");
+    assert_eq!(fs::read_to_string(&second).unwrap(), "new two");
+    assert!(
+        editor.read_with(cx, |editor, _| editor.workspace.open_documents.is_empty()),
+        "后台保存完成后标签应被关掉"
+    );
 }
 
 #[gpui::test]

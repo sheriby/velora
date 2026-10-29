@@ -67,7 +67,7 @@ pub(super) fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> 
     StagedDocumentWrite::prepare(path, contents)?.commit()
 }
 
-struct StagedDocumentWrite {
+pub(super) struct StagedDocumentWrite {
     target: PathBuf,
     temporary: PathBuf,
 }
@@ -87,13 +87,13 @@ fn canonical_write_target(path: &Path) -> PathBuf {
 }
 
 impl StagedDocumentWrite {
-    fn prepare(path: &Path, contents: &[u8]) -> std::io::Result<Self> {
+    pub(super) fn prepare(path: &Path, contents: &[u8]) -> std::io::Result<Self> {
         Self::prepare_with_baseline(path, contents, None)
     }
 
     /// `baseline` 是刚为版本校验读过的那份内容（见
     /// [`capture_baseline_with`](crate::config::file_history::capture_baseline_with)）。
-    fn prepare_with_baseline(
+    pub(super) fn prepare_with_baseline(
         path: &Path,
         contents: &[u8],
         baseline: Option<&[u8]>,
@@ -134,7 +134,7 @@ impl StagedDocumentWrite {
     /// 可移植的原子比较交换，外部写者在这个窗口里改文件会被 rename 覆盖。窗口只
     /// 剩这些调用的间隙（校验紧挨着 rename），要更小只能上跨进程文件锁；
     /// 这里接受现状，不把它误当成「校验通过就绝无覆盖」。
-    fn commit_checked(self, path: &Path, expected_version: u64) -> anyhow::Result<()> {
+    pub(super) fn commit_checked(self, path: &Path, expected_version: u64) -> anyhow::Result<()> {
         let target = std::fs::canonicalize(path)
             .map(|target| canonical_write_target(&target))
             .map_err(|error| ExternalChange {
@@ -192,7 +192,7 @@ impl std::fmt::Display for ExternalChange {
 impl std::error::Error for ExternalChange {}
 
 /// 这个失败是不是「盘上的内容变了 / 读不到」那一类——它走冲突入口，不走「保存失败」。
-fn is_external_change(error: &anyhow::Error) -> bool {
+pub(super) fn is_external_change(error: &anyhow::Error) -> bool {
     error.downcast_ref::<ExternalChange>().is_some()
 }
 
@@ -219,7 +219,7 @@ pub(super) fn tab_write_bytes(path: &Path, text: &str, expected_version: u64) ->
 }
 
 /// 按磁盘上那份文件的形状把文本重新编码；认不出形状就照原文本字节走。
-fn encoded_with_disk_shape(text: &str, disk_raw: &[u8]) -> Vec<u8> {
+pub(super) fn encoded_with_disk_shape(text: &str, disk_raw: &[u8]) -> Vec<u8> {
     if disk_raw.is_empty() {
         return text.as_bytes().to_vec();
     }

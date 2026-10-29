@@ -1187,6 +1187,119 @@ impl Editor {
         Ok(())
     }
 
+    /// 缓存标签的批量保存：读盘校验、按盘上形状编码与临时文件暂存都在后台，
+    /// 回主线程逐页提交 rename 并记账；全部成功后重入关闭流程收尾。
+    fn stage_and_close_cached_tabs(
+        &mut self,
+        closing: Vec<WorkspaceDocumentTab>,
+        cached: Vec<WorkspaceDocumentTab>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editor = cx.entity().downgrade();
+        let window_handle = window.window_handle();
+        let background = cx.background_executor().clone();
+        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let (staged, failures) = background
+                .spawn(async move {
+                    let mut staged = Vec::new();
+                    let mut failures = Vec::new();
+                    for tab in cached {
+                        let prepared = (|| {
+                            let raw = crate::editor::persistence::verify_file_version(
+                                &tab.path,
+                                tab.file_version,
+                            )?;
+                            let bytes = crate::editor::persistence::encoded_with_disk_shape(
+                                &tab.markdown,
+                                &raw,
+                            );
+                            let write = crate::editor::persistence::StagedDocumentWrite::prepare_with_baseline(
+                                &tab.path,
+                                &bytes,
+                                Some(&raw),
+                            )?;
+                            Ok::<_, anyhow::Error>((write, bytes))
+                        })();
+                        match prepared {
+                            Ok((write, bytes)) => staged.push((tab, write, bytes)),
+                            Err(error) => failures.push((tab.path.clone(), error)),
+                        }
+                    }
+                    (staged, failures)
+                })
+                .await;
+
+            let outcome = editor.update(cx, move |editor, cx| {
+                // 一篇失败不拖垮整批：能写的先写，失败的逐条上报，最后整体不关标签。
+                let mut failed = false;
+                for (path, error) in failures {
+                    failed = true;
+                    if crate::editor::persistence::is_external_change(&error) {
+                        editor.report_external_change_conflict(path, error.to_string(), cx);
+                    } else {
+                        editor.workspace.file_error = Some(error.to_string());
+                        let title = cx
+                            .global::<crate::i18n::I18nManager>()
+                            .strings()
+                            .save_failed_title
+                            .clone();
+                        editor.show_message_modal(title, error.to_string(), cx);
+                    }
+                }
+                for (tab, write, bytes) in staged {
+                    if let Err(error) = write.commit_checked(&tab.path, tab.file_version) {
+                        failed = true;
+                        editor.workspace.file_error = Some(error.to_string());
+                        let title = cx
+                            .global::<crate::i18n::I18nManager>()
+                            .strings()
+                            .save_failed_title
+                            .clone();
+                        editor.show_message_modal(title, error.to_string(), cx);
+                        continue;
+                    }
+                    let version = crate::editor::persistence::file_content_version(&tab.markdown);
+                    editor.mark_workspace_document_saved(&tab.path, version, &tab.markdown);
+                    if !editor.record_saved_history(
+                        &tab.path,
+                        &bytes,
+                        crate::config::file_history::HistorySource::Exit,
+                        cx,
+                    ) {
+                        failed = true;
+                        continue;
+                    }
+                    if editor.file_path.as_ref() == Some(&tab.path) {
+                        editor.document_dirty = false;
+                        editor.file_version = Some(version);
+                    }
+                    if let Err(error) = crate::config::remove_recovery_snapshot(tab.recovery_id) {
+                        eprintln!("无法移除已保存标签的恢复快照：{error}");
+                    }
+                }
+                !failed
+            });
+            let Ok(saved) = outcome else {
+                return;
+            };
+            if !saved {
+                return;
+            }
+            let _ = cx.update_window(
+                window_handle,
+                move |_view: AnyView, window: &mut Window, cx: &mut App| {
+                    if let Err(error) = editor.update(cx, |editor, cx| {
+                        editor.finish_close_workspace_tabs(&closing, false, window, cx);
+                    }) {
+                        eprintln!("批量保存后关闭标签失败：{error}");
+                    }
+                },
+            );
+        })
+        .detach();
+    }
+
     /// 活动文档那一页保存完成后重入关闭流程：它刚落盘，快照里的脏标记要清掉，
     /// 再由循环把其余标签走完。
     pub(crate) fn resume_close_workspace_tabs_after_save(
@@ -1229,6 +1342,7 @@ impl Editor {
                 self.save_document(window, cx);
                 return;
             }
+            let mut cached = Vec::new();
             for tab in closing {
                 if !tab.dirty || self.shared_tab_has_other_view(&tab.path, cx) {
                     continue;
@@ -1252,39 +1366,13 @@ impl Editor {
                     // 保存转后台：续作在完成回调里重入本函数，把其余标签走完。
                     return;
                 }
-                let bytes = match crate::editor::persistence::tab_write_bytes(&tab.path, &tab.markdown, tab.file_version) {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
-                        self.report_external_change_conflict(tab.path.clone(), error.to_string(), cx);
-                        return;
-                    }
-                };
-                match crate::editor::persistence::write_atomic(
-                    &tab.path,
-                    &bytes,
-                ) {
-                    Ok(()) => {
-                        let version = crate::editor::persistence::file_content_version(&tab.markdown);
-                        self.mark_workspace_document_saved(&tab.path, version, &tab.markdown);
-                        if !self.record_saved_history(&tab.path, &bytes, crate::config::file_history::HistorySource::Exit, cx) {
-                            return;
-                        }
-                        if self.file_path.as_ref() == Some(&tab.path) {
-                            self.document_dirty = false;
-                            self.file_version = Some(version);
-                            window.set_window_edited(false);
-                        }
-                        if let Err(error) = crate::config::remove_recovery_snapshot(tab.recovery_id) {
-                            eprintln!("无法移除已保存标签的恢复快照：{error}");
-                        }
-                    }
-                    Err(err) => {
-                        self.workspace.file_error = Some(err.to_string());
-                        let title = cx.global::<crate::i18n::I18nManager>().strings().save_failed_title.clone();
-                        self.show_message_modal(title, err.to_string(), cx);
-                        return;
-                    }
-                }
+                cached.push(tab.clone());
+            }
+            if !cached.is_empty() {
+                // 缓存标签的读盘与暂存同样转后台：逐页同步读盘+fsync，多标签
+                // 一次关闭就是主线程上一串整篇 IO。
+                self.stage_and_close_cached_tabs(closing.to_vec(), cached, window, cx);
+                return;
             }
         }
 

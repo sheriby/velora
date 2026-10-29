@@ -851,6 +851,8 @@ fn closing_dirty_background_tabs_records_their_saved_contents(cx: &mut TestAppCo
             assert!(editor.modal_is_open());
             editor.dismiss_modal(0, window, cx);
         });
+        // 缓存标签的读盘与暂存转后台：等一轮再读历史。
+        cx.run_until_parked();
         let newest = versions(&path).remove(0);
         assert_eq!(
             newest.source,
