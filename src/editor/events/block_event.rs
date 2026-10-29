@@ -505,6 +505,10 @@ impl Editor {
                 let soft_wrapped =
                     crate::components::markdown::paste::is_soft_wrapped_paste(lines);
                 let quote_related = self.block_is_quote_structure_related(&block, cx);
+                // 引用里的结构粘贴会往容器后面插入新的根块：这一段的写回区间从
+                // 粘贴前就定下来，收尾按「引用根 + 新根」整体落笔，别处不动。
+                let roots_before = self.document.root_layout();
+                let quote_root_before = self.document.root_ancestor_of(block.entity_id());
                 // 粘贴先按「在光标处插入一段文本」处理：能算出插入点就走缓冲区插入，
                 // 块结构由导入器从缓冲区重新认。引用/标注里的粘贴要跟着容器自己那套
                 // 规范化走，留在下面的整篇重投影路径上。
@@ -644,6 +648,14 @@ impl Editor {
                     });
                 }
 
+                // 先把整段（引用根 + 粘贴插入的新根）按区间写进缓冲区，再让
+                // 引用重解析把结构收一遍。只靠 normalize 写引用根的话，插在它
+                // 后面的新根没有区间，随后的整篇序列化又被跳过，粘贴内容就停在
+                // 树里没进缓冲区。
+                let region_written = quote_related
+                    && quote_root_before.as_ref().is_some_and(|anchor| {
+                        self.write_back_structural_change(anchor, Some(&roots_before), cx)
+                    });
                 if quote_related {
                     self.normalize_rendered_quote_structure(&block, cx);
                 }
@@ -655,7 +667,11 @@ impl Editor {
                         self.ensure_trailing_paragraph_after_structural(&last_root, cx);
                     }
                 }
-                self.mark_dirty(cx);
+                if region_written {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }
@@ -940,7 +956,9 @@ impl Editor {
                             cx,
                         );
                         self.ensure_trailing_paragraph_after_structural(&block, cx);
-                        self.mark_dirty(cx);
+                        // 补尾段落只往缓冲区末尾追加分隔空行、给新块挂零宽区间：
+                        // 字节已经落好，别再整篇重投影把别的块写法一起洗掉。
+                        self.mark_dirty_written_back(cx);
                         self.finalize_pending_undo_capture(cx);
                         // 补完段落重新按增量索引找落点：新块此刻已在可见快照里。
                         let landing = self

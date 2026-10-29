@@ -2424,3 +2424,41 @@ async fn table_cell_with_code_span_pipe_maps_to_its_own_bytes(cx: &mut TestAppCo
         "代码段带竖线的格子的映射没有落在它自己的原文字节上：{mapped:?}"
     );
 }
+
+/// 文档末尾是代码块时按 ↓ 补尾段落：别的块的原文写法不该被整篇重投影洗掉。
+#[gpui::test]
+async fn adding_a_trailing_paragraph_keeps_other_blocks_source_bytes(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let markdown = "| 名称 | 数量 |\n| ---- | ---- |\n| 甲   | 1    |\n\n```rust\nfn main() {}\n```\n";
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, markdown.to_string(), None)
+    });
+    redraw(cx);
+    let code = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|root| root.read(cx).kind().is_code_block())
+            .cloned()
+            .expect("代码块")
+    });
+    editor.update(cx, |editor, cx| {
+        editor.on_block_event(
+            code,
+            &crate::components::BlockEvent::RequestFocusNext { preferred_x: None },
+            cx,
+        );
+    });
+    let text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert!(
+        text.contains("| 甲   | 1    |"),
+        "无关表格的列宽写法被整篇重投影洗掉：{text:?}"
+    );
+    assert!(
+        text.trim_end().ends_with("```"),
+        "尾段落没补上或字节被改写：{text:?}"
+    );
+}

@@ -430,3 +430,35 @@
         });
     }
 
+
+    /// 在引用里粘贴结构内容时，别的块的原文写法一个字都不许动：这条路径若退回
+    /// 整篇重投影，`__强调__`、表格列宽、Setext 一类非规范写法会被洗成标准形式。
+    #[gpui::test]
+    async fn pasting_into_a_quote_keeps_other_blocks_source_bytes(cx: &mut TestAppContext) {
+        let markdown = "首段 __强调__ 与 `code`\n\n> 引用行\n\n尾段\n";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.to_string(), None));
+        editor.update(cx, |editor, cx| {
+            let quote_line = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).display_text() == "引用行")
+                .map(|visible| visible.entity.clone())
+                .expect("引用行");
+            editor.on_block_event(
+                quote_line,
+                &BlockEvent::RequestPasteMultiline {
+                    leading: InlineTextTree::plain("引用行".to_string()),
+                    lines: vec!["- 甲".to_string(), "- 乙".to_string()],
+                    trailing: InlineTextTree::plain(String::new()),
+                },
+                cx,
+            );
+            let text = editor.buffer.text();
+            assert!(
+                text.contains("__强调__"),
+                "无关块的写法被规范化了：{text:?}"
+            );
+            assert!(text.contains("- 甲"), "粘贴内容没落进缓冲区：{text:?}");
+        });
+    }
