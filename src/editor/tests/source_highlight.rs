@@ -194,3 +194,47 @@ async fn toggling_view_modes_back_and_forth_keeps_highlighting(cx: &mut TestAppC
         });
     }
 }
+
+/// `<!-->` 与 `<!--->` 在 HTML 规格里是完整的空注释：不能当成跨行注释的
+/// 开头，否则后面的正文从下一行起整片涂成注释色，而渲染视图里它只是普通
+/// 段落——两侧大面积串色。
+#[gpui::test]
+async fn self_closing_html_comments_do_not_swallow_following_lines(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    for marker in ["<!-->", "<!--->"] {
+        let source = format!("{marker}\n普通正文\n");
+        let (editor, cx) = cx.add_window_view(move |_window, cx| {
+            Editor::from_markdown(cx, source.clone(), None)
+        });
+        redraw(cx);
+        editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            let block = editor.document.root_blocks()[0].read(cx);
+            let result = block.code_highlight_result().expect("高亮结果");
+            let text = block.display_text();
+            let body = text.find("普通正文").expect("正文");
+            assert!(
+                !result.spans.iter().any(|span| {
+                    matches!(span.class, CodeHighlightClass::Comment)
+                        && span.range.start <= body
+                        && body < span.range.end
+                }),
+                "{marker} 之后的正文不该是注释色: {:?}",
+                result.spans
+            );
+            let marker_at = text.find(marker).expect("标记");
+            assert!(
+                result.spans.iter().any(|span| {
+                    matches!(span.class, CodeHighlightClass::Comment)
+                        && span.range.start <= marker_at
+                        && marker_at < span.range.end
+                }),
+                "{marker} 本身仍应是注释色: {:?}",
+                result.spans
+            );
+        });
+    }
+}

@@ -234,6 +234,23 @@ impl<'a> Scanner<'a> {
 
         if content.starts_with("<!--") {
             self.flush_pending_paragraph();
+            // `<!-->` 与 `<!--->` 是 HTML 规格里的完整空注释：先按单行注释
+            // 收尾，别把它们当成跨行注释的开头（否则后文整片被涂成注释色）。
+            let tail = &content[4..];
+            let self_closed_len = if tail.starts_with('>') {
+                Some(1)
+            } else if tail.starts_with("->") {
+                Some(2)
+            } else {
+                None
+            };
+            if let Some(close_len) = self_closed_len {
+                self.push(
+                    content_start..content_start + 4 + close_len,
+                    CodeHighlightClass::Comment,
+                );
+                return;
+            }
             match content[4..].find("-->") {
                 Some(offset) => {
                     self.push(
