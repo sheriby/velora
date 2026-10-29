@@ -371,25 +371,33 @@ impl Block {
         preferred_x: Pixels,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(lines) = self.last_layout.as_deref() else {
+        let Some(target) = self.vertical_target_offset(direction, preferred_x) else {
             return false;
         };
+        self.move_to_with_preferred_x(target, Some(preferred_x), cx);
+        true
+    }
+
+    /// 纵向移动的落点（块内）。光标已在首/末视觉行时返回 `None`，由调用方交给
+    /// 编辑器换块；Shift+↑/↓ 与普通移动共用这一份判据。
+    pub(crate) fn vertical_target_offset(
+        &self,
+        direction: i32,
+        preferred_x: Pixels,
+    ) -> Option<usize> {
+        let lines = self.last_layout.as_deref()?;
 
         let text = self.display_text();
         let ranges = self.shared_hard_line_ranges();
         let (current_line_idx, offset_in_line) =
             crate::components::block::element::line_index_for_offset(&ranges, self.cursor_offset());
-        let Some(current_layout) = lines.get(current_line_idx) else {
-            return false;
-        };
-        let Some(current_position) = crate::components::block::element::position_for_offset(
+        let current_layout = lines.get(current_line_idx)?;
+        let current_position = crate::components::block::element::position_for_offset(
             current_layout,
             offset_in_line,
             self.last_line_height,
             true,
-        ) else {
-            return false;
-        };
+        )?;
 
         let current_y = crate::components::block::element::wrapped_line_top(
             lines,
@@ -402,7 +410,7 @@ impl Block {
             current_y + self.last_line_height + self.last_line_height / 2.0
         };
         if target_y < px(0.0) {
-            return false;
+            return None;
         }
 
         let total_height = lines.iter().fold(px(0.0), |height, line| {
@@ -413,18 +421,15 @@ impl Block {
                 )
         });
         if target_y >= total_height {
-            return false;
+            return None;
         }
 
-        let Some((target_line_idx, target_y_in_line)) =
+        let (target_line_idx, target_y_in_line) =
             crate::components::block::element::wrapped_line_for_y(
                 lines,
                 self.last_line_height,
                 target_y,
-            )
-        else {
-            return false;
-        };
+            )?;
         let target_layout = &lines[target_line_idx];
         let target_point = point(
             preferred_x - self.row_alignment_offset(target_layout, target_y_in_line),
@@ -442,11 +447,9 @@ impl Block {
             .or_else(|| ranges.last())
             .cloned()
             .unwrap_or(0..0);
-        let flat_offset = crate::components::markdown::inline::clamp_to_char_boundary(
+        Some(crate::components::markdown::inline::clamp_to_char_boundary(
             text, line_range.start + target_offset_in_line,
-        );
-        self.move_to_with_preferred_x(flat_offset, Some(preferred_x), cx);
-        true
+        ))
     }
 
     /// Compute the character offset where the cursor should land when focus

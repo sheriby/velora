@@ -17,7 +17,8 @@ use crate::components::{
     HighlightSelection, StrikethroughSelection, SubscriptSelection, SuperscriptSelection,
     DismissTransientUi, End, ExitCodeBlock, FocusNext, FocusPrev, Home, IndentBlock,
     ItalicSelection, MoveLeft, MoveRight, Newline, OutdentBlock, Paste, PasteAsPlainText,
-    SelectAll, SelectEnd, SelectHome, SelectLeft, SelectRight, UnderlineSelection,
+    SelectAll, SelectDown, SelectEnd, SelectHome, SelectLeft, SelectRight, SelectUp,
+    UnderlineSelection,
     WordDeleteBack, WordDeleteForward, WordMoveLeft, WordMoveRight, WordSelectLeft,
     WordSelectRight,
 };

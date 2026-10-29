@@ -458,6 +458,12 @@ impl I18nStringsDe {
             preferences_shortcut_select_right: self
                 .preferences_shortcut_select_right
                 .unwrap_or(defaults.preferences_shortcut_select_right),
+            preferences_shortcut_select_up: self
+                .preferences_shortcut_select_up
+                .unwrap_or(defaults.preferences_shortcut_select_up),
+            preferences_shortcut_select_down: self
+                .preferences_shortcut_select_down
+                .unwrap_or(defaults.preferences_shortcut_select_down),
             preferences_shortcut_word_select_left: self
                 .preferences_shortcut_word_select_left
                 .unwrap_or(defaults.preferences_shortcut_word_select_left),

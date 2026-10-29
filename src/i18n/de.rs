@@ -196,6 +196,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) preferences_shortcut_jump_to_bottom: Option<String>,
     pub(crate) preferences_shortcut_select_left: Option<String>,
     pub(crate) preferences_shortcut_select_right: Option<String>,
+    pub(crate) preferences_shortcut_select_up: Option<String>,
+    pub(crate) preferences_shortcut_select_down: Option<String>,
     pub(crate) preferences_shortcut_word_select_left: Option<String>,
     pub(crate) preferences_shortcut_word_select_right: Option<String>,
     pub(crate) preferences_shortcut_select_home: Option<String>,

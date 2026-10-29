@@ -1957,3 +1957,64 @@ async fn every_mounted_row_resolves_to_its_own_block(cx: &mut TestAppContext) {
         assert!(pressed > 0, "第 {round} 轮该点到行");
     }
 }
+
+/// Shift+↑/↓ 纵向扩选：块内按视觉行延，块边缘交给编辑器把选区接到相邻块。
+/// 以前只有横向与 Home/End 的 shift 扩选，纵向完全没有入口。
+#[gpui::test]
+async fn shift_up_and_down_extend_the_selection_vertically(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "第一行\n第二行\n第三行\n\n下一段甲\n下一段乙\n".into(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.root_blocks()[0].clone();
+        editor.focus_block(block.entity_id());
+        block.update(cx, |block, cx| block.move_to(0, cx));
+    });
+    redraw(cx);
+    redraw(cx);
+
+    cx.simulate_keystrokes("shift-down");
+    redraw(cx);
+    cx.simulate_keystrokes("shift-down");
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let block = editor.document.root_blocks()[0].read(cx);
+        let selected = &block.display_text()[block.selected_range.clone()];
+        assert_eq!(
+            selected, "第一行\n第二行\n",
+            "块内 Shift+↓ 两下该选到第三行行首"
+        );
+    });
+
+    // 再一下已经在本块末行行首：选区接到下一块，锚点还在本块。
+    cx.simulate_keystrokes("shift-down");
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let selection = editor
+            .cross_block_selection
+            .expect("越过块边界后应是跨块选区");
+        let anchor_block = editor
+            .document
+            .root_blocks()
+            .first()
+            .map(|block| block.entity_id())
+            .expect("首块");
+        assert_eq!(selection.anchor.entity_id, anchor_block, "锚点该留在原块");
+        let text = editor.selected_visible_text(cx).expect("应有跨块选区文本");
+        assert!(text.contains("第三行"), "选区该含原块末行：{text:?}");
+    });
+
+    // 在新块里继续 Shift+↓：焦点端点往下走一视觉行，锚点不动，跨块选区保持。
+    cx.simulate_keystrokes("shift-down");
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let text = editor.selected_visible_text(cx).expect("应有跨块选区文本");
+        assert!(
+            text.contains("第三行") && text.contains("下一段甲"),
+            "跨块后继续扩选不该丢掉原块那一段：{text:?}"
+        );
+    });
+}

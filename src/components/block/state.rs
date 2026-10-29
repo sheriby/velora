@@ -1127,6 +1127,13 @@ pub enum BlockEvent {
     /// `folded` and re-renders; view-only state, so the document is not
     /// marked dirty.
     RequestToggleFold,
+    /// Shift+↑/↓：块内纵向落点由块自己算（`target_offset`）；已经在本块
+    /// 首/末视觉行时（`None`）由编辑器把选区延伸到相邻块。
+    RequestSelectVertical {
+        direction: i32,
+        preferred_x: f32,
+        target_offset: Option<usize>,
+    },
     /// A `[TOC]` entry was clicked (roadmap C2): jump to that heading line.
     RequestJumpToHeadingLine { line: usize },
     /// The user pressed Enter; a new block should be created after this

@@ -289,6 +289,8 @@ pub struct I18nStrings {
     pub preferences_shortcut_jump_to_bottom: String,
     pub preferences_shortcut_select_left: String,
     pub preferences_shortcut_select_right: String,
+    pub preferences_shortcut_select_up: String,
+    pub preferences_shortcut_select_down: String,
     pub preferences_shortcut_word_select_left: String,
     pub preferences_shortcut_word_select_right: String,
     pub preferences_shortcut_select_home: String,

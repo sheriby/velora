@@ -114,6 +114,8 @@ impl Block {
             .on_action(cx.listener(Self::on_block_down))
             .on_action(cx.listener(Self::on_select_left))
             .on_action(cx.listener(Self::on_select_right))
+            .on_action(cx.listener(Self::on_select_up))
+            .on_action(cx.listener(Self::on_select_down))
             .on_action(cx.listener(Self::on_word_select_left))
             .on_action(cx.listener(Self::on_word_select_right))
             .on_action(cx.listener(Self::on_select_home))

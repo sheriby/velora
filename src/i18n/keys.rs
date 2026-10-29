@@ -193,6 +193,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "preferences_shortcut_jump_to_bottom",
     "preferences_shortcut_select_left",
     "preferences_shortcut_select_right",
+    "preferences_shortcut_select_up",
+    "preferences_shortcut_select_down",
     "preferences_shortcut_word_select_left",
     "preferences_shortcut_word_select_right",
     "preferences_shortcut_select_home",

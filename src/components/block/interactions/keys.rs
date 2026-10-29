@@ -105,6 +105,35 @@ impl Block {
         self.select_to(self.cursor_visual_row_display_range().start, cx);
     }
 
+    pub(crate) fn on_select_up(
+        &mut self,
+        _: &SelectUp,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_vertically(-1, cx);
+    }
+
+    pub(crate) fn on_select_down(
+        &mut self,
+        _: &SelectDown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_vertically(1, cx);
+    }
+
+    /// Shift+↑/↓：块内的纵向落点在这里算，首/末视觉行之外交给编辑器换块扩选。
+    fn select_vertically(&mut self, direction: i32, cx: &mut Context<Self>) {
+        let preferred_x = self.vertical_anchor_x();
+        let target_offset = self.vertical_target_offset(direction, preferred_x);
+        cx.emit(crate::components::BlockEvent::RequestSelectVertical {
+            direction,
+            preferred_x: f32::from(preferred_x),
+            target_offset,
+        });
+    }
+
     pub(crate) fn on_select_end(
         &mut self,
         _: &SelectEnd,

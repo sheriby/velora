@@ -51,6 +51,8 @@ impl PreferencesWindow {
             ShortcutCommand::JumpToBottom => strings.preferences_shortcut_jump_to_bottom.clone(),
             ShortcutCommand::SelectLeft => strings.preferences_shortcut_select_left.clone(),
             ShortcutCommand::SelectRight => strings.preferences_shortcut_select_right.clone(),
+            ShortcutCommand::SelectUp => strings.preferences_shortcut_select_up.clone(),
+            ShortcutCommand::SelectDown => strings.preferences_shortcut_select_down.clone(),
             ShortcutCommand::WordSelectLeft => {
                 strings.preferences_shortcut_word_select_left.clone()
             }

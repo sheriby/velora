@@ -1,4 +1,5 @@
 use super::*;
+use crate::editor::{CrossBlockSelection, CrossBlockSelectionEndpoint};
 
 impl Editor {
     /// 本块在可见序里的位置；不可见块按旧口径当 0 号（折叠区块发不出这些事件，
@@ -22,6 +23,53 @@ impl Editor {
         let target_index =
             self.vertical_neighbor_index(visible, from, delta, cx)?;
         visible.get(target_index).map(|visible| visible.entity.clone())
+    }
+
+    /// Shift+↑/↓ 在块边缘继续扩选：焦点落到相邻块，选区锚点保持不动。
+    /// 已有跨块选区时沿用它的锚点；否则以当前块的光标为锚。
+    fn extend_selection_vertically_across_blocks(
+        &mut self,
+        block: &Entity<crate::editor::Block>,
+        direction: i32,
+        preferred_x: Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(target) =
+            self.vertical_neighbor_entity(block.entity_id(), direction as isize, cx)
+        else {
+            return;
+        };
+        // 表格容器没有文本元素，也建不出跨块端点：扩选停在表格前。
+        if target.read(cx).kind() == BlockKind::Table {
+            return;
+        }
+        let offset = target
+            .read(cx)
+            .entry_offset_for_vertical_focus(direction < 0, Some(preferred_x));
+        let anchor = self
+            .cross_block_selection
+            .map(|selection| selection.anchor)
+            .unwrap_or_else(|| {
+                let block_ref = block.read(cx);
+                CrossBlockSelectionEndpoint {
+                    entity_id: block.entity_id(),
+                    offset: block_ref.current_to_clean_offset(block_ref.cursor_offset()),
+                }
+            });
+        let focus = {
+            let target_ref = target.read(cx);
+            CrossBlockSelectionEndpoint {
+                entity_id: target.entity_id(),
+                offset: target_ref.current_to_clean_offset(offset),
+            }
+        };
+        self.cross_block_selection = Some(CrossBlockSelection { anchor, focus });
+        self.focus_block(target.entity_id());
+        target.update(cx, |target, cx| {
+            target.move_to_with_preferred_x(offset, Some(preferred_x), cx);
+        });
+        self.sync_cross_block_selection_visuals(cx);
+        cx.notify();
     }
 
     /// Handles all block-originated editor events against the current cached
@@ -54,6 +102,8 @@ impl Editor {
                     | BlockEvent::RequestBlockUp
                     | BlockEvent::RequestBlockDown
                     | BlockEvent::RequestFocus
+                    // 只读文档也要能用 Shift+↑/↓ 扩选（纯阅读导航）。
+                    | BlockEvent::RequestSelectVertical { .. }
             )
         {
             return;
@@ -996,6 +1046,42 @@ impl Editor {
                 target.update(cx, move |target, cx| {
                     target.move_to_with_preferred_x(offset, target_x, cx);
                 });
+                cx.notify();
+            }
+            BlockEvent::RequestSelectVertical {
+                direction,
+                preferred_x,
+                target_offset,
+            } => {
+                let preferred_x = px(*preferred_x);
+                let Some(target_offset) = target_offset else {
+                    self.extend_selection_vertically_across_blocks(
+                        &block,
+                        *direction,
+                        preferred_x,
+                        cx,
+                    );
+                    return;
+                };
+                // 焦点块里继续按 Shift+↑/↓：跨块选区的焦点端点跟着走，锚点
+                // 留在原块——不能退化成块内选区，否则前面选中的几块会整段丢掉。
+                let block_ref = block.read(cx);
+                let clean_target = block_ref.current_to_clean_offset(*target_offset);
+                let block_id = block.entity_id();
+                if let Some(mut selection) = self.cross_block_selection
+                    && selection.focus.entity_id == block_id
+                {
+                    selection.focus.offset = clean_target;
+                    self.cross_block_selection = (selection.focus != selection.anchor)
+                        .then_some(selection);
+                    block.update(cx, |block, cx| block.move_to(*target_offset, cx));
+                    self.sync_cross_block_selection_visuals(cx);
+                    cx.notify();
+                    return;
+                }
+                // 没有跨块选区：普通块内扩选，从光标往上/下延。
+                self.clear_cross_block_selection(cx);
+                block.update(cx, |block, cx| block.select_to(*target_offset, cx));
                 cx.notify();
             }
             BlockEvent::RequestBlockUp => {
