@@ -499,6 +499,112 @@ async fn typing_wikilink_opens_completion_and_enter_inserts_target(cx: &mut Test
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// 光标贴近窗口底缘时输入 `[[`，8 行候选浮层（约 216px 高）曾把 top 钳在
+/// 「视口高-48px」：下半截落到视口外，后几项（含选中项）看不见也点不到。
+/// 浮层整体必须留在视口内（下方放不下就翻到光标上方），且点击判据用的
+/// `panel_bounds` 与渲染几何同源。
+#[gpui::test]
+async fn wikilink_completion_panel_stays_inside_the_viewport_near_the_bottom_edge(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!(
+        "velora-wlc-bottom-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create root");
+    for index in 1..=8 {
+        fs::write(root.join(format!("note-{index}.md")), "").expect("write note");
+    }
+    let body = (1..=16)
+        .map(|index| format!("第 {index} 段"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, body, None));
+    cx.simulate_resize(gpui::size(px(900.0), px(340.0)));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        editor.ensure_workspace_files_walk(cx);
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, _cx| {
+        assert_eq!(
+            editor.text_files_on_disk().len(),
+            8,
+            "夹具前提：候选名单该已走盘完成"
+        );
+        let last = editor
+            .document
+            .visible_blocks()
+            .last()
+            .map(|visible| visible.entity.clone())
+            .expect("夹具应有末段");
+        editor.focus_block(last.entity_id());
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let viewport = cx.update(|window, _cx| window.viewport_size());
+    let caret_bounds = editor
+        .read_with(cx, |editor, cx| {
+            let block = editor.document.visible_blocks().last()?.entity.clone();
+            block.read(cx).active_range_or_cursor_bounds()
+        })
+        .expect("焦点块应有光标几何");
+    assert!(
+        caret_bounds.bottom() > viewport.height * 0.5,
+        "夹具前提：光标该在视口下半才碰得到贴底钳制，caret_bottom={:?} viewport={:?}",
+        caret_bounds.bottom(),
+        viewport
+    );
+
+    cx.simulate_input("[[note");
+    cx.run_until_parked();
+    redraw(cx);
+
+    let last_entry = cx
+        .debug_bounds("wikilink-entry-7")
+        .expect("8 条候选每条都该有几何");
+    assert!(
+        f32::from(last_entry.bottom()) <= f32::from(viewport.height) + 1.0,
+        "末项落到视口之外：entry.bottom={} viewport.height={}",
+        f32::from(last_entry.bottom()),
+        f32::from(viewport.height)
+    );
+    let panel = cx.debug_bounds("wikilink-completion").expect("补全浮层该上屏");
+    assert!(
+        f32::from(panel.top()) >= -1.0 && f32::from(panel.bottom()) <= f32::from(viewport.height) + 1.0,
+        "补全浮层该整体留在视口内：panel={:?} viewport={:?}",
+        panel,
+        viewport
+    );
+
+    // 捕获阶段的点击判定读 panel_bounds：它必须与渲染出来的浮层一致，
+    // 否则点在看得见的浮层上会被当成「点在外面」而关闭。
+    let panel_bounds = editor
+        .read_with(cx, |editor, _cx| {
+            editor
+                .wikilink_completion
+                .as_ref()
+                .and_then(|state| state.panel_bounds)
+        })
+        .expect("渲染后应记录点击判定区域");
+    assert!(
+        (f32::from(panel_bounds.left()) - f32::from(panel.left())).abs() <= 1.0
+            && (f32::from(panel_bounds.top()) - f32::from(panel.top())).abs() <= 1.0
+            && (f32::from(panel_bounds.size.width) - f32::from(panel.size.width)).abs() <= 1.0
+            && (f32::from(panel_bounds.size.height) - f32::from(panel.size.height)).abs() <= 1.0,
+        "点击判定区域该与渲染几何同源：panel_bounds={:?} rendered={:?}",
+        panel_bounds,
+        panel
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// 插入表格对话框的步进器与 TableData::new_empty 都要有规模上限：
 /// 每格是一个块实体，无上限的 `+` 连点到 200×200 会同步建 4 万个块，
 /// 前台长时间冻结（评审 v0.2.6 维度二建议 22）。

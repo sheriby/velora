@@ -240,7 +240,8 @@ impl Editor {
         cx.notify();
     }
 
-    /// 补全浮层：锚在焦点块光标下方；布局未跟上（caret 无界）的帧不渲染。
+    /// 补全浮层：锚在焦点块光标下方；下方放不下就翻到光标上方，再放不下就压到
+    /// 视口内靠滚动看全。布局未跟上（caret 无界）的帧不渲染。
     pub(crate) fn render_wikilink_completion_overlay(
         &mut self,
         theme: &Theme,
@@ -251,28 +252,40 @@ impl Editor {
         let state = self.wikilink_completion.as_ref()?;
         let block = self.document.block_entity_by_id(state.block_id)?;
         let caret_bounds = block.read(cx).active_range_or_cursor_bounds()?;
-        let state = self.wikilink_completion.as_mut()?;
-        let panel_origin_x = caret_bounds
+        let viewport = window.viewport_size();
+        let margin = px(12.0);
+        let row_count = state.results.len();
+        let panel_width = px(280.0);
+        // 行高 26 + 行间距 2 + 上下内边距各 4：按真实内容高度算，少一行间隙
+        // 都会让末行被面板自己的滚动区裁掉。
+        let content_height = if row_count == 0 {
+            px(8.0)
+        } else {
+            px(26.0 * row_count as f32 + 2.0 * (row_count - 1) as f32 + 8.0)
+        };
+        let panel_height = content_height.min((viewport.height - margin * 2.0).max(px(0.0)));
+        let left = caret_bounds
             .left()
-            .min(window.viewport_size().width - px(292.0))
+            .min(viewport.width - panel_width - margin)
             .max(px(0.0));
-        let panel_origin_y = (caret_bounds.bottom() + px(4.0))
-            .min(window.viewport_size().height - px(48.0));
+        let below = caret_bounds.bottom() + px(4.0);
+        let above = caret_bounds.top() - px(4.0) - panel_height;
+        let top = if below + panel_height + margin <= viewport.height {
+            below
+        } else if above >= margin {
+            above
+        } else {
+            (viewport.height - panel_height - margin).max(px(0.0))
+        };
+        let state = self.wikilink_completion.as_mut()?;
         state.panel_bounds = Some(Bounds::new(
-            point(panel_origin_x, panel_origin_y),
-            size(px(280.0), px(26.0 * state.results.len() as f32 + 8.0)),
+            point(left, top),
+            size(panel_width, panel_height),
         ));
         let selected = state.selected;
         let result_count = state.results.len();
         let c = &theme.colors;
         let t = &theme.typography;
-        let viewport = window.viewport_size();
-        let panel_width = px(280.0);
-        let left = caret_bounds
-            .left()
-            .min(viewport.width - panel_width - px(12.0))
-            .max(px(0.0));
-        let top = (caret_bounds.bottom() + px(4.0)).min(viewport.height - px(48.0));
 
         let mut rows = Vec::new();
         for (index, path) in self
@@ -339,7 +352,7 @@ impl Editor {
                 .left(left)
                 .top(top)
                 .w(panel_width)
-                .max_h(px(26.0 * WIKILINK_COMPLETION_LIMIT as f32 + 8.0))
+                .max_h(panel_height)
                 .overflow_y_scroll()
                 .flex()
                 .flex_col()
