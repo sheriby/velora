@@ -2462,3 +2462,41 @@ async fn adding_a_trailing_paragraph_keeps_other_blocks_source_bytes(
         "尾段落没补上或字节被改写：{text:?}"
     );
 }
+
+/// 引用容器里的结构块（围栏代码）补尾段落之后，第一笔输入不该退回整篇重投影。
+#[gpui::test]
+async fn typing_into_a_trailing_paragraph_inside_a_quote_keeps_other_blocks(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let markdown = "| 名称 | 数量 |\n| ---- | ---- |\n| 甲   | 1    |\n\n> 引用行\n> ```\n> code\n> ```\n\n尾段\n";
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, markdown.to_string(), None)
+    });
+    redraw(cx);
+    let code = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).kind().is_code_block())
+            .map(|visible| visible.entity.clone())
+            .expect("引用里的代码块")
+    });
+    editor.update(cx, |editor, cx| {
+        editor.on_block_event(
+            code,
+            &crate::components::BlockEvent::RequestFocusNext { preferred_x: None },
+            cx,
+        );
+    });
+    redraw(cx);
+    cx.simulate_input("x");
+    redraw(cx);
+    let text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert!(text.contains('x'), "输入没落进缓冲区：{text:?}");
+    assert!(
+        text.contains("| 甲   | 1    |"),
+        "表格列宽写法被首笔输入洗掉：{text:?}"
+    );
+}
