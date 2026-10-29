@@ -636,6 +636,31 @@ impl Block {
             .unwrap_or(0..self.visible_len())
     }
 
+    /// 光标所在**视觉行**的显示区间。软换行后 Home/End 要对齐这一行，而不是
+    /// 整个硬行：竖屏窄窗口里长段落一按 Home 会跨过上面几行回到段落开头。
+    /// 没有排版（未聚焦）或这一硬行没有折行时退回硬行区间。
+    pub(crate) fn cursor_visual_row_display_range(&self) -> std::ops::Range<usize> {
+        let hard = self.cursor_line_display_range();
+        let Some(lines) = self.last_layout.as_deref() else {
+            return hard;
+        };
+        let ranges = self.shared_hard_line_ranges();
+        let (line_idx, _) = crate::components::block::element::line_index_for_offset(
+            &ranges,
+            self.cursor_offset(),
+        );
+        let Some(line) = lines.get(line_idx) else {
+            return hard;
+        };
+        let local = self.cursor_offset().saturating_sub(hard.start);
+        let Some((row_start, row_end)) =
+            crate::components::block::element::wrapped_row_range_for_offset(line, local)
+        else {
+            return hard;
+        };
+        hard.start + row_start..hard.start + row_end
+    }
+
     pub fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.drop_stale_ime_marked_range(cx);
         self.move_to_with_preferred_x(offset, None, cx);

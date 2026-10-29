@@ -700,6 +700,26 @@ fn wrapped_row_offsets(line: &WrappedLine) -> Vec<usize> {
     offsets
 }
 
+/// 软换行后某个行内偏移所属视觉行的区间（行内坐标）。折行边界归下一行，
+/// 与 `position_for_offset` 的 `prefer_next_wrap_start` 同一口径；行尾落在
+/// 最后一段的右端点上时归最后一段。
+pub(crate) fn wrapped_row_range_for_offset(
+    line: &WrappedLine,
+    offset: usize,
+) -> Option<(usize, usize)> {
+    if line.wrap_boundaries().is_empty() {
+        return None;
+    }
+    let offsets = wrapped_row_offsets(line);
+    let offset = offset.min(line.len());
+    for pair in offsets.windows(2) {
+        if offset >= pair[0] && offset < pair[1] {
+            return Some((pair[0], pair[1]));
+        }
+    }
+    offsets.windows(2).last().map(|pair| (pair[0], pair[1]))
+}
+
 fn wrapped_row_origin_x(
     line: &WrappedLine,
     bounds: Bounds<Pixels>,

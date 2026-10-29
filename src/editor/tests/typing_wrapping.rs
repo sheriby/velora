@@ -751,3 +751,91 @@ async fn undo_and_redo_a_visible_character_keep_the_viewport_still(cx: &mut Test
         );
     }
 }
+
+/// 软换行后 Home/End 对齐的是**视觉行**，不是整个硬行：竖屏窄窗口里一段长
+/// 文本折成好几行，光标在第三行按 Home 应停在本行行首，而不是跨过上面两行
+/// 回到段落 0 位；End 同理停在视觉行行尾。
+#[gpui::test]
+async fn home_and_end_follow_the_visual_row_in_a_wrapped_paragraph(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let text = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike \
+                november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee \
+                zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima"
+        .to_string();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_markdown(cx, text, None)
+    });
+    cx.simulate_resize(gpui::size(px(460.0), px(600.0)));
+    redraw(cx);
+    redraw(cx);
+
+    let (bounds, line_height) = editor.read_with(cx, |editor, cx| {
+        let block = editor.document.root_blocks()[0].clone();
+        let block = block.read(cx);
+        (
+            block.last_bounds.expect("段落该有几何"),
+            block.last_line_height,
+        )
+    });
+    // 点第三视觉行中部，让光标落在这一行内部（不是折行边界）。
+    let point = gpui::point(
+        bounds.left() + bounds.size.width * 0.5,
+        bounds.top() + line_height * 2.5,
+    );
+    cx.simulate_click(point, Modifiers::none());
+    redraw(cx);
+    let (click_offset, click_top, row) = editor.read_with(cx, |editor, cx| {
+        let block = editor.document.root_blocks()[0].read(cx);
+        (
+            block.cursor_offset(),
+            block
+                .active_range_or_cursor_bounds()
+                .expect("光标几何")
+                .top(),
+            block.cursor_visual_row_display_range(),
+        )
+    });
+    assert!(
+        row.start < click_offset && click_offset < row.end,
+        "前置：光标该落在视觉行内部：row={row:?} click={click_offset}"
+    );
+    assert!(
+        click_top > bounds.top() + line_height * 1.5,
+        "前置：光标该落在第三视觉行：click_top={click_top:?} block_top={:?}",
+        bounds.top()
+    );
+
+    cx.simulate_keystrokes("home");
+    redraw(cx);
+    let (offset, top) = editor.read_with(cx, |editor, cx| {
+        let block = editor.document.root_blocks()[0].read(cx);
+        (
+            block.cursor_offset(),
+            block
+                .active_range_or_cursor_bounds()
+                .expect("光标几何")
+                .top(),
+        )
+    });
+    assert!(
+        (f32::from(top) - f32::from(click_top)).abs() <= 1.0,
+        "Home 不该跨视觉行：before={click_top:?} after={top:?}"
+    );
+    assert_eq!(
+        offset, row.start,
+        "Home 应停在本视觉行行首：row={row:?} click={click_offset} home={offset}"
+    );
+
+    cx.simulate_keystrokes("end");
+    redraw(cx);
+    // 行尾光标按亲和度画在下一视觉行行首是排版惯例，这里只看落点文本位置。
+    let offset = editor.read_with(cx, |editor, cx| {
+        editor.document.root_blocks()[0]
+            .read(cx)
+            .cursor_offset()
+    });
+    assert_eq!(
+        offset, row.end,
+        "End 应停在本视觉行行尾：row={row:?} click={click_offset} end={offset}"
+    );
+}

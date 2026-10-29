@@ -2,7 +2,7 @@ use super::*;
 
 impl Block {
     pub(crate) fn on_end(&mut self, _: &End, _window: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(self.cursor_line_display_range().end, cx);
+        self.move_to(self.cursor_visual_row_display_range().end, cx);
     }
 
     pub(crate) fn on_select_left(
@@ -102,7 +102,7 @@ impl Block {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_to(self.cursor_line_display_range().start, cx);
+        self.select_to(self.cursor_visual_row_display_range().start, cx);
     }
 
     pub(crate) fn on_select_end(
@@ -111,7 +111,7 @@ impl Block {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_to(self.cursor_line_display_range().end, cx);
+        self.select_to(self.cursor_visual_row_display_range().end, cx);
     }
 
     /// 复制的唯一判据：有选区取选区，没选区取光标所在那一行。
