@@ -82,6 +82,16 @@ impl Editor {
             self.mark_dirty(cx);
         }
         self.finalize_pending_undo_capture(cx);
+        // 换种类改写了缓冲区的块边界：原先被围栏包着的 `[logo]: …`、`[^1]`
+        // 可能变成引用定义（或反过来）。这条路径不发 Changed，靠事件触发的
+        // 注册表重建不会跑，按被换块的文本判一次，命中才整篇重建。
+        let touches_definitions = changed.iter().any(|block| {
+            let text = block.read(cx).display_text();
+            text.contains("]:") || text.contains("[^")
+        });
+        if touches_definitions {
+            self.rebuild_image_runtimes(cx);
+        }
         cx.notify();
         true
     }

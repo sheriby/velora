@@ -1039,3 +1039,29 @@ async fn a_body_containing_a_fence_line_wraps_with_the_other_marker(cx: &mut Tes
         "写下去的字节读不回同一个结构"
     );
 }
+
+/// 换种类会改「哪些行算引用定义」：代码块里的 `[logo]: a.png` 换成正文后，
+/// 引用式图片必须立刻解析出来，不能等到别处下一次编辑才自愈。
+#[gpui::test]
+async fn converting_a_code_block_with_a_reference_definition_refreshes_images(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = "```text\n[logo]: a.png\n```\n\n![x][logo]\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    let image_block = visible_block(&editor, 1, cx);
+    let before = image_block.read_with(cx, |block, _cx| block.image_runtime().is_some());
+    assert!(!before, "前置：定义还被围栏包着，图片应解析不到");
+
+    put_caret(&editor, 0, 0, cx);
+    assert!(apply(&editor, BlockKindTarget::Paragraph, cx));
+    redraw(cx);
+    image_block.read_with(cx, |block, _cx| {
+        assert!(
+            block.image_runtime().is_some(),
+            "换种类后引用定义生效，引用式图片该立刻解析出来"
+        );
+    });
+}
