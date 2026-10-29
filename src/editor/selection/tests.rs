@@ -933,4 +933,74 @@ mod tests {
         });
         cx.quit();
     }
+    /// 块间空行上的偏移归下一块：距离平局时取区间起点更靠后的块。
+    /// 空行是上一块之后的接缝，落点按「下一块块首」解释才与块尾口径一致
+    /// （块尾停在内容末尾，不含接缝字节）。
+    #[gpui::test]
+    async fn a_blank_line_offset_between_blocks_lands_on_the_next_block(
+        cx: &mut TestAppContext,
+    ) {
+        init_editor_test_app(cx);
+        let editor =
+            cx.new(|cx| Editor::from_markdown(cx, "AAA\n\nBBB\n".to_string(), None));
+        editor.update(cx, |editor, cx| {
+            let mappings = editor.source_mappings_in_range(&(0..8), cx);
+            let endpoint = editor
+                .endpoint_for_source_offset(4, &mappings, cx)
+                .expect("空行上的偏移应有落点");
+            let next = editor.document.visible_blocks()[1].entity.entity_id();
+            assert_eq!(
+                endpoint.entity_id, next,
+                "空行上的偏移落到了上一块（端点 {:?}）",
+                endpoint
+            );
+            assert_eq!(endpoint.offset, 0, "空行应落在下一块块首");
+        });
+        cx.quit();
+    }
+    /// 区间端点口径必须随块内干净偏移单调不减：同一块的选区起点往右挪，落进
+    /// 缓冲区的字节位置不许倒退。顺带覆盖「盖住块尾」：`clean_offset` 走到末尾
+    /// 时端点要给块尾（隐藏围栏在内），中间偏移不许越过内容末尾。
+    #[gpui::test]
+    async fn range_endpoints_are_monotone_in_the_clean_offset(cx: &mut TestAppContext) {
+        init_editor_test_app(cx);
+        let fixtures = [
+            "# 标题 #\n\n正文 **加粗** 与 [链接](https://a.b)\n\n- 列表项\n- 第二项\n",
+            "```rust\nfn main() {}\n```\n\n结尾\n",
+            "> 引用 **强** 调\n> 第二行\n",
+            "普通段落 `code` 尾\n",
+        ];
+        for markdown in fixtures {
+            let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.to_string(), None));
+            editor.update(cx, |editor, cx| {
+                for visible in editor.document.visible_blocks() {
+                    let entity_id = visible.entity.entity_id();
+                    let Some(mapping) = editor.source_mapping_for_entity(entity_id, cx) else {
+                        continue;
+                    };
+                    let len = visible.entity.read(cx).clean_visible_len();
+                    let mut previous = 0usize;
+                    for offset in 0..=len {
+                        if let Some(current) =
+                            editor.mapping_source_range_endpoint(&mapping, offset, false, cx)
+                        {
+                            assert!(
+                                current >= previous,
+                                "块内偏移 {offset} 的端点 {current} 比前一个 {previous} 倒退（{markdown:?}，块 {entity_id:?}）"
+                            );
+                            previous = current;
+                        }
+                    }
+                    // 盖住块尾：端点要落在块区间末尾（含隐藏的收尾记号）。
+                    let end = editor.mapping_source_range_endpoint(&mapping, len, true, cx);
+                    assert_eq!(
+                        end,
+                        Some(mapping.full_source_range.end),
+                        "块尾端点没给区间末尾（{markdown:?}，块 {entity_id:?}）"
+                    );
+                }
+            });
+            cx.quit();
+        }
+    }
 }

@@ -651,8 +651,13 @@ impl Editor {
         mappings: &[SourceTargetMapping],
         cx: &App,
     ) -> Option<CrossBlockSelectionEndpoint> {
+        // 距离平局（偏移正落在块间空行上）时取区间起点更靠后的块：空行是上一块
+        // 之后的接缝，落点按「下一块块首」解释；取先遇到的块会停在上一个块尾。
         let mapping = mappings.iter().min_by_key(|mapping| {
-            Self::source_offset_distance(&mapping.full_source_range, offset)
+            (
+                Self::source_offset_distance(&mapping.full_source_range, offset),
+                std::cmp::Reverse(mapping.full_source_range.start),
+            )
         })?;
         let local = if offset <= mapping.full_source_range.start {
             0
