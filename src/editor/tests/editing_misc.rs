@@ -93,6 +93,9 @@ async fn manual_external_change_policy_keeps_buffer_until_user_reload(cx: &mut T
     editor.update(cx, |editor, cx| {
         editor.reload_externally_changed_document(&path, cx);
     });
+    // 重载读盘在后台 executor 上（P175）：manual 策略在排任务前就返回，
+    // auto 策略要泵完后台任务才落地。
+    cx.run_until_parked();
     editor.read_with(cx, |editor, cx| {
         assert_eq!(
             editor.document.markdown_text(cx),
@@ -110,6 +113,7 @@ async fn manual_external_change_policy_keeps_buffer_until_user_reload(cx: &mut T
     editor.update(cx, |editor, cx| {
         editor.reload_externally_changed_document(&path, cx);
     });
+    cx.run_until_parked();
     editor.read_with(cx, |editor, cx| {
         assert_eq!(
             editor.document.markdown_text(cx),
