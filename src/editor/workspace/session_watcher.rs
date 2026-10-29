@@ -105,9 +105,15 @@ impl Editor {
                 },
                 move |choice, editor, window, cx| match choice {
                     0 => {
-                        if let Some(path) = editor.file_path.clone()
-                            && editor.save_to_existing_path(&path, window, cx) {
-                            editor.apply_workspace_root(root, cx);
+                        if let Some(path) = editor.file_path.clone() {
+                            editor.pending_save_then = Some(
+                                crate::editor::persistence::SaveThen::SwitchWorkspaceRoot(
+                                    root.clone(),
+                                ),
+                            );
+                            if !editor.save_to_existing_path(&path, window, cx) {
+                                editor.pending_save_then = None;
+                            }
                         }
                     }
                     1 => {
@@ -128,7 +134,7 @@ impl Editor {
         self.apply_workspace_root(root, cx);
     }
 
-    fn apply_workspace_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+    pub(crate) fn apply_workspace_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
         if !self.prune_workspace_tabs_outside_root(&root, cx) {
             return;
         }

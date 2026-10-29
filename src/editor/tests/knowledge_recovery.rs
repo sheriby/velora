@@ -141,6 +141,7 @@ async fn crash_recovery_drill_snapshot_restore_save(cx: &mut TestAppContext) {
             assert!(editor.save_to_existing_path(&source_path, window, cx));
         });
     });
+    cx.run_until_parked();
     assert_eq!(
         fs::read_to_string(&source_path).expect("read after save"),
         unsaved

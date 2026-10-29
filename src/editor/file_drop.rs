@@ -537,9 +537,10 @@ impl Editor {
         self.close_menu_bar(cx);
 
         if let Some(path) = self.file_path.clone() {
-            if self.save_to_existing_path(&path, window, cx) {
-                self.replace_after_successful_save(window, cx);
-            } else {
+            self.pending_save_then =
+                Some(crate::editor::persistence::SaveThen::ReplacePendingDrop);
+            if !self.save_to_existing_path(&path, window, cx) {
+                self.pending_save_then = None;
                 self.abort_pending_drop_replace_after_save(cx);
             }
             return;
@@ -576,7 +577,7 @@ impl Editor {
         self.save_and_replace_pending_drop(window, cx);
     }
 
-    fn replace_after_successful_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn replace_after_successful_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(drop_path) = self.pending_drop_replace_path.take() else {
             self.clear_pending_drop_replace_state(cx);
             return;
@@ -686,7 +687,7 @@ impl Editor {
         self.replace_document_from_path(&drop_path, cx)
     }
 
-    fn abort_pending_drop_replace_after_save(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn abort_pending_drop_replace_after_save(&mut self, cx: &mut Context<Self>) {
         self.pending_drop_replace_after_save = false;
         self.show_drop_replace_dialog = false;
         self.pending_drop_replace_path = None;

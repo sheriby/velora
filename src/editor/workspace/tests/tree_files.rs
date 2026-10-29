@@ -356,6 +356,7 @@ async fn opening_code_files_keeps_them_in_the_editor(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| editor.save_document(window, cx));
     });
+    cx.run_until_parked();
     assert_eq!(fs::read_to_string(&plain_path).unwrap(), "select 2;");
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {

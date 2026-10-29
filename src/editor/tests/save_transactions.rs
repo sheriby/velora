@@ -19,6 +19,7 @@ async fn core_repair_saving_before_open_version_registration_preserves_external_
         fs::write(&path, "external").unwrap();
         editor.save_to_existing_path(&path, window, cx);
     });
+    cx.run_until_parked();
     assert_eq!(fs::read_to_string(&path).unwrap(), "external");
     assert!(editor.read_with(cx, |editor, _| editor.document_dirty && editor.modal_is_open()));
     let recovery_id = editor.read_with(cx, |editor, _| editor.recovery_id);

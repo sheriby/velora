@@ -506,6 +506,8 @@ async fn review_workspace_switch_save_and_discard_choices_preserve_disk_intent(c
             assert!(editor.modal_is_open());
         });
         cx.update(|window, cx| editor.update(cx, |editor, cx| editor.dismiss_modal(choice, window, cx)));
+        // 「保存并切换」的读盘与写盘在后台，切根在完成回调里做。
+        cx.run_until_parked();
         assert_eq!(editor.read_with(cx, |editor, _| editor.workspace.root.clone()), Some(crate::file_url::canonical_path(&root_b)));
         assert_eq!(fs::read_to_string(path).unwrap(), if choice == 0 { live } else { "old".into() });
     }

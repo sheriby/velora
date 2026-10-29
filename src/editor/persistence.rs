@@ -130,6 +130,10 @@ impl StagedDocumentWrite {
         Ok(())
     }
 
+    /// 读盘校验、临时文件写入与目录锁都是系统调用；`verify` 与 `rename` 之间没有
+    /// 可移植的原子比较交换，外部写者在这个窗口里改文件会被 rename 覆盖。窗口只
+    /// 剩这些调用的间隙（校验紧挨着 rename），要更小只能上跨进程文件锁；
+    /// 这里接受现状，不把它误当成「校验通过就绝无覆盖」。
     fn commit_checked(self, path: &Path, expected_version: u64) -> anyhow::Result<()> {
         let target = std::fs::canonicalize(path)
             .map(|target| canonical_write_target(&target))
@@ -253,6 +257,16 @@ pub(super) fn file_content_version_normalized(markdown: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     markdown.hash(&mut hasher);
     hasher.finish()
+}
+
+/// 手动保存转后台之后，成功那一刻要接着做的动作（关窗、切工作区根、替换拖入
+/// 的文件、继续关闭一批标签）。失败时各调用方自己的"中止"语义在完成回调里处理。
+#[derive(Clone)]
+pub(crate) enum SaveThen {
+    CloseWindow,
+    SwitchWorkspaceRoot(PathBuf),
+    ReplacePendingDrop,
+    CloseWorkspaceTabs(Vec<super::workspace::WorkspaceDocumentTab>),
 }
 
 #[derive(Clone)]
@@ -890,6 +904,12 @@ impl Editor {
         self.record_saved_history(&path, &saved_bytes, source, cx)
     }
 
+    /// 保存到已经存在的路径。返回 `true` 表示已受理（后台读盘与写临时文件正在
+    /// 进行，完成后回主线程提交），`false` 表示当场拒绝（组合文本未落定）。
+    ///
+    /// 读盘校验、baseline 与临时文件的 fsync 都挪到后台 executor：多 MB 文档
+    /// 在 UTF-16/GB18030 解码与实时扫描叠加时，这条链在主线程上能卡数百毫秒。
+    /// 主线程只留修订号校对与 rename（`commit_checked` 的最后一次校验与提交）。
     pub(super) fn save_to_existing_path(
         &mut self,
         path: &Path,
@@ -906,64 +926,155 @@ impl Editor {
         {
             self.file_version = Some(file_content_version_normalized(&opened_text));
         }
-        let mut verified_raw = None;
-        if let Some(expected_version) = self.file_version {
-            match verify_file_version(path, expected_version) {
-                Ok(raw) => verified_raw = Some(raw),
-                Err(error) => {
-                    let detail = error.to_string();
-                    let strings = cx.global::<I18nManager>().strings().clone();
-                    // 应用内模态，不用系统原生弹窗（用户要求）。
-                    if is_external_change(&error) {
-                        self.report_workspace_file_error(detail.clone(), cx);
-                        // 手动保存撞上的冲突与自动保存撞上的同一个问题，给同一个解除入口
-                        // （重载 / 另存为），不再只有一块「好」按钮。
-                        self.show_external_change_conflict_modal(path.to_path_buf(), cx);
-                    } else {
-                        self.show_message_modal(strings.save_failed_title.clone(), detail.clone(), cx);
-                    }
-                    let _ = window;
-                    return false;
-                }
-            }
-        }
         let bytes = self.document_bytes_for_save();
         let saved_text = self.document_text_for_save();
         let identity = self.document_save_identity();
         let expected_version = self.file_version;
-        let result = StagedDocumentWrite::prepare_with_baseline(
-            path,
-            &bytes,
-            verified_raw.as_deref(),
-        )
-        .map_err(anyhow::Error::from).and_then(|staged| {
-            #[cfg(test)]
-            if let Some(hook) = self.save_commit_hook.take() {
-                hook(self, cx);
-            }
-            anyhow::ensure!(identity == self.document_save_identity(), "文档在准备保存期间已改变");
-            match expected_version {
-                Some(version) => staged.commit_checked(path, version),
-                None => staged.commit().map_err(anyhow::Error::from),
-            }
-        });
-        match result {
-            Ok(_) => {
-                let history_saved = self.apply_successful_save(path.to_path_buf(), saved_text, bytes, cx);
-                window.set_window_edited(false);
-                history_saved
-            }
-            Err(err) => {
-                let detail = err.to_string();
-                let strings = cx.global::<I18nManager>().strings().clone();
-                if is_external_change(&err) {
-                    self.report_external_change_conflict(path.to_path_buf(), detail, cx);
-                } else {
-                    self.show_message_modal(strings.save_failed_title.clone(), detail, cx);
+        let path = path.to_path_buf();
+        let then = self.pending_save_then.take();
+        let window_handle = window.window_handle();
+        let editor = cx.entity().downgrade();
+        let verify_reads = self.autosave_verify_reads.clone();
+
+        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let staged = cx
+                .background_executor()
+                .spawn({
+                    let path = path.clone();
+                    let bytes = bytes.clone();
+                    async move {
+                        let baseline = match expected_version {
+                            Some(version) => {
+                                verify_reads
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                Some(verify_file_version(&path, version)?)
+                            }
+                            None => None,
+                        };
+                        let staged = StagedDocumentWrite::prepare_with_baseline(
+                            &path,
+                            &bytes,
+                            baseline.as_deref(),
+                        )
+                        .with_context(|| format!("failed to stage '{}'", path.display()))?;
+                        Ok::<_, anyhow::Error>(staged)
+                    }
+                })
+                .await;
+
+            let outcome = editor.update(cx, {
+                let path = path.clone();
+                let then = then.clone();
+                move |editor, cx| {
+                    let staged = match staged {
+                        Ok(staged) => staged,
+                        Err(error) => {
+                            editor.report_manual_save_failure(&path, &error, cx);
+                            editor.abort_pending_save_then(then, cx);
+                            return false;
+                        }
+                    };
+                    #[cfg(test)]
+                    if let Some(hook) = editor.save_commit_hook.take() {
+                        hook(editor, cx);
+                    }
+                    if identity != editor.document_save_identity() {
+                        let error = anyhow::anyhow!("文档在准备保存期间已改变");
+                        editor.report_manual_save_failure(&path, &error, cx);
+                        editor.abort_pending_save_then(then, cx);
+                        return false;
+                    }
+                    let result = match expected_version {
+                        Some(version) => staged.commit_checked(&path, version),
+                        None => staged.commit().map_err(anyhow::Error::from),
+                    };
+                    match result {
+                        Ok(()) => {
+                            let history_saved =
+                                editor.apply_successful_save(path.clone(), saved_text, bytes, cx);
+                            if !history_saved {
+                                // 文件已写盘，只是历史没记上：按失败处理会让调用方
+                                // 以为内容没落盘（关窗流程会重新弹未保存框）。
+                                eprintln!(
+                                    "文件已保存，但文件历史写入失败：{}",
+                                    path.display()
+                                );
+                            }
+                            true
+                        }
+                        Err(error) => {
+                            editor.report_manual_save_failure(&path, &error, cx);
+                            editor.abort_pending_save_then(then, cx);
+                            false
+                        }
+                    }
                 }
-                let _ = window;
-                false
+            });
+
+            let Ok(saved) = outcome else {
+                return;
+            };
+            if !saved {
+                return;
             }
+            let _ = cx.update_window(
+                window_handle,
+                move |_view: AnyView, window: &mut Window, cx: &mut App| {
+                    if let Err(error) = editor.update(cx, |editor, cx| {
+                        editor.finish_pending_save_then(then, window, cx);
+                    }) {
+                        eprintln!("保存完成后无法回写编辑器状态：{error}");
+                    }
+                },
+            );
+        })
+        .detach();
+        true
+    }
+
+    /// 手动保存失败的统一上报：外部修改走带解除入口的冲突记录，其余走模态。
+    fn report_manual_save_failure(
+        &mut self,
+        path: &Path,
+        error: &anyhow::Error,
+        cx: &mut Context<Self>,
+    ) {
+        let detail = error.to_string();
+        if is_external_change(error) {
+            self.report_workspace_file_error(detail.clone(), cx);
+            self.show_external_change_conflict_modal(path.to_path_buf(), cx);
+        } else {
+            let title = cx.global::<I18nManager>().strings().save_failed_title.clone();
+            self.show_message_modal(title, detail, cx);
+        }
+    }
+
+    /// 后台保存失败时，按调用方的语境撤销"保存后继续"的挂起状态。
+    fn abort_pending_save_then(&mut self, then: Option<SaveThen>, cx: &mut Context<Self>) {
+        match then {
+            Some(SaveThen::CloseWindow) => self.abort_pending_close_after_save(cx),
+            Some(SaveThen::ReplacePendingDrop) => self.abort_pending_drop_replace_after_save(cx),
+            // 切根与批量关标签失败时只需留在原地：错误已经上报，状态没有变过。
+            Some(SaveThen::SwitchWorkspaceRoot(_)) | Some(SaveThen::CloseWorkspaceTabs(_)) => {}
+            None => {}
+        }
+    }
+
+    fn finish_pending_save_then(
+        &mut self,
+        then: Option<SaveThen>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.set_window_edited(false);
+        match then {
+            Some(SaveThen::CloseWindow) => Self::close_editor_window(window),
+            Some(SaveThen::SwitchWorkspaceRoot(root)) => self.apply_workspace_root(root, cx),
+            Some(SaveThen::ReplacePendingDrop) => self.replace_after_successful_save(window, cx),
+            Some(SaveThen::CloseWorkspaceTabs(closing)) => {
+                self.resume_close_workspace_tabs_after_save(closing, window, cx)
+            }
+            None => {}
         }
     }
 
@@ -1130,12 +1241,14 @@ impl Editor {
         }
         if let Some(path) = self.file_path.clone() {
             let should_close_after_save = self.pending_close_after_save;
-            if self.save_to_existing_path(&path, window, cx) {
+            if should_close_after_save {
+                self.pending_save_then = Some(SaveThen::CloseWindow);
+            }
+            if !self.save_to_existing_path(&path, window, cx) {
                 if should_close_after_save {
-                    Editor::close_editor_window(window);
+                    self.pending_save_then = None;
+                    self.abort_pending_close_after_save(cx);
                 }
-            } else if should_close_after_save {
-                self.abort_pending_close_after_save(cx);
             }
             return;
         }

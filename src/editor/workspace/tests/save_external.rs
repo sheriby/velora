@@ -409,10 +409,11 @@ async fn the_conflict_modal_save_as_keeps_the_edits_and_asks_for_a_new_path(
     fs::write(&path, "external version\n").expect("external write");
     // 这次不放钟：让冲突由手动保存撞出来，于是自动保存一次快照都还没写过——
     // 「重载」那一侧的 stash 才有东西可证。
-    let saved = editor.update_in(cx, |editor, window, cx| {
+    let accepted = editor.update_in(cx, |editor, window, cx| {
         editor.save_to_existing_path(&path, window, cx)
     });
-    assert!(!saved, "冲突时手动保存必须拒绝写盘");
+    assert!(accepted, "保存受理后由后台完成读盘校验");
+    cx.run_until_parked();
     editor.read_with(cx, |editor, _| {
         assert!(
             editor.modal_is_open(),

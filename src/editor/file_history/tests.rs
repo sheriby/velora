@@ -144,6 +144,7 @@ fn oversized_markdown_saves_normally_without_creating_another_history_version(
                 "正常保存应成功"
             );
         });
+        cx.run_until_parked();
         assert_eq!(
             std::fs::metadata(&path).expect("保存文件").len(),
             1024 * 1024 + 1
@@ -802,6 +803,7 @@ fn manual_save_marks_a_checkpoint_even_after_autosave(cx: &mut TestAppContext) {
         editor.update_in(cx, |editor, window, cx| {
             assert!(editor.save_to_existing_path(&path, window, cx))
         });
+        cx.run_until_parked();
         let newest = versions(&path).remove(0);
         assert_eq!(
             newest.source,

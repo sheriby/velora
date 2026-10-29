@@ -324,6 +324,9 @@ pub struct Editor {
     show_drop_replace_dialog: bool,
     pending_drop_replace_after_save: bool,
     drop_replace_restore_focus: Option<EntityId>,
+    /// 手动保存的读盘与写临时文件在后台做；成功那一刻要接着做的事
+    /// （关窗 / 切根 / 替换拖入 / 继续关一批标签）存在这里。
+    pending_save_then: Option<persistence::SaveThen>,
     /// 应用内模态（取代系统原生 window.prompt，用户要求全软件不用原生弹窗）。
     modal: Option<modal::EditorModal>,
     /// C13：模态键盘拦截器（App::intercept_keystrokes）。绑定解析先于
@@ -1004,6 +1007,7 @@ impl Editor {
             pending_drop_replace_path: None,
             show_drop_replace_dialog: false,
             pending_drop_replace_after_save: false,
+            pending_save_then: None,
             drop_replace_restore_focus: None,
             modal: None,
             modal_key_interceptor: None,

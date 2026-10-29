@@ -1187,6 +1187,24 @@ impl Editor {
         Ok(())
     }
 
+    /// 活动文档那一页保存完成后重入关闭流程：它刚落盘，快照里的脏标记要清掉，
+    /// 再由循环把其余标签走完。
+    pub(crate) fn resume_close_workspace_tabs_after_save(
+        &mut self,
+        mut closing: Vec<WorkspaceDocumentTab>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(active) = self.file_path.clone() {
+            for tab in &mut closing {
+                if tab.path == active {
+                    tab.dirty = false;
+                }
+            }
+        }
+        self.finish_close_workspace_tabs(&closing, true, window, cx);
+    }
+
     /// Removes closed tabs from the strip, optionally saving their cached
     /// content first, and activates the nearest remaining neighbour.
     pub(crate) fn finish_close_workspace_tabs(
@@ -1223,10 +1241,16 @@ impl Editor {
                 if self.file_path.as_ref() == Some(&tab.path)
                     && self.recovery_id == tab.recovery_id
                 {
+                    self.pending_save_then =
+                        Some(crate::editor::persistence::SaveThen::CloseWorkspaceTabs(
+                            closing.to_vec(),
+                        ));
                     if !self.save_to_existing_path(&tab.path, window, cx) {
+                        self.pending_save_then = None;
                         return;
                     }
-                    continue;
+                    // 保存转后台：续作在完成回调里重入本函数，把其余标签走完。
+                    return;
                 }
                 let bytes = match crate::editor::persistence::tab_write_bytes(&tab.path, &tab.markdown, tab.file_version) {
                     Ok(bytes) => bytes,

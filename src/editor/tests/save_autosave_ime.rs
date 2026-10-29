@@ -266,6 +266,52 @@ async fn scheduling_a_save_does_not_scan_every_block_for_composition_state(
     );
 }
 
+/// ⌘S 的整条链路不再跑在调用线程上：返回那一刻目标文件还没被替换，读盘校验与
+/// 临时文件写入在后台，完成后才回主线程提交。
+#[gpui::test]
+async fn manual_save_defers_io_to_the_background(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("manual-save-background");
+    fs::write(&path, "alpha").expect("write initial markdown");
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup_path);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(path))
+    });
+    let recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(recovery_id);
+    });
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.first_root().expect("first block").clone();
+        first.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(InlineTextTree::plain("beta".to_string()));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(editor.save_to_existing_path(&path, window, cx));
+    });
+    assert_eq!(
+        fs::read_to_string(&path).expect("read before the background round"),
+        "alpha",
+        "保存受理就同步写完了：整条 IO 还在调用线程上"
+    );
+    cx.run_until_parked();
+    assert_eq!(
+        fs::read_to_string(&path).expect("read after the background round"),
+        "beta"
+    );
+}
+
 #[gpui::test]
 async fn chinese_ime_composition_commit_save_and_undo_keep_text(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -534,11 +580,14 @@ async fn autosave_does_not_overwrite_external_file_changes(cx: &mut TestAppConte
         assert!(editor.document_dirty);
         assert!(editor.has_external_autosave_conflict());
     });
+    cx.run_until_parked();
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
-            assert!(!editor.save_to_existing_path(&path, window, cx));
+            // 保存受理后版本校验在后台做：冲突在完成回调里上报，文件保持外部内容。
+            assert!(editor.save_to_existing_path(&path, window, cx));
         });
     });
+    cx.run_until_parked();
     assert_eq!(
         fs::read_to_string(&path).expect("read external file after manual save"),
         "external edits"
@@ -638,10 +687,15 @@ async fn a_real_write_failure_still_reports_save_failed(cx: &mut TestAppContext)
     editor.update(cx, |editor, _cx| editor.file_version = None);
     fs::rename(&root, moved_document_dir(&root)).expect("move the directory away");
 
-    let saved = editor.update_in(cx, |editor, window, cx| {
+    let accepted = editor.update_in(cx, |editor, window, cx| {
         editor.save_to_existing_path(&path, window, cx)
     });
-    assert!(!saved, "写不进去就是没保存成功");
+    assert!(accepted, "保存受理后由后台完成读盘与写临时文件");
+    cx.run_until_parked();
+    assert!(
+        !path.exists(),
+        "目录已被挪走，写不进去的文件不该凭空出现"
+    );
 
     let strings = cx.update(|_window, cx| cx.global::<I18nManager>().strings().clone());
     editor.read_with(cx, |editor, _cx| {
