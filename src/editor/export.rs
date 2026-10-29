@@ -170,8 +170,12 @@ impl Editor {
 /// 导出失败提示走应用内模态（用户要求：全软件不用系统原生弹窗）。
 fn show_export_error(editor: WeakEntity<Editor>, cx: &mut AsyncApp, detail: &str) {
     let detail: SharedString = detail.to_string().into();
-    let _ = editor.update(cx, move |editor, cx| {
+    let message = detail.clone();
+    if let Err(error) = editor.update(cx, move |editor, cx| {
         let title = cx.global::<I18nManager>().strings().export_failed_title.clone();
         editor.show_message_modal(title.clone(), detail.clone(), cx);
-    });
+    }) {
+        // 弹不出框（编辑器已关）时导出失败也不能无声消失：至少留下详情。
+        eprintln!("导出失败且无法显示提示：{message}（{error}）");
+    }
 }

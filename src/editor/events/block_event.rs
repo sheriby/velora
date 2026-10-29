@@ -272,9 +272,13 @@ impl Editor {
                 {
                     let deferred_target = target.clone();
                     cx.defer(move |cx| {
-                        let _ = handle.update(cx, |editor, window, cx| {
+                        // 窗口/实体在 defer 期间消失是正常的竞态；但失败要有痕迹，
+                        // 不能连日志都没有（约定：不要静默吞错）。
+                        if let Err(error) = handle.update(cx, |editor, window, cx| {
                             editor.open_wikilink(deferred_target.clone(), window, cx);
-                        });
+                        }) {
+                            eprintln!("跳转双链失败（窗口已关闭？）：{error}");
+                        }
                     });
                 }
             }
