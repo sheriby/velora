@@ -343,3 +343,37 @@ async fn emphasis_marker_survives_toggle_off_on_and_stays_uniform(cx: &mut TestA
         );
     });
 }
+
+/// 行内格式命令不能顺手把段落变成标题/列表：可见文本以 `# ` 开头但源码是
+/// 转义写法（`\# …`）时，快捷语法检测只看可见文本，与解析期判据不同源，
+/// 一按加粗就把段落换成标题并吞掉前缀。
+#[gpui::test]
+async fn inline_format_does_not_turn_an_escaped_heading_prefix_into_a_heading(
+    cx: &mut TestAppContext,
+) {
+    use crate::components::block::runtime::InlineFormat;
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("\\# 标题"),
+            ),
+        )
+    });
+    block.update(cx, |block, cx| {
+        let len = block.visible_len();
+        assert!(block.toggle_inline_format_in_range(InlineFormat::Bold, 0..len, None, cx));
+        assert_eq!(
+            block.kind(),
+            BlockKind::Paragraph,
+            "格式命令不该把段落变成标题"
+        );
+        assert!(
+            block.record.title.serialize_markdown().contains("# 标题"),
+            "前缀不该被快捷语法吞掉：{:?}",
+            block.record.title.serialize_markdown()
+        );
+    });
+}

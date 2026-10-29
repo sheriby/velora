@@ -270,7 +270,7 @@ impl Block {
         }
 
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
-        self.apply_title_edit(
+        self.apply_title_edit_preserving_kind(
             next_title,
             selection.end,
             None,
@@ -316,7 +316,7 @@ impl Block {
         }
 
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
-        self.apply_title_edit(
+        self.apply_title_edit_preserving_kind(
             next_title,
             selection.end,
             None,

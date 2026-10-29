@@ -464,6 +464,54 @@ impl Block {
         new_span_caret_affinity: Option<CollapsedCaretAffinity>,
         cx: &mut Context<Self>,
     ) {
+        self.apply_title_edit_with_shortcuts(
+            next_title,
+            cursor_clean,
+            marked_range_clean,
+            selected_range_clean,
+            selected_range_reversed,
+            new_span_caret_affinity,
+            true,
+            cx,
+        );
+    }
+
+    /// 行内格式/清除格式专用的入口：不做快捷语法检测。快捷键前缀只看可见
+    /// 文本，转义写法（`\# …`）在解析期是段落，格式命令顺手换种类属于禁止
+    /// 的「顺手规范化」。
+    pub(crate) fn apply_title_edit_preserving_kind(
+        &mut self,
+        next_title: InlineTextTree,
+        cursor_clean: usize,
+        marked_range_clean: Option<Range<usize>>,
+        selected_range_clean: Option<Range<usize>>,
+        selected_range_reversed: Option<bool>,
+        new_span_caret_affinity: Option<CollapsedCaretAffinity>,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_title_edit_with_shortcuts(
+            next_title,
+            cursor_clean,
+            marked_range_clean,
+            selected_range_clean,
+            selected_range_reversed,
+            new_span_caret_affinity,
+            false,
+            cx,
+        );
+    }
+
+    fn apply_title_edit_with_shortcuts(
+        &mut self,
+        next_title: InlineTextTree,
+        cursor_clean: usize,
+        marked_range_clean: Option<Range<usize>>,
+        selected_range_clean: Option<Range<usize>>,
+        selected_range_reversed: Option<bool>,
+        new_span_caret_affinity: Option<CollapsedCaretAffinity>,
+        allow_shortcuts: bool,
+        cx: &mut Context<Self>,
+    ) {
         let old_kind = self.record.kind.clone();
         let old_title = self.record.title.clone();
         let old_title_was_empty = old_title.visible_text().is_empty();
@@ -472,7 +520,11 @@ impl Block {
             self.projection.is_some() && self.supports_inline_projection();
 
         let (next_kind, normalized_title, adjusted_cursor, shortcut_removed_len, next_list_marker) =
-            self.normalize_after_title_edit(next_title, cursor_clean);
+            if allow_shortcuts {
+                self.normalize_after_title_edit(next_title, cursor_clean)
+            } else {
+                (self.kind(), next_title, cursor_clean, 0, self.record.list_marker)
+            };
         let should_restart_numbered_list = old_kind == BlockKind::Paragraph
             && old_title_was_empty
             && self.list_group_separator_candidate
