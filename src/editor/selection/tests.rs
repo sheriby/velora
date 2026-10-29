@@ -1127,4 +1127,57 @@ mod tests {
         });
         cx.quit();
     }
+    /// 大表上的落点换算按运行时行列直接取格：每个格子中心都解析回它自己。
+    /// （旧实现逐条扫 `table_cells` 绑定表，并把整份 runtime 克隆一遍。）
+    #[gpui::test]
+    async fn table_point_lookup_resolves_cells_by_runtime_position(cx: &mut TestAppContext) {
+        init_editor_test_app(cx);
+        let mut markdown = String::from("|");
+        for column in 0..8 {
+            markdown.push_str(&format!(" h{column} |"));
+        }
+        markdown.push_str("\n|");
+        for _ in 0..8 {
+            markdown.push_str(" --- |");
+        }
+        markdown.push('\n');
+        for row in 0..30 {
+            markdown.push('|');
+            for column in 0..8 {
+                markdown.push_str(&format!(" r{row}c{column} |"));
+            }
+            markdown.push('\n');
+        }
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, markdown, None)
+        });
+        redraw(cx);
+        redraw(cx);
+        editor.update(cx, |editor, cx| {
+            let table = editor.document.root_blocks()[0].clone();
+            for (row, column) in [(0, 0), (0, 7), (5, 3), (30, 7)] {
+                let cell = editor
+                    .table_cell_entity(
+                        table.entity_id(),
+                        crate::components::TableCellPosition { row, column },
+                        cx,
+                    )
+                    .expect("运行时里应有这一格");
+                let center = cell
+                    .read(cx)
+                    .last_bounds
+                    .expect("格子应已绘制出几何")
+                    .center();
+                let (table_id, position) = editor
+                    .table_text_position_at_point(center, cx)
+                    .expect("格子中心应解析出落点");
+                assert_eq!(table_id, table.entity_id());
+                assert_eq!(
+                    position.cell,
+                    crate::components::TableCellPosition { row, column },
+                    "落点 {center:?} 解析到了别的格子"
+                );
+            }
+        });
+    }
 }

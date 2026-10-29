@@ -132,14 +132,11 @@ impl Editor {
         cx: &App,
     ) -> Option<(EntityId, TableTextPosition)> {
         let (table_block_id, cell_position) = self.table_cell_at_point(position, cx)?;
-        let binding = self
-            .table_cells
-            .values()
-            .find(|binding| {
-                binding.table_block.entity_id() == table_block_id
-                    && binding.position == cell_position
-            })?;
-        let cell = binding.cell.read(cx);
+        // 按行列直接取格：`table_cells` 是整篇文档所有格子的绑定表，逐条找
+        // 一次 move 就是 O(全文档格子数)。
+        let cell = self
+            .table_cell_entity(table_block_id, cell_position, cx)?
+            .read(cx);
         let offset = cell.current_to_clean_offset(cell.index_for_mouse_position(position));
         Some((
             table_block_id,
@@ -416,7 +413,8 @@ impl Editor {
         cx: &App,
     ) -> Option<Entity<Block>> {
         let table = self.document.block_entity_by_id(table_block_id)?;
-        let runtime = table.read(cx).table_runtime.clone()?;
+        let table_block = table.read(cx);
+        let runtime = table_block.table_runtime.as_ref()?;
         if position.row == 0 {
             runtime.header.get(position.column).cloned()
         } else {
