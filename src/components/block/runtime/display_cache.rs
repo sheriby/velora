@@ -16,6 +16,9 @@ impl Block {
         let collapsed_affinity = self.current_collapsed_caret_affinity();
         let keep_projection =
             self.projection.is_some() && self.supports_inline_projection();
+        if let Some(marker) = self.record.title.emphasis_marker_preference() {
+            self.preferred_emphasis_marker = Some(marker);
+        }
         let next_cache = self.record.title.render_cache();
         if next_cache.spans() != self.render_cache.spans() {
             self.render_generation = self.render_generation.wrapping_add(1);

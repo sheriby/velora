@@ -202,6 +202,9 @@ pub struct Block {
     /// 公式源码里 `$$` 前后文字段的可见文本，按源码串缓存：这些文字段每帧都要
     /// 重新走一遍行内 Markdown 解析，而源码不变时结果恒同。
     pub(super) math_text_segment_cache: Option<(String, Vec<SharedString>)>,
+    /// 这一块最近一次用过的强调写法（`*` / `_`）。关闭强调时片段上的 marker
+    /// 会被清掉，重新开启要沿用块里的写法而不是一律写成星号。
+    preferred_emphasis_marker: Option<char>,
     /// Cached projection used to show editable inline delimiters for the
     /// currently touched inline span(s).
     pub(crate) projection: Option<ExpandedInlineProjection>,
@@ -382,6 +385,7 @@ impl Block {
             cursor_blink_task: None,
             math_edit_preview_source: None,
             math_text_segment_cache: None,
+            preferred_emphasis_marker: None,
             projection: None,
             hide_markdown_markers: crate::config::EditorSettings::hide_markdown_markers(cx),
             projection_cache_key: None,

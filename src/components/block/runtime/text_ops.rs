@@ -236,9 +236,28 @@ impl Block {
 
         let selection = self.current_to_clean_range(selection);
         let mut next_title = self.record.title.clone();
+        // 强调写法跟着块记：选区内已有写法取多数派，否则沿用这一块上次用过的；
+        // 两者都没有才退回规范星号。
+        let block_preference = self
+            .preferred_emphasis_marker
+            .or_else(|| self.record.title.emphasis_marker_preference());
+        if let Some(marker) = block_preference {
+            self.preferred_emphasis_marker = Some(marker);
+        }
+        let emphasis_marker = next_title
+            .emphasis_marker_majority(selection.clone())
+            .or(block_preference);
         let changed = match format {
-            InlineFormat::Bold => next_title.toggle_bold(selection.clone()),
-            InlineFormat::Italic => next_title.toggle_italic(selection.clone()),
+            InlineFormat::Bold => next_title.toggle_emphasis_with_marker(
+                selection.clone(),
+                crate::components::markdown::inline::StyleFlag::Bold,
+                emphasis_marker,
+            ),
+            InlineFormat::Italic => next_title.toggle_emphasis_with_marker(
+                selection.clone(),
+                crate::components::markdown::inline::StyleFlag::Italic,
+                emphasis_marker,
+            ),
             InlineFormat::Underline => next_title.toggle_underline(selection.clone()),
             InlineFormat::Strikethrough => next_title.toggle_strikethrough(selection.clone()),
             InlineFormat::Code => next_title.toggle_code(selection.clone()),

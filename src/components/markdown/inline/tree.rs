@@ -897,10 +897,12 @@ impl InlineTextTree {
         InlineInsertionAttributes::default()
     }
 
+    #[cfg(test)]
     pub fn toggle_bold(&mut self, range: Range<usize>) -> bool {
         self.toggle_style(range, StyleFlag::Bold)
     }
 
+    #[cfg(test)]
     pub fn toggle_italic(&mut self, range: Range<usize>) -> bool {
         self.toggle_style(range, StyleFlag::Italic)
     }
@@ -1138,7 +1140,62 @@ impl InlineTextTree {
         }
     }
 
+    /// 选区里已有强调写法的多数派（平票取先出现的那个）。一次命令对混合
+    /// 选区统一记号，避免 `_斜_ 与普通文本` 加粗后产出 `_`+`*` 混搭。
+    pub fn emphasis_marker_majority(&self, range: Range<usize>) -> Option<char> {
+        let mut counts: Vec<(char, usize)> = Vec::new();
+        let mut offset = 0usize;
+        for fragment in &self.fragments {
+            let length = fragment.text.len();
+            let overlaps = offset < range.end && offset + length > range.start;
+            offset += length;
+            if !overlaps || !(fragment.style.bold || fragment.style.italic) {
+                continue;
+            }
+            let Some(marker) = fragment.style.emphasis_marker else {
+                continue;
+            };
+            match counts.iter_mut().find(|(existing, _)| *existing == marker) {
+                Some((_, count)) => *count += 1,
+                None => counts.push((marker, 1)),
+            }
+        }
+        counts
+            .into_iter()
+            .max_by_key(|(_, count)| *count)
+            .map(|(marker, _)| marker)
+    }
+
+    /// 整块最近一次用到的强调写法：关掉强调后片段上的 marker 会被清空，
+    /// 但「这一块习惯用哪种写法」应该留着，重新开启时沿用。
+    pub fn emphasis_marker_preference(&self) -> Option<char> {
+        self.fragments
+            .iter()
+            .find(|fragment| (fragment.style.bold || fragment.style.italic) && fragment.style.emphasis_marker.is_some())
+            .and_then(|fragment| fragment.style.emphasis_marker)
+    }
+
+    /// 与 [`Self::toggle_bold`] 同一条路径，但开启强调时用指定的写法
+    /// （`None` 退回规范星号）。
+    pub fn toggle_emphasis_with_marker(
+        &mut self,
+        range: Range<usize>,
+        flag: StyleFlag,
+        marker: Option<char>,
+    ) -> bool {
+        self.toggle_style_with_marker(range, flag, marker)
+    }
+
     fn toggle_style(&mut self, range: Range<usize>, flag: StyleFlag) -> bool {
+        self.toggle_style_with_marker(range, flag, None)
+    }
+
+    fn toggle_style_with_marker(
+        &mut self,
+        range: Range<usize>,
+        flag: StyleFlag,
+        marker: Option<char>,
+    ) -> bool {
         if range.is_empty() {
             return false;
         }
@@ -1158,6 +1215,13 @@ impl InlineTextTree {
 
         for fragment in &mut middle.fragments {
             fragment.style = set_style_flag(fragment.style, flag, !should_remove);
+            // 开启强调：写法跟着这次命令走（已有强调的片段也统一过来）。
+            if !should_remove
+                && matches!(flag, StyleFlag::Bold | StyleFlag::Italic)
+                && (fragment.style.bold || fragment.style.italic)
+            {
+                fragment.style.emphasis_marker = Some(marker.unwrap_or('*'));
+            }
         }
         middle.normalize_fragments();
 

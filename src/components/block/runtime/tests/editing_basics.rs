@@ -297,3 +297,49 @@ async fn frontmatter_block_avoids_source_raw_paint_branch(cx: &mut TestAppContex
     });
 }
 
+
+/// 强调写法要跟着块记：`__粗体__` 关掉再加回来仍是 `__粗体__`，不能被
+/// 规范化成星号；同一次命令里对混合选区统一一套记号，不能产出 `_`+`*` 混搭。
+#[gpui::test]
+async fn emphasis_marker_survives_toggle_off_on_and_stays_uniform(cx: &mut TestAppContext) {
+    use crate::components::block::runtime::InlineFormat;
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("__粗体__"),
+            ),
+        )
+    });
+    block.update(cx, |block, cx| {
+        let len = block.visible_len();
+        assert!(block.toggle_inline_format_in_range(InlineFormat::Bold, 0..len, None, cx));
+        assert!(block.toggle_inline_format_in_range(InlineFormat::Bold, 0..len, None, cx));
+        assert_eq!(
+            block.record.title.serialize_markdown(),
+            "__粗体__",
+            "关一次再开一次不该把下划线写法洗成星号"
+        );
+    });
+
+    let mixed = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("_斜_ 与普通文本"),
+            ),
+        )
+    });
+    mixed.update(cx, |block, cx| {
+        let len = block.visible_len();
+        assert!(block.toggle_inline_format_in_range(InlineFormat::Bold, 0..len, None, cx));
+        let markdown = block.record.title.serialize_markdown();
+        assert!(
+            !markdown.contains('*'),
+            "同一次命令混出了两套强调记号：{markdown:?}"
+        );
+    });
+}
