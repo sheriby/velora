@@ -428,7 +428,7 @@ impl Editor {
                     editor.set_workspace_search_scope(WorkspaceSearchScope::Workspace, cx);
                 })),
             );
-        let match_count = self.workspace.search_results.len();
+        let match_count = self.search_result_count(scope);
         let count_label = (match_count > 0 && scope == WorkspaceSearchScope::Document).then(|| {
             strings
                 .search_result_count

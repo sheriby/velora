@@ -176,6 +176,21 @@ impl Editor {
         Some(next)
     }
 
+    /// 搜索结果计数：文档范围读整张命中表（导航用的是同一份），工作区范围读
+    /// 侧栏结果列表。投影列表有 200 条上限，拿它当计数会让用户以为全文只有
+    /// 200 处命中。
+    pub(crate) fn search_result_count(&self, scope: super::WorkspaceSearchScope) -> usize {
+        match scope {
+            super::WorkspaceSearchScope::Document => self
+                .workspace
+                .document_matches
+                .as_ref()
+                .map(|table| table.hits.len())
+                .unwrap_or(self.workspace.search_results.len()),
+            super::WorkspaceSearchScope::Workspace => self.workspace.search_results.len(),
+        }
+    }
+
     /// 命中表投影成侧栏的结果列表。
     pub(crate) fn project_document_hits(
         &self,

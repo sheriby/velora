@@ -3105,3 +3105,39 @@ fn workspace_replace_and_count_use_the_same_cross_line_engine_as_the_results_lis
     assert_eq!(count_matches_in_source("a\na\n", &literal), 2);
     assert_eq!(replace_in_source("a\na\n", &literal, "b"), "b\nb\n");
 }
+
+/// 文档范围的「N 个结果」读整张命中表，不读被截断到 200 条的侧栏投影：
+/// 否则列表数字与 F3/Enter 还能继续跳到的命中数互相矛盾。
+#[gpui::test]
+async fn document_scope_result_count_reads_the_full_hit_table(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let markdown = "needle\n\n".repeat(500);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, markdown, None)
+    });
+    editor.update(cx, |editor, cx| {
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Document;
+        editor.workspace.search_query = "needle".into();
+        let hits = editor.document_matches(cx).expect("命中表");
+        assert!(hits.len() >= 400, "夹具应有大量命中，实际 {}", hits.len());
+        let label = editor.buffer.text();
+        let projected = editor.project_document_hits(
+            &hits,
+            &label,
+            std::path::Path::new("current.md"),
+            "current.md",
+            200,
+        );
+        assert_eq!(projected.len(), 200, "侧栏投影保留 200 条上限");
+        editor.workspace.search_results = projected;
+        assert_eq!(
+            editor.search_result_count(super::super::WorkspaceSearchScope::Document),
+            hits.len(),
+            "计数读成了投影后的列表长度"
+        );
+    });
+}
