@@ -51,6 +51,10 @@ impl Editor {
             self.close_command_palette(cx);
             return;
         }
+        // 与 ⌘P 快速切换互斥（见 toggle_quick_open 的同一条约定）。
+        if self.quick_open.is_some() {
+            self.close_quick_open(cx);
+        }
         self.dismiss_contextual_overlays(cx);
         self.overlay_focus_restore_target = self.focused_edit_target_entity_id(window, cx);
         let input = cx.new(|cx| InputState::new(window, cx));

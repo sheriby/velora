@@ -254,6 +254,11 @@ impl Editor {
             self.close_quick_open(cx);
             return;
         }
+        // 两个全局浮层互斥：渲染侧是 if/else 互斥，互不关闭的话后开者会变成
+        // 「有状态、有焦点、没有 UI」的幽灵浮层，按键全打进看不见的输入框。
+        if self.command_palette.is_some() {
+            self.close_command_palette(cx);
+        }
         self.dismiss_contextual_overlays(cx);
         self.overlay_focus_restore_target = self.focused_edit_target_entity_id(window, cx);
         let input = cx.new(|cx| InputState::new(window, cx));

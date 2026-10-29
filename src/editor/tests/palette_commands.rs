@@ -499,3 +499,32 @@ async fn palette_click_uses_the_revised_query_after_an_empty_result(cx: &mut Tes
     assert_eq!(buffer_text(&editor, cx), "**alpha** one\n\nbeta two\n");
     assert!(editor.read_with(cx, |editor, _| editor.command_palette.is_none()));
 }
+
+/// ⌘P 与 ⇧⌘P 互斥：打开一个必须关掉另一个，不能出现「有焦点、没 UI」的幽灵浮层。
+#[gpui::test]
+async fn quick_open_and_command_palette_close_each_other(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "alpha".to_string(), None)
+    });
+    redraw(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_quick_open(window, cx);
+        assert!(editor.quick_open.is_some());
+        editor.toggle_command_palette(window, cx);
+        assert!(
+            editor.quick_open.is_none(),
+            "打开命令面板后快速切换浮层还开着：它会占着焦点但没有 UI"
+        );
+        assert!(editor.command_palette.is_some());
+    });
+    redraw(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_quick_open(window, cx);
+        assert!(
+            editor.command_palette.is_none(),
+            "打开快速切换后命令面板还开着"
+        );
+        assert!(editor.quick_open.is_some());
+    });
+}
