@@ -3,13 +3,11 @@
 use super::source_mapping::clip_hit_to_span;
 use super::*;
 
-#[derive(Clone)]
-struct HistoryRowLayout {
-    signature: String,
-    kind: BlockKind,
-    height: Option<f32>,
-    scrollbar_height: Option<f32>,
-    folded: bool,
+/// [`Editor::replay_history_group`] 的产物：重做用的正向增量，加上给区域重投影
+/// 用的缓冲区变更（按应用顺序，每条 `old_range` 是它落下之前那一刻的坐标）。
+struct HistoryReplay {
+    forward: Vec<buffer::AppliedEdit>,
+    changes: Vec<buffer::BufferChange>,
 }
 
 impl Editor {
@@ -677,17 +675,285 @@ impl Editor {
         }
     }
 
-    /// 反序重放一组逆操作，返回「重做这一步」需要的那组增量。
-    fn replay_history_group(&mut self, entry: &HistoryEntry) -> Vec<buffer::AppliedEdit> {
+    /// 反序重放一组逆操作，返回「重做这一步」需要的那组增量与这组缓冲变更。
+    fn replay_history_group(&mut self, entry: &HistoryEntry) -> HistoryReplay {
         // 这一步之内缓冲区已经是目标状态，别让重投影拿块树盖掉它。
         self.skip_next_resync = true;
         let mut forward = Vec::with_capacity(entry.edits.len());
+        let mut changes = Vec::with_capacity(entry.edits.len());
         // 反序重放：后发生的改动先退回。返回的那组也按同样的反序记录，
         // 下一次 `replay_history_group` 再反一次就正好是正向时序。
         for edit in entry.edits.iter().rev() {
-            forward.push(self.buffer.edit(edit.new_range.clone(), &edit.removed));
+            let applied = self.buffer.edit(edit.new_range.clone(), &edit.removed);
+            changes.push(buffer::BufferChange {
+                old_range: edit.new_range.clone(),
+                new_len: edit.removed.len(),
+                revision: self.buffer.revision(),
+                origin: self.buffer.shared_writer_id(),
+                newline_delta: edit.removed.bytes().filter(|byte| *byte == b'\n').count() as i64
+                    - applied
+                        .removed
+                        .bytes()
+                        .filter(|byte| *byte == b'\n')
+                        .count() as i64,
+            });
+            forward.push(applied);
         }
-        forward
+        HistoryReplay { forward, changes }
+    }
+
+    /// 把重放落进缓冲区的这组变更只反映到受影响的根块上。
+    ///
+    /// 撤销/重做改动的字节是已知区间，整篇重解析让区间外的每个块都付一遍
+    /// 「重新解析 + 重新挂区间 + 丢折叠与量高」。返回 `false` 表示区域重投影
+    /// 不成立（懒导入未完成、结构外扩、源码模式区间不可信），调用方整篇重建。
+    fn reproject_after_history_replay(
+        &mut self,
+        changes: &[buffer::BufferChange],
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if changes.is_empty() {
+            return true;
+        }
+        let applied = self.reproject_buffer_changes_regionally(changes, false, cx);
+        if applied && self.vim_enabled {
+            // 换上的块实体要按当前 vim 模式重套输入开关；非 vim 模式下新块的
+            // 默认值就是这个状态，不必整篇扫一遍。
+            self.sync_vim_block_carets(cx);
+        }
+        applied
+    }
+
+    /// 把一组按应用顺序给出的缓冲区变更反映到渲染投影上：只重解析与改动相交的
+    /// 根块，区间外的块实体原样保留。返回 `false` 表示区域重投影不成立，
+    /// 调用方必须整篇重建。
+    ///
+    /// 这是分屏共享视图与撤销/重做共用的唯一一份「改动 → 投影」判据：两边都在
+    /// 拿一组已知字节区间去同步块树，口径分开写必然在边界（零宽区间、跨根、
+    /// 区间端点落在根交界）上漂移。
+    pub(crate) fn reproject_buffer_changes_regionally(
+        &mut self,
+        changes: &[buffer::BufferChange],
+        reuse_leaf: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.document.pending_tail().is_some() {
+            return false;
+        }
+        // 源码视图的投影块是 512 行的定长分块：改行数就会移动分块边界（块首退格
+        // 把两块并成一块），只按旧区间重切片给不出新分块。行数不变的编辑可以按
+        // 区间重切片；变了就整篇重建（源码文档的根块数只是「行数 / 512」，便宜）。
+        let source_chunks_hold = changes.iter().all(|change| change.newline_delta == 0);
+        if self.view_mode == ViewMode::Source && !source_chunks_hold {
+            return false;
+        }
+        let mut total = (self.buffer.byte_len() as i64
+            - changes
+                .iter()
+                .map(|change| change.new_len as i64 - change.old_range.len() as i64)
+                .sum::<i64>())
+            .max(0) as usize;
+        // 每条变更各自算出受影响的根块下标；块表在这些步骤里只换区间、不换根，
+        // 所以下标在整个循环里都是同一份。相邻/重叠的区间合并成一段，避免把
+        // 同一根块重解析多次。
+        let mut regions: Vec<(usize, usize)> = Vec::new();
+        for change in changes {
+            let roots = self.document.root_blocks();
+            let mut first = roots
+                .partition_point(|root| {
+                    self.document
+                        .source_span_of(root.entity_id())
+                        .is_some_and(|span| span.end <= change.old_range.start)
+                })
+                .min(roots.len().saturating_sub(1));
+            let last_offset = change
+                .old_range
+                .end
+                .saturating_sub(usize::from(!change.old_range.is_empty()));
+            let mut last = roots
+                .partition_point(|root| {
+                    self.document
+                        .source_span_of(root.entity_id())
+                        .is_some_and(|span| span.end <= last_offset)
+                })
+                .min(roots.len().saturating_sub(1));
+            // 改动只要**碰到**根块边界，两侧的块就可能合并/拆分成别的结构
+            // （删掉两段之间的空行，两段并成一段）：必须把邻块一起重解析，
+            // 否则只刷新一侧，会在投影里留下本该合并的两个块。
+            if first > 0
+                && self
+                    .document
+                    .source_span_of(roots[first - 1].entity_id())
+                    .is_some_and(|span| span.end == change.old_range.start)
+            {
+                first -= 1;
+            }
+            if last + 1 < roots.len()
+                && self
+                    .document
+                    .source_span_of(roots[last + 1].entity_id())
+                    .is_some_and(|span| span.start == change.old_range.end)
+            {
+                last += 1;
+            }
+            // 没有源码区间的根（结构操作刚造出来的空段落）在字节坐标里没有位置：
+            // 它可能正落在改动区里、被重解析吞掉，也可能不在。区域重投影给不出
+            // 判据，只能整篇重建。
+            let neighbours_without_span = |index: usize| {
+                roots
+                    .get(index)
+                    .is_some_and(|root| self.document.source_span_of(root.entity_id()).is_none())
+            };
+            if (first > 0 && neighbours_without_span(first - 1))
+                || neighbours_without_span(last + 1)
+            {
+                return false;
+            }
+            match regions.last_mut() {
+                Some((_, open_end)) if first <= *open_end + 1 => {
+                    *open_end = (*open_end).max(last);
+                }
+                _ => regions.push((first, last)),
+            }
+            // 先记下这一段里所有根的旧区间：平移只处理「整体落在改动之后」的根，
+            // 与改动相交的根（包括界限恰好落在改动区间里的）要按映射逐端修正。
+            let affected_spans: Vec<(EntityId, std::ops::Range<usize>)> = (first..=last)
+                .filter_map(|index| {
+                    roots.get(index).and_then(|root| {
+                        self.document
+                            .source_span_of(root.entity_id())
+                            .map(|span| (root.entity_id(), span))
+                    })
+                })
+                .collect();
+            let delta = change.new_len as i64 - change.old_range.len() as i64;
+            let map_offset = |offset: usize| -> usize {
+                if offset <= change.old_range.start {
+                    offset
+                } else if offset >= change.old_range.end {
+                    (offset as i64 + delta).max(0) as usize
+                } else {
+                    change.old_range.start + change.new_len
+                }
+            };
+            total = (total as i64 + delta).max(0) as usize;
+            self.document
+                .shift_source_spans_after(change.old_range.end, delta, total);
+            for (id, span) in affected_spans {
+                let start = map_offset(span.start).min(total);
+                let end = map_offset(span.end).min(total).max(start);
+                self.document.set_source_span(id, start..end);
+            }
+        }
+
+        if self.view_mode == ViewMode::Source {
+            // 源码投影块是缓冲区的定长切片，不重解析：把区间内的块按新内容
+            // 重新切片，再串一遍围栏状态。
+            for (first, last) in regions {
+                for index in first..=last {
+                    let Some(root) = self.document.root_blocks().get(index).cloned() else {
+                        continue;
+                    };
+                    let span = self
+                        .document
+                        .source_span_of(root.entity_id())
+                        .filter(|span| self.buffer.span_is_trustworthy(span));
+                    let Some(span) = span else {
+                        return false;
+                    };
+                    let text = self.buffer.slice(span);
+                    root.update(cx, |block, cx| {
+                        block.record.set_title(InlineTextTree::plain(text));
+                        block.sync_render_cache();
+                        cx.notify();
+                    });
+                    self.cascade_source_fence_states_after(root.entity_id(), cx);
+                }
+            }
+            self.refresh_source_line_starts(cx);
+            return true;
+        }
+
+        let affected_roots: Vec<_> = regions
+            .iter()
+            .filter_map(|(first, _)| self.document.root_blocks().get(*first).cloned())
+            .collect();
+        let mut refresh_references = affected_roots
+            .iter()
+            .any(|root| self.changed_block_needs_runtime_context_refresh(root, cx));
+        let mut replaced = Vec::new();
+        // 从后往前替换：后面的区间先换掉，前面那些下标就还是这份表里的原值。
+        for (first, last) in regions.into_iter().rev() {
+            let mut previous: Vec<Entity<Block>> = self
+                .document
+                .root_blocks()
+                .get(first..last + 1)
+                .unwrap_or_default()
+                .to_vec();
+            let folded: Vec<bool> = previous.iter().map(|root| root.read(cx).folded).collect();
+            let kinds: Vec<BlockKind> = previous.iter().map(|root| root.read(cx).kind()).collect();
+            while let Some(block) = previous.pop() {
+                let block_state = block.read(cx);
+                previous.extend(block_state.children.iter().cloned());
+                if let Some(runtime) = &block_state.table_runtime {
+                    for cell in runtime.header.iter().chain(runtime.rows.iter().flatten()) {
+                        self.table_cells.remove(&cell.entity_id());
+                    }
+                }
+                self.runtime_context_sensitive_blocks
+                    .remove(&block.entity_id());
+            }
+            let old_count = self.document.root_blocks().len();
+            if self
+                .reproject_root_range(first, last, reuse_leaf, cx)
+                .is_none()
+            {
+                return false;
+            }
+            let count = self.document.root_blocks().len() + (last + 1 - first) - old_count;
+            let installed: Vec<Entity<Block>> = self
+                .document
+                .root_blocks()
+                .iter()
+                .skip(first)
+                .take(count)
+                .cloned()
+                .collect();
+            // 同一位置、同一种类的块沿用折叠态：撤销一次标题里的改动不该把
+            // 折着的标题展开——整篇重建那条路也是按签名/位置把折叠态带回去的。
+            if installed.len() == folded.len()
+                && installed
+                    .iter()
+                    .zip(&kinds)
+                    .all(|(root, kind)| root.read(cx).kind() == *kind)
+            {
+                for (root, folded) in installed.iter().zip(folded) {
+                    if folded {
+                        root.update(cx, |block, cx| {
+                            block.folded = true;
+                            cx.notify();
+                        });
+                    }
+                }
+            }
+            replaced.extend(installed);
+        }
+        refresh_references |= replaced
+            .iter()
+            .any(|root| self.changed_block_needs_runtime_context_refresh(root, cx));
+        let base = self.local_link_base_dir();
+        while let Some(block) = replaced.pop() {
+            replaced.extend(block.read(cx).children.iter().cloned());
+            let table = block.read(cx).record.table.clone();
+            if let Some(table) = table {
+                self.install_table_runtime_for_block(&block, &table, cx);
+            }
+            self.sync_runtime_context_for_block(&block, base.as_deref(), cx);
+        }
+        if refresh_references {
+            self.rebuild_image_runtimes(cx);
+        }
+        true
     }
 
     /// 用缓冲区里的文本重建整棵块树，并把每个根块的区间挂回去。
@@ -734,102 +1000,6 @@ impl Editor {
         }
         // 撤销/切视图重建出的块同样是新实体，按当前模式重套 vim 的输入开关。
         self.sync_vim_block_carets(cx);
-    }
-
-    fn history_row_signature(&self, id: EntityId, block: &Block) -> String {
-        let source = self
-            .document
-            .source_span_of(id)
-            // 撤销收尾这条路上，区间可能是增量重投影留下的坏值（端点落在多字节
-            // 字符中间）。这里只是个签名，答不出就退回块自己的文本——拿坏区间去
-            // `slice` 是 panic，而 panic 换不来任何正确性。判据只有一处：
-            // `TextBuffer::span_is_trustworthy`。
-            .filter(|span| self.buffer.span_is_trustworthy(span))
-            .map(|span| self.buffer.slice(span))
-            .unwrap_or_else(|| block.record.markdown_line(0, None));
-        format!(
-            "{:?}:{}:{}:{:?}:{source}",
-            block.kind(),
-            block.render_depth,
-            block.visible_quote_depth,
-            block.callout_variant
-        )
-    }
-
-    fn capture_history_row_layouts(&self, cx: &App) -> Vec<HistoryRowLayout> {
-        self.document
-            .visible_blocks()
-            .iter()
-            .map(|entry| {
-                let block = entry.entity.read(cx);
-                HistoryRowLayout {
-                    signature: self.history_row_signature(entry.entity.entity_id(), block),
-                    kind: block.kind(),
-                    height: self
-                        .row_stride_cache
-                        .get(&entry.entity.entity_id())
-                        .copied(),
-                    scrollbar_height: self
-                        .row_scrollbar_stride_cache
-                        .get(&entry.entity.entity_id())
-                        .copied(),
-                    folded: block.folded,
-                }
-            })
-            .collect()
-    }
-
-    fn restore_history_row_layouts(
-        &mut self,
-        layouts: &[HistoryRowLayout],
-        cx: &mut Context<Self>,
-    ) {
-        let mut by_signature: HashMap<&str, std::collections::VecDeque<&HistoryRowLayout>> =
-            HashMap::new();
-        for layout in layouts {
-            by_signature
-                .entry(&layout.signature)
-                .or_default()
-                .push_back(layout);
-        }
-        let visible = self.document.visible_blocks().to_vec();
-        let same_length = visible.len() == layouts.len();
-        for (index, entry) in visible.iter().enumerate() {
-            let (signature, kind) = {
-                let block = entry.entity.read(cx);
-                (
-                    self.history_row_signature(entry.entity.entity_id(), block),
-                    block.kind(),
-                )
-            };
-            let layout = by_signature
-                .get_mut(signature.as_str())
-                .and_then(|candidates| candidates.pop_front())
-                .or_else(|| {
-                    same_length
-                        .then(|| layouts.get(index))
-                        .flatten()
-                        .filter(|layout| layout.kind == kind)
-                });
-            let Some(layout) = layout else {
-                continue;
-            };
-            let id = entry.entity.entity_id();
-            // 原文相同的块仍使用原来的量高；发生变化的同类块先沿用高度估计，
-            // 下一帧会按真实布局修正，避免撤销首帧把全文缩成最低行高。
-            if let Some(height) = layout.height {
-                self.row_stride_cache.insert(id, height);
-            }
-            if let Some(height) = layout.scrollbar_height {
-                self.row_scrollbar_stride_cache.insert(id, height);
-            }
-            if layout.folded {
-                entry.entity.update(cx, |block, cx| {
-                    block.folded = true;
-                    cx.notify();
-                });
-            }
-        }
     }
 
     /// 撤销/重做一步的收尾：把选区放回那一步之前的现场。
@@ -979,15 +1149,15 @@ impl Editor {
         self.pending_undo_capture = None;
         self.history_restore_in_progress = true;
         self.clear_cross_block_selection(cx);
-        let layouts = self.capture_history_row_layouts(cx);
-        let forward = self.replay_history_group(&entry);
-        self.rebuild_document_from_buffer(cx);
-        self.restore_history_row_layouts(&layouts, cx);
+        let replay = self.replay_history_group(&entry);
+        if !self.reproject_after_history_replay(&replay.changes, cx) {
+            self.rebuild_document_from_buffer(cx);
+        }
         self.history_restore_in_progress = false;
         self.apply_restored_selection(&entry, cx);
         // 重放留下的区间就是这一步的正向操作，交给重做用。
         self.redo_history.push(HistoryEntry {
-            edits: forward,
+            edits: replay.forward,
             ..current
         });
         self.mark_dirty(cx);
@@ -1015,14 +1185,14 @@ impl Editor {
         self.pending_undo_capture = None;
         self.history_restore_in_progress = true;
         self.clear_cross_block_selection(cx);
-        let layouts = self.capture_history_row_layouts(cx);
-        let forward = self.replay_history_group(&entry);
-        self.rebuild_document_from_buffer(cx);
-        self.restore_history_row_layouts(&layouts, cx);
+        let replay = self.replay_history_group(&entry);
+        if !self.reproject_after_history_replay(&replay.changes, cx) {
+            self.rebuild_document_from_buffer(cx);
+        }
         self.history_restore_in_progress = false;
         self.apply_restored_selection(&entry, cx);
         self.undo_history.push(HistoryEntry {
-            edits: forward,
+            edits: replay.forward,
             ..current
         });
         self.mark_dirty(cx);

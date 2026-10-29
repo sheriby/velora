@@ -77,29 +77,43 @@ impl Editor {
         root_index: usize,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        self.reproject_root_region_impl(root_index, false, cx)
+        self.reproject_root_range(root_index, root_index, false, cx)
     }
 
-    pub(crate) fn reproject_shared_root_region(&mut self, root_index: usize, cx: &mut Context<Self>) -> Option<usize> {
-        self.reproject_root_region_impl(root_index, true, cx)
+    /// [`reproject_root_region`](Self::reproject_root_region) 的多根版本：
+    /// 把 `[first, last]` 这几根一起当成一段重解析。撤销一次回车会删掉两根之间的
+    /// 换行、把它们并成一根，只按单根重解析会在本段行数处给不出根边界。
+    pub(crate) fn reproject_root_range(
+        &mut self,
+        first: usize,
+        last: usize,
+        reuse_leaf: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        self.reproject_root_region_impl(first, last, reuse_leaf, cx)
     }
 
-    fn reproject_root_region_impl(&mut self, root_index: usize, reuse_leaf: bool, cx: &mut Context<Self>) -> Option<usize> {
+    fn reproject_root_region_impl(&mut self, first: usize, last: usize, reuse_leaf: bool, cx: &mut Context<Self>) -> Option<usize> {
         const REGION_PROBE_LINES: usize = 2;
         // 懒导入没建完时接缝归尾部那段，窗口解析与整篇解析对不上，走整篇那条路。
         if self.document.pending_tail().is_some() {
             return None;
         }
-        let roots = self.document.root_blocks();
-        let root = roots.get(root_index)?.clone();
-        let span = self.document.source_span_of(root.entity_id())?;
-        if span.end > self.buffer.byte_len() {
+        if last < first {
             return None;
         }
-        let line_base = self.buffer.line_of(span.start);
-        let last_line = self.buffer.line_of(span.end);
+        let roots = self.document.root_blocks();
+        let root = roots.get(first)?.clone();
+        let last_root = roots.get(last)?.clone();
+        let span_start = self.document.source_span_of(root.entity_id())?.start;
+        let span_end = self.document.source_span_of(last_root.entity_id())?.end;
+        if span_end > self.buffer.byte_len() {
+            return None;
+        }
+        let line_base = self.buffer.line_of(span_start);
+        let last_line = self.buffer.line_of(span_end);
         let region_lines = last_line + 1 - line_base;
-        let previous_root_is_list_item = root_index
+        let previous_root_is_list_item = first
             .checked_sub(1)
             .and_then(|index| roots.get(index))
             .is_some_and(|previous| previous.read(cx).kind().is_list_item());
@@ -129,7 +143,7 @@ impl Editor {
         }
         self.roots_reprojected
             .set(self.roots_reprojected.get() + within as u64);
-        if reuse_leaf && within == 1 {
+        if reuse_leaf && within == 1 && last == first {
             if let Some(next) = new_roots.first() {
                 let record = next.read(cx).record.clone();
                 let reusable = root.read(cx).kind() == next.read(cx).kind()
@@ -153,7 +167,7 @@ impl Editor {
         }
         self.attach_root_spans(&new_roots[..within], &spans[..within], line_base);
         self.document
-            .replace_root_range(root_index..root_index + 1, new_roots[..within].to_vec(), cx);
+            .replace_root_range(first..last + 1, new_roots[..within].to_vec(), cx);
         Some(region_lines)
     }
 

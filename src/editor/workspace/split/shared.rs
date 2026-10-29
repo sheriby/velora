@@ -1,5 +1,4 @@
 use super::*;
-use crate::editor::ViewMode;
 use crate::editor::buffer::BufferChange;
 
 impl Editor {
@@ -732,56 +731,15 @@ impl Editor {
         let changes: Vec<_> = changes
             .iter()
             .filter(|change| change.revision > self.split_projection_revision)
+            .cloned()
             .collect();
         if changes.is_empty() {
             return;
         }
         // 共享字节已被另一视图修改，旧块的映射此时不能再切新缓冲区。
         let mut selection = self.last_selection_snapshot.clone();
-        let total_delta: i64 = changes
-            .iter()
-            .map(|change| change.new_len as i64 - change.old_range.len() as i64)
-            .sum();
-        let mut total = (self.buffer.byte_len() as i64 - total_delta).max(0) as usize;
-        let mut affected = std::collections::BTreeSet::new();
-        let mut rebuild = false;
-        for change in changes {
-            let roots = self.document.root_blocks();
-            let first = roots
-                .partition_point(|root| {
-                    self.document
-                        .source_span_of(root.entity_id())
-                        .is_some_and(|span| span.end <= change.old_range.start)
-                })
-                .min(roots.len().saturating_sub(1));
-            let last_offset = change
-                .old_range
-                .end
-                .saturating_sub(usize::from(!change.old_range.is_empty()));
-            let last = roots
-                .partition_point(|root| {
-                    self.document
-                        .source_span_of(root.entity_id())
-                        .is_some_and(|span| span.end <= last_offset)
-                })
-                .min(roots.len().saturating_sub(1));
-            let previous = roots.get(first).and_then(|root| {
-                self.document
-                    .source_span_of(root.entity_id())
-                    .map(|span| (root.entity_id(), span))
-            });
-            rebuild |= first != last;
-            affected.insert(first);
+        for change in &changes {
             let delta = change.new_len as i64 - change.old_range.len() as i64;
-            total = (total as i64 + delta).max(0) as usize;
-            self.document
-                .shift_source_spans_after(change.old_range.end, delta, total);
-            if let Some((id, span)) = previous {
-                self.document.set_source_span(
-                    id,
-                    span.start..(span.end as i64 + delta).max(span.start as i64) as usize,
-                );
-            }
             let map = |offset: usize| {
                 if offset <= change.old_range.start {
                     offset
@@ -793,88 +751,11 @@ impl Editor {
             };
             selection.range = map(selection.range.start)..map(selection.range.end);
         }
-        let references_changed = affected
-            .iter()
-            .filter_map(|index| self.document.root_blocks().get(*index))
-            .any(|block| self.changed_block_needs_runtime_context_refresh(block, cx));
-        let mut replaced = Vec::new();
-        if self.view_mode == ViewMode::Source && !rebuild {
-            for index in affected {
-                if let Some(root) = self.document.root_blocks().get(index).cloned() {
-                    if let Some(span) = self
-                        .document
-                        .source_span_of(root.entity_id())
-                        .filter(|span| self.buffer.span_is_trustworthy(span))
-                    {
-                        let text = self.buffer.slice(span);
-                        root.update(cx, |block, cx| {
-                            block
-                                .record
-                                .set_title(crate::components::InlineTextTree::plain(text));
-                            block.sync_render_cache();
-                            cx.notify();
-                        });
-                        self.cascade_source_fence_states_after(root.entity_id(), cx);
-                    }
-                }
-            }
-            self.refresh_source_line_starts(cx);
-        } else if !rebuild {
-            for index in affected.into_iter().rev() {
-                let mut previous: Vec<_> = self
-                    .document
-                    .root_blocks()
-                    .get(index)
-                    .cloned()
-                    .into_iter()
-                    .collect();
-                while let Some(block) = previous.pop() {
-                    let block_state = block.read(cx);
-                    previous.extend(block_state.children.iter().cloned());
-                    if let Some(runtime) = &block_state.table_runtime {
-                        for cell in runtime.header.iter().chain(runtime.rows.iter().flatten()) {
-                            self.table_cells.remove(&cell.entity_id());
-                        }
-                    }
-                    self.runtime_context_sensitive_blocks
-                        .remove(&block.entity_id());
-                }
-                let old_count = self.document.root_blocks().len();
-                if self.reproject_shared_root_region(index, cx).is_none() {
-                    rebuild = true;
-                    break;
-                }
-                let count = self.document.root_blocks().len() + 1 - old_count;
-                replaced.extend(
-                    self.document
-                        .root_blocks()
-                        .iter()
-                        .skip(index)
-                        .take(count)
-                        .cloned(),
-                );
-            }
-        }
-        if rebuild {
+        // 分屏重投影要尽量保留原块实体（复用叶子），撤销/重做那条路则不要，
+        // 其余口径（受影响根的判定、区间平移、引用注册表刷新）只有一处实现。
+        let applied = self.reproject_buffer_changes_regionally(&changes, true, cx);
+        if !applied {
             self.rebuild_document_from_buffer(cx);
-        }
-        if !rebuild && self.view_mode == ViewMode::Rendered {
-            let base = self.local_link_base_dir();
-            let refresh_references = references_changed
-                || replaced
-                    .iter()
-                    .any(|block| self.changed_block_needs_runtime_context_refresh(block, cx));
-            while let Some(block) = replaced.pop() {
-                replaced.extend(block.read(cx).children.iter().cloned());
-                let table = block.read(cx).record.table.clone();
-                if let Some(table) = table {
-                    self.install_table_runtime_for_block(&block, &table, cx);
-                }
-                self.sync_runtime_context_for_block(&block, base.as_deref(), cx);
-            }
-            if refresh_references {
-                self.rebuild_image_runtimes(cx);
-            }
         }
         // 只同步发生变化的视图状态，后台分屏不能抢走当前输入焦点。
         self.apply_selection_snapshot_in_current_mode(&selection, cx);

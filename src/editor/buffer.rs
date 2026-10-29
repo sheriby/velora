@@ -28,6 +28,9 @@ pub(crate) struct BufferChange {
     pub(crate) new_len: usize,
     pub(crate) revision: u64,
     pub(crate) origin: u64,
+    /// 这一笔换进来的文本比换掉的多了几个换行。源码视图的投影块按 512 行切，
+    /// 行数一变分块边界就整体挪位，区域重投影只能整篇重建。
+    pub(crate) newline_delta: i64,
 }
 
 macro_rules! shared_read {
@@ -735,6 +738,8 @@ impl TextBuffer {
                 new_len: text.len(),
                 revision: self.revision,
                 origin: self.identity,
+                newline_delta: text.bytes().filter(|byte| *byte == b'\n').count() as i64
+                    - removed.bytes().filter(|byte| *byte == b'\n').count() as i64,
             });
             self.shared_views.retain(|view| {
                 let Some(view) = view.upgrade() else { return false; };

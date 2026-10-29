@@ -976,3 +976,127 @@ async fn splitting_a_block_records_only_the_seam_in_the_undo_group(cx: &mut Test
     let (spans, buffer_text) = root_block_spans(&editor, cx);
     assert_spans_tile_the_content(&span_ranges(&spans), &buffer_text, "撤销拆块之后");
 }
+
+/// 一次 ⌘Z 只重投影改动所在的那几根块，不把整篇重新解析一遍。
+///
+/// 撤销重放只动了已知区间，但收尾原先走 `rebuild_document_from_buffer`：渲染态
+/// 整篇重解析建根块、重建表格运行时（内含整篇引用注册表），再按签名把全量可见块
+/// 的高度重新挂一遍。10 MiB 档一次撤销是秒级冻结；这条钉住「重投影的根块数跟着
+/// 改动走，不跟着文档长」。
+#[gpui::test]
+async fn undoing_a_typing_burst_reprojects_only_the_edited_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..200)
+        .map(|index| format!("第 {index} 段正文。\n\n"))
+        .collect::<String>();
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown.clone(), None));
+    redraw(cx);
+    let root_count = editor.read_with(cx, |editor, _cx| editor.document.root_blocks().len());
+    assert!(root_count > 100, "夹具得够大才测得出整篇重建：{root_count} 根");
+
+    cx.simulate_input("xyz");
+    redraw(cx);
+    let rebuilt_before =
+        editor.read_with(cx, |editor, _cx| editor.roots_reprojected.get());
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    let rebuilt = editor.read_with(cx, |editor, _cx| editor.roots_reprojected.get())
+        - rebuilt_before;
+
+    assert_eq!(
+        editor.read_with(cx, |editor, _cx| editor.buffer.text()),
+        markdown,
+        "撤销没把刚打的字换回去"
+    );
+    assert!(
+        rebuilt <= 2,
+        "一次 ⌘Z 重投影了 {rebuilt} 根块（全文 {root_count} 根），只该动改动所在的那一根"
+    );
+}
+
+/// 重做同样只重投影改动所在的那一根。
+#[gpui::test]
+async fn redoing_a_typing_burst_reprojects_only_the_edited_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..200)
+        .map(|index| format!("第 {index} 段正文。\n\n"))
+        .collect::<String>();
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    cx.simulate_input("xyz");
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+
+    let rebuilt_before =
+        editor.read_with(cx, |editor, _cx| editor.roots_reprojected.get());
+    editor.update(cx, |editor, cx| editor.redo_document(cx));
+    redraw(cx);
+    let rebuilt = editor.read_with(cx, |editor, _cx| editor.roots_reprojected.get())
+        - rebuilt_before;
+
+    assert!(
+        editor
+            .read_with(cx, |editor, _cx| editor.buffer.text())
+            .contains("xyz"),
+        "重做没把刚打的字放回去"
+    );
+    assert!(
+        rebuilt <= 2,
+        "一次重做重投影了 {rebuilt} 根块，只该动改动所在的那一根"
+    );
+}
+
+/// 撤销一次拆块要把两根并回一根，同时也只重解析接缝那一段。
+#[gpui::test]
+async fn undoing_a_block_split_merges_the_pair_without_reparsing_the_document(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let markdown = (0..200)
+        .map(|index| format!("第 {index} 段正文。\n\n"))
+        .collect::<String>();
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown.clone(), None));
+    redraw(cx);
+    let root_count = editor.read_with(cx, |editor, _cx| editor.document.root_blocks().len());
+    let target = editor.read_with(cx, |editor, _cx| {
+        editor.document.root_blocks()[5].clone()
+    });
+    let length = target.read_with(cx, |block, _cx| block.visible_len());
+    editor.update(cx, |editor, _cx| editor.focus_block(target.entity_id()));
+    cx.update(|_window, cx| {
+        target.update(cx, |block, _cx| block.selected_range = length..length);
+    });
+    cx.dispatch_action(Newline);
+    redraw(cx);
+    assert_eq!(
+        editor.read_with(cx, |editor, _cx| editor.document.root_blocks().len()),
+        root_count + 1,
+        "回车没把这一段拆成两根"
+    );
+
+    let rebuilt_before =
+        editor.read_with(cx, |editor, _cx| editor.roots_reprojected.get());
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    let rebuilt = editor.read_with(cx, |editor, _cx| editor.roots_reprojected.get())
+        - rebuilt_before;
+
+    assert_eq!(
+        editor.read_with(cx, |editor, _cx| editor.buffer.text()),
+        markdown,
+        "撤销拆块没把接缝换回去"
+    );
+    assert_eq!(
+        editor.read_with(cx, |editor, _cx| editor.document.root_blocks().len()),
+        root_count,
+        "撤销拆块之后两根没并回一根"
+    );
+    assert!(
+        rebuilt <= 4,
+        "撤销一次拆块重投影了 {rebuilt} 根块（全文 {root_count} 根），只该动接缝两侧"
+    );
+}

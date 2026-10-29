@@ -1674,14 +1674,15 @@ async fn reattaching_root_spans_does_not_scan_candidates_per_block(cx: &mut Test
     );
 }
 
-/// 一次 ⌘Z 只许重建一遍整篇引用注册表。
+/// 撤销只在改动真的碰了引用/定义行时才重建整篇引用注册表。
 ///
-/// `rebuild_document_from_buffer` 原来先 `rebuild_table_runtimes`（它的收尾已经调了
-/// `rebuild_image_runtimes`）再直接调一次 `rebuild_image_runtimes`：同一份缓冲区、同一棵
-/// 树连着重建两遍。10 MiB 档一次 766ms，撤销里白付一遍。这条钉成**恰好一次**——少一遍
-/// 说明表格那条收尾被挪了，多一遍说明重复调用又回来了。
+/// 以前撤销整篇重解析，注册表总是跟着表格收尾重建一遍（10 MiB 档 766ms）；
+/// 区域重投影之后，没碰定义行的撤销一次都不该付。正控保证收窄没把该动的漏掉：
+/// 改定义行本身，撤销必须重建。
 #[gpui::test]
-async fn undoing_once_rebuilds_the_reference_registry_exactly_once(cx: &mut TestAppContext) {
+async fn undoing_rebuilds_the_reference_registry_only_for_definition_changes(
+    cx: &mut TestAppContext,
+) {
     init_editor_test_app(cx);
     let markdown = (0..40)
         .map(|index| format!("## 第 {index} 节\n\n[asset{index}]: ./assets/{index}.png\n"))
@@ -1700,10 +1701,39 @@ async fn undoing_once_rebuilds_the_reference_registry_exactly_once(cx: &mut Test
     cx.run_until_parked();
     let after = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
     assert_eq!(
-        after - before,
-        1,
-        "一次撤销重建了 {} 遍整篇引用注册表，应当是恰好一遍",
+        after, before,
+        "撤销标题里的改动重建了 {} 遍整篇引用注册表，这次改动没碰定义行",
         after - before
+    );
+
+    // 正控：改定义行本身。
+    let definition = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|root| {
+                root.read(cx)
+                    .record
+                    .title_markdown()
+                    .contains("[asset0]:")
+            })
+            .cloned()
+            .expect("夹具里应有定义行")
+    });
+    definition.update(cx, |block, cx| {
+        block.replace_text_in_visible_range(0..0, "x", None, false, cx);
+    });
+    cx.run_until_parked();
+    let before_definition_undo =
+        editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    cx.run_until_parked();
+    let after_definition_undo =
+        editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    assert!(
+        after_definition_undo > before_definition_undo,
+        "撤销定义行上的改动没重建引用注册表"
     );
 }
 
