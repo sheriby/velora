@@ -562,3 +562,44 @@ async fn markdown_source_mode_highlights_with_monospace_pipeline(cx: &mut TestAp
     });
 }
 
+
+/// 代码块里选中多行按 Tab：逐行加缩进，不能拿四个空格把选区整段替换掉。
+#[gpui::test]
+async fn tab_in_a_code_block_indents_every_selected_line(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "```\na\nb\nc\n```\n".to_string(), None)
+    });
+    redraw(cx);
+    let code = editor.read_with(cx, |editor, _cx| {
+        editor.document.root_blocks()[0].clone()
+    });
+    code.update_in(cx, |block, window, cx| {
+        block.selected_range = 0..5;
+        block.selection_reversed = false;
+        block.on_indent_block(&crate::components::IndentBlock, window, cx);
+        assert_eq!(block.display_text(), "    a\n    b\n    c");
+        assert_eq!(block.selected_range, 4..17, "选区没有跟着缩进右移");
+    });
+}
+
+/// 代码块里 Shift+Tab：逐行去掉至多四个空格的缩进。
+#[gpui::test]
+async fn shift_tab_in_a_code_block_outdents_every_selected_line(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "```\n    a\n    b\n```\n".to_string(), None)
+    });
+    redraw(cx);
+    let code = editor.read_with(cx, |editor, _cx| {
+        editor.document.root_blocks()[0].clone()
+    });
+    code.update_in(cx, |block, window, cx| {
+        let len = block.display_text().len();
+        block.selected_range = 0..len;
+        block.selection_reversed = false;
+        block.on_outdent_block(&crate::components::OutdentBlock, window, cx);
+        assert_eq!(block.display_text(), "a\nb");
+        assert_eq!(block.selected_range, 0..3, "选区没有跟着缩进左移");
+    });
+}

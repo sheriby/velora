@@ -597,9 +597,99 @@ impl Block {
             cx.emit(BlockEvent::RequestIndent);
             return;
         }
-        if self.kind() == BlockKind::Paragraph || self.kind().is_code_block() {
+        if self.kind().is_code_block() {
+            self.indent_code_block_selection(window, cx);
+            return;
+        }
+        if self.kind() == BlockKind::Paragraph {
             self.replace_text_in_range(None, "    ", window, cx);
         }
+    }
+
+    /// 选区在显示文本里覆盖了哪些硬行，返回各行行首偏移。
+    fn selected_line_starts(display: &str, selection: &std::ops::Range<usize>) -> Vec<usize> {
+        let mut line_ranges = Vec::new();
+        let mut line_start = 0usize;
+        for (index, byte) in display.bytes().enumerate() {
+            if byte == b'\n' {
+                line_ranges.push(line_start..index + 1);
+                line_start = index + 1;
+            }
+        }
+        if line_start < display.len() {
+            line_ranges.push(line_start..display.len());
+        }
+        line_ranges
+            .into_iter()
+            .filter(|line| line.start < selection.end && line.end > selection.start)
+            .map(|line| line.start)
+            .collect()
+    }
+
+    /// 代码块里的 Tab：没有跨行选区时插入四个空格；选区覆盖多行时逐行行首
+    /// 补缩进——拿四个空格替换整段选区会把选中的代码直接删掉。
+    fn indent_code_block_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let display = self.display_text();
+        let selection = self.selected_range.clone();
+        let line_starts = Self::selected_line_starts(&display, &selection);
+        if line_starts.len() <= 1 {
+            self.replace_text_in_range(None, "    ", window, cx);
+            return;
+        }
+        let shift = |offset: usize| offset + 4 * line_starts.iter().filter(|start| **start <= offset).count();
+        let new_start = shift(selection.start);
+        let new_end = selection.end + 4 * line_starts.iter().filter(|start| **start < selection.end).count();
+        for start in line_starts.iter().rev() {
+            self.replace_text_in_visible_range(*start..*start, "    ", None, false, cx);
+        }
+        self.selected_range = new_start..new_end.max(new_start);
+        self.selection_reversed = false;
+        cx.notify();
+    }
+
+    /// 代码块里的 Shift+Tab：逐行去掉至多四个空格（或一个制表符）的缩进。
+    fn outdent_code_block_selection(&mut self, cx: &mut Context<Self>) {
+        let display = self.display_text();
+        let selection = self.selected_range.clone();
+        let line_starts = Self::selected_line_starts(&display, &selection);
+        let removals: Vec<(usize, usize)> = line_starts
+            .into_iter()
+            .filter_map(|start| {
+                let line = &display[start..];
+                if line.starts_with('\t') {
+                    Some((start, 1))
+                } else {
+                    let spaces = line.bytes().take_while(|byte| *byte == b' ').count().min(4);
+                    (spaces > 0).then_some((start, spaces))
+                }
+            })
+            .collect();
+        if removals.is_empty() {
+            return;
+        }
+        let map = |offset: usize| -> usize {
+            let mut shift = 0usize;
+            for (start, count) in &removals {
+                let end = *start + count;
+                if end <= offset {
+                    shift += count;
+                } else if offset > *start {
+                    // 偏移落在被删掉的缩进里：收到该行行首。
+                    return start.saturating_sub(shift);
+                } else {
+                    break;
+                }
+            }
+            offset - shift
+        };
+        let new_start = map(selection.start);
+        let new_end = map(selection.end);
+        for (start, count) in removals.iter().rev() {
+            self.replace_text_in_visible_range(*start..*start + *count, "", None, false, cx);
+        }
+        self.selected_range = new_start..new_end.max(new_start);
+        self.selection_reversed = false;
+        cx.notify();
     }
 
     pub(crate) fn on_outdent_block(
@@ -618,6 +708,10 @@ impl Block {
         }
         if self.can_outdent_list_nesting() {
             cx.emit(BlockEvent::RequestOutdent);
+            return;
+        }
+        if self.kind().is_code_block() {
+            self.outdent_code_block_selection(cx);
         }
     }
 
