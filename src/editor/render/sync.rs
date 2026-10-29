@@ -144,17 +144,25 @@ impl Editor {
             if viewport_height > 0.0
                 && let Some(index) = index
             {
-                let total = self.document.visible_blocks().len().max(1);
-                let estimate_y = content_height * (index as f32 + 0.5) / total as f32;
+                // 行计划的前缀按实测行高累加（未量行用下界）：拿它当跳转落点
+                // 比 `index/total` 的平均比例精确一个量级——行高不均匀的文档
+                //（首屏大表格/代码块）里平均比例能偏出几屏，先跳错再靠爬行补。
+                let (estimate_top, estimate_bottom) = self
+                    .estimated_row_span_for_block(focused_block.entity_id())
+                    .unwrap_or_else(|| {
+                        let total = self.document.visible_blocks().len().max(1);
+                        let center = content_height * (index as f32 + 0.5) / total as f32;
+                        (center, center)
+                    });
                 let mut offset = self.scroll_handle.offset();
                 let content_top = -f32::from(offset.y);
                 let target_y = match placement {
-                    ScrollPlacement::Top => -estimate_y,
-                    ScrollPlacement::Bottom => viewport_height - estimate_y,
+                    ScrollPlacement::Top => -estimate_top,
+                    ScrollPlacement::Bottom => viewport_height - estimate_bottom,
                     // 跳转只求可见：估算落点在视口上方就贴顶，否则贴底。
-                    ScrollPlacement::Reveal if estimate_y < content_top => -estimate_y,
-                    ScrollPlacement::Reveal => viewport_height - estimate_y,
-                    _ => -(estimate_y - viewport_height * 0.5),
+                    ScrollPlacement::Reveal if estimate_top < content_top => -estimate_top,
+                    ScrollPlacement::Reveal => viewport_height - estimate_bottom,
+                    _ => viewport_height * 0.5 - (estimate_top + estimate_bottom) * 0.5,
                 };
                 let max_offset_y = f32::from(self.scroll_handle.max_offset().y).max(0.0);
                 let target_y = target_y.min(0.0).max(-max_offset_y);

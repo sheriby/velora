@@ -1314,3 +1314,63 @@ async fn mount_check_locates_the_row_by_visible_index(cx: &mut TestAppContext) {
         "一次视口锚换算比较了 {probes} 个行成员：挂载判断仍在逐行扫"
     );
 }
+
+/// 行高不均匀的文档里跳到靠后的块：落点按行计划实测前缀，一次跳到位，
+/// 不该先按「块序号 / 总块数」平均比例偏出几屏再爬回来。
+#[gpui::test]
+async fn jumping_to_a_late_block_lands_on_its_measured_row(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut source = String::from("```rust\n");
+    for index in 0..600 {
+        source.push_str(&format!("let value_{index} = {index};\n"));
+    }
+    source.push_str("```\n\n");
+    for index in 0..60 {
+        source.push_str(&format!("段落 {index}\n\n"));
+    }
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, source, None)
+    });
+    redraw(cx);
+    redraw(cx);
+    let target = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).display_text() == "段落 50")
+            .map(|visible| visible.entity.clone())
+            .expect("目标段落")
+    });
+    editor.update(cx, |editor, cx| {
+        editor.focus_block(target.entity_id());
+        editor.pending_scroll_active_block_into_view = true;
+        editor.pending_scroll_placement = crate::editor::ScrollPlacement::Top;
+        editor.pending_scroll_recheck_after_layout = false;
+        editor.scroll_settle_frames = 8;
+        cx.notify();
+    });
+    // 直接走一次「目标未挂载」的滚动交还：目标此刻没有任何几何，落点只能估计。
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.apply_pending_scroll_into_view(window, cx);
+        });
+    });
+    // 只画一帧：下一帧目标就有真实几何、会被精确对齐，掩掉首跳的偏差。
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        let viewport = editor.scroll_handle.bounds();
+        let target_top = target
+            .read(cx)
+            .last_bounds
+            .map(|bounds| bounds.top())
+            .expect("目标应已挂载并绘制");
+        assert!(
+            (f32::from(target_top - viewport.top())).abs() <= f32::from(viewport.size.height),
+            "首跳后目标离视口顶 {target_top:?}（视口 {viewport:?}）：估计落点偏出一屏"
+        );
+    });
+}

@@ -905,6 +905,21 @@ impl Editor {
     ///
     /// 没量过的行只是下界估计，所以它只能保证把目标行拉进窗口，精确对齐还得
     /// 靠下一帧的真实几何——与标签切回的交还同一套路（`anchor_scroll_y`）。
+    /// 块所在行的估计上下沿（内容坐标，像素）：已量行精确、未量行按行计划的
+    /// 下界。跳转滚动拿它当落点，别按 `index/total` 的平均比例猜。
+    pub(super) fn estimated_row_span_for_block(&self, entity_id: EntityId) -> Option<(f32, f32)> {
+        let plan = self.rendered_row_plan.as_ref()?;
+        let visible_index = self.document.visible_index_for_entity_id(entity_id)?;
+        let row = plan
+            .visible_starts
+            .partition_point(|start| *start <= visible_index)
+            .saturating_sub(1);
+        let prefix = plan.stride_prefix();
+        let top = *prefix.nonnegative.get(row)?;
+        let bottom = prefix.nonnegative.get(row + 1).copied().unwrap_or(top);
+        Some((top, bottom))
+    }
+
     fn estimated_scroll_y_for_block(&self, entity_id: EntityId) -> Option<Pixels> {
         let plan = self.rendered_row_plan.as_ref()?;
         let visible_index = self.document.visible_index_for_entity_id(entity_id)?;
