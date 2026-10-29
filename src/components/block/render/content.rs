@@ -127,11 +127,15 @@ impl Block {
                         cx,
                     ));
                 }
-                TableCellInlineImageSegment::Image { markdown, syntax } => {
-                    if let Some(runtime) = self.image_runtime_for_syntax(syntax) {
+                TableCellInlineImageSegment::Image { syntax, .. } => {
+                    if let Some(runtime) = self.image_runtime_for_syntax(syntax.clone()) {
                         children.push(self.render_inline_image_content(&runtime, theme, strings));
                     } else {
-                        let tree = crate::components::InlineTextTree::plain(markdown);
+                        let fallback =
+                            crate::components::markdown::image::unavailable_image_fallback_text(
+                                &syntax,
+                            );
+                        let tree = crate::components::InlineTextTree::plain(fallback.to_string());
                         children.extend(self.render_inline_tree_children(
                             &tree,
                             theme,

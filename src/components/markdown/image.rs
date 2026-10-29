@@ -27,6 +27,15 @@ pub(crate) struct ImageSyntax {
     pub(crate) target: ImageTarget,
 }
 
+/// 单元格图片解析不出可用来源时的降级文本（评审 P146，判据单点）。
+///
+/// 与 CommonMark 的图片语义一致显示 alt。「标题整格」与「行内分词」两条
+/// 渲染路径共用这一处；整格路径曾回退渲染整段 markdown 原文（`!` 与括号
+/// 齐出），同一张表在不同渲染时刻会看到两种失败表现。
+pub(crate) fn unavailable_image_fallback_text(syntax: &ImageSyntax) -> &str {
+    &syntax.alt
+}
+
 /// Inline image/text segment used only by native table-cell rendering.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TableCellInlineImageSegment {

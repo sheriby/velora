@@ -655,7 +655,7 @@ impl Block {
                             ));
                         } else {
                             self.push_text_word_segments(
-                                &syntax.alt,
+                                crate::components::markdown::image::unavailable_image_fallback_text(&syntax),
                                 span,
                                 theme,
                                 base_color,

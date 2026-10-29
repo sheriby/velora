@@ -3,6 +3,7 @@ mod tests {
         ImageReferenceDefinition, ImageResolvedSource, ImageSyntax, ImageTarget,
         TableCellInlineImageSegment, normalize_reference_label, parse_image_reference_definitions,
         parse_standalone_image, parse_table_cell_inline_images, resolve_image_source,
+        unavailable_image_fallback_text,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -10,6 +11,46 @@ mod tests {
 
     /// 只用来占位：阅读视图的解析断言只看路径，不看像素。
     const PNG_FIXTURE: [u8; 8] = [0x89, b'P', b'N', b'G', 1, 2, 3, 4];
+
+    /// 两条单元格图片渲染路径的失败降级必须走同一判据（评审 P146）：
+    /// 「标题整格」路径曾回退渲染整段 markdown 原文（`!` 与括号齐出），
+    /// 「行内分词」路径只显示 alt——同一张表在不同渲染时刻两种失败表现。
+    /// 统一为显示 alt（与 CommonMark 图片语义一致），判据单点在本模块。
+    #[test]
+    fn unavailable_image_fallback_is_a_single_shared_criterion() {
+        let title_cell_path = include_str!("../../block/render/content.rs");
+        let inline_word_path = include_str!("../../block/render/inline_visuals.rs");
+        for source in [title_cell_path, inline_word_path] {
+            assert!(
+                source.contains("unavailable_image_fallback_text("),
+                "单元格图片渲染路径的失败分支必须走共享判据"
+            );
+        }
+        assert!(
+            !title_cell_path.contains("InlineTextTree::plain(markdown)"),
+            "整格路径不得再回退渲染整段 markdown 原文"
+        );
+    }
+
+    /// 判据本身：降级文本就是 alt（直连与引用两种写法一致），不再是源码形态。
+    #[test]
+    fn unavailable_image_fallback_text_is_the_alt() {
+        let direct = ImageSyntax {
+            alt: "架构图".to_string(),
+            target: ImageTarget::Direct {
+                src: "./missing.png".to_string(),
+                title: None,
+            },
+        };
+        assert_eq!(unavailable_image_fallback_text(&direct), "架构图");
+        let reference = ImageSyntax {
+            alt: String::new(),
+            target: ImageTarget::Reference {
+                label: "logo".to_string(),
+            },
+        };
+        assert_eq!(unavailable_image_fallback_text(&reference), "");
+    }
 
     /// 造一个 `assets/` 目录，里面放三种真实文件名（含空格、含字面 `%`、含中文）。
     fn fixture_dir() -> PathBuf {
