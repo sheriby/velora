@@ -249,3 +249,68 @@ async fn wikilink_traversal_target_is_rejected(cx: &mut TestAppContext) {
     let _ = std::fs::remove_dir_all(root);
     let _ = std::fs::remove_file(&escaped);
 }
+
+/// `[[目录/文件名]]` 形式的双链要按相对路径打开，而不是静默无动作。
+#[gpui::test]
+async fn wikilink_with_a_subdirectory_target_opens_the_relative_file(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = temp_fixture_dir().join(format!("velora-wikilink-sub-{}", uuid::Uuid::new_v4()));
+    let notes = root.join("notes");
+    std::fs::create_dir_all(&notes).expect("create notes dir");
+    std::fs::write(notes.join("alpha.md"), "# alpha\n").expect("write alpha");
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_wikilink("notes/alpha".into(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.active_document_path(),
+            Some(&crate::file_url::canonical_path(notes.join("alpha.md"))),
+            "子路径双链没有打开对应文件"
+        );
+    });
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 没有工作区根时，新建双链文件落在当前文档旁边，不落进程当前目录。
+#[gpui::test]
+async fn wikilink_without_a_workspace_root_creates_beside_the_document(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let directory =
+        temp_fixture_dir().join(format!("velora-wikilink-beside-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&directory).expect("create directory");
+    let document_path = directory.join("note.md");
+    std::fs::write(&document_path, "正文\n").expect("write document");
+    let (editor, cx) = cx.add_window_view({
+        let path = document_path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "正文\n".to_string(), Some(path))
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_wikilink("fresh note".into(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    assert!(
+        directory.join("fresh note.md").is_file(),
+        "新文件没有建在文档旁边"
+    );
+    let cwd_candidate = std::env::current_dir()
+        .expect("cwd")
+        .join("fresh note.md");
+    assert!(
+        !cwd_candidate.is_file(),
+        "新文件落进了进程当前目录"
+    );
+    let _ = std::fs::remove_dir_all(&directory);
+}

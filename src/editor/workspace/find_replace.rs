@@ -299,6 +299,11 @@ impl Editor {
             return;
         }
         let needle = target.to_lowercase();
+        // Observant 风格的子路径双链（`[[目录/文件名]]`）：按相对工作区根的路径
+        // 比对，带不带扩展名都认。只做 stem/文件名全等的话它永远匹配不上，
+        // 随后又因名字里带 `/` 被判非法，点击就静默无动作。
+        let normalized = target.replace('\\', "/").to_lowercase();
+        let root_for_match = self.workspace.root.clone();
         let found = self.workspace_text_files().into_iter().find(|path| {
             let stem = path
                 .file_stem()
@@ -306,8 +311,22 @@ impl Editor {
             let name = path
                 .file_name()
                 .map(|name| name.to_string_lossy().to_lowercase());
-            stem.as_deref() == Some(needle.as_str())
+            if stem.as_deref() == Some(needle.as_str())
                 || name.as_deref() == Some(needle.as_str())
+            {
+                return true;
+            }
+            let Some(root) = root_for_match.as_ref() else {
+                return false;
+            };
+            let Ok(relative) = path.strip_prefix(root) else {
+                return false;
+            };
+            let relative = relative.to_string_lossy().replace('\\', "/").to_lowercase();
+            relative == normalized
+                || relative
+                    .rsplit_once('.')
+                    .is_some_and(|(without_extension, _)| without_extension == normalized)
         });
         if let Some(path) = found {
             // 链接目标按预览标签打开（与搜索结果同口径）：连着点几个链接不堆标签栏。
@@ -321,15 +340,25 @@ impl Editor {
         // `[[../../x]]` 就能穿越工作区根在盘上任意位置建文件、或打开根外
         // 任意文本文件。与 tree_edit 的建文件判据同一把尺。
         if !super::tree_edit::valid_workspace_name(&target) {
+            self.workspace.file_error =
+                Some(format!("双链目标不能用作文件名：{target}"));
+            cx.notify();
             return;
         }
-        // Create `<target>.md` at the workspace root.
-        let path = self
-            .workspace
-            .root
-            .clone()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
-            .join(format!("{target}.md"));
+        // 新文件建在工作区根下；没有根（单文件打开）时以当前文件所在目录
+        // 为基准——绝不能落到进程当前目录（随启动方式漂移）。
+        let Some(directory) = self.workspace.root.clone().or_else(|| {
+            self.file_path
+                .as_ref()
+                .and_then(|path| path.parent())
+                .map(std::path::Path::to_path_buf)
+        }) else {
+            self.workspace.file_error =
+                Some(format!("双链目标没有可创建的位置：{target}"));
+            cx.notify();
+            return;
+        };
+        let path = directory.join(format!("{target}.md"));
         if !path.exists() {
             if let Err(error) = fs::write(&path, format!("# {target}\n")) {
                 self.workspace.file_error = Some(error.to_string());
