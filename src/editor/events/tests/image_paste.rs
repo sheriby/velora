@@ -182,9 +182,10 @@ use std::path::{Path, PathBuf};
 
         let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
         editor.update(cx, |editor, _cx| {
-            let result = editor.image_target_dir(
+            let result = Editor::image_target_dir_for(
                 crate::config::ImagePasteBehavior::CopyToNamedAssetsFolder,
                 &root,
+                None,
                 &crate::components::PastedImageSource::ClipboardImage(gpui::Image::from_bytes(
                     gpui::ImageFormat::Png,
                     Vec::new(),
@@ -261,4 +262,73 @@ use std::path::{Path, PathBuf};
             let spec = editor.modal_spec().expect("没有落脚点要有提示");
             assert_eq!(spec.title, title);
         });
+    }
+
+    /// 粘贴图片的复制/写盘不在调用线程上做完：受理返回时目标文件还不存在，
+    /// 后台一轮之后才落盘并插入引用。
+    #[gpui::test]
+    async fn pasted_image_is_copied_to_disk_after_the_background_round(
+        cx: &mut TestAppContext,
+    ) {
+        let config_root = std::env::temp_dir().join(format!(
+            "velora-image-paste-config-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let _config = crate::config::override_test_config_root(&config_root);
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let workdir = std::env::temp_dir().join(format!(
+            "velora-image-paste-doc-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workdir).expect("workdir");
+        let document_path = workdir.join("note.md");
+        std::fs::write(&document_path, "正文\n").expect("document");
+        let source_path = std::env::temp_dir().join(format!(
+            "velora-image-paste-source-{}.png",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&source_path, b"png-bytes").expect("source image");
+        let (editor, cx) = cx.add_window_view({
+            let document_path = document_path.clone();
+            move |_window, cx| {
+                Editor::from_markdown(cx, "正文\n".to_string(), Some(document_path))
+            }
+        });
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| {
+                let block = editor.document.root_blocks()[0].clone();
+                editor.on_block_event(
+                    block,
+                    &crate::components::BlockEvent::RequestPasteImage {
+                        leading: InlineTextTree::plain("正".to_string()),
+                        source: crate::components::PastedImageSource::LocalPath(
+                            source_path.clone(),
+                        ),
+                        trailing: InlineTextTree::plain("文".to_string()),
+                    },
+                    cx,
+                );
+            });
+        });
+        let target = workdir
+            .join("assets")
+            .join(source_path.file_name().expect("file name"));
+        assert!(
+            !target.exists(),
+            "受理返回时图片已经复制完成：物化仍在调用线程上同步执行"
+        );
+        cx.run_until_parked();
+        assert!(target.exists(), "后台一轮之后图片应落盘");
+        editor.read_with(cx, |editor, cx| {
+            assert!(
+                editor.document.markdown_text(cx).contains("![velora-image-paste-source"),
+                "图片引用没写进文档"
+            );
+        });
+        let _ = std::fs::remove_dir_all(&workdir);
+        let _ = std::fs::remove_file(&source_path);
     }

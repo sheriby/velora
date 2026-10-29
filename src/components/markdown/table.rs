@@ -929,19 +929,19 @@ fn is_delimiter_row(line: &str, columns: usize) -> bool {
     })
 }
 
+// 逐起点的无外管道表格探测次数（测试用）。`is_soft_wrapped_paste` 先按
+// 分隔行形状预筛，绝大多数粘贴不该走到这里。
+#[cfg(test)]
+thread_local! {
+    pub(crate) static PIPELESS_TABLE_PROBES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// Detects a table that starts at `start` without requiring outer pipes,
 /// returning the region end (exclusive) when `lines[start]` is a multi-column
 /// header followed by a matching delimiter row. Body rows extend to the next
 /// blank line, matching GFM. Returns `None` for ordinary prose so a stray `|`
 /// is never mistaken for a table; single-column pipeless candidates are also
 /// rejected because they are ambiguous with setext headings.
-/// 逐起点的无外管道表格探测次数（测试用）。`is_soft_wrapped_paste` 先按
-/// 分隔行形状预筛，绝大多数粘贴不该走到这里。
-#[cfg(test)]
-thread_local! {
-    pub(crate) static PIPELESS_TABLE_PROBES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
 pub fn collect_pipeless_table_region(lines: &[String], start: usize) -> Option<usize> {
     #[cfg(test)]
     PIPELESS_TABLE_PROBES.with(|probes| probes.set(probes.get() + 1));

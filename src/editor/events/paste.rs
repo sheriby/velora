@@ -106,10 +106,10 @@ impl Editor {
     }
 
 
-    pub(crate) fn image_target_dir(
-        &self,
+    pub(crate) fn image_target_dir_for(
         behavior: ImagePasteBehavior,
         root_dir: &Path,
+        file_path: Option<&Path>,
         source: &PastedImageSource,
     ) -> anyhow::Result<PathBuf> {
         match behavior {
@@ -118,14 +118,12 @@ impl Editor {
             }
             ImagePasteBehavior::CopyToAssetsFolder => Ok(root_dir.join("assets")),
             ImagePasteBehavior::CopyToNamedAssetsFolder => {
-                let base = self
-                    .file_path
-                    .as_ref()
+                let base = file_path
                     .and_then(|path| path.file_stem())
                     .and_then(|stem| stem.to_str())
                     .filter(|stem| !stem.trim().is_empty())
                     .unwrap_or("untitle");
-                if self.file_path.is_some() {
+                if file_path.is_some() {
                     return Ok(root_dir.join(format!("{base}.assets")));
                 }
 
@@ -201,20 +199,21 @@ impl Editor {
         left == right
     }
 
-    pub(crate) fn materialize_pasted_image(
-        &self,
+    /// 物化（复制或写盘）粘贴的图片。纯 IO，不读编辑器状态：粘贴链路把它放到
+    /// 后台 executor，慢盘与实时扫描不再卡按键线程。
+    fn materialize_pasted_image_into(
+        behavior: ImagePasteBehavior,
+        root_dir: &Path,
+        file_path: Option<&Path>,
         source: &PastedImageSource,
     ) -> anyhow::Result<(PathBuf, bool)> {
-        let behavior = Self::current_image_paste_behavior();
-        let root_dir = self.image_paste_root_dir()?;
-
         if matches!(behavior, ImagePasteBehavior::None)
             && let PastedImageSource::LocalPath(path) = source
         {
             return Ok((path.clone(), false));
         }
 
-        let target_dir = self.image_target_dir(behavior, &root_dir, source)?;
+        let target_dir = Self::image_target_dir_for(behavior, root_dir, file_path, source)?;
         fs::create_dir_all(&target_dir)
             .with_context(|| format!("failed to create '{}'", target_dir.display()))?;
 
@@ -297,28 +296,23 @@ impl Editor {
         Some(format!("./{}", Self::markdown_path_string(relative)))
     }
 
-    /// 物化粘贴的图片并产出引用它的 markdown。`created` 为 `Some(路径)` 时表示
-    /// 这次调用**新建**了图片文件（剪贴板写入或复制），调用方若最终没有把它写进
-    /// 文档，应当删掉它，别留孤儿资源。
-    pub(crate) fn pasted_image_markdown(
-        &self,
-        source: &PastedImageSource,
-    ) -> anyhow::Result<(String, Option<std::path::PathBuf>)> {
-        let root_dir = self.image_paste_root_dir()?;
-        let (path, relative) = self.materialize_pasted_image(source)?;
-        let created = Self::materialized_image_was_created(source, &path);
+    /// 物化结果对应的图片引用 markdown。`relative` = 引用要写成相对文档目录。
+    fn pasted_image_markdown_for(
+        root_dir: &Path,
+        path: &Path,
+        relative: bool,
+    ) -> anyhow::Result<String> {
         let path_text = if relative {
-            Self::relative_markdown_path(&root_dir, &path)
+            Self::relative_markdown_path(root_dir, path)
                 .ok_or_else(|| anyhow!("failed to create a relative image path"))?
         } else {
-            Self::markdown_path_string(&path)
+            Self::markdown_path_string(path)
         };
-        let markdown = format!(
+        Ok(format!(
             "![{}]({})",
-            Self::markdown_image_alt(&path),
+            Self::markdown_image_alt(path),
             Self::markdown_image_target(&path_text)
-        );
-        Ok((markdown, created.then_some(path)))
+        ))
     }
 
     /// 物化结果是不是这次调用新建的文件（决定失败时能否安全删除）。
@@ -451,14 +445,81 @@ impl Editor {
         if self.is_read_only() {
             return;
         }
-        let (markdown, created_path) = match self.pasted_image_markdown(source) {
-            Ok(result) => result,
-            Err(err) => {
-                self.show_image_paste_error(err, cx);
+        let behavior = Self::current_image_paste_behavior();
+        let file_path = self.file_path.clone();
+        let root_dir = match self.image_paste_root_dir() {
+            Ok(root_dir) => root_dir,
+            Err(error) => {
+                self.show_image_paste_error(error, cx);
                 return;
             }
         };
+        // 物化是纯 IO：大截图在慢盘或实时扫描下能卡几百毫秒。素材（字节、
+        // 前后文片段、目标块）先快照下来，写完盘再回主线程插入引用。
+        let source = source.clone();
+        let leading = leading.clone();
+        let trailing = trailing.clone();
+        let editor = cx.entity().downgrade();
+        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let write_root = root_dir.clone();
+            let write_file_path = file_path.clone();
+            let write_source = source.clone();
+            let materialized = cx
+                .background_executor()
+                .spawn(async move {
+                    Self::materialize_pasted_image_into(
+                        behavior,
+                        &write_root,
+                        write_file_path.as_deref(),
+                        &write_source,
+                    )
+                })
+                .await;
+            let _ = editor.update(cx, move |editor, cx| match materialized {
+                Ok((path, relative)) => {
+                    let markdown =
+                        match Self::pasted_image_markdown_for(&root_dir, &path, relative) {
+                            Ok(markdown) => markdown,
+                            Err(error) => {
+                                editor.show_image_paste_error(error, cx);
+                                return;
+                            }
+                        };
+                    let created = Self::materialized_image_was_created(&source, &path);
+                    editor.insert_pasted_image_markdown(
+                        block,
+                        &leading,
+                        &trailing,
+                        markdown,
+                        created.then_some(path),
+                        cx,
+                    );
+                }
+                Err(error) => editor.show_image_paste_error(error, cx),
+            });
+        })
+        .detach();
+    }
 
+    /// 图片文件已就绪：把引用写进文档。插入失败时删掉这次新建的文件。
+    fn insert_pasted_image_markdown(
+        &mut self,
+        block: Entity<crate::editor::Block>,
+        leading: &InlineTextTree,
+        trailing: &InlineTextTree,
+        markdown: String,
+        created_path: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_read_only()
+            || block
+                .downgrade()
+                .read_with(cx, |_, _| ())
+                .is_err()
+        {
+            Self::discard_unaccepted_pasted_image(created_path);
+            return;
+        }
         if self.replace_cross_block_selection_with_text(
             &markdown,
             None,
@@ -486,16 +547,7 @@ impl Editor {
         if !inserted {
             // 图片文件已经落盘、文档却没接收（锚点不在树里等边角）：删掉刚建的
             // 文件，别在磁盘上留孤儿资源。
-            if let Some(path) = created_path
-                && let Err(error) = std::fs::remove_file(&path)
-            {
-                // 清理失败多半是文件被占用（Windows 索引器）或权限问题：孤儿
-                // 文件会一直留在磁盘上，至少让它可排查。
-                eprintln!(
-                    "velora: 未能删除未接收的粘贴图片 {}：{error}",
-                    path.display()
-                );
-            }
+            Self::discard_unaccepted_pasted_image(created_path);
         }
 
         // 一段变三段（前面 + 图片行 + 后面）改的是根块序列，但变的只有落点那一段：
@@ -507,5 +559,19 @@ impl Editor {
         }
         self.finalize_pending_undo_capture(cx);
         cx.notify();
+    }
+
+    fn discard_unaccepted_pasted_image(path: Option<PathBuf>) {
+        let Some(path) = path else {
+            return;
+        };
+        if let Err(error) = std::fs::remove_file(&path) {
+            // 清理失败多半是文件被占用（Windows 索引器）或权限问题：孤儿
+            // 文件会一直留在磁盘上，至少让它可排查。
+            eprintln!(
+                "velora: 未能删除未接收的粘贴图片 {}：{error}",
+                path.display()
+            );
+        }
     }
 }
