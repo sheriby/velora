@@ -364,7 +364,7 @@ impl Editor {
             return;
         }
 
-        let Some(pending) = self.pending_undo_capture.take() else {
+        let Some(mut pending) = self.pending_undo_capture.take() else {
             return;
         };
 
@@ -383,40 +383,39 @@ impl Editor {
                 .is_some_and(|entry| entry.kind == UndoCaptureKind::ImeComposition)
         {
             self.redo_history.clear();
-            self.undo_history
-                .last_mut()
-                .expect("checked above")
-                .edits
-                .extend(pending.snapshot.edits);
+            if let Some(entry) = self.undo_history.last_mut() {
+                entry.edits.extend(pending.snapshot.edits);
+            }
             return;
         }
 
-        if pending.snapshot.kind == UndoCaptureKind::ImeCompositionCommit
-            && self
-                .undo_history
-                .last()
-                .is_some_and(|entry| entry.kind == UndoCaptureKind::ImeComposition)
-        {
+        let merged_commit_noop = {
             // 组合输入收尾时文本又回到了组合开始前：那条记录没有存在意义。
             //
             // 增量式撤销组里，「组合」和「收尾」是两条各自记录了一次缓冲区写入的
             // 条目，撤销整次组合输入必须一次退干净，所以先把收尾的增量并进来，
-            // 再拿合并后的整组判断「改了等于没改」。
-            self.redo_history.clear();
-            self.undo_history
+            // 再拿合并后的整组判断「改了等于没改」。判定结果先带出借用，
+            // pop/改类型要重新拿整表的访问权。
+            match self
+                .undo_history
                 .last_mut()
-                .expect("checked above")
-                .edits
-                .extend(pending.snapshot.edits);
-            let noop = Self::history_group_is_noop(
-                &self.buffer,
-                &self.undo_history.last().expect("checked above").edits,
-            );
+                .filter(|entry| {
+                    pending.snapshot.kind == UndoCaptureKind::ImeCompositionCommit
+                        && entry.kind == UndoCaptureKind::ImeComposition
+                }) {
+                Some(entry) => {
+                    entry.edits.extend(std::mem::take(&mut pending.snapshot.edits));
+                    Some(Self::history_group_is_noop(&self.buffer, &entry.edits))
+                }
+                None => None,
+            }
+        };
+        if let Some(noop) = merged_commit_noop {
+            self.redo_history.clear();
             if noop {
                 self.undo_history.pop();
-            } else {
-                self.undo_history.last_mut().expect("checked above").kind =
-                    UndoCaptureKind::NonCoalescible;
+            } else if let Some(entry) = self.undo_history.last_mut() {
+                entry.kind = UndoCaptureKind::NonCoalescible;
             }
             return;
         }
@@ -435,11 +434,9 @@ impl Editor {
             });
         if should_merge {
             // 合并 = 把两组增量接起来：撤销时整组反序重放，等价于逐步回退。
-            self.undo_history
-                .last_mut()
-                .expect("checked above")
-                .edits
-                .extend(pending.snapshot.edits);
+            if let Some(entry) = self.undo_history.last_mut() {
+                entry.edits.extend(pending.snapshot.edits);
+            }
         } else {
             self.undo_history.push(pending.snapshot);
             if self.undo_history.len() > Self::HISTORY_LIMIT {
@@ -1019,5 +1016,20 @@ impl Editor {
         self.sync_table_axis_visuals(cx);
         self.dismiss_contextual_overlays(cx);
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// 产品路径禁 expect（AGENTS §1）：撤销合并分支依赖「上方守卫已保证」的
+    /// expect 在代码被重排后就会当场 panic（评审 P168）。守卫结果必须用
+    /// if let 表达，不许靠 expect 传达不变量。
+    #[test]
+    fn undo_merge_branches_express_guards_with_if_let_not_expect() {
+        let source = include_str!("history.rs");
+        assert!(
+            !source.contains(concat!("checked abo", "ve")),
+            "撤销合并分支不许用 expect 传达「上方已守卫」"
+        );
     }
 }
