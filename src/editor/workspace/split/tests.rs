@@ -422,6 +422,30 @@ fn split_command_copies_the_document_and_keeps_one_shared_buffer(cx: &mut TestAp
     });
 }
 
+/// 分屏长会话里共享缓冲区的变更队列不许随编辑次数无界增长。
+///
+/// 队列由「存在共享视图」时的每一笔 `buffer.edit` 推入，只有同步循环
+/// （组实体的观察通知 → `sync_shared_groups`）收尾那句 clear 才清。这条钉住
+/// 「消费即清」的闭环：清空那行被删掉、或通知链断掉，队列就会随会话长度线性涨。
+#[gpui::test]
+fn a_long_split_session_keeps_the_shared_change_queue_bounded(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, _| {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.split_active_document(SplitDirection::Right, window, cx)
+        });
+        redraw(cx);
+        for _ in 0..100 {
+            cx.simulate_input("x");
+        }
+        redraw(cx);
+        let queued = editor.read_with(cx, |editor, _| editor.buffer.shared_changes().len());
+        assert!(
+            queued <= 8,
+            "100 次分屏输入后共享变更队列还剩 {queued} 条：没有消费方清空，队列随会话无界增长"
+        );
+    });
+}
+
 #[gpui::test]
 fn split_edits_refresh_the_other_projection_and_share_undo(cx: &mut TestAppContext) {
     fixture(cx, |editor, cx, _| {
