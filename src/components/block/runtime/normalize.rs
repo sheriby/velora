@@ -275,6 +275,22 @@ impl Block {
         );
     }
 
+    /// 片段自己决定的插入属性。投影与 fragments 不同代（缓存复用后又改过树）
+    /// 时返回 `None`，调用方继续找下一段，别拿过期下标直接切数组。
+    fn fragment_insertion_attributes(
+        &self,
+        fragment_index: usize,
+    ) -> Option<InlineInsertionAttributes> {
+        let fragment = self.record.title.fragments.get(fragment_index)?;
+        Some(InlineInsertionAttributes {
+            style: fragment.style,
+            html_style: fragment.html_style,
+            link: fragment.link.clone(),
+            footnote: fragment.footnote.clone(),
+            math: None,
+        })
+    }
+
     fn insertion_attributes_for_current_offset(
         &self,
         current_offset: usize,
@@ -296,38 +312,29 @@ impl Block {
                     if current_offset >= segment.display_range.start
                         && current_offset <= segment.display_range.end =>
                 {
-                    let fragment = &self.record.title.fragments[segment.fragment_index];
-                    return InlineInsertionAttributes {
-                        style: fragment.style,
-                        html_style: fragment.html_style,
-                        link: fragment.link.clone(),
-                        footnote: fragment.footnote.clone(),
-                        math: None,
-                    };
+                    if let Some(attributes) =
+                        self.fragment_insertion_attributes(segment.fragment_index)
+                    {
+                        return attributes;
+                    }
                 }
                 ExpandedInlineSegmentKind::OpeningDelimiter(_)
                     if current_offset == segment.display_range.end =>
                 {
-                    let fragment = &self.record.title.fragments[segment.fragment_index];
-                    return InlineInsertionAttributes {
-                        style: fragment.style,
-                        html_style: fragment.html_style,
-                        link: fragment.link.clone(),
-                        footnote: fragment.footnote.clone(),
-                        math: None,
-                    };
+                    if let Some(attributes) =
+                        self.fragment_insertion_attributes(segment.fragment_index)
+                    {
+                        return attributes;
+                    }
                 }
                 ExpandedInlineSegmentKind::ClosingDelimiter(_)
                     if current_offset == segment.display_range.start =>
                 {
-                    let fragment = &self.record.title.fragments[segment.fragment_index];
-                    return InlineInsertionAttributes {
-                        style: fragment.style,
-                        html_style: fragment.html_style,
-                        link: fragment.link.clone(),
-                        footnote: fragment.footnote.clone(),
-                        math: None,
-                    };
+                    if let Some(attributes) =
+                        self.fragment_insertion_attributes(segment.fragment_index)
+                    {
+                        return attributes;
+                    }
                 }
                 // Caret just outside a span: after a closing delimiter or before
                 // an opening one. Insert plain text so it isn't absorbed back into

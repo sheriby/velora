@@ -39,7 +39,7 @@ impl Block {
     ) -> CollapsedCaretAffinity {
         if clean == 0 {
             CollapsedCaretAffinity::OuterStart
-        } else if clean >= self.record.title.visible_text().len() {
+        } else if clean >= self.record.title.visible_len() {
             CollapsedCaretAffinity::OuterEnd
         } else {
             fallback
