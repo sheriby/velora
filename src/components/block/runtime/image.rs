@@ -94,11 +94,21 @@ impl Block {
 
     fn standalone_image_markdown_for_runtime(&self) -> Option<String> {
         let visible = self.record.title.visible_text();
+        // 独立图片恒为「以 `![` 开头的单行」：正文里恰好提到 `![` 的段落先在
+        // 这里被挡掉，不必为一次注定失败的解析再补整份序列化重解析。
+        let trimmed = visible.trim_start();
+        if !trimmed.starts_with("![") || trimmed.contains('\n') {
+            return None;
+        }
+        #[cfg(test)]
+        probe::note_standalone_parse();
         if parse_standalone_image(&visible).is_some() {
             return Some(visible);
         }
 
         let serialized = self.record.title.serialize_markdown();
+        #[cfg(test)]
+        probe::note_standalone_parse();
         parse_standalone_image(&serialized)
             .is_some()
             .then_some(serialized)
@@ -169,11 +179,18 @@ pub(crate) mod probe {
     use std::cell::Cell;
     thread_local! {
         static IMAGE_SYNC_SCANS: Cell<u64> = const { Cell::new(0) };
+        static IMAGE_STANDALONE_PARSES: Cell<u64> = const { Cell::new(0) };
     }
     pub(crate) fn note_scan() {
         IMAGE_SYNC_SCANS.with(|counter| counter.set(counter.get() + 1));
     }
     pub(crate) fn scans() -> u64 {
         IMAGE_SYNC_SCANS.with(|counter| counter.get())
+    }
+    pub(crate) fn note_standalone_parse() {
+        IMAGE_STANDALONE_PARSES.with(|counter| counter.set(counter.get() + 1));
+    }
+    pub(crate) fn standalone_parses() -> u64 {
+        IMAGE_STANDALONE_PARSES.with(|counter| counter.get())
     }
 }

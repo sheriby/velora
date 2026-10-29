@@ -230,3 +230,53 @@ async fn image_blocks_still_enter_the_image_runtime_scan(cx: &mut TestAppContext
         "带 ![ 的块必须进解析路径"
     );
 }
+
+/// 正文里恰好提到 `![` 的段落不是图片：廉价形状预判失败就直接返回，不该
+/// 先整树拼一遍可见文本再为失败解析补一次全量序列化重解析（每键两轮扫描
+/// + 一次整份序列化）。真图块照常解析。
+#[gpui::test]
+async fn prose_blocks_that_mention_image_syntax_skip_the_standalone_parse(
+    cx: &mut TestAppContext,
+) {
+    use crate::components::block::runtime::image::probe;
+    let cx = cx.add_empty_window();
+    let prose = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("讲 ![ 语法：![图](a.png) 的写法"),
+            ),
+        )
+    });
+    let before = probe::standalone_parses();
+    prose.update(cx, |block, _cx| {
+        block.set_runtime_context(None, Arc::default(), Arc::default(), Arc::default());
+    });
+    assert_eq!(
+        probe::standalone_parses() - before,
+        0,
+        "正文里提到 ![ 的段落不该进独立图片解析"
+    );
+
+    let image = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("![图](a.png)"),
+            ),
+        )
+    });
+    let before = probe::standalone_parses();
+    image.update(cx, |block, _cx| {
+        block.set_runtime_context(None, Arc::default(), Arc::default(), Arc::default());
+    });
+    assert!(
+        probe::standalone_parses() > before,
+        "独立图片块必须照常解析"
+    );
+    image.read_with(cx, |block, _cx| {
+        assert!(block.image_runtime.is_some(), "独立图片块应建出运行时");
+    });
+}
