@@ -141,6 +141,19 @@ impl Editor {
     /// 撤销组里可能有多条，后面的条目会把前面的区间挪位，所以「改了等于没改」
     /// 要在一份副本上真重放一遍，不能拿当前缓冲区去套每条区间。
     fn history_group_is_noop(buffer: &buffer::TextBuffer, edits: &[buffer::AppliedEdit]) -> bool {
+        // 单条编辑走切片比对（评审 P167）：中文 IME 每次提交都进来，整份
+        // 克隆 + 反序重放在大文档上就是一次 10MB 级堆拷贝。单条编辑的逆操作
+        // 只动 new_range 一段，「放回去之后与现状相同」⟺ 这一段恰好等于
+        // removed，切片对比即可。
+        if let [edit] = edits {
+            if edit.new_range.end > buffer.byte_len()
+                || !buffer.is_char_boundary(edit.new_range.start)
+                || !buffer.is_char_boundary(edit.new_range.end)
+            {
+                return false;
+            }
+            return buffer.slice(edit.new_range.clone()) == edit.removed;
+        }
         let mut probe = buffer.clone();
         for edit in edits.iter().rev() {
             if edit.new_range.end > probe.byte_len()
@@ -1021,6 +1034,10 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
+    use super::Editor;
+    use crate::editor::buffer;
+    use std::ops::Range;
+
     /// 产品路径禁 expect（AGENTS §1）：撤销合并分支依赖「上方守卫已保证」的
     /// expect 在代码被重排后就会当场 panic（评审 P168）。守卫结果必须用
     /// if let 表达，不许靠 expect 传达不变量。
@@ -1031,5 +1048,42 @@ mod tests {
             !source.contains(concat!("checked abo", "ve")),
             "撤销合并分支不许用 expect 传达「上方已守卫」"
         );
+    }
+
+    /// 单条编辑的 noop 快速判定（评审 P167）必须与整份克隆 + 反序重放逐例
+    /// 同判：IME 每次提交都走这里，10 MiB 文档上旧路径是一次 10MB 堆拷贝。
+    /// 等价性守的是正确性——快速路径一旦与重放分叉，撤销栈会多出或吃掉条目。
+    #[test]
+    fn single_edit_noop_verdict_matches_the_full_replay() {
+        let cases: [(&str, Range<usize>, &str, bool); 6] = [
+            // 原样重打（多字节）：换回同一串 = noop。
+            ("hello 世界 world", 6..12, "世界", true),
+            // 真改动：换成了不同内容。
+            ("hello 世界 world", 6..12, "世界们", false),
+            // 原样重打（ASCII）。
+            ("hello world", 0..5, "hello", true),
+            // 纯插入：内容必然变多，非 noop。
+            ("hello world", 5..5, "  ", false),
+            // 整段替换回原文：noop。
+            ("abcdef", 0..6, "abcdef", true),
+            // 整段替换成别的：非 noop。
+            ("abcdef", 0..6, "xyz", false),
+        ];
+        for (text, range, replaced_with, expected_noop) in cases {
+            let mut buffer = buffer::TextBuffer::from_text(text);
+            let applied = buffer.edit(range.clone(), replaced_with);
+            let fast = Editor::history_group_is_noop(&buffer, &[applied.clone()]);
+            let mut probe = buffer.clone();
+            probe.edit(applied.new_range.clone(), &applied.removed);
+            let slow = probe.same_content(&buffer);
+            assert_eq!(
+                fast, slow,
+                "单条编辑 noop 快速判定与整份重放分叉（{text:?} {range:?} → {replaced_with:?}）"
+            );
+            assert_eq!(
+                fast, expected_noop,
+                "语义钉死：{text:?} {range:?} → {replaced_with:?}"
+            );
+        }
     }
 }
