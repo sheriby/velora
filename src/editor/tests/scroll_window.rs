@@ -1250,3 +1250,67 @@ async fn toggling_view_mode_round_trip_keeps_the_reading_position(cx: &mut TestA
     );
 }
 
+
+/// 拖动滚动条期间文档变短：冻结的上限不能把滚动偏移带到当前可滚范围之外。
+#[gpui::test]
+async fn scrollbar_drag_clamps_to_the_current_max_after_the_document_shrinks(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = (0..300)
+        .map(|index| format!("line {index}\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, source, None)
+    });
+    for _ in 0..3 {
+        redraw(cx);
+    }
+    editor.update(cx, |editor, cx| {
+        let max = f32::from(editor.scroll_handle.max_offset().y).max(1.0);
+        editor.start_scrollbar_drag(0.0, 320.0, 64.0, max, cx);
+        editor.update_scrollbar_drag(300.0, cx);
+    });
+    redraw(cx);
+    // 文档大幅变短：当前可滚上限跟着缩水。
+    editor.update(cx, |editor, cx| {
+        let total = editor.buffer.byte_len();
+        editor.buffer.edit(0..total, "短文档\n");
+        editor.rebuild_document_from_buffer(cx);
+        editor.mark_dirty_written_back(cx);
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        let offset = f32::from(editor.scroll_handle.offset().y);
+        let max = f32::from(editor.scroll_handle.max_offset().y);
+        assert!(
+            offset >= -max - 0.5,
+            "拖动偏移越过了当前上限：offset {offset}，当前 max {}",
+            -max
+        );
+    });
+}
+
+/// 「这块挂载了吗」按可见下标直接定位行，不再逐行扫挂载成员：
+/// 换模式取视口锚时会对每个可见块问一遍，线性扫描是 O(可见块×挂载行)。
+#[gpui::test]
+async fn mount_check_locates_the_row_by_visible_index(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..1500)
+        .map(|index| format!("段落 {index}\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, markdown, None)
+    });
+    redraw(cx);
+    redraw(cx);
+    crate::editor::window_state::MOUNT_ENTITY_PROBES.with(|probes| probes.set(0));
+    editor.read_with(cx, |editor, cx| {
+        let _ = editor.block_at_viewport_top(cx);
+    });
+    let probes = crate::editor::window_state::MOUNT_ENTITY_PROBES.with(|probes| probes.get());
+    assert!(
+        probes <= 5000,
+        "一次视口锚换算比较了 {probes} 个行成员：挂载判断仍在逐行扫"
+    );
+}

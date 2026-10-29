@@ -10,6 +10,12 @@ use crate::components::markdown::link::EXTERNAL_LINK_SCHEMES;
 /// 视口自身必须始终有挂载行覆盖。
 const COLD_RUN_MAX_ROWS: usize = 12;
 
+// 判断「这块挂载了吗」时比较了多少个行成员（测试用）：应当只碰候选行。
+#[cfg(test)]
+thread_local! {
+    pub(crate) static MOUNT_ENTITY_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl Editor {
     pub(super) fn on_registered_menu_action<A: Action>(
         &mut self,
@@ -144,7 +150,36 @@ impl Editor {
             return false;
         };
         let Some(plan) = self.rendered_row_plan.as_ref() else { return false; };
-        run.rows().any(|(row, _)| plan.rows.get(row).is_some_and(|row| row.entities().any(|entity| entity.entity_id() == entity_id)))
+        let Some(visible_index) = self.document.visible_index_for_entity_id(entity_id) else {
+            return false;
+        };
+        // 行计划按 `visible_starts` 有序：可见下标一比即知它在哪一行，先判这一行
+        // 在不在挂载区/焦点岛里，再在行内确认成员。别逐行扫成员——调用方
+        // （`block_at_viewport_top`）会对每个可见块问一遍。
+        let row = plan
+            .visible_starts
+            .partition_point(|start| *start <= visible_index)
+            .saturating_sub(1);
+        let mounted_row = (run.row_start..run.row_end).contains(&row)
+            || run.focus_island.is_some_and(|(island, _)| island == row);
+        if !mounted_row {
+            return false;
+        }
+        let Some(plan_row) = plan.rows.get(row) else {
+            return false;
+        };
+        #[cfg(test)]
+        MOUNT_ENTITY_PROBES.with(|probes| {
+            probes.set(probes.get() + plan_row.entities().count());
+        });
+        match &plan_row.body {
+            crate::editor::render::RenderedRowBody::Ordinary { entity, .. } => {
+                entity.entity_id() == entity_id
+            }
+            crate::editor::render::RenderedRowBody::Group { members, .. } => members
+                .iter()
+                .any(|member| member.entity.entity_id() == entity_id),
+        }
     }
 
     /// Picks the contiguous run of rows to mount; the culled runs become
@@ -745,7 +780,7 @@ impl Editor {
     ///
     /// 表格、分隔线这类块没有文字元素（`last_bounds` 恒为空），它们的落点只能
     /// 按行框量；量不出文字布局时块内偏移恒为块首（`index_for_mouse_position`）。
-    fn block_at_viewport_top(
+    pub(super) fn block_at_viewport_top(
         &self,
         cx: &App,
     ) -> Option<(Entity<Block>, Bounds<Pixels>, Pixels)> {

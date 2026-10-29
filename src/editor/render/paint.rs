@@ -354,7 +354,6 @@ impl Render for Editor {
         let thumb_top = scrollbar_geometry.thumb_top;
         let scrollbar_max_position = scrollbar_geometry.max_scroll_y;
 
-        let stride_prefix = rendered_row_plan.stride_prefix();
 
         // Bound the cache against block churn, only when it outgrows the live rows.
         if self.row_stride_cache.len() > row_first_ids.len().saturating_mul(2)
@@ -365,14 +364,19 @@ impl Render for Editor {
             self.row_scrollbar_stride_cache.retain(|id, _| live.contains(id));
         }
 
-        let mut render_window = Self::rendered_window_with_row_floor(
-            &stride_prefix.nonnegative,
-            current_scroll_y,
-            viewport_height,
-            RENDER_OVERDRAW_PX,
-            focus_row,
-            self.restored_row_start,
-        );
+        // 前缀表只在选窗口这一刻借：这一帧后面还会 set_stride 写回量高，
+        // RefCell 的不可变借用抱到函数结束就是一颗借用 panic 地雷。
+        let mut render_window = {
+            let stride_prefix = rendered_row_plan.stride_prefix();
+            Self::rendered_window_with_row_floor(
+                &stride_prefix.nonnegative,
+                current_scroll_y,
+                viewport_height,
+                RENDER_OVERDRAW_PX,
+                focus_row,
+                self.restored_row_start,
+            )
+        };
         let unmeasured = (render_window.run_start..render_window.run_end)
             .chain(render_window.focus_island.map(|island| island.row))
             .any(|row| row_first_ids.get(row).is_some_and(|id| !self.row_stride_cache.contains_key(id)));
