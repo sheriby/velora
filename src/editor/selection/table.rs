@@ -9,6 +9,12 @@
 //! 切段走。格子自己的块内选区不受影响——指针没离开按下那一格时，选文字还是格子自己的事。
 
 use super::*;
+
+// 跨格选区一次同步扫过多少格（测试用）：只该扫选区覆盖的行列。
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TABLE_RANGE_CELL_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 use crate::components::{TableCellPosition, InlineTextTree, serialize_table_cell_markdown};
 
 /// 表格里的一处文本位置：第几行第几列的那一格，加上这一格里的**干净**可见偏移。
@@ -246,21 +252,42 @@ impl Editor {
         end: TableTextPosition,
         cx: &App,
     ) -> Vec<(TableCellPosition, Entity<Block>, Range<usize>)> {
-        let Some(runtime) = table.read(cx).table_runtime.clone() else {
+        let table_block = table.read(cx);
+        let Some(runtime) = table_block.table_runtime.as_ref() else {
             return Vec::new();
         };
+        // 只扫选区覆盖的行列：拖动时每次 move 都调这里，整表双重循环在百行
+        // 百列的表上是万级格子读。
+        let start_key = (start.cell.row, start.cell.column);
+        let end_key = (end.cell.row, end.cell.column);
+        let (low, high) = if start_key <= end_key {
+            (start_key, end_key)
+        } else {
+            (end_key, start_key)
+        };
         let mut cells = Vec::new();
-        let mut rows: Vec<&Vec<Entity<Block>>> = Vec::with_capacity(runtime.rows.len() + 1);
-        rows.push(&runtime.header);
-        rows.extend(runtime.rows.iter());
-        for (row, row_cells) in rows.into_iter().enumerate() {
-            for (column, cell) in row_cells.iter().enumerate() {
-                let position = TableCellPosition { row, column };
-                let start_key = (start.cell.row, start.cell.column);
-                let end_key = (end.cell.row, end.cell.column);
-                if (row, column) < start_key || (row, column) > end_key {
+        for row in low.0..=high.0 {
+            let row_cells = if row == 0 {
+                &runtime.header
+            } else {
+                let Some(row_cells) = runtime.rows.get(row - 1) else {
                     continue;
-                }
+                };
+                row_cells
+            };
+            let first_column = if row == low.0 { low.1 } else { 0 };
+            let last_column = if row == high.0 {
+                high.1
+            } else {
+                row_cells.len().saturating_sub(1)
+            };
+            for column in first_column..=last_column.min(row_cells.len().saturating_sub(1)) {
+                #[cfg(test)]
+                TABLE_RANGE_CELL_VISITS.with(|visits| visits.set(visits.get() + 1));
+                let Some(cell) = row_cells.get(column) else {
+                    continue;
+                };
+                let position = TableCellPosition { row, column };
                 let block = cell.read(cx);
                 let len = block.clean_visible_len();
                 let range = Self::table_cell_range_in_text_selection(start, end, position, len);

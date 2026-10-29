@@ -1077,4 +1077,54 @@ mod tests {
             "一次拖动 move 读了 {probes} 个挂载行的几何：仍在逐行扫描"
         );
     }
+    /// 跨格选区的行扫只走覆盖到的行列：30×8 的表选两格，不该把整表格子
+    /// 都读一遍（拖动时每次 move 都走这条同步）。
+    #[gpui::test]
+    async fn cross_cell_selection_only_walks_the_selected_columns(cx: &mut TestAppContext) {
+        init_editor_test_app(cx);
+        let mut markdown = String::from("|");
+        for column in 0..8 {
+            markdown.push_str(&format!(" h{column} |"));
+        }
+        markdown.push_str("\n|");
+        for _ in 0..8 {
+            markdown.push_str(" --- |");
+        }
+        markdown.push('\n');
+        for row in 0..30 {
+            markdown.push('|');
+            for column in 0..8 {
+                markdown.push_str(&format!(" r{row}c{column} |"));
+            }
+            markdown.push('\n');
+        }
+        let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+        editor.update(cx, |editor, cx| {
+            let table = editor.document.root_blocks()[0].clone();
+            editor.select_table_text_range(
+                table.entity_id(),
+                crate::editor::TableTextPosition {
+                    cell: crate::components::TableCellPosition { row: 0, column: 0 },
+                    offset: 0,
+                    whole_cell: false,
+                },
+                crate::editor::TableTextPosition {
+                    cell: crate::components::TableCellPosition { row: 1, column: 1 },
+                    offset: 1,
+                    whole_cell: false,
+                },
+                cx,
+            );
+            crate::editor::selection::table::TABLE_RANGE_CELL_VISITS
+                .with(|visits| visits.set(0));
+            editor.sync_table_text_selection_visuals(cx);
+            let visits = crate::editor::selection::table::TABLE_RANGE_CELL_VISITS
+                .with(|visits| visits.get());
+            assert!(
+                visits <= 16,
+                "一次跨格同步扫了 {visits} 个格子：仍在整表双重循环"
+            );
+        });
+        cx.quit();
+    }
 }
