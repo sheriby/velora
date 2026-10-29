@@ -495,7 +495,13 @@ impl Editor {
         match self.last_scroll_viewport_size {
             Some(previous) if Self::viewport_size_changed(previous, viewport_size) => {
                 self.last_scroll_viewport_size = Some(viewport_size);
-                self.request_active_block_scroll_into_view(cx);
+                // 现场交还还没落地时别取消它：交还本身按新视口量尺寸，下一帧
+                // 自然会适配；这里抢先滚到活动块会把「回到上次阅读位置」丢掉。
+                if self.pending_scroll_restore.is_none()
+                    && self.pending_view_mode_scroll.is_none()
+                {
+                    self.request_active_block_scroll_into_view(cx);
+                }
             }
             Some(_) => {}
             None => {

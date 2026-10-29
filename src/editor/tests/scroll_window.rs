@@ -1374,3 +1374,84 @@ async fn jumping_to_a_late_block_lands_on_its_measured_row(cx: &mut TestAppConte
         );
     });
 }
+
+/// 标签现场还没交还时改变视口尺寸：不能把「回到上次阅读位置」丢掉，
+/// 也不能顺手把视口拽向活动块（交还本身会按新视口量尺寸）。
+#[gpui::test]
+async fn resizing_the_viewport_keeps_a_pending_scroll_restore(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "alpha\n\nbeta".to_string(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        editor.last_scroll_viewport_size = Some(gpui::size(gpui::px(800.0), gpui::px(600.0)));
+        editor.pending_scroll_restore = Some(crate::editor::DocumentView {
+            view_mode: crate::editor::ViewMode::Rendered,
+            content_len: 0,
+            content_version: 0,
+            scroll_y: 120.0,
+            row_anchor: None,
+            row_layout: None,
+            editing_state: None,
+            selection: crate::editor::UndoSelectionSnapshot {
+                range: 0..0,
+                reversed: false,
+            },
+        });
+        let refocus_before = editor.pending_scroll_active_block_into_view;
+        editor.sync_scroll_viewport(gpui::size(gpui::px(700.0), gpui::px(600.0)), cx);
+        assert!(
+            editor.pending_scroll_restore.is_some(),
+            "视口尺寸变化把尚未交还的阅读现场取消了"
+        );
+        assert_eq!(
+            editor.pending_scroll_active_block_into_view, refocus_before,
+            "resize 顺手发起了「滚到活动块」，会顶掉现场交还"
+        );
+    });
+}
+
+/// 交还现场把挂载上界钉在旧行号上；键盘/滚轮滚到它上方之后，上面的行必须
+/// 重新挂载（否则视口上方整段是 spacer 空白，且不会自愈）。
+#[gpui::test]
+async fn scrolling_above_the_restored_row_releases_the_mount_floor(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..300)
+        .map(|index| format!("段落 {index}\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, markdown, None)
+    });
+    redraw(cx);
+    redraw(cx);
+    let (floor_top, first_id) = editor.read_with(cx, |editor, _cx| {
+        let plan = editor.rendered_row_plan.as_ref().expect("行计划");
+        let prefix = plan.stride_prefix();
+        let floor = 150usize.min(plan.rows.len().saturating_sub(1));
+        (
+            prefix.nonnegative.get(floor).copied().unwrap_or(0.0),
+            editor.document.visible_blocks()[0].entity.entity_id(),
+        )
+    });
+    editor.update(cx, |editor, _cx| {
+        editor.restored_row_start = Some(150);
+        let mut offset = editor.scroll_handle.offset();
+        offset.y = gpui::px(-floor_top);
+        editor.scroll_handle.set_offset(offset);
+    });
+    redraw(cx);
+    // 用户滚回顶部：钳制应当放开，第一段重新挂载。
+    editor.update(cx, |editor, _cx| {
+        let mut offset = editor.scroll_handle.offset();
+        offset.y = gpui::px(0.0);
+        editor.scroll_handle.set_offset(offset);
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.entity_is_mounted(first_id),
+            "滚回顶部后第一段仍未挂载：挂载上界还钉在交还行上"
+        );
+    });
+}

@@ -368,6 +368,17 @@ impl Render for Editor {
         // RefCell 的不可变借用抱到函数结束就是一颗借用 panic 地雷。
         let mut render_window = {
             let stride_prefix = rendered_row_plan.stride_prefix();
+            // 交还现场把挂载上界钉在交还那一行上。用户（键盘/滚轮）一旦滚到
+            // 它上方，再钉着只会让视口上方整段变成 spacer：放开钳制，按正常
+            // 窗口挂载。
+            if let Some(floor) = self.restored_row_start
+                && stride_prefix
+                    .nonnegative
+                    .get(floor)
+                    .is_some_and(|top| current_scroll_y + 0.5 < *top)
+            {
+                self.restored_row_start = None;
+            }
             Self::rendered_window_with_row_floor(
                 &stride_prefix.nonnegative,
                 current_scroll_y,
