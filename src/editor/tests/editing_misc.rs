@@ -603,3 +603,42 @@ async fn shift_tab_in_a_code_block_outdents_every_selected_line(cx: &mut TestApp
         assert_eq!(block.selected_range, 0..3, "选区没有跟着缩进左移");
     });
 }
+
+/// 三击选中整块（段落）；双击仍然是选词。
+#[gpui::test]
+async fn triple_click_selects_the_whole_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "alpha beta gamma".into(), None)
+    });
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _cx| {
+        editor.document.first_root().expect("正文块").clone()
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(block.entity_id()));
+    redraw(cx);
+    let position = block.read_with(cx, |block, _cx| {
+        let bounds = block.last_bounds.expect("正文块应有几何");
+        gpui::point(bounds.left() + gpui::px(2.0), bounds.center().y)
+    });
+    let down = |count: usize| gpui::MouseDownEvent {
+        position,
+        button: gpui::MouseButton::Left,
+        modifiers: gpui::Modifiers::default(),
+        click_count: count,
+        first_mouse: count == 1,
+    };
+    editor.update_in(cx, |_editor, window, cx| {
+        block.update(cx, |block, block_cx| {
+            block.on_mouse_down(&down(3), window, block_cx);
+        });
+    });
+    redraw(cx);
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(
+            block.selected_range,
+            0..block.display_text().len(),
+            "三击没有选中整块"
+        );
+    });
+}

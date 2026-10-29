@@ -434,7 +434,17 @@ impl Block {
             return;
         }
 
-        if event.click_count >= 2 && !event.modifiers.shift {
+        if event.click_count >= 3 && !event.modifiers.shift {
+            // 三击选整块（一个块就是一个段落/标题）：连续点击不再停在词选，
+            // 给鼠标一套「快速选中一段」的手势。
+            self.is_selecting = true;
+            self.select_whole_block(cx);
+            if !was_focused {
+                cx.emit(BlockEvent::RequestFocus);
+            }
+            return;
+        }
+        if event.click_count == 2 && !event.modifiers.shift {
             // 双击选词（用户要求）：选中所点的字词段。聚焦与不聚焦两个
             // 分支都要处理——第一次单击只聚焦，第二次（已聚焦）才成词选。
             self.is_selecting = true;
@@ -459,6 +469,18 @@ impl Block {
         if !was_focused {
             cx.emit(BlockEvent::RequestFocus);
         }
+    }
+
+    /// 三击选整块：一个块就是一个段落/标题/列表项。
+    pub(crate) fn select_whole_block(&mut self, cx: &mut Context<Self>) {
+        self.drop_stale_ime_marked_range(cx);
+        let len = self.display_text().len();
+        if len == 0 {
+            return;
+        }
+        self.selected_range = 0..len;
+        self.selection_reversed = false;
+        cx.notify();
     }
 
     /// 双击选词：选中 `offset` 所在的字词段（Unicode UAX#29 词边界：
