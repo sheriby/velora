@@ -2,6 +2,13 @@
 
 use super::*;
 
+// 拖动定位时读了几次挂载行几何（测试用）。二分定位应当只碰对数级几行，
+// 逐行线性扫会随挂载行数线性增长。
+#[cfg(test)]
+thread_local! {
+    pub(crate) static DRAG_ROW_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl Editor {
     pub(super) fn begin_cross_block_drag_at_point(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
         let had_selection = self.cross_block_selection.take().is_some();
@@ -344,8 +351,22 @@ impl Editor {
             return None;
         }
         let scroll = self.scroll_handle.offset();
+
+        // 没有焦点岛时挂载区是一段连续行，行按 y 单调排列：先二分找到包含落点
+        // 的那一行，只碰它和它上面那一行。拖动是高频事件，逐行读全部成员块在
+        // 长文档上一次 move 就是几十次实体读加分配。
+        if run.focus_island.is_none()
+            && let Some(Some(endpoint)) =
+                self.drag_endpoint_by_row_bisection(run, position, anchor, cx)
+        {
+            return Some(endpoint);
+        }
+
+        // 有焦点岛或挂载区有空洞时退回线性扫描（行序与 y 序不再一致）。
         let mut previous: Option<CrossBlockSelectionEndpoint> = None;
         for (row, child) in run.rows() {
+            #[cfg(test)]
+            DRAG_ROW_PROBES.with(|probes| probes.set(probes.get() + 1));
             let Some(item) = self.scroll_handle.bounds_for_item(child) else {
                 continue;
             };
@@ -354,58 +375,139 @@ impl Editor {
             let Some(plan_row) = plan.rows.get(row) else {
                 continue;
             };
-            let members: Vec<_> = plan_row.entities().filter_map(|entity| {
-                let block = entity.read(cx);
-                let bounds = block.last_bounds.or_else(|| {
-                    block.table_runtime.as_ref().and_then(|runtime| {
-                        runtime.header.iter().chain(runtime.rows.iter().flatten())
-                            .filter_map(|cell| cell.read(cx).last_bounds)
-                            .reduce(|bounds, cell| bounds.union(&cell))
-                    })
-                });
-                let bounds = match &plan_row.body {
-                    crate::editor::render::RenderedRowBody::Ordinary { .. } => Some(bounds.unwrap_or(row_bounds)),
-                    crate::editor::render::RenderedRowBody::Group { .. } => bounds,
-                }?;
-                Some((entity, bounds))
-            }).collect();
-            let Some((first, _)) = members.first() else { continue; };
+            let Some(first) = plan_row.entities().next() else {
+                continue;
+            };
             if position.y < row_bounds.top() {
                 // 落点在这一行上方：归上一行的块尾；没有上一行就归这一行的块首。
-                return Some(previous.unwrap_or(CrossBlockSelectionEndpoint { entity_id: first.entity_id(), offset: 0 }));
+                return Some(previous.unwrap_or(CrossBlockSelectionEndpoint {
+                    entity_id: first.entity_id(),
+                    offset: 0,
+                }));
             }
             if position.y <= row_bounds.bottom() {
-                // 一行里挑块：单块的直接就是它；callout / 脚注组里几块共用一行，
-                // 按各块自己的边界挑（那些边界是这一帧画的），都够不着就取最后一块。
-                let mut chosen = *first;
-                for (entity, bounds) in &members {
-                    chosen = *entity;
-                    if position.y <= bounds.bottom() {
-                        break;
-                    }
-                }
-                let entity = chosen;
-                let block = entity.read(cx);
-                // 只画图片的块量不出块内偏移（没有文字布局），整块算：它在选区起点侧
-                // 就取块首、在终点侧取块尾。文本块的块内偏移由它自己裁到上下边界。
-                let offset = if block.has_text_layout() {
-                    block.current_to_clean_offset(block.index_for_mouse_position(position))
-                } else {
-                    self.whole_block_offset(entity, anchor, cx)
-                };
-                return Some(CrossBlockSelectionEndpoint {
-                    entity_id: entity.entity_id(),
-                    offset,
-                });
+                return self.pick_drag_endpoint_in_row(plan_row, row_bounds, position, anchor, cx);
             }
-            let Some((last, _)) = members.last() else { continue; };
-            previous = Some(CrossBlockSelectionEndpoint {
-                entity_id: last.entity_id(),
-                offset: last.read(cx).clean_visible_len(),
-            });
+            if let Some(endpoint) = self.row_last_endpoint(plan_row, cx) {
+                previous = Some(endpoint);
+            }
         }
         // 落点在整个挂载区下方：归最后一块的块尾。
         previous
+    }
+
+    /// 二分定位落点所在行并换算端点。`None` = 这一段布局有空洞，调用方退回线性扫描。
+    fn drag_endpoint_by_row_bisection(
+        &self,
+        run: crate::editor::MountedRun,
+        position: Point<Pixels>,
+        anchor: Option<CrossBlockSelectionEndpoint>,
+        cx: &App,
+    ) -> Option<Option<CrossBlockSelectionEndpoint>> {
+        let plan = self.rendered_row_plan.as_ref()?;
+        let scroll = self.scroll_handle.offset();
+        let row_bounds = |row: usize| -> Option<Bounds<Pixels>> {
+            if row < run.row_start || row >= run.row_end {
+                return None;
+            }
+            let child = run.child_base + row - run.row_start;
+            #[cfg(test)]
+            DRAG_ROW_PROBES.with(|probes| probes.set(probes.get() + 1));
+            let mut bounds = self.scroll_handle.bounds_for_item(child)?;
+            bounds.origin += scroll;
+            Some(bounds)
+        };
+        let (mut low, mut high) = (run.row_start, run.row_end);
+        while low < high {
+            let mid = (low + high) / 2;
+            match row_bounds(mid) {
+                Some(bounds) if bounds.bottom() < position.y => low = mid + 1,
+                Some(_) => high = mid,
+                None => return None,
+            }
+        }
+        if low >= run.row_end {
+            // 落点在整段挂载行下方：归最后一行最后一块的块尾。
+            let plan_row = plan.rows.get(run.row_end.checked_sub(1)?)?;
+            return Some(self.row_last_endpoint(plan_row, cx));
+        }
+        let row_bounds = row_bounds(low)?;
+        let plan_row = plan.rows.get(low)?;
+        if position.y < row_bounds.top() {
+            if low == run.row_start {
+                let first = plan_row.entities().next()?;
+                return Some(Some(CrossBlockSelectionEndpoint {
+                    entity_id: first.entity_id(),
+                    offset: 0,
+                }));
+            }
+            let previous_row = plan.rows.get(low - 1)?;
+            return Some(self.row_last_endpoint(previous_row, cx));
+        }
+        Some(self.pick_drag_endpoint_in_row(plan_row, row_bounds, position, anchor, cx))
+    }
+
+    /// 一行的最后一块的块尾端点。
+    fn row_last_endpoint(
+        &self,
+        plan_row: &crate::editor::render::RenderedRowPlanRow,
+        cx: &App,
+    ) -> Option<CrossBlockSelectionEndpoint> {
+        let last = plan_row.entities().last()?;
+        Some(CrossBlockSelectionEndpoint {
+            entity_id: last.entity_id(),
+            offset: last.read(cx).clean_visible_len(),
+        })
+    }
+
+    /// 一行里挑块：单块的直接就是它；callout / 脚注组里几块共用一行，按各块
+    /// 自己的边界挑（那些边界是这一帧画的），都够不着就取最后一块。
+    fn pick_drag_endpoint_in_row(
+        &self,
+        plan_row: &crate::editor::render::RenderedRowPlanRow,
+        row_bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+        anchor: Option<CrossBlockSelectionEndpoint>,
+        cx: &App,
+    ) -> Option<CrossBlockSelectionEndpoint> {
+        let mut chosen: Option<Entity<Block>> = None;
+        for entity in plan_row.entities() {
+            let block = entity.read(cx);
+            let bounds = block.last_bounds.or_else(|| {
+                block.table_runtime.as_ref().and_then(|runtime| {
+                    runtime
+                        .header
+                        .iter()
+                        .chain(runtime.rows.iter().flatten())
+                        .filter_map(|cell| cell.read(cx).last_bounds)
+                        .reduce(|bounds, cell| bounds.union(&cell))
+                })
+            });
+            let bounds = match &plan_row.body {
+                crate::editor::render::RenderedRowBody::Ordinary { .. } => {
+                    Some(bounds.unwrap_or(row_bounds))
+                }
+                crate::editor::render::RenderedRowBody::Group { .. } => bounds,
+            };
+            let Some(bounds) = bounds else { continue };
+            chosen = Some(entity.clone());
+            if position.y <= bounds.bottom() {
+                break;
+            }
+        }
+        let entity = chosen?;
+        let block = entity.read(cx);
+        // 只画图片的块量不出块内偏移（没有文字布局），整块算：它在选区起点侧
+        // 就取块首、在终点侧取块尾。文本块的块内偏移由它自己裁到上下边界。
+        let offset = if block.has_text_layout() {
+            block.current_to_clean_offset(block.index_for_mouse_position(position))
+        } else {
+            self.whole_block_offset(&entity, anchor, cx)
+        };
+        Some(CrossBlockSelectionEndpoint {
+            entity_id: entity.entity_id(),
+            offset,
+        })
     }
 
     /// 没有文字布局的块（未聚焦的公式、带行内公式的段落、只装公式的格子）量不出块内

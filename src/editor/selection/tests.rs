@@ -1030,4 +1030,51 @@ mod tests {
         });
         cx.quit();
     }
+    /// 拖动定位先按 y 二分到目标行：一次 move 不该逐行扫整个挂载区。
+    #[gpui::test]
+    async fn dragging_locates_the_target_row_by_bisection(cx: &mut TestAppContext) {
+        init_editor_test_app(cx);
+        let markdown = (0..200)
+            .map(|index| format!("第 {index} 段。\n\n"))
+            .collect::<String>();
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, markdown, None)
+        });
+        redraw(cx);
+        redraw(cx);
+        let (start, end) = editor.read_with(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            let first = visible[0]
+                .entity
+                .read(cx)
+                .last_bounds
+                .expect("第一块应有几何边界");
+            let last = visible
+                .iter()
+                .rev()
+                .find(|visible| visible.entity.read(cx).last_bounds.is_some())
+                .expect("应有一根靠下的挂载块");
+            let last_bounds = last.entity.read(cx).last_bounds.expect("几何边界");
+            let scroll = editor.scroll_handle.bounds();
+            (
+                point(first.left() + px(2.0), first.center().y),
+                // 落在最后一行下方的留白里：不在任何块的内层命中区上，移动事件
+                // 由编辑器容器接住（真实拖动跨出块时也是这一支）。
+                point(
+                    scroll.left() + scroll.size.width * 0.5,
+                    (last_bounds.bottom() + px(8.0)).min(scroll.bottom() - px(2.0)),
+                ),
+            )
+        });
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        redraw(cx);
+        crate::editor::selection::pointer::DRAG_ROW_PROBES.with(|probes| probes.set(0));
+        cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::none());
+        let probes = crate::editor::selection::pointer::DRAG_ROW_PROBES.with(|probes| probes.get());
+        assert!(probes > 0, "拖动没走定位路径（probes=0）");
+        assert!(
+            probes <= 15,
+            "一次拖动 move 读了 {probes} 个挂载行的几何：仍在逐行扫描"
+        );
+    }
 }
