@@ -170,6 +170,102 @@ async fn dirty_saved_document_is_autosaved(cx: &mut TestAppContext) {
     editor.read_with(cx, |editor, _cx| assert!(!editor.document_dirty));
 }
 
+/// 一轮自动保存对同一个目标文件只读两遍盘：一遍在后台取落盘形状，一遍在
+/// rename 之前兜底校验。中间那次 verify 的结论紧接着被 `commit_checked`
+/// 重做一遍，属于白读——大文档每轮多付一整篇解码加哈希。
+#[gpui::test]
+async fn one_autosave_round_verifies_the_target_file_twice(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("autosave-verify-reads");
+    fs::write(&path, "alpha").expect("write initial markdown");
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup_path);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(path))
+    });
+    let recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(recovery_id);
+    });
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.first_root().expect("first block").clone();
+        first.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(InlineTextTree::plain("autosaved text".to_string()));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        editor
+            .autosave_verify_reads
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs::read_to_string(&path).expect("read autosaved markdown"),
+        "autosaved text"
+    );
+    let reads = editor.read_with(cx, |editor, _cx| {
+        editor
+            .autosave_verify_reads
+            .load(std::sync::atomic::Ordering::Relaxed)
+    });
+    assert_eq!(
+        reads, 2,
+        "一轮自动保存对目标文件做了 {reads} 次读盘校验，只该有「取形状」与「rename 前兜底」两次"
+    );
+}
+
+/// 没有输入法组合时，调度自动保存不该逐块问「你有没有组合中的文本」。
+///
+/// 守卫 `has_marked_document_text` 在每键的 `schedule_autosave` 开头跑：逐块
+/// 读实体扫全部可见块加全部表格格子。组合态是窗口级的少数事件，正常打字时的
+/// 判定必须是 O(1)。
+#[gpui::test]
+async fn scheduling_a_save_does_not_scan_every_block_for_composition_state(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("autosave-composition-guard");
+    let markdown = (0..200)
+        .map(|index| format!("第 {index} 段正文。\n\n"))
+        .collect::<String>();
+    fs::write(&path, &markdown).expect("write initial markdown");
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup_path);
+    });
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, markdown.clone(), Some(path))
+    });
+    redraw(cx);
+    let blocks = editor.read_with(cx, |editor, _cx| editor.document.visible_blocks().len());
+    assert!(blocks > 100, "夹具得有足够多的块才测得出全量扫描：{blocks}");
+
+    editor.update(cx, |editor, cx| {
+        editor.autosave_guard_block_reads.set(0);
+        for _ in 0..3 {
+            editor.schedule_autosave(cx);
+        }
+    });
+    let reads = editor.read_with(cx, |editor, _cx| editor.autosave_guard_block_reads.get());
+    assert_eq!(
+        reads, 0,
+        "没有组合文本时三次调度读了 {reads} 个块实体：每键都在为 IME 守卫扫全篇"
+    );
+}
+
 #[gpui::test]
 async fn chinese_ime_composition_commit_save_and_undo_keep_text(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

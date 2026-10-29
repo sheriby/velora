@@ -49,7 +49,7 @@ fn baseline_capture_checks_the_limit_before_copying_the_source() {
     fixture(|path| {
         let file = std::fs::File::create(path).expect("原文");
         file.set_len(1024 * 1024 + 1).expect("超限原文");
-        super::capture_baseline(path).expect("正常保存可继续");
+        super::capture_baseline_with(path, None).expect("正常保存可继续");
         assert!(
             !super::directory(path).expect("目录").exists(),
             "超限文档应跳过基准复制"

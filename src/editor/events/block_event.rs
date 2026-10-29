@@ -59,6 +59,16 @@ impl Editor {
             return;
         }
         if matches!(event, BlockEvent::CompositionChanged) {
+            // 组合跨度的唯一出口 `set_marked_range` 保证每次变化都发这个事件，
+            // 所以这里维护的集合就是「此刻谁挂着组合文本」的唯一账本：
+            // `has_marked_document_text` 每次调度只查它，不再逐块读实体。
+            let id = block.entity_id();
+            let marked = block.read(cx).has_marked_text();
+            self.composition_blocks
+                .retain(|tracked| tracked.entity_id() != id && tracked.upgrade().is_some());
+            if marked {
+                self.composition_blocks.push(block.downgrade());
+            }
             if self.focusable_entity_by_id(block.entity_id()).is_some() {
                 if !block.read(cx).has_marked_text() {
                     self.finish_ime_composition(cx);

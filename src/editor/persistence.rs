@@ -88,8 +88,18 @@ fn canonical_write_target(path: &Path) -> PathBuf {
 
 impl StagedDocumentWrite {
     fn prepare(path: &Path, contents: &[u8]) -> std::io::Result<Self> {
+        Self::prepare_with_baseline(path, contents, None)
+    }
+
+    /// `baseline` 是刚为版本校验读过的那份内容（见
+    /// [`capture_baseline_with`](crate::config::file_history::capture_baseline_with)）。
+    fn prepare_with_baseline(
+        path: &Path,
+        contents: &[u8],
+        baseline: Option<&[u8]>,
+    ) -> std::io::Result<Self> {
         use std::io::Write;
-        crate::config::file_history::capture_baseline(path)?;
+        crate::config::file_history::capture_baseline_with(path, baseline)?;
         let target = canonical_write_target(path);
         let permissions = match std::fs::metadata(&target) {
             Ok(metadata) => Some(metadata.permissions()),
@@ -262,12 +272,12 @@ impl Editor {
             return self.split_groups().iter().any(|group| group.read(cx).has_marked_document_text(cx));
         }
         let mut scanned = 0u64;
-        let marked = self.document.visible_blocks().iter().map(|block| &block.entity)
-            .chain(self.table_cells.values().map(|binding| &binding.cell))
-            .any(|block| {
-                scanned += 1;
-                block.read(cx).has_marked_text()
-            });
+        let marked = self.composition_blocks.iter().any(|tracked| {
+            scanned += 1;
+            tracked
+                .read_with(cx, |block, _| block.has_marked_text())
+                .unwrap_or(false)
+        });
         self.autosave_guard_block_reads
             .set(self.autosave_guard_block_reads.get() + scanned);
         marked
@@ -302,6 +312,7 @@ impl Editor {
     /// `AutosaveTick::RetryAfterComposition`）。
     fn spawn_autosave_round(&mut self, cx: &mut Context<Self>) {
         let editor = cx.entity().downgrade();
+        let verify_reads = self.autosave_verify_reads.clone();
         self.autosave_task = Some(cx.spawn(
             async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
                 let debounce = cx
@@ -311,7 +322,7 @@ impl Editor {
                     .await;
 
                 enum AutosaveTick {
-                    Save(Vec<PendingAutosaveDocument>, u64),
+                    Save(std::sync::Arc<Vec<PendingAutosaveDocument>>, u64),
                     /// 到点发现输入法组合还挂着：本轮取消，但要重排下一轮。
                     /// 组合可能一直挂着（用户停手离开），不重排的话恢复快照与
                     /// 文件写全部停更，直到下一次编辑事件为止。
@@ -366,7 +377,7 @@ impl Editor {
                         if documents.is_empty() {
                             return AutosaveTick::Idle;
                         }
-                        AutosaveTick::Save(documents, editor.document_revision)
+                        AutosaveTick::Save(std::sync::Arc::new(documents), editor.document_revision)
                     })
                     .ok();
                 let (documents, revision) = match tick {
@@ -394,7 +405,7 @@ impl Editor {
                     .spawn(async move {
                         let mut prepared = Vec::new();
                         let mut conflicts = Vec::new();
-                        for document in documents_for_write {
+                        for document in documents_for_write.iter() {
                             let failing_path = document.path.clone();
                             // 一篇失败不再拖垮整批：出问题的这一篇
                             // 跳过磁盘提交，其余文档的快照与写盘照常走。
@@ -406,6 +417,10 @@ impl Editor {
                             let disk_raw = match (document.path.as_deref(), document.file_version)
                             {
                                 (Some(path), Some(expected_version)) => {
+                                    verify_reads.fetch_add(
+                                        1,
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
                                     match verify_file_version(path, expected_version) {
                                         Ok(raw) => raw,
                                         Err(error) => {
@@ -422,18 +437,13 @@ impl Editor {
                                 // 优先写缓冲区字节；后台那一页按磁盘上的形状重新编码
                                 // （见 `autosave_payload`），CRLF/UTF-16/GB18030 文档
                                 // 经 autosave 不能被洗成 LF/UTF-8。
-                                let payload = autosave_payload(&document, &disk_raw);
-                                match StagedDocumentWrite::prepare(path, &payload) {
+                                let payload = autosave_payload(document, &disk_raw);
+                                match StagedDocumentWrite::prepare_with_baseline(
+                                    path,
+                                    &payload,
+                                    Some(&disk_raw),
+                                ) {
                                     Ok(staged_write) => {
-                                        if let (Some(path), Some(expected_version)) =
-                                            (document.path.as_deref(), document.file_version)
-                                            && let Err(error) =
-                                                verify_file_version(path, expected_version)
-                                        {
-                                            conflicts.push((Some(path.to_path_buf()), error));
-                                            prepared.push(None);
-                                            continue;
-                                        }
                                         staged = Some((staged_write, payload));
                                     }
                                     Err(error) => {
@@ -453,7 +463,7 @@ impl Editor {
                         editor.autosave_task = None;
                         let (prepared, conflicts) = write_result;
                         if editor.document_revision != revision {
-                            for document in &documents {
+                            for document in documents.iter() {
                                 let is_open = if document.path.is_none() {
                                     editor.is_untitled_recovery_open(document.recovery.id, cx)
                                 } else {
@@ -518,7 +528,13 @@ impl Editor {
                                 continue;
                             }
                             let result = match document.file_version {
-                                Some(version) => staged.commit_checked(path, version),
+                                Some(version) => {
+                                    editor.autosave_verify_reads.fetch_add(
+                                        1,
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
+                                    staged.commit_checked(path, version)
+                                }
                                 None => staged.commit().map_err(anyhow::Error::from),
                             };
                             if let Err(error) = result {
@@ -890,28 +906,37 @@ impl Editor {
         {
             self.file_version = Some(file_content_version_normalized(&opened_text));
         }
-        if let Some(expected_version) = self.file_version
-            && let Err(error) = verify_file_version(path, expected_version)
-        {
-            let detail = error.to_string();
-            let strings = cx.global::<I18nManager>().strings().clone();
-            // 应用内模态，不用系统原生弹窗（用户要求）。
-            if is_external_change(&error) {
-                self.report_workspace_file_error(detail.clone(), cx);
-                // 手动保存撞上的冲突与自动保存撞上的同一个问题，给同一个解除入口
-                // （重载 / 另存为），不再只有一块「好」按钮。
-                self.show_external_change_conflict_modal(path.to_path_buf(), cx);
-            } else {
-                self.show_message_modal(strings.save_failed_title.clone(), detail.clone(), cx);
+        let mut verified_raw = None;
+        if let Some(expected_version) = self.file_version {
+            match verify_file_version(path, expected_version) {
+                Ok(raw) => verified_raw = Some(raw),
+                Err(error) => {
+                    let detail = error.to_string();
+                    let strings = cx.global::<I18nManager>().strings().clone();
+                    // 应用内模态，不用系统原生弹窗（用户要求）。
+                    if is_external_change(&error) {
+                        self.report_workspace_file_error(detail.clone(), cx);
+                        // 手动保存撞上的冲突与自动保存撞上的同一个问题，给同一个解除入口
+                        // （重载 / 另存为），不再只有一块「好」按钮。
+                        self.show_external_change_conflict_modal(path.to_path_buf(), cx);
+                    } else {
+                        self.show_message_modal(strings.save_failed_title.clone(), detail.clone(), cx);
+                    }
+                    let _ = window;
+                    return false;
+                }
             }
-            let _ = window;
-            return false;
         }
         let bytes = self.document_bytes_for_save();
         let saved_text = self.document_text_for_save();
         let identity = self.document_save_identity();
         let expected_version = self.file_version;
-        let result = StagedDocumentWrite::prepare(path, &bytes).map_err(anyhow::Error::from).and_then(|staged| {
+        let result = StagedDocumentWrite::prepare_with_baseline(
+            path,
+            &bytes,
+            verified_raw.as_deref(),
+        )
+        .map_err(anyhow::Error::from).and_then(|staged| {
             #[cfg(test)]
             if let Some(hook) = self.save_commit_hook.take() {
                 hook(self, cx);

@@ -272,6 +272,14 @@ pub struct Editor {
     /// 全部可见块加全部表格格子来问「有没有未落定的组合文本」，而调用点在每键的
     /// `schedule_autosave` 开头——这个数随文档长度长，就说明每键都在为一次守卫扫全篇。
     autosave_guard_block_reads: std::cell::Cell<u64>,
+    /// 计数器：一轮自动保存对同一目标文件读盘校验了几次（`verify_file_version`）。
+    /// 读盘在后台线程，所以用共享原子。多于两次就是重复的整篇读+解码+哈希：
+    /// 第一次取落盘形状，最后一次必须在 rename 之前兜底，中间那次是白读。
+    autosave_verify_reads: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// 此刻挂着 IME 组合文本（`marked_range`）的块。组合开始/结束都会发
+    /// `CompositionChanged`，这里按事件增删；守卫 `has_marked_document_text` 于是
+    /// 先看这个集合为不为空，不必每键逐块读实体问一遍。
+    composition_blocks: Vec<WeakEntity<Block>>,
     /// 计数器：大纲同步时整篇克隆了多少根块（`sync_workspace_outline`）。侧栏打开时
     /// 这个函数每帧跑一次，而短路判断只需要根块数——克隆却要付每个 Entity 句柄的
     /// 引用计数与 LeakDetector 登记（10 MiB 档 106,456 根，实测 3.7–4.7ms/帧）。
@@ -978,6 +986,8 @@ impl Editor {
             document_view_captures: std::cell::Cell::default(),
             reference_registry_rebuilds: std::cell::Cell::default(),
             autosave_guard_block_reads: std::cell::Cell::default(),
+            autosave_verify_reads: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            composition_blocks: Vec::new(),
             outline_root_blocks_cloned: std::cell::Cell::default(),
             status_bar_selection_block_reads: std::cell::Cell::default(),
             focus_transfer_block_updates: std::cell::Cell::default(),

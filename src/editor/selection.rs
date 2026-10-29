@@ -792,8 +792,9 @@ impl Editor {
             return;
         };
         block.update(cx, |block, cx| {
-            block.marked_range = Some(local);
-            cx.notify();
+            // 必须走唯一出口：直接写字段不发 `CompositionChanged`，编辑器那本
+            // 「谁挂着组合文本」的账就漏记，组合期间自动保存会把预编辑文本当定稿写盘。
+            block.set_marked_range(Some(local), cx);
         });
     }
 

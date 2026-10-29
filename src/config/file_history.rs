@@ -429,7 +429,9 @@ pub(crate) fn list_versions(
     load_and_prune(file, policy, now)
 }
 
-pub(crate) fn capture_baseline(file: &Path) -> std::io::Result<()> {
+/// `baseline` 是调用方刚刚为版本校验读过的那份文件内容：保存链路同一次提交里
+/// 已经为校验完整读过盘，这里再读一遍是同一份字节的第二遍。`None` 才自己读。
+pub(crate) fn capture_baseline_with(file: &Path, baseline: Option<&[u8]>) -> std::io::Result<()> {
     if !supports_document(file, 0) {
         return Ok(());
     }
@@ -444,6 +446,15 @@ pub(crate) fn capture_baseline(file: &Path) -> std::io::Result<()> {
         .unwrap_or_default();
     if !list_versions(file, policy, SystemTime::now())?.is_empty() {
         return Ok(());
+    }
+    if let Some(bytes) = baseline {
+        return record_snapshot_at(
+            file,
+            bytes,
+            HistorySource::Baseline,
+            policy,
+            SystemTime::now(),
+        );
     }
     match read_limited(file) {
         Ok(bytes) => record_snapshot_at(
