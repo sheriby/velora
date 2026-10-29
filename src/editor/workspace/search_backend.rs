@@ -247,11 +247,16 @@ pub(crate) fn search_content_cache() -> &'static std::sync::Mutex<SearchContentC
 /// 都不行才 lossy 兜底，与文档缓冲区拿到文本的方式**同一份实现**。
 pub(crate) fn cached_file_source(path: &Path) -> Option<std::sync::Arc<str>> {
     let metadata = fs::metadata(path).ok()?;
-    if metadata.len() > SEARCH_CACHE_MAX_FILE_BYTES {
-        return None;
-    }
     let mtime = metadata.modified().ok()?;
     let len = metadata.len();
+    if len > SEARCH_CACHE_MAX_FILE_BYTES {
+        // 超大文件不进缓存，但仍要读出来搜：搜索与「全部替换」必须看同一批
+        // 文件，否则搜索里看不见的命中会被批量替换掉（确认框计数也没有它）。
+        let bytes = fs::read(path).ok()?;
+        return Some(std::sync::Arc::from(
+            crate::editor::encoding::decode_document_bytes(bytes),
+        ));
+    }
 
     {
         let cache = search_content_cache();
@@ -735,5 +740,33 @@ mod tests {
             new * 4 <= old,
             "新写法 {new:?} 应当远快于旧写法 {old:?}——每插一条不再全表扫描才算修住了缺陷 #8"
         );
+    }
+}
+
+#[cfg(test)]
+mod oversized_file_tests {
+    use super::cached_file_source;
+
+    /// 超过单文件缓存上限的文件仍要能搜正文（不进缓存）：搜索跳过它而
+    /// 「全部替换」照改，是用户看不见的批量改写。
+    #[test]
+    fn oversized_files_are_still_searchable_without_caching() {
+        let path = std::env::temp_dir().join(format!(
+            "velora-oversized-search-{}.md",
+            uuid::Uuid::new_v4()
+        ));
+        let mut contents = String::with_capacity(super::SEARCH_CACHE_MAX_FILE_BYTES as usize + 64);
+        contents.push_str("开头\n");
+        while contents.len() as u64 <= super::SEARCH_CACHE_MAX_FILE_BYTES {
+            contents.push_str("填充文本。\n");
+        }
+        contents.push_str("needle 在后面\n");
+        std::fs::write(&path, &contents).expect("write oversized fixture");
+        let source = cached_file_source(&path).expect("超大文件也要能读出来搜");
+        assert!(
+            source.contains("needle"),
+            "超大文件的正文没被读出来：搜索会跳过它而全部替换照改"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 }
