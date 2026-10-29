@@ -642,3 +642,39 @@ async fn triple_click_selects_the_whole_block(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// 段落变空并失焦后，上一帧的几何必须作废：否则点击下方区域会被陈旧
+/// 边界认领进这个看不见的空块。
+#[gpui::test]
+async fn an_empty_unfocused_paragraph_drops_its_stale_geometry(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "alpha\n\nbeta".into(), None)
+    });
+    redraw(cx);
+    let (first, second) = editor.read_with(cx, |editor, _cx| {
+        let blocks = editor.document.root_blocks();
+        (blocks[0].clone(), blocks[1].clone())
+    });
+    assert!(
+        first.read_with(cx, |block, _cx| block.last_bounds.is_some()),
+        "夹具：第一块应先有几何"
+    );
+    editor.update(cx, |editor, cx| {
+        first.update(cx, |block, _cx| {
+            block.record.set_title(crate::components::InlineTextTree::plain(String::new()));
+            block.sync_render_cache();
+        });
+        editor.focus_block(second.entity_id());
+        editor.mark_dirty(cx);
+    });
+    redraw(cx);
+    redraw(cx);
+    first.read_with(cx, |block, _cx| {
+        assert!(
+            block.last_bounds.is_none() && block.last_layout.is_none(),
+            "空段落还留着上一帧的几何：{:?}",
+            block.last_bounds
+        );
+    });
+}

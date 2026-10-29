@@ -257,6 +257,10 @@ impl Render for Block {
 
         // 空行块不渲染内容：空的文本元素自带一行高，会把 min_h 撑开。
         if self.collapses_to_blank_gap(focused, false) {
+            // 这一帧没有文本元素：上一帧量下的几何必须一起作废。留着它，
+            // 点击视觉上属于下方块的区域也会被旧 bounds 认领进这个空块。
+            self.last_layout = None;
+            self.last_bounds = None;
             return self
                 .render_shell(
                     block_id,
