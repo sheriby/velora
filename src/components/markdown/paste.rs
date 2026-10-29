@@ -11,13 +11,30 @@ pub(crate) fn is_soft_wrapped_paste(lines: &[String]) -> bool {
     // A pipeless GFM table reads cell-by-cell as plain lines, so detect the
     // header-plus-delimiter shape explicitly and leave the whole paste to the
     // block builder instead of joining it into one paragraph.
-    if (0..lines.len()).any(|start| collect_pipeless_table_region(lines, start).is_some()) {
+    //
+    // 先按分隔行形状预筛：没有一行长得像 `---|---` 时，任何起点都不可能是
+    // 表头+分隔行，逐起点的切格探测只是白扫（两万行带竖线的正文一次要上百
+    // 毫秒）。预筛是保守超集，真表格的形状一定过得了它。
+    if lines.iter().any(|line| looks_like_delimiter_row(line))
+        && (0..lines.len()).any(|start| collect_pipeless_table_region(lines, start).is_some())
+    {
         return false;
     }
 
     lines.iter().filter(|line| !line.trim().is_empty()).count() >= 2
         && lines.iter().all(|line| !line.trim().is_empty())
         && lines.iter().all(|line| is_plain_inline_paste_line(line))
+}
+
+/// 分隔行的廉价形状判据：去掉首尾空白后只含 `|`、`-`、`:` 与制表符/空格，
+/// 且至少两个连字符（无外管道表格至少两格，每格至少一个连字符）。
+fn looks_like_delimiter_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    !trimmed.is_empty()
+        && trimmed
+            .chars()
+            .all(|ch| matches!(ch, '|' | '-' | ':' | ' ' | '\t'))
+        && trimmed.chars().filter(|ch| *ch == '-').count() >= 2
 }
 
 fn is_plain_inline_paste_line(line: &str) -> bool {
@@ -159,4 +176,31 @@ mod tests {
     fn blank_lines_are_paragraph_separators_not_soft_wraps() {
         assert!(!is_soft_wrapped_paste(&lines("第一段\n\n第二段")));
     }
+
+    /// 行里带竖线但整篇没有分隔行形状时，不该逐起点做切格探测：两万行这样的
+    /// 正文（日志、导出结果）旧路径要上百毫秒，全在主线程的粘贴链路上。
+    #[test]
+    fn pipe_heavy_prose_skips_the_per_line_table_probe() {
+        use crate::components::markdown::table::PIPELESS_TABLE_PROBES;
+
+        let pasted: Vec<String> = (0..200)
+            .map(|index| format!("row {index} left | row {index} right"))
+            .collect();
+        PIPELESS_TABLE_PROBES.with(|probes| probes.set(0));
+        assert!(is_soft_wrapped_paste(&pasted));
+        let probes = PIPELESS_TABLE_PROBES.with(|probes| probes.get());
+        assert_eq!(
+            probes, 0,
+            "没有分隔行形状的粘贴仍做了 {probes} 次逐起点表格探测"
+        );
+
+        // 正控：真表格形状必须进探测并被认出来。
+        PIPELESS_TABLE_PROBES.with(|probes| probes.set(0));
+        assert!(!is_soft_wrapped_paste(&lines("A | B\n--- | ---\n1 | 2")));
+        assert!(
+            PIPELESS_TABLE_PROBES.with(|probes| probes.get()) > 0,
+            "表格形状的粘贴没进探测，预筛把该拦的漏了"
+        );
+    }
 }
+
