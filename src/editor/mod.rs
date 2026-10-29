@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use gpui::*;
 
 use self::context_menu::{ContextMenuState, TableInsertDialogState};
-use self::selection::{TableTextPosition, TableTextSelection};
+use self::selection::{NormalizedCrossBlockSelection, TableTextPosition, TableTextSelection};
 use self::document::ChunkCursor;
 use self::tree::{DocumentTree, PendingSourceTail, PendingTail};
 use crate::components::{
@@ -327,6 +327,15 @@ pub struct Editor {
     /// 手动保存的读盘与写临时文件在后台做；成功那一刻要接着做的事
     /// （关窗 / 切根 / 替换拖入 / 继续关一批标签）存在这里。
     pending_save_then: Option<persistence::SaveThen>,
+    /// 上一次铺过的跨块选区。拖动时两端所在块没换、文档没重建，就只重铺两端：
+    /// 中间的块目标区间一直是整块，不必每次 move 都读一遍实体。
+    last_selection_visuals: Option<NormalizedCrossBlockSelection>,
+    /// 铺高亮时的「文档选区世代」（`document_selection_active` 的 Rc 指针）。
+    /// 文档重建后块都是新实体，世代变了就必须全量重铺。
+    last_selection_visuals_epoch: Option<std::rc::Rc<std::cell::Cell<bool>>>,
+    /// 上一次铺高亮时的 `document_revision`：拖动中途若有编辑改了块长度，
+    /// 中间块的高亮也得重算，这一拍退回全量路径。
+    last_selection_visuals_revision: u64,
     /// 应用内模态（取代系统原生 window.prompt，用户要求全软件不用原生弹窗）。
     modal: Option<modal::EditorModal>,
     /// C13：模态键盘拦截器（App::intercept_keystrokes）。绑定解析先于
@@ -1008,6 +1017,9 @@ impl Editor {
             show_drop_replace_dialog: false,
             pending_drop_replace_after_save: false,
             pending_save_then: None,
+            last_selection_visuals: None,
+            last_selection_visuals_epoch: None,
+            last_selection_visuals_revision: 0,
             drop_replace_restore_focus: None,
             modal: None,
             modal_key_interceptor: None,

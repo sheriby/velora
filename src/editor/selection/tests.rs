@@ -1003,4 +1003,31 @@ mod tests {
             cx.quit();
         }
     }
+    /// 选区已经覆盖一段之后，只在末端块里挪偏移不该重铺整段：每次 move 只该
+    /// 读写两端那两块，中间的块目标区间一直是整块，一个实体都不用碰。
+    #[gpui::test]
+    async fn extending_within_the_last_block_repaints_only_the_endpoints(
+        cx: &mut TestAppContext,
+    ) {
+        init_editor_test_app(cx);
+        let markdown = (0..200)
+            .map(|index| format!("第 {index} 段。\n\n"))
+            .collect::<String>();
+        let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+        editor.update(cx, |editor, cx| {
+            // 先铺满 0..=100 这一段。
+            set_selection(editor, 0, 0, 100, 0, cx);
+            let before = editor.selection_visual_visits.get();
+            // 之后只在最后一根块里挪偏移：中间 99 块的区间没有变。
+            for offset in 1..6 {
+                set_selection(editor, 0, 0, 100, offset, cx);
+            }
+            let visits = editor.selection_visual_visits.get() - before;
+            assert!(
+                visits <= 12,
+                "末端块内挪偏移 5 次共铺了 {visits} 次选区：选中段整段被反复读写"
+            );
+        });
+        cx.quit();
+    }
 }

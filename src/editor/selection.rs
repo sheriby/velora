@@ -496,13 +496,66 @@ impl Editor {
     pub(super) fn sync_cross_block_selection_visuals(&mut self, cx: &mut Context<Self>) {
         self.sync_document_selection_ownership(cx);
         let normalized = self.normalized_cross_block_selection(cx);
+        let previous = std::mem::replace(&mut self.last_selection_visuals, normalized);
+        let same_epoch = self
+            .last_selection_visuals_epoch
+            .as_ref()
+            .is_some_and(|epoch| std::rc::Rc::ptr_eq(epoch, &self.document_selection_active));
+        let same_revision = self.last_selection_visuals_revision == self.document_revision;
+        self.last_selection_visuals_epoch = Some(self.document_selection_active.clone());
+        self.last_selection_visuals_revision = self.document_revision;
+
+        // 增量路径：两端所在的块没换、文档也没变时，中间块的目标区间与上一帧
+        // 相同（整块），只重铺两端。拖动时每次 move 都是这一支。
+        if let (Some(previous), Some(current)) = (previous, normalized)
+            && same_epoch
+            && same_revision
+            && previous.start_index == current.start_index
+            && previous.end_index == current.end_index
+        {
+            let start = self
+                .document
+                .visible_blocks()
+                .get(current.start_index)
+                .map(|visible| visible.entity.clone());
+            let end = self
+                .document
+                .visible_blocks()
+                .get(current.end_index)
+                .map(|visible| visible.entity.clone());
+            let mut painted_ids: std::collections::HashSet<EntityId> =
+                self.cross_block_selection_painted.iter().copied().collect();
+            if let Some(start) = &start {
+                let range = Self::endpoint_selection_range(start, current, true, cx);
+                self.paint_selection_block(start, range, &mut painted_ids, cx);
+            }
+            if current.end_index != current.start_index
+                && let Some(end) = &end
+            {
+                let range = Self::endpoint_selection_range(end, current, false, cx);
+                self.paint_selection_block(end, range, &mut painted_ids, cx);
+            }
+            let stale = std::mem::replace(
+                &mut self.cross_block_selection_painted,
+                painted_ids.into_iter().collect(),
+            );
+            self.clear_stale_selection_visuals(stale, cx);
+            // 表格格子上的高亮只有在「这一段里可能有表格」时才要重扫；两端没换块时
+            // 中间块覆盖的格子集合不变，整段扫一遍纯属白读。
+            let touches_tables = self.table_text_selection.is_some()
+                || !self.table_text_selection_painted.is_empty()
+                || start.as_ref().is_some_and(|entity| entity.read(cx).kind() == crate::components::BlockKind::Table)
+                || end.as_ref().is_some_and(|entity| entity.read(cx).kind() == crate::components::BlockKind::Table);
+            if touches_tables {
+                self.sync_table_text_selection_visuals(cx);
+            }
+            return;
+        }
+
         let visible_blocks = normalized.and_then(|selection| self.document.visible_blocks()
             .get(selection.start_index..=selection.end_index).map(|blocks| blocks.to_vec())).unwrap_or_default();
-        let mut painted = Vec::new();
         let mut painted_ids = std::collections::HashSet::new();
         for (relative_index, visible) in visible_blocks.into_iter().enumerate() {
-            #[cfg(test)]
-            self.selection_visual_visits.set(self.selection_visual_visits.get() + 1);
             let next_range = normalized.and_then(|selection| {
                 let index = selection.start_index + relative_index;
                 let block = visible.entity.read(cx);
@@ -518,27 +571,75 @@ impl Editor {
                 };
                 (!range.is_empty()).then_some(range)
             });
+            self.paint_selection_block(&visible.entity, next_range, &mut painted_ids, cx);
+        }
+        let stale = std::mem::replace(
+            &mut self.cross_block_selection_painted,
+            painted_ids.into_iter().collect(),
+        );
+        self.clear_stale_selection_visuals(stale, cx);
+        // 表格格子上的高亮由同一份选区状态派生：整张表落进跨块选区时，格子上也要亮，
+        // 不然用户看到的是「表格什么也没选中」。
+        self.sync_table_text_selection_visuals(cx);
+    }
 
-            if next_range.is_some() {
-                painted.push(visible.entity.entity_id());
-                painted_ids.insert(visible.entity.entity_id());
+    /// 选区端点那块的目标高亮区间（干净坐标）。
+    fn endpoint_selection_range(
+        entity: &Entity<Block>,
+        selection: NormalizedCrossBlockSelection,
+        is_start: bool,
+        cx: &App,
+    ) -> Option<Range<usize>> {
+        let block = entity.read(cx);
+        let len = block.clean_visible_len();
+        let range = if selection.start_index == selection.end_index {
+            selection.start.offset.min(len)..selection.end.offset.min(len)
+        } else if is_start {
+            selection.start.offset.min(len)..len
+        } else {
+            0..selection.end.offset.min(len)
+        };
+        (!range.is_empty()).then_some(range)
+    }
+
+    fn paint_selection_block(
+        &mut self,
+        entity: &Entity<Block>,
+        next_range: Option<Range<usize>>,
+        painted_ids: &mut std::collections::HashSet<EntityId>,
+        cx: &mut Context<Self>,
+    ) {
+        #[cfg(test)]
+        self.selection_visual_visits.set(self.selection_visual_visits.get() + 1);
+        match &next_range {
+            Some(_) => {
+                painted_ids.insert(entity.entity_id());
             }
-            let needs_update = {
-                let block = visible.entity.read(cx);
-                block.editor_selection_clean_range != next_range
-                    || block.document_selection_active.as_ref().is_none_or(|current| !std::rc::Rc::ptr_eq(current, &self.document_selection_active))
-            };
-            if needs_update {
-                visible.entity.update(cx, |block, cx| {
-                    block.document_selection_active = Some(self.document_selection_active.clone());
-                    if block.editor_selection_clean_range != next_range {
-                        block.editor_selection_clean_range = next_range;
-                        cx.notify();
-                    }
-                });
+            None => {
+                painted_ids.remove(&entity.entity_id());
             }
         }
-        for entity_id in std::mem::replace(&mut self.cross_block_selection_painted, painted) {
+        let needs_update = {
+            let block = entity.read(cx);
+            block.editor_selection_clean_range != next_range
+                || block.document_selection_active.as_ref().is_none_or(|current| !std::rc::Rc::ptr_eq(current, &self.document_selection_active))
+        };
+        if needs_update {
+            let active = self.document_selection_active.clone();
+            entity.update(cx, |block, cx| {
+                block.document_selection_active = Some(active);
+                if block.editor_selection_clean_range != next_range {
+                    block.editor_selection_clean_range = next_range;
+                    cx.notify();
+                }
+            });
+        }
+    }
+
+    fn clear_stale_selection_visuals(&mut self, previous: Vec<EntityId>, cx: &mut Context<Self>) {
+        let painted_ids: std::collections::HashSet<EntityId> =
+            self.cross_block_selection_painted.iter().copied().collect();
+        for entity_id in previous {
             if painted_ids.contains(&entity_id) { continue; }
             #[cfg(test)]
             self.selection_visual_visits.set(self.selection_visual_visits.get() + 1);
@@ -548,9 +649,6 @@ impl Editor {
                 block.update(cx, |block, cx| { block.editor_selection_clean_range = None; cx.notify(); });
             }
         }
-        // 表格格子上的高亮由同一份选区状态派生：整张表落进跨块选区时，格子上也要亮，
-        // 不然用户看到的是「表格什么也没选中」。
-        self.sync_table_text_selection_visuals(cx);
     }
 
     /// 光标落在缓冲区的哪个字节：块内显示偏移 → 文件字节偏移。
