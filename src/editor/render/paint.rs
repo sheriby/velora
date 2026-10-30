@@ -23,7 +23,7 @@ impl Render for Editor {
                     let keystroke = &event.keystroke;
                     let _ = editor.update(cx, |editor, cx| {
                         let mut consumed = editor.ai_review_key_down(keystroke, window, cx);
-                        consumed = consumed || editor.mermaid_preview_key_down(keystroke, cx);
+                        consumed = consumed || editor.mermaid_preview_key_down(keystroke, window, cx);
                         consumed = consumed || editor.file_history_key_down(keystroke, cx);
                         if !consumed {
                             consumed = editor.wikilink_completion_key_down(keystroke, cx);
@@ -69,7 +69,7 @@ impl Render for Editor {
         if !self.ai_result_preview && self.split_parent.is_none() { self.install_close_guard(cx, window); }
         self.sync_ai_availability(cx);
         self.sync_ai_settings(cx);
-        self.sync_mermaid_preview_theme(cx);
+        self.sync_mermaid_preview_theme(window, cx);
         self.sync_ai_task_navigation(cx);
         self.sync_ai_review_document(cx);
         self.sync_ai_surface_visibility(cx);

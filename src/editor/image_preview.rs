@@ -107,7 +107,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub(super) fn sync_mermaid_preview_theme(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn sync_mermaid_preview_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let dark = cx.global::<crate::theme::ThemeManager>().current().is_dark();
         let Some(preview) = self.mermaid_preview.as_mut().filter(|preview| preview.dark != dark) else {
             return;
@@ -119,7 +119,9 @@ impl Editor {
                 preview.clamp_pan();
             }
             Err(error) => {
-                self.mermaid_preview = None;
+                // 关闭走正式出口：浮层已经把焦点从正文抢走，直接置空会让焦点
+                // 悬空，用户得用鼠标点回正文才能继续打字。
+                self.close_mermaid_preview(window, cx);
                 self.show_message_modal("Mermaid", error.to_string(), cx);
             }
         }
@@ -153,6 +155,7 @@ impl Editor {
     pub(super) fn mermaid_preview_key_down(
         &mut self,
         keystroke: &Keystroke,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         if self.mermaid_preview.is_none() {
@@ -160,8 +163,7 @@ impl Editor {
         }
         match keystroke.key.as_str() {
             "escape" => {
-                self.mermaid_preview = None;
-                cx.notify();
+                self.close_mermaid_preview(window, cx);
             }
             "+" | "=" => self.zoom_mermaid_preview(1.2, cx),
             "-" => self.zoom_mermaid_preview(1.0 / 1.2, cx),

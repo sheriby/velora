@@ -1740,3 +1740,53 @@ async fn printing_an_image_preview_shows_a_modal_instead_of_panicking(cx: &mut T
         assert!(editor.modal.is_some(), "打印失败应弹应用内模态而不是重入 panic");
     });
 }
+
+/// 拦截器那条 Esc（焦点陷阱尚未建立的窗口期）也必须走正式关闭函数：旧实现
+/// 直接把预览状态置空，焦点悬在已被丢弃的浮层上，必须用鼠标点回正文才能继续
+/// 打字。主题重渲染失败那条路径同理。
+#[gpui::test]
+async fn mermaid_preview_escape_through_the_interceptor_restores_block_focus(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let markdown = "```mermaid\nflowchart LR\nA-->B\n```\n\n正文\n".to_string();
+    let (editor, cx) = cx.add_window_view({
+        let markdown = markdown.clone();
+        move |_, cx| Editor::from_markdown(cx, markdown, None)
+    });
+    redraw(cx);
+    let fence = editor.read_with(cx, |editor, _| editor.document.root_blocks()[0].clone());
+    editor.update(cx, |editor, _cx| editor.focus_block(fence.entity_id()));
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.open_mermaid_preview(
+        "```mermaid\nflowchart LR\nA-->B\n```",
+        cx,
+    ));
+    redraw(cx);
+    redraw(cx);
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            let escape = gpui::Keystroke::parse("escape").expect("escape");
+            assert!(
+                editor.mermaid_preview_key_down(&escape, window, cx),
+                "Esc 应被预览拦下"
+            );
+        });
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.mermaid_preview.is_none(), "Esc 后预览应关闭");
+    });
+
+    // 焦点回到正文块：继续打字应落进文档。
+    cx.simulate_input("x");
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert_ne!(
+            editor.buffer.text(),
+            markdown,
+            "Esc 之后焦点该回到正文块，打字仍应落进文档"
+        );
+    });
+}
