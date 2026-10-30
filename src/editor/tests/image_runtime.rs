@@ -1814,3 +1814,64 @@ async fn picking_an_unsupported_image_reports_instead_of_returning_silently(
     });
     let _ = fs::remove_file(txt);
 }
+
+/// 图片预览放大后可以拖拽平移查看角落：此前只有滚轮缩放，放大后四周被裁掉，
+/// 想看边缘只能缩小回整体。
+#[gpui::test]
+async fn image_preview_can_pan_after_zooming_in(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = image_preview_fixture_root(cx);
+    let path = root.join("平移.svg");
+    fs::write(
+        &path,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900"><rect width="1600" height="900" fill="#284"/></svg>"##,
+    )
+    .expect("生成大图夹具");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        window.resize(gpui::size(px(900.0), px(650.0)));
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(path.clone(), window, cx)
+        });
+    });
+    redraw(cx);
+    redraw(cx);
+    let viewport = cx.debug_bounds("image-file-preview").expect("图片视口");
+    for _ in 0..3 {
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui::ScrollDelta::Lines(gpui::point(0.0, 3.0)),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::default(),
+        });
+        redraw(cx);
+    }
+    let before = cx
+        .debug_bounds("image-file-preview-image")
+        .expect("放大后的图片");
+    let start = viewport.center();
+    let delta = gpui::point(px(80.0), px(60.0));
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        start + delta,
+        Some(gpui::MouseButton::Left),
+        Modifiers::none(),
+    );
+    redraw(cx);
+    cx.simulate_mouse_up(
+        start + delta,
+        gpui::MouseButton::Left,
+        Modifiers::none(),
+    );
+    redraw(cx);
+    let after = cx
+        .debug_bounds("image-file-preview-image")
+        .expect("平移后的图片");
+    assert!(
+        (f32::from(after.origin.x - before.origin.x) - 80.0).abs() <= 1.0
+            && (f32::from(after.origin.y - before.origin.y) - 60.0).abs() <= 1.0,
+        "拖拽应平移图片：before={:?} after={:?}",
+        before,
+        after
+    );
+}

@@ -25,7 +25,25 @@ pub(super) struct ImageFilePreview {
     pub(super) image: Option<Arc<RenderImage>>,
     error: Option<String>,
     zoom: f32,
+    /// 放大后超出视口的平移量（拖拽产生），按缩放后的图片与视口钳制。
+    pan: Point<Pixels>,
+    drag_start: Option<(Point<Pixels>, Point<Pixels>)>,
     _load_task: Task<()>,
+}
+
+impl ImageFilePreview {
+    fn clamp_pan(&mut self, viewport: Size<Pixels>) {
+        let Some(image) = self.image.as_ref() else {
+            self.pan = point(px(0.0), px(0.0));
+            return;
+        };
+        let scaled_width = px(image.size(0).width.0 as f32 * self.zoom);
+        let scaled_height = px(image.size(0).height.0 as f32 * self.zoom);
+        let max_x = ((scaled_width - viewport.width) / 2.0).max(px(0.0));
+        let max_y = ((scaled_height - viewport.height) / 2.0).max(px(0.0));
+        self.pan.x = self.pan.x.min(max_x).max(-max_x);
+        self.pan.y = self.pan.y.min(max_y).max(-max_y);
+    }
 }
 
 pub(super) struct MermaidPreview {
@@ -504,6 +522,8 @@ impl Editor {
             image: None,
             error: None,
             zoom: 1.0,
+            pan: point(px(0.0), px(0.0)),
+            drag_start: None,
             _load_task: task,
         });
         self.active_entity_id = None;
@@ -530,6 +550,9 @@ impl Editor {
                 .max_h(relative(preview.zoom))
                 .flex_shrink_0()
                 .object_fit(ObjectFit::Contain)
+                .relative()
+                .left(preview.pan.x)
+                .top(preview.pan.y)
                 .into_any_element()
         } else if preview.error.is_some() {
             div()
@@ -552,16 +575,62 @@ impl Editor {
             .p(px(24.0))
             .overflow_hidden()
             .text_color(theme.colors.dialog_muted)
-            .on_scroll_wheel(cx.listener(|editor, event: &ScrollWheelEvent, _, cx| {
+            .on_scroll_wheel(cx.listener(|editor, event: &ScrollWheelEvent, window, cx| {
                 cx.stop_propagation();
+                let viewport = window.viewport_size();
                 if let Some(factor) = preview_wheel_zoom_factor(event)
                     && let Some(preview) = editor.image_preview.as_mut()
                     && preview.image.is_some()
                 {
                     preview.zoom = (preview.zoom * factor).clamp(0.1, 8.0);
+                    preview.clamp_pan(viewport);
                     cx.notify();
                 }
             }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|editor, event: &MouseDownEvent, _window, cx| {
+                    let Some(preview) = editor.image_preview.as_mut() else {
+                        return;
+                    };
+                    if preview.image.is_none() {
+                        return;
+                    }
+                    preview.drag_start = Some((event.position, preview.pan));
+                    cx.stop_propagation();
+                }),
+            )
+            .on_mouse_move(cx.listener(|editor, event: &MouseMoveEvent, window, cx| {
+                if !event.dragging() {
+                    return;
+                }
+                let viewport = window.viewport_size();
+                let Some(preview) = editor.image_preview.as_mut() else {
+                    return;
+                };
+                let Some((start_position, start_pan)) = preview.drag_start else {
+                    return;
+                };
+                preview.pan = start_pan + (event.position - start_position);
+                preview.clamp_pan(viewport);
+                cx.notify();
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|editor, _event: &MouseUpEvent, _window, _cx| {
+                    if let Some(preview) = editor.image_preview.as_mut() {
+                        preview.drag_start = None;
+                    }
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|editor, _event: &MouseUpEvent, _window, _cx| {
+                    if let Some(preview) = editor.image_preview.as_mut() {
+                        preview.drag_start = None;
+                    }
+                }),
+            )
             .child(content)
             .into_any_element()
     }
