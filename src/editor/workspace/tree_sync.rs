@@ -33,9 +33,10 @@ impl Editor {
             fold_state_version: self.fold_state_version,
             root_count: self.document.root_count(),
         };
-        if active && key.rendered && self.search_highlight_key.as_ref() == Some(&key) {
+        if active && self.search_highlight_key.as_ref() == Some(&key) {
             // 查询、开关、文档内容、视图模式、折叠状态、块数量都没变，这一次只是
-            // 活动命中换了位置。普通命中的高亮一条都没变，不必重算。
+            // 活动命中换了位置。普通命中的高亮一条都没变，不必重算——两种视图同
+            // 一条口径：源码分块的根块也有源码区间，活动标记按区间挪即可。
             self.move_active_search_highlight(cx);
             return;
         }

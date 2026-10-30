@@ -376,3 +376,55 @@ async fn a_query_that_fails_to_compile_clears_the_table(cx: &mut TestAppContext)
     });
     assert_eq!(table_ranges(&editor, cx).len(), 1);
 }
+
+/// 源码模式下连续按 F3 只该动活动命中：普通命中一条都没变，不该整篇重建源码映射。
+#[gpui::test]
+async fn source_mode_search_navigation_only_touches_the_active_chunk(
+    cx: &mut TestAppContext,
+) {
+    init(cx);
+    let source = (0..3000)
+        .map(|index| format!("line {index} needle"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source, None));
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    cx.run_until_parked();
+    search_document(&editor, "needle", cx);
+    assert_eq!(table_ranges(&editor, cx).len(), 3000);
+
+    // 第一跳把活动命中放到位（这次允许走全量同步）。
+    editor.update(cx, |editor, cx| {
+        editor.find_next_document_match(false, cx);
+    });
+    let first_active = editor.read_with(cx, |editor, _| editor.workspace.document_active_range.clone());
+    let before = editor.read_with(cx, |editor, _| editor.source_mapping_roots_walked.get());
+    editor.update(cx, |editor, cx| {
+        editor.find_next_document_match(false, cx);
+    });
+    let walked = editor.read_with(cx, |editor, _| editor.source_mapping_roots_walked.get()) - before;
+    assert_eq!(walked, 0, "仅活动命中变化不该重建整篇源码映射（走了 {walked} 根根块）");
+    editor.read_with(cx, |editor, cx| {
+        let active = editor
+            .workspace
+            .document_active_range
+            .clone()
+            .expect("活动命中");
+        assert_ne!(Some(active), first_active, "活动命中应向前推进");
+        let total: usize = editor
+            .search_highlighted_blocks
+            .iter()
+            .map(|entity| entity.read(cx).search_highlight_ranges.len())
+            .sum();
+        assert_eq!(total, 3000, "普通命中高亮应保持原样");
+        assert!(
+            editor
+                .search_active_blocks
+                .iter()
+                .filter(|entity| entity.read(cx).search_active_range.is_some())
+                .count()
+                >= 1,
+            "活动命中要落在一块上"
+        );
+    });
+}
