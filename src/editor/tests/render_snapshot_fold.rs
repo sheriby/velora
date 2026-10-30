@@ -602,3 +602,31 @@ async fn a_large_code_font_does_not_grow_paragraphs_without_inline_code(
         "带行内代码的段落应容纳放大的代码字号"
     );
 }
+
+/// 行号槽的标签只随内容/字体/主题变化重新整形：滚动、选区、光标闪烁期间
+/// 每帧重排几百个数字是纯浪费。
+#[gpui::test]
+async fn source_line_numbers_are_shaped_once_per_text_generation(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = (1..=40)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source, None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _| {
+        editor.document.first_root().expect("源码块").clone()
+    });
+    let first = block.read_with(cx, |block, _| block.source_line_number_shapes.get());
+    assert!(first > 0, "源码模式应画出行号");
+    redraw(cx);
+    redraw(cx);
+    let second = block.read_with(cx, |block, _| block.source_line_number_shapes.get());
+    assert_eq!(
+        second, first,
+        "行号内容没变，后续帧不该重新整形（{first} → {second}）"
+    );
+}

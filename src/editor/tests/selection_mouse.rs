@@ -2065,7 +2065,7 @@ async fn shift_click_on_a_block_extends_from_an_existing_in_block_selection(
     cx.simulate_mouse_up(in_second, gpui::MouseButton::Left, shift);
     redraw(cx);
 
-    editor.read_with(cx, |editor, cx| {
+    editor.read_with(cx, |editor, _cx| {
         let selection = editor
             .cross_block_selection
             .expect("已有块内选区时 shift+点另一段也该成跨块选区");

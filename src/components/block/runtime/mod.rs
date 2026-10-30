@@ -238,6 +238,16 @@ pub struct Block {
     word_starts_cache: std::cell::RefCell<Option<(u64, std::sync::Arc<Vec<usize>>)>>,
     #[cfg(test)]
     pub(crate) word_index_scans: std::cell::Cell<u64>,
+    /// 行号槽标签的整形结果：滚动、选区、光标闪烁期间行号内容不变，
+    /// 不该每帧把每个标签重新 shape 一遍。
+    pub(crate) source_line_number_cache: std::cell::RefCell<
+        Option<(
+            SourceLineNumberCacheKey,
+            std::sync::Arc<Vec<gpui::ShapedLine>>,
+        )>,
+    >,
+    #[cfg(test)]
+    pub(crate) source_line_number_shapes: std::cell::Cell<u64>,
     /// P3：跨帧 shape 备忘。键命中时布局闭包跳过 build_text_runs 与
     /// shape_text（taffy 一次布局会对同一元素多次 measure）。
     pub(crate) shape_memo: Option<ShapeMemoEntry>,
@@ -410,6 +420,9 @@ impl Block {
             word_starts_cache: std::cell::RefCell::new(None),
             #[cfg(test)]
             word_index_scans: std::cell::Cell::new(0),
+            source_line_number_cache: std::cell::RefCell::new(None),
+            #[cfg(test)]
+            source_line_number_shapes: std::cell::Cell::new(0),
             shape_memo: None,
             long_line_plan: None,
             expanded_long_lines: std::collections::BTreeSet::new(),
@@ -906,6 +919,16 @@ pub(crate) struct ColumnLayoutMemo {
 pub(crate) struct ShapeMemoEntry {
     pub key: ShapeMemoKey,
     pub lines: std::sync::Arc<Vec<gpui::WrappedLine>>,
+}
+
+/// 行号槽整形的缓存键：标签内容、字号、字体与主题（占位色烘焙在 run 里）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SourceLineNumberCacheKey {
+    pub line_start: usize,
+    pub line_count: usize,
+    pub font_size_bits: u32,
+    pub font_fingerprint: u64,
+    pub theme_generation: u64,
 }
 
 

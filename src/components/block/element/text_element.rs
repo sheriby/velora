@@ -28,7 +28,7 @@ impl BlockTextElement {
 /// Prepared text layout and paint geometry for one `BlockTextElement` frame.
 pub struct PrepaintState {
     lines: std::sync::Arc<Vec<WrappedLine>>,
-    source_line_numbers: Vec<ShapedLine>,
+    source_line_numbers: std::sync::Arc<Vec<ShapedLine>>,
     source_line_number_gutter_width: Pixels,
     /// (源行下标, 是否展开)：paint 时按行顶画指示符。
     long_line_markers: Vec<(usize, bool)>,
@@ -478,29 +478,68 @@ impl Element for BlockTextElement {
         let source_line_numbers = if show_source_line_numbers {
             let run_color = theme.colors.text_placeholder;
             let line_start = input.source_line_start();
-            (line_start..line_start + lines.len().max(1))
-                .map(|line_number| {
-                    let label = line_number.to_string();
-                    window.text_system().shape_line_with_font_sizes(
-                        SharedString::from(label.clone()),
-                        font_size,
-                        &[TextRun {
-                            run: gpui::TextRun {
-                                len: label.len(),
-                                font: style.font(),
-                                color: run_color,
-                                background_color: None,
-                                underline: None,
-                                strikethrough: None,
-                            },
-                            font_size: None,
-                        }],
-                        None,
-                    )
-                })
-                .collect()
+            let line_count = lines.len().max(1);
+            let style_font = style.font();
+            let mut font_hasher = std::hash::DefaultHasher::new();
+            {
+                use std::hash::Hash as _;
+                style_font.family.hash(&mut font_hasher);
+                style_font.weight.hash(&mut font_hasher);
+                style_font.style.hash(&mut font_hasher);
+            }
+            let font_fingerprint = {
+                use std::hash::Hasher as _;
+                font_hasher.finish()
+            };
+            let key = crate::components::block::runtime::SourceLineNumberCacheKey {
+                line_start,
+                line_count,
+                font_size_bits: f32::from(font_size).to_bits(),
+                font_fingerprint,
+                theme_generation: cx.global::<ThemeManager>().current_theme_generation(),
+            };
+            let cached = input
+                .source_line_number_cache
+                .borrow()
+                .as_ref()
+                .filter(|(cached_key, _)| *cached_key == key)
+                .map(|(_, numbers)| numbers.clone());
+            match cached {
+                Some(numbers) => numbers,
+                None => {
+                    #[cfg(test)]
+                    input
+                        .source_line_number_shapes
+                        .set(input.source_line_number_shapes.get() + line_count as u64);
+                    let numbers = std::sync::Arc::new(
+                        (line_start..line_start + line_count)
+                            .map(|line_number| {
+                                let label = line_number.to_string();
+                                window.text_system().shape_line_with_font_sizes(
+                                    SharedString::from(label.clone()),
+                                    font_size,
+                                    &[TextRun {
+                                        run: gpui::TextRun {
+                                            len: label.len(),
+                                            font: style.font(),
+                                            color: run_color,
+                                            background_color: None,
+                                            underline: None,
+                                            strikethrough: None,
+                                        },
+                                        font_size: None,
+                                    }],
+                                    None,
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    );
+                    *input.source_line_number_cache.borrow_mut() = Some((key, numbers.clone()));
+                    numbers
+                }
+            }
         } else {
-            Vec::new()
+            std::sync::Arc::new(Vec::new())
         };
 
         let long_line_markers = input
@@ -867,7 +906,7 @@ impl Element for BlockTextElement {
         let line_number_tops = source_line_number_tops(&lines, line_height);
         let font_size = window.text_style().font_size.to_pixels(window.rem_size());
         let (number_right, marker_left) = source_gutter_columns(text_bounds.left(), font_size);
-        let line_numbers = std::mem::take(&mut prepaint.source_line_numbers);
+        let line_numbers = prepaint.source_line_numbers.clone();
         for (line_number, y_offset) in line_numbers.iter().zip(line_number_tops.iter()) {
             let line_number_width = line_number.x_for_index(line_number.len());
             line_number
