@@ -192,7 +192,15 @@ pub(crate) fn install_pending_update(cx: &mut App) -> bool {
     match cx.global::<UpdateSession>().backend.launch_install(&plan) {
         Ok(()) => true,
         Err(error) => {
-            show_failure_on_app(cx, &error.to_string());
+            show_failure_on_app(
+                cx,
+                &format!("{error}。已保留更新包，修复问题后再次退出即可安装"),
+            );
+            // show_failure_on_app 会清空全局安装态；计划要放回去，否则用户处理完
+            // 磁盘/权限问题再退出时 plan 已丢，只能重新检查与下载整个安装包。
+            cx.update_global::<UpdateSession, _>(|session, _| {
+                session.pending_install = Some(plan);
+            });
             false
         }
     }
@@ -896,8 +904,8 @@ mod tests {
         cx.run_until_parked();
         cx.update(|cx| {
             assert!(
-                cx.global::<UpdateSession>().pending_install.is_none(),
-                "最后一个窗口关闭也必须处理待安装更新，不能直接退出"
+                cx.global::<UpdateSession>().pending_install.is_some(),
+                "安装助手启动失败后计划应保留，下次退出还能重试"
             )
         });
         cx.update(|cx| {
@@ -953,7 +961,10 @@ mod tests {
         });
         cx.update(|cx| {
             assert!(!cx.global::<UpdateSession>().download_active);
-            assert!(cx.global::<UpdateSession>().pending_install.is_none());
+            assert!(
+                cx.global::<UpdateSession>().pending_install.is_some(),
+                "安装启动失败不能把计划丢掉"
+            );
         });
     }
     #[gpui::test]
