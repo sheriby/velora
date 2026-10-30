@@ -934,6 +934,9 @@ impl I18nStringsDe {
             insert_image_prompt: self
                 .insert_image_prompt
                 .unwrap_or(defaults.insert_image_prompt),
+            insert_image_unsupported: self
+                .insert_image_unsupported
+                .unwrap_or(defaults.insert_image_unsupported),
             insert_math_block: self.insert_math_block.unwrap_or(defaults.insert_math_block),
             insert_formula: self.insert_formula.unwrap_or(defaults.insert_formula),
             formula_editor_apply: self.formula_editor_apply.unwrap_or(defaults.formula_editor_apply),

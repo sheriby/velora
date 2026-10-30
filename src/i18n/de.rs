@@ -394,6 +394,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) format_clear_unavailable: Option<String>,
     pub(crate) insert_image: Option<String>,
     pub(crate) insert_image_prompt: Option<String>,
+    pub(crate) insert_image_unsupported: Option<String>,
     pub(crate) insert_math_block: Option<String>,
     pub(crate) insert_formula: Option<String>,
     pub(crate) formula_editor_apply: Option<String>,

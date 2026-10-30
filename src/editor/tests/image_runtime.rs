@@ -1790,3 +1790,27 @@ async fn mermaid_preview_escape_through_the_interceptor_restores_block_focus(
         );
     });
 }
+
+/// 「插入 → 图片」选了不支持的文件时要给出应用内提示：以前回调里 find 落空
+/// 直接 return，界面毫无反应；与粘贴路径「失败必报」的口径也不一致。
+#[gpui::test]
+async fn picking_an_unsupported_image_reports_instead_of_returning_silently(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "正文\n".into(), None));
+    redraw(cx);
+    let dir = temp_fixture_dir();
+    let txt = dir.join(format!("unsupported-{}.txt", temp_fixture_token()));
+    fs::write(&txt, "not an image").expect("write txt");
+    editor.update(cx, |editor, cx| {
+        assert!(
+            !editor.insert_picked_image(vec![txt.clone()], cx),
+            "不支持的文件不该插入成功"
+        );
+        assert!(editor.modal_is_open(), "选了不支持的文件应弹应用内提示");
+        assert_eq!(editor.buffer.text(), "正文\n", "缓冲区不该被动过");
+    });
+    let _ = fs::remove_file(txt);
+}

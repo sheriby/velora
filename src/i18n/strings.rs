@@ -604,6 +604,7 @@ pub struct I18nStrings {
     pub format_clear_unavailable: String,
     pub insert_image: String,
     pub insert_image_prompt: String,
+    pub insert_image_unsupported: String,
     pub insert_math_block: String,
     pub insert_formula: String,
     pub formula_editor_apply: String,

@@ -391,6 +391,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "format_clear_unavailable",
     "insert_image",
     "insert_image_prompt",
+    "insert_image_unsupported",
     "insert_math_block",
     "insert_formula",
     "formula_editor_apply",

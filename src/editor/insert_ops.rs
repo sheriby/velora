@@ -150,6 +150,12 @@ impl Editor {
             .current_edit_target_from_state(cx)
             .or_else(|| self.document.first_root().cloned())
         else {
+            let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+            self.show_message_modal(
+                strings.insert_image.clone(),
+                strings.insert_image_unsupported.clone(),
+                cx,
+            );
             return false;
         };
         let (leading, trailing) = block.update(cx, |block, _cx| block.paste_image_split());
@@ -183,17 +189,33 @@ impl Editor {
             let Ok(Ok(Some(paths))) = prompt.await else {
                 return;
             };
-            let Some(path) = paths
-                .into_iter()
-                .find(|path| Block::is_supported_local_image_path(path))
-            else {
-                return;
-            };
             let _ = weak_editor.update(cx, |editor, cx| {
-                editor.insert_image_at_caret(path, cx);
+                editor.insert_picked_image(paths, cx);
             });
         })
         .detach();
+    }
+
+    /// 图片选择器交回的文件：找到第一个支持的图片插入；有文件但都不支持时
+    /// 给出应用内提示（与粘贴路径同一口径），取消才保持静默。
+    pub(crate) fn insert_picked_image(
+        &mut self,
+        paths: Vec<std::path::PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(path) = paths
+            .into_iter()
+            .find(|path| Block::is_supported_local_image_path(path))
+        else {
+            let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+            self.show_message_modal(
+                strings.insert_image.clone(),
+                strings.insert_image_unsupported.clone(),
+                cx,
+            );
+            return false;
+        };
+        self.insert_image_at_caret(path, cx)
     }
 
     /// 「格式 → 链接」：把选中的那段包成 `[文字]()`，光标停在 `](` 之后等写地址。
