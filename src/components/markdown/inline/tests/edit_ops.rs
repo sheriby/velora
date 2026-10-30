@@ -1368,3 +1368,15 @@ fn extremely_deep_inline_html_does_not_overflow_the_stack() {
     assert!(tree.visible_text().contains('x'));
     assert!(tree.visible_text().contains("<u>"));
 }
+
+/// `<br>` 的写法在模型里只记「这里有一个换行」，序列化统一写回 `<br>`
+/// （md 模型文档「语义相同、写法可能不同」一节）。这条把规范化固定在
+/// 文档声明的一致口径上，避免有人半路改成保真或改成别的字面量。
+#[test]
+fn br_variants_are_normalized_to_the_documented_form() {
+    for source in ["a<br>b", "a<br/>b", "a<br />b", "a<BR>b"] {
+        let tree = InlineTextTree::from_markdown(source);
+        assert_eq!(tree.visible_text(), "a\nb", "{source} 应解析成换行");
+        assert_eq!(tree.serialize_markdown(), "a<br>b", "{source} 的写法");
+    }
+}
