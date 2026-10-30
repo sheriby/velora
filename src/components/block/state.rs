@@ -700,6 +700,9 @@ pub struct BlockRecord {
     pub raw_fallback: Option<String>,
     /// 列表项自己写的记号（`+`/`*`/`-`、`.`/`)`）。见 [`ListMarkerStyle`]。
     pub list_marker: ListMarkerStyle,
+    /// 根级列表项第一行的完整前缀原文（缩进 + 记号 + 记号后的空白/勾选框）。
+    /// `-\t项`、`  -  项` 这类写法按原文写回，不按「每级两格 + 一个空格」重拼。
+    pub list_marker_prefix: Option<SharedString>,
     /// 有序项在原文里写下的起始号（`5. 一` 的 5）。`None` 是「没记」（新建/拆出来的项，
     /// 或无序项），序号按所在族往上数。带着它，界面才不至于把「从 5 起跳」的一族数回 1。
     pub list_start: Option<usize>,
@@ -779,6 +782,7 @@ impl BlockRecord {
             content: Vec::new(),
             raw_fallback: None,
             list_marker: ListMarkerStyle::default(),
+            list_marker_prefix: None,
             list_start: None,
             separator_marker: SeparatorMarker::default(),
             source_line_prefixes: Vec::new(),
@@ -884,6 +888,7 @@ impl BlockRecord {
     /// 版本号不动就会把旧写法继续交出去。
     pub fn canonicalize_writing_style(&mut self) {
         self.list_marker = ListMarkerStyle::default();
+        self.list_marker_prefix = None;
         self.list_start = None;
         self.callout_marker = None;
         self.math_on_marker_line = false;
@@ -951,22 +956,44 @@ impl BlockRecord {
                     "#".repeat(level as usize)
                 )
             }
-            BlockKind::BulletedListItem => prefixed_multiline(
-                &title_markdown,
-                &format!("{indentation}{} ", self.list_marker.bullet_or_default()),
-                &format!("{indentation}  "),
-            ),
+            BlockKind::BulletedListItem => {
+                let prefix = self
+                    .list_marker_prefix
+                    .as_ref()
+                    .filter(|_| depth == 0)
+                    .map(|prefix| prefix.to_string())
+                    .unwrap_or_else(|| {
+                        format!("{indentation}{} ", self.list_marker.bullet_or_default())
+                    });
+                prefixed_multiline(&title_markdown, &prefix, &format!("{indentation}  "))
+            }
             BlockKind::TaskListItem { checked } => {
                 let box_char = if checked {
                     self.list_marker.checked_task_box()
                 } else {
                     ' '
                 };
-                prefixed_multiline(
-                    &title_markdown,
-                    &format!("{indentation}{} [{box_char}] ", self.list_marker.bullet_or_default()),
-                    &format!("{indentation}      "),
-                )
+                // 原文前缀里的勾选框要跟当前状态一致：勾选/取消之后那一格变了，
+                // 不能把导入时记下的旧 `[ ]` 原样写回去。
+                let prefix = self
+                    .list_marker_prefix
+                    .as_ref()
+                    .filter(|_| depth == 0)
+                    .filter(|prefix| {
+                        prefix.rfind('[').and_then(|start| {
+                            prefix[start + 1..].find(']').and_then(|end| {
+                                prefix[start + 1..start + 1 + end].chars().next()
+                            })
+                        }) == Some(box_char)
+                    })
+                    .map(|prefix| prefix.to_string())
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{indentation}{} [{box_char}] ",
+                            self.list_marker.bullet_or_default()
+                        )
+                    });
+                prefixed_multiline(&title_markdown, &prefix, &format!("{indentation}      "))
             }
             BlockKind::NumberedListItem => {
                 let ordinal = list_ordinal.unwrap_or(1);

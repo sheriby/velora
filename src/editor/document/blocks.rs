@@ -725,8 +725,12 @@ impl Editor {
             // 有序项写下的那个号也一起带上（`5. 一` 的 5），界面才不至于把它数回 1。
             // 公式长在标记行上这件事也要带上：序列化把子块公式首行并回标记行，
             // 不然往返多出一个空标题行。
+            // 首行的整段前缀（缩进 + 记号 + 记号后空白/勾选框）一起记：`-\t项` 与
+            // `  -  项` 的写法只在原文里。
+            let marker_prefix = lines[index].get(..marker_width).map(gpui::SharedString::from);
             block.update(cx, |block, _cx| {
                 block.record.list_marker = marker.style;
+                block.record.list_marker_prefix = marker_prefix;
                 block.record.list_start = marker.numbered_start;
                 block.record.math_on_marker_line = marker_is_math;
             });

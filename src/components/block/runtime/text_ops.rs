@@ -32,6 +32,7 @@ impl Block {
             self.record.clear_code_family_books();
         }
         self.record.kind = BlockKind::Paragraph;
+        self.record.list_marker_prefix = None;
         self.record.math_body_only = false;
         self.record.raw_fallback = None;
         self.quote_reparse_requested = false;
@@ -54,6 +55,7 @@ impl Block {
         let marker = crate::components::SeparatorMarker::detect(&self.display_text());
         self.clear_inline_projection();
         self.record.kind = BlockKind::Separator;
+        self.record.list_marker_prefix = None;
         self.record.separator_marker = marker;
         self.record.raw_fallback = None;
         self.record.set_title(InlineTextTree::plain(String::new()));
@@ -90,6 +92,8 @@ impl Block {
             self.record.clear_code_family_books();
         }
         self.record.kind = next;
+        // 记号写法的原文只对换种类之前那一行有效。
+        self.record.list_marker_prefix = None;
         self.record.math_body_only = false;
         self.record.raw_fallback = None;
         self.record.raw_fallback = None;
@@ -124,6 +128,7 @@ impl Block {
         self.clear_inline_projection();
         self.record.clear_code_family_books();
         self.record.kind = BlockKind::CodeBlock { language };
+        self.record.list_marker_prefix = None;
         self.record.math_body_only = false;
         self.record.raw_fallback = None;
         self.record.set_title(InlineTextTree::plain(String::new()));
@@ -160,6 +165,7 @@ impl Block {
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
         self.clear_inline_projection();
         self.record.kind = BlockKind::MathBlock;
+        self.record.list_marker_prefix = None;
         self.record.math_body_only = body_only;
         self.record.set_title(InlineTextTree::plain(source));
         self.quote_reparse_requested = false;

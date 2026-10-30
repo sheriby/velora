@@ -2556,3 +2556,19 @@ async fn empty_quote_marker_spelling_round_trips(cx: &mut TestAppContext) {
         assert_eq!(round_tripped, source, "空引用记号被改写：{source:?}");
     }
 }
+
+/// 列表记号前后的空白与缩进是原文写法：`-\t项` 的制表符、根级 `  -  项` 的
+/// 缩进与双空格，未编辑保存都必须逐字节还原。
+#[gpui::test]
+async fn list_marker_gap_and_indent_round_trip_without_edit(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for source in [
+        "-\tno space before tab",
+        "  -  two-space nested item",
+        "+   three spaces after plus",
+    ] {
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
+        let round_tripped = editor.read_with(cx, |editor, cx| editor.document.markdown_text(cx));
+        assert_eq!(round_tripped, source, "列表记号写法被改写：{source:?}");
+    }
+}

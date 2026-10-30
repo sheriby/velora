@@ -538,6 +538,10 @@ impl Block {
             .map(|range| Self::adjust_range_for_shortcut(range, shortcut_removed_len))
             .unwrap_or_else(|| adjusted_cursor..adjusted_cursor);
 
+        if self.record.kind != next_kind {
+            // 重解析换了种类：旧那一行的记号前缀原文作废。
+            self.record.list_marker_prefix = None;
+        }
         self.record.kind = next_kind;
         self.record.list_marker = next_list_marker;
         let old_visible_text = old_title.visible_text();
