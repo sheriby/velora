@@ -1230,7 +1230,7 @@ impl Render for Block {
                                         .into(),
                                     ))
                                     .absolute()
-                                    .top_0()
+                                    .top(-activation_band)
                                     .left_0()
                                     .right_0()
                                     .h(activation_band)
@@ -1396,6 +1396,8 @@ impl Render for Block {
                     rows.extend(body_rows.map(|row| row.into_any_element()));
 
                     let measure_block = cx.entity().downgrade();
+                    // 顶部留出列轴激活条自己的窄条：条子贴在这里，不再盖住
+                    // 表头文字上沿的选择热区。
                     let table_host = div()
                         .w(relative(VISUAL_BLOCK_WIDTH_RATIO))
                         .min_w(px(0.0))
@@ -1403,6 +1405,7 @@ impl Render for Block {
                         .flex()
                         .flex_col()
                         .gap(px(0.0))
+                        .pt(activation_band)
                         .child(
                             div().w_full().flex().flex_col()
                                 .shadow_sm()

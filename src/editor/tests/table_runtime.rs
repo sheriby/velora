@@ -1262,3 +1262,34 @@ async fn clicking_table_block_padding_focuses_the_table(cx: &mut TestAppContext)
         );
     });
 }
+
+/// 表头文字上沿那一条不该变成「选列」的隐形热区：列轴激活条要贴在自己
+/// 预留的窄条里，按在表头文字上应进入文字编辑/拖选。
+#[gpui::test]
+async fn clicking_the_header_top_edge_edits_text_instead_of_selecting_the_column(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let markdown = "| A | B |\n| --- | --- |\n| 1 | 2 |";
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.into(), None));
+    redraw(cx);
+    redraw(cx);
+    let cell = table_cell_bounds(&editor, cx, 0, 0);
+    let point = gpui::point(cell.center().x, cell.top() + px(2.0));
+    cx.simulate_click(point, Modifiers::none());
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let table = editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|block| block.read(cx).kind() == BlockKind::Table)
+            .cloned()
+            .expect("table root");
+        assert!(
+            table.read(cx).table_axis_selection.is_none(),
+            "表头文字上沿的按下不该触发列选择"
+        );
+    });
+}
