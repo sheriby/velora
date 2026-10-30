@@ -893,6 +893,12 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             // 的原文里量同一套格子。
             return self.push_table_mappings_in_root(block, absolute_start, mappings, cx);
         };
+        // 与 runtime_context 同一道闸：坏区间（倒置、越界、端点不在字符边界）
+        // 直接拿去切片会 panic，映射重建与写回链路当场崩。不可信就不推格子映射，
+        // 命中退回宿主表格块——比崩掉或按错位字节换算都安全。
+        if !self.buffer.span_is_trustworthy(&span) {
+            return 0;
+        }
 
         // 单元格的位置按结构从缓冲区里这张表的原文量（第几行第几列，夹在管道符之间），
         // 既不按「列宽 = 内容长 + 3」猜，也不拿这一格序列化出来的文字回原文里搜。
@@ -936,11 +942,6 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         // 什么都不推，命中退回宿主表格块——按错位槽位取格子原文区间比没有映射
         // 更糟（光标/粘贴/写回都会落进别的格子的字节）。
         if table_row_slots(core).len() != cells.len() {
-            #[cfg(test)]
-            println!("GUARD-REJECT slots={:?} cells={} core={:?}", table_row_slots(core), cells.len(), core);
-            if cfg!(not(test)) {
-                return;
-            }
             return;
         }
         for (column, cell) in cells.iter().enumerate() {

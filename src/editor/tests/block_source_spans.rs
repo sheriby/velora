@@ -1650,3 +1650,38 @@ async fn large_markdown_source_fallback_materializes_in_chunks(cx: &mut TestAppC
         }
     });
 }
+
+/// 表格映射入口也要过 span 可信度闸：坏区间（端点落在多字节字符中间）
+/// 直接 `buffer.slice` 会 panic，映射重建与写回链路当场崩。不可信时应放弃
+/// 这张表的格子映射，而不是崩掉。
+#[gpui::test]
+async fn table_mapping_survives_a_corrupt_source_span(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "| 中文 | B |\n| --- | --- |\n| 1 | 2 |\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    let table = editor
+        .read_with(cx, |editor, cx| {
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|block| block.read(cx).kind() == BlockKind::Table)
+                .cloned()
+        })
+        .expect("夹具应是表格根块");
+    // 4 落在「中」的字节区间中间：不是字符边界。
+    editor.update(cx, |editor, _cx| {
+        editor
+            .document
+            .set_source_span(table.entity_id(), 4..source.len());
+    });
+    let mapping = editor.read_with(cx, |editor, cx| {
+        editor.source_mapping_for_entity(table.entity_id(), cx)
+    });
+    assert!(
+        mapping.is_none(),
+        "坏区间不该推出表格映射（旧实现会在这里 panic）"
+    );
+}
