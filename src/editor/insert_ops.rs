@@ -67,9 +67,16 @@ impl Editor {
             return false;
         }
         self.flush_pending_materialization(cx);
+        // 可用性判定必须读 flush 之后的树：续建/物化可能改变选区到根块的映射，
+        // 拿 flush 前的结论直接去取锚点会落空。
+        if !self.insert_block_target_is_available(target, cx) {
+            return false;
+        }
         let roots = self.selection_root_blocks(cx);
         // 跨块选区插在整段选区后面：光标那头的根块。
-        let anchor = roots.last().cloned().expect("可用性已经把空选区挡在外面");
+        let Some(anchor) = roots.last().cloned() else {
+            return false;
+        };
 
         let layout: Vec<EntityId> = self
             .document
@@ -77,10 +84,10 @@ impl Editor {
             .into_iter()
             .map(|(id, _)| id)
             .collect();
-        let anchor_index = layout
-            .iter()
-            .position(|id| *id == anchor.entity_id())
-            .expect("根块来自根块布局");
+        let Some(anchor_index) = layout.iter().position(|id| *id == anchor.entity_id()) else {
+            // 根块不在布局里说明树刚被换过（物化/重载竞态）：这次不插，不 panic。
+            return false;
+        };
         let anchor_span = self.document.source_span_of(anchor.entity_id());
 
         let Some(record) = self.record_for_target(target) else {

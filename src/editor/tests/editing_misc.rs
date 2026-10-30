@@ -710,3 +710,14 @@ async fn focused_toc_block_falls_back_to_editable_text(cx: &mut TestAppContext) 
         );
     });
 }
+
+/// 「插入块」入口是产品路径：可用性判定与执行必须读同一份（flush 后的）状态，
+/// 锚点取不到就返回 false，不能用 expect 把结构化事实降级成运行时断言。
+#[test]
+fn insert_block_entry_has_no_product_expects() {
+    let source = include_str!("../insert_ops.rs");
+    assert!(
+        !source.contains(".expect("),
+        "插入块入口不该用 expect：锚点/布局竞态应当直接放弃本次插入"
+    );
+}
