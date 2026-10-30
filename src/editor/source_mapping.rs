@@ -1118,11 +1118,14 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             }
             BlockKind::Heading { .. } => {
                 // Setext 标题的内容行没有记号：导入把整行（连前导空白）当内容收，
-                // 所以量到 0 才是对的。
+                // 所以量到 0 才是对的。ATX 标题则要先让开上级列表的缩进再解析：
+                // 多级列表里的标题原始缩进会超过 3 格，直接解析会失败并留下 0。
+                let stripped =
+                    super::document::strip_leading_columns(&rest, list_dedent).unwrap_or(&rest);
                 if let Some((_level, _content, marker_len)) =
-                    BlockKind::parse_atx_heading_line_with_marker(&rest)
+                    BlockKind::parse_atx_heading_line_with_marker(stripped)
                 {
-                    consumed += marker_len;
+                    consumed += rest.len() - stripped.len() + marker_len;
                 }
             }
             BlockKind::Paragraph => {

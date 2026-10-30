@@ -3740,3 +3740,20 @@ async fn recorded_line_prefixes_refuse_out_of_range_buffer_lines(cx: &mut TestAp
         );
     });
 }
+
+
+/// 量首行前缀时 Heading 分支要先让开上级列表缩进，再按 ATX 记号记账：
+/// 直接拿整行解析 ATX 在缩进超过 3 格时失败，prefix 会错误地留在 0。
+#[gpui::test]
+async fn heading_prefix_measurement_strips_container_indent_first(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let editor = cx.new(|cx| Editor::from_markdown(cx, "      # 标题".to_string(), None));
+    editor.read_with(cx, |editor, _cx| {
+        let measured = editor.measured_block_prefix(0, 0, 4, &BlockKind::Heading { level: 1 });
+        assert_eq!(
+            measured,
+            Some((8, 4)),
+            "六格原始缩进 + `# ` 应量出 8 字节前缀"
+        );
+    });
+}
