@@ -187,6 +187,14 @@ impl Editor {
         let needed = 1 + crate::editor::tree::DocumentTree::root_separator_count(previous_state.kind().is_list_item(), next_state.kind().is_list_item(), 0);
         let Some(before) = self.document.source_span_of(previous.entity_id()) else { return; };
         let Some(after) = self.document.source_span_of(next.entity_id()) else { return; };
+        // 区间不可信（端点不在字符边界、越界、倒置）就别拿去切片：这里只是
+        // 补一个分隔空行，少补一次的代价远小于 buffer.slice 当场 panic。
+        // 判据只有一处：`TextBuffer::span_is_trustworthy`。
+        if !self.buffer.span_is_trustworthy(&before)
+            || !self.buffer.span_is_trustworthy(&after)
+        {
+            return;
+        }
         if before.end > after.start || after.start > self.buffer.byte_len() { return; }
         let gap = self.buffer.slice(before.end..after.start);
         if !gap.chars().all(char::is_whitespace) { return; }
@@ -243,7 +251,9 @@ impl Editor {
         let Some(entity) = self.document.block_entity_by_id(entity_id) else {
             return false;
         };
-        span.end <= self.buffer.byte_len()
+        // 坏区间（端点不在字符边界/越界/倒置）不能拿去切片：这里只是判断
+        // 「块树写法与文件是否一致」，判不了就按不一致处理（走重写那条路）。
+        self.buffer.span_is_trustworthy(&span)
             && self.document.block_markdown_source(&entity, cx) == self.buffer.slice(span)
     }
 

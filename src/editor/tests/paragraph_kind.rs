@@ -1065,3 +1065,26 @@ async fn converting_a_code_block_with_a_reference_definition_refreshes_images(
         );
     });
 }
+
+/// 换种类补分隔空行会用相邻块在缓冲区里的区间切片：区间不可信（端点落在
+/// 多字节字符中间）时必须放弃补行，不能让 buffer.slice 当场 panic。
+#[gpui::test]
+async fn kind_conversion_survives_a_corrupt_neighbor_span(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "中\n\n文".into(), None));
+    redraw(cx);
+    let second = visible_block(&editor, 1, cx);
+    // 起点 6 落在「文」的字节区间中间：不是字符边界。
+    editor.update(cx, |editor, _cx| {
+        editor.document.set_source_span(second.entity_id(), 6..8);
+    });
+    put_caret(&editor, 0, 0, cx);
+    assert!(
+        apply(&editor, BlockKindTarget::Heading(1), cx),
+        "换种类本身应成功"
+    );
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.buffer.text().contains('文'), "缓冲区不该损坏或 panic");
+    });
+}
