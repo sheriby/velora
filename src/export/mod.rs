@@ -124,3 +124,60 @@ pub(crate) fn render_png(
     let theme = resolve_export_theme(theme);
     png::render_png(markdown, &theme, title, base_path)
 }
+
+/// 导出落盘前把目标扩展名收口到格式本身：`notes.txt` 导出 HTML 时存成
+/// `notes.txt.html`，而不是让 HTML 字节顶着 txt 扩展名。
+pub(crate) fn ensure_export_extension(path: PathBuf, format: ExportFormat) -> PathBuf {
+    let already_target = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(format.extension()));
+    if already_target {
+        return path;
+    }
+    // 追加而非替换：`report.v2` 的 `.v2` 是文件名的一部分，不是待覆盖的扩展名。
+    match path.file_name() {
+        Some(name) => {
+            let mut name = name.to_os_string();
+            name.push(".");
+            name.push(format.extension());
+            path.with_file_name(name)
+        }
+        None => path,
+    }
+}
+
+#[cfg(test)]
+mod export_path_tests {
+    use super::{ExportFormat, ensure_export_extension};
+    use std::path::PathBuf;
+
+    fn normalized(name: &str, format: ExportFormat) -> String {
+        ensure_export_extension(PathBuf::from(name), format)
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn export_paths_keep_the_target_extension() {
+        assert_eq!(normalized("notes", ExportFormat::Html), "notes.html");
+        assert_eq!(normalized("notes.html", ExportFormat::Html), "notes.html");
+        assert_eq!(normalized("notes.HTML", ExportFormat::Html), "notes.HTML");
+        assert_eq!(normalized("notes.pdf", ExportFormat::Pdf), "notes.pdf");
+    }
+
+    #[test]
+    fn foreign_extensions_are_appended_not_replaced() {
+        // 文件名里的点不一定是扩展名：`report.v2`、`2026.10` 原样保留再追加。
+        assert_eq!(
+            normalized("notes.txt", ExportFormat::Html),
+            "notes.txt.html"
+        );
+        assert_eq!(normalized("report.v2", ExportFormat::Png), "report.v2.png");
+        assert_eq!(normalized("2026.10", ExportFormat::Pdf), "2026.10.pdf");
+        assert_eq!(
+            normalized("notes.html", ExportFormat::Pdf),
+            "notes.html.pdf"
+        );
+    }
+}

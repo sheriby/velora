@@ -120,7 +120,7 @@ impl Editor {
         let _ = window_handle;
 
         cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let mut path = match prompt.await {
+            let path = match prompt.await {
                 Ok(Ok(Some(path))) => path,
                 Ok(Ok(None)) | Err(_) => return,
                 Ok(Err(err)) => {
@@ -129,10 +129,7 @@ impl Editor {
                     return;
                 }
             };
-
-            if path.extension().is_none() {
-                path.set_extension(format.extension());
-            }
+            let path = document_export::ensure_export_extension(path, format);
 
             let (sender, receiver) = oneshot::channel();
             let spawn_result = thread::Builder::new()
