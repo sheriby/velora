@@ -1309,3 +1309,28 @@ fn repeated_prepaint_preserves_measured_text_lines(cx: &mut TestAppContext) {
             );
         });
     }
+
+/// 行内代码背景与语言输入框的绘制链路不得用 expect/unwrap 取布局：
+/// 「有没有字体尺寸 run」取决于运行期模式，切模式的那一帧两个读取点可能对不上，
+/// release 下 panic=abort，版面差一帧不该变成一次崩溃。
+#[test]
+fn inline_code_paint_paths_have_no_shaping_expects() {
+    let text_element = include_str!("text_element.rs");
+    let code_input = include_str!("code_input.rs");
+    assert!(
+        !text_element.contains("code fragment belongs to a shaped line"),
+        "行内代码背景不该 expect 换行行"
+    );
+    assert!(
+        !text_element.contains("inline code has a font-size run"),
+        "行内代码背景不该 expect 字体尺寸 run"
+    );
+    assert!(
+        !text_element.contains("code_run.font_size.unwrap()"),
+        "行内代码背景不该 unwrap 字体尺寸"
+    );
+    assert!(
+        !code_input.contains("line.take().expect"),
+        "语言输入框绘制不该 expect 排版结果"
+    );
+}

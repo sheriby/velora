@@ -736,9 +736,13 @@ impl Element for BlockTextElement {
                     span.range.clone(),
                     text_align,
                 ) {
-                    let (line_idx, _) =
+                    // 「这一格片段落在哪条排版行 / 哪条 run 带字体尺寸」都由运行期
+                    // 模式决定，切模式的那一帧可能对不上：对不上就这一格不画底色。
+                    let Some((line_idx, _)) =
                         wrapped_line_for_y(&lines, line_height, segment.top() - text_bounds.top())
-                            .expect("code fragment belongs to a shaped line");
+                    else {
+                        continue;
+                    };
                     let layout = &lines[line_idx];
                     let row_idx = ((segment.top()
                         - text_bounds.top()
@@ -750,12 +754,13 @@ impl Element for BlockTextElement {
                         .end
                         .saturating_sub(shared_ranges[line_idx].start)
                         .min(row_end);
-                    let code_run = layout
-                        .runs()
-                        .iter()
-                        .find(|run| run.font_size.is_some())
-                        .expect("inline code has a font-size run");
-                    let code_size = code_run.font_size.unwrap();
+                    let Some(code_run) = layout.runs().iter().find(|run| run.font_size.is_some())
+                    else {
+                        continue;
+                    };
+                    let Some(code_size) = code_run.font_size else {
+                        continue;
+                    };
                     let code_ascent = cx.text_system().ascent(code_run.font_id, code_size);
                     let code_descent =
                         px(f32::from(cx.text_system().descent(code_run.font_id, code_size)).abs());

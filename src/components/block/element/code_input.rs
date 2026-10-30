@@ -200,7 +200,9 @@ impl Element for CodeLanguageInputElement {
             window.paint_quad(selection);
         }
 
-        let line = prepaint.line.take().expect("line should be shaped");
+        let Some(line) = prepaint.line.take() else {
+            return;
+        };
         line.paint(bounds.origin, bounds.size.height, gpui::TextAlign::Left, None, window, cx)
             .ok();
 
