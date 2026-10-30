@@ -43,6 +43,9 @@ pub(super) struct PendingTail {
 pub(super) struct PendingSourceTail {
     pub source: String,
     pub next_line: usize,
+    /// 续建块要挂的源码高亮语言：代码文件由 kind 自带，markdown 源码回退
+    /// 需要显式带回 `"markdown"`，否则续建的分块不参与源码高亮。
+    pub language: Option<String>,
 }
 
 /// Ordinal/blank-run carry-over for [`DocumentTree::append_roots`].

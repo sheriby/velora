@@ -1599,3 +1599,54 @@ async fn root_spans_stay_on_char_boundaries_across_edits_and_undo(cx: &mut TestA
     cx.run_until_parked();
     check(&editor, cx, "撤销之后再打字");
 }
+
+/// markdown 源码回退（`!!!` 标注等歧义语法强制源码视图）也要走分块续建：
+/// 以前「是不是代码文件」写死在守卫里，几万行的 markdown 回退会一次性同步
+/// 建完所有块，打开路径整体卡顿。续建出的块仍要带 markdown 高亮语言。
+#[gpui::test]
+async fn large_markdown_source_fallback_materializes_in_chunks(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let chunk = crate::editor::file_drop::SOURCE_DOCUMENT_CHUNK_LINES;
+    let mut source = String::new();
+    for index in 0..chunk + 5 {
+        source.push_str(&format!("第 {index} 行\n"));
+    }
+    source.push_str("!!! note\n  keep this\n");
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.replace_document_from_markdown(source.clone(), None, cx)
+    });
+    // 打开当帧只同步建首块；续建由渲染帧/显式驱动推进，所以这里先断言
+    // 未物化的尾部还在。
+    editor.read_with(cx, |editor, _cx| {
+        assert!(matches!(editor.view_mode, ViewMode::Source));
+        assert!(
+            editor.document.pending_source().is_some(),
+            "大 markdown 回退源码视图应留后台续建（修复前一次建完）"
+        );
+        assert!(
+            editor.document.root_count() <= 2,
+            "同步只该建首块：{} 块",
+            editor.document.root_count()
+        );
+    });
+
+    for _ in 0..10 {
+        let more = editor.update(cx, |editor, cx| editor.materialize_next_pending_chunk(cx));
+        if !more {
+            break;
+        }
+    }
+    editor.read_with(cx, |editor, cx| {
+        assert!(editor.document.pending_source().is_none(), "续建应全部落地");
+        assert_eq!(editor.document.raw_source_text(cx), source, "字节应逐字还原");
+        for block in editor.document.root_blocks() {
+            assert_eq!(
+                block.read(cx).source_language(),
+                Some("markdown"),
+                "续建分块也要带 markdown 高亮语言"
+            );
+        }
+    });
+}

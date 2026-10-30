@@ -332,6 +332,9 @@ impl Editor {
             } else {
                 BlockKind::Paragraph
             };
+            // 代码文件的语言在 kind 里；markdown 源码回退要把高亮语言显式
+            // 记到块上（首块与续建的块都要）。
+            let chunk_language = if is_code { None } else { Some("markdown") };
             // P6a：不再把全文切成近十万个 String——只同步建首块，剩余
             // 原始字节进 PendingSourceTail 后台按行切块续建。
             let built = match scan_chunk_end(
@@ -339,27 +342,57 @@ impl Editor {
                 0,
                 SOURCE_DOCUMENT_CHUNK_LINES,
             ) {
-                Some(end) if is_code && end < normalized.len() => {
+                Some(end) if end < normalized.len() => {
                     pending_code_tail = Some(PendingSourceTail {
                         source: normalized[end..].to_string(),
                         next_line: SOURCE_DOCUMENT_CHUNK_LINES,
+                        language: chunk_language.map(str::to_string),
                     });
-                    // 代码文件的块语言在 kind 里，无需额外记。
-                    Self::build_source_document_roots(chunk_kind, &normalized[..end - 1], None, cx)
+                    Self::build_source_document_roots(
+                        chunk_kind,
+                        &normalized[..end - 1],
+                        chunk_language,
+                        cx,
+                    )
                 }
-                _ => Self::build_source_document_roots(chunk_kind, &normalized, None, cx),
+                _ => Self::build_source_document_roots(
+                    chunk_kind,
+                    &normalized,
+                    chunk_language,
+                    cx,
+                ),
             };
             self.attach_source_slice_spans(&built, cx);
             built
         } else if view_mode == ViewMode::Source {
-            // 交还的现场是源码视图，而这是一篇 markdown：整篇按源码切片直编，
-            // 高亮语言记 markdown——与「渲染↔源码」切换用的是同一个入口。
-            let built = Self::build_source_document_roots(
-                BlockKind::Paragraph,
-                &normalized,
-                Some("markdown"),
-                cx,
-            );
+            // 交还的现场是源码视图，而这是一篇 markdown：按源码切片直编，高亮
+            // 语言记 markdown——与「渲染↔源码」切换同一个入口。大文档与代码
+            // 文档同一条窗口化路径：首块同步、其余后台续建。
+            let built = match scan_chunk_end(
+                normalized.as_bytes(),
+                0,
+                SOURCE_DOCUMENT_CHUNK_LINES,
+            ) {
+                Some(end) if end < normalized.len() => {
+                    pending_code_tail = Some(PendingSourceTail {
+                        source: normalized[end..].to_string(),
+                        next_line: SOURCE_DOCUMENT_CHUNK_LINES,
+                        language: Some("markdown".to_string()),
+                    });
+                    Self::build_source_document_roots(
+                        BlockKind::Paragraph,
+                        &normalized[..end - 1],
+                        Some("markdown"),
+                        cx,
+                    )
+                }
+                _ => Self::build_source_document_roots(
+                    BlockKind::Paragraph,
+                    &normalized,
+                    Some("markdown"),
+                    cx,
+                ),
+            };
             self.attach_source_slice_spans(&built, cx);
             built
         } else {

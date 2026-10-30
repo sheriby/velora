@@ -1172,11 +1172,12 @@ impl Editor {
 
     /// Imports one more chunk of the pending tail. Returns whether work remains.
     fn materialize_next_pending_chunk(&mut self, cx: &mut Context<Self>) -> bool {
-        // 代码/纯文本文档：原始字节尾部按行切块续建（P6a）。
+        // 源码视图的按行分块续建：代码/纯文本文档与 markdown 源码回退共用
+        // 这条原始字节尾部路径（P6a / P230）。
+        if self.document.pending_source().is_some() {
+            return self.materialize_next_pending_source_chunk(cx);
+        }
         if self.code_document {
-            if self.document.pending_source().is_some() {
-                return self.materialize_next_pending_source_chunk(cx);
-            }
             return false;
         }
 
@@ -1265,6 +1266,9 @@ impl Editor {
                     let chunk_line_start = line_start;
                     block.update(cx, |block, _cx| {
                         block.set_source_document_mode();
+                        if let Some(language) = tail.language.as_deref() {
+                            block.set_source_language(language);
+                        }
                         block.set_source_line_start(chunk_line_start);
                     });
                     roots.push(block);
@@ -1281,6 +1285,9 @@ impl Editor {
                         let chunk_line_start = line_start;
                         block.update(cx, |block, _cx| {
                             block.set_source_document_mode();
+                            if let Some(language) = tail.language.as_deref() {
+                                block.set_source_language(language);
+                            }
                             block.set_source_line_start(chunk_line_start);
                         });
                         roots.push(block);
@@ -1302,6 +1309,7 @@ impl Editor {
             self.document.set_pending_source(Some(PendingSourceTail {
                 source: rest,
                 next_line: line_start - 1,
+                language: tail.language,
             }));
             cx.notify();
             return true;
