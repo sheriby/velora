@@ -1351,12 +1351,20 @@ impl DocumentTree {
                 }
 
                 if !block_ref.children.is_empty() {
+                    let mut child_lines = Vec::new();
                     Self::collect_markdown_lines(
                         &block_ref.children,
                         list_depth,
                         cx,
-                        &mut body,
+                        &mut child_lines,
                         false,
+                    );
+                    // 子块序列化返回的是「块内容」字符串，列表项/代码块的多行会在
+                    // 一个元素里带换行；引用记号要按物理行加，先摊平。
+                    body.extend(
+                        child_lines
+                            .into_iter()
+                            .flat_map(|line| line.split('\n').map(str::to_string).collect::<Vec<_>>()),
                     );
                 }
 
@@ -1409,11 +1417,11 @@ impl DocumentTree {
                         &mut child_lines,
                         false,
                     );
-                    lines.extend(
-                        child_lines
-                            .into_iter()
-                            .map(|line| format!("{indentation}> {line}")),
-                    );
+                    lines.extend(child_lines.into_iter().flat_map(|line| {
+                        line.split('\n')
+                            .map(|line| format!("{indentation}> {line}"))
+                            .collect::<Vec<_>>()
+                    }));
                 }
             }
             BlockKind::FootnoteDefinition => {

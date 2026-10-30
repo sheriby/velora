@@ -2500,3 +2500,37 @@ async fn typing_into_a_trailing_paragraph_inside_a_quote_keeps_other_blocks(
         "表格列宽写法被首笔输入洗掉：{text:?}"
     );
 }
+
+/// 引用里的列表续行必须仍带引用记号：丢了 `>` 之后这一行会跑到引用外面。
+#[gpui::test]
+async fn quoted_list_continuation_keeps_its_quote_marker(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for source in [
+        "> - 列表项\n>   续行",
+        "> [!note]\n> - 列表项\n>   续行",
+    ] {
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
+        let once = editor.read_with(cx, |editor, cx| editor.document.markdown_text(cx));
+        assert_eq!(once, source, "引用里的列表续行被改写：{once:?}");
+        let reparsed = cx.new(|cx| Editor::from_markdown(cx, once.clone(), None));
+        reparsed.read_with(cx, |editor, cx| {
+            let blocks: Vec<(String, usize, String)> = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .map(|visible| {
+                    let block = visible.entity.read(cx);
+                    (
+                        format!("{:?}", block.kind()),
+                        block.quote_depth,
+                        block.display_text().to_string(),
+                    )
+                })
+                .collect();
+            assert!(
+                blocks.iter().all(|(_, depth, _)| *depth == 1),
+                "重读后应仍在引用里：{blocks:?}"
+            );
+        });
+    }
+}
