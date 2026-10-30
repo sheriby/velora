@@ -211,3 +211,37 @@ async fn core_repair_table_preedit_blocks_manual_save(cx: &mut TestAppContext) {
 async fn core_repair_table_preedit_blocks_save_and_close(cx: &mut TestAppContext) {
     table_preedit_is_not_saved(cx, SaveAttempt::Close);
 }
+
+/// 表格结构操作前会从格子 record 同步模型：IME 组合串若只在显示层、不在模型里，
+/// 插行重建格子实体时就会丢。这条钉住「组合串在结构操作后仍然留在那一格」。
+#[gpui::test]
+async fn table_preedit_survives_a_row_insert(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "| a | b |\n| --- | --- |\n| c | d |";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    let (cell, table) = editor.read_with(cx, |editor, cx| {
+        let table = editor.document.first_root().unwrap().clone();
+        let cell = table.read(cx).table_runtime.as_ref().unwrap().header[0].clone();
+        (cell, table)
+    });
+    cell.update_in(cx, |block, window, cx| {
+        block.replace_and_mark_text_in_range(None, "中", Some(1..1), window, cx)
+    });
+    editor.update(cx, |editor, cx| {
+        editor.insert_table_row(&table, 0, true, None, cx);
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let runtime = editor.document.first_root().unwrap().read(cx).table_runtime.as_ref().unwrap().clone();
+        let header_texts: Vec<String> = runtime
+            .header
+            .iter()
+            .map(|cell| cell.read(cx).display_text().to_string())
+            .collect();
+        assert!(
+            header_texts.iter().any(|text| text.contains('中')),
+            "插行后组合串从表头格子消失：{header_texts:?}"
+        );
+    });
+}
