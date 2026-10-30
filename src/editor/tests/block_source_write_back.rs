@@ -3640,3 +3640,81 @@ async fn typing_after_a_source_mode_newline_writes_each_byte_once(cx: &mut TestA
         "源码模式回车后的块里打字，字节没落在光标处"
     );
 }
+
+/// 引用/列表里的多行段落：第二行行首打字必须落在那一行自己的字节上。
+/// 续行前缀的反表若继承上一行末尾，字会写进上一行的换行或前缀里。
+#[gpui::test]
+async fn typing_at_the_second_line_of_a_contained_paragraph_lands_on_that_line(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    for (source, expected) in [
+        ("> 第一行\n> 第二行", "> 第一行\n> X第二行"),
+        ("- 第一行\n  第二行", "- 第一行\n  X第二行"),
+    ] {
+        let (editor, cx) = cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, source.to_string(), None)
+        });
+        redraw(cx);
+        let block = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).display_text() == "第一行\n第二行")
+                .expect("多行段落")
+                .entity
+                .clone()
+        });
+        editor.update(cx, |editor, _| editor.focus_block(block.entity_id()));
+        let offset = block.read_with(cx, |block, _| {
+            block
+                .display_text()
+                .find("第二行")
+                .expect("第二行在显示文本里")
+        });
+        block.update(cx, |block, _| block.selected_range = offset..offset);
+        redraw(cx);
+        cx.simulate_input("X");
+        redraw(cx);
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.buffer.text()),
+            expected,
+            "{source:?} 的第二行行首打字落错了位置"
+        );
+    }
+}
+
+/// 续行前缀字节的反查落在**下一行行首内容**上：量表单路径（引用/列表里的
+/// 多行段落）按上一行末尾补零时，行首记号会反查到上一行的换行符。
+#[gpui::test]
+async fn continuation_prefix_bytes_reverse_map_to_the_next_line_start(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    for (source, first_prefix, second_prefix) in
+        [("> 第一行\n> 第二行", "> ", "> "), ("- 第一行\n  第二行", "- ", "  ")]
+    {
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
+        editor.read_with(cx, |editor, cx| {
+            let root = editor.document.first_root().expect("根块").clone();
+            let mapping = editor
+                .source_mapping_for_entity(root.entity_id(), cx)
+                .expect("根块应有文本映射");
+            let content_start_of_line_two = "第一行\n".len();
+            // 第二行前缀在源码里的相对偏移 = 首行前缀 + 第一行(9) + 换行(1)。
+            let start = first_prefix.len() + 9 + 1;
+            for source_offset in start..(start + second_prefix.len()) {
+                let content = mapping
+                    .source_to_content
+                    .get(source_offset)
+                    .copied()
+                    .unwrap_or_default();
+                assert_eq!(
+                    content, content_start_of_line_two,
+                    "{source:?} 源码偏移 {source_offset} 该反查到第二行行首内容 {content_start_of_line_two}，实际 {content}"
+                );
+            }
+        });
+    }
+}

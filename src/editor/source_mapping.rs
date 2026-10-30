@@ -248,10 +248,16 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         let mut content_to_source = vec![0usize; content.len() + 1];
         let mut total_len = 0usize;
         let mut markdown_offset = 0usize;
+        // 每一行行首记号在源码里占的字节段（续行的 `> `、列表缩进等），
+        // 反表要把它们归到**这一行**行首内容，而不是继承上一行末尾。
+        let mut line_prefix_gaps: Vec<(usize, usize, usize)> = Vec::new();
         for (index, model_line) in model_lines.iter().enumerate() {
             let prefix = line_prefixes.get(index).copied().unwrap_or(0);
             let file_len = file_lens.get(index).copied().unwrap_or(model_line.len());
             let content_start = total_len + prefix;
+            if prefix > 0 {
+                line_prefix_gaps.push((content_start - prefix, content_start, markdown_offset));
+            }
             for position in 0..=model_line.len() {
                 content_to_source[markdown_offset + position] =
                     content_start + position.min(file_len);
@@ -277,6 +283,15 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 *slot = previous;
             } else {
                 previous = *slot;
+            }
+        }
+        // 行首记号段显式改归下一行行首：零填充把它们记成了上一行末尾，
+        // 端点换算会停在上一个换行符上。
+        for (gap_start, gap_end, content_offset) in line_prefix_gaps {
+            let end = gap_end.min(source_to_content.len());
+            let start = gap_start.min(end);
+            for slot in &mut source_to_content[start..end] {
+                *slot = content_offset;
             }
         }
 
