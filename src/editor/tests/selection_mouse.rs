@@ -2018,3 +2018,63 @@ async fn shift_up_and_down_extend_the_selection_vertically(cx: &mut TestAppConte
         );
     });
 }
+
+/// 先在 A 段拖出一段选区，再 shift+点击未聚焦的 B 段：扩选的锚点该是 A 段
+/// 选区的起点，而不是在 B 段重新落锚把旧选区丢掉。
+#[gpui::test]
+async fn shift_click_on_a_block_extends_from_an_existing_in_block_selection(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "第一段正文\n\n第二段正文".into(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let bounds_of = |index: usize, cx: &mut VisualTestContext| {
+        editor.read_with(cx, |editor, cx| {
+            editor.document.visible_blocks()[index]
+                .entity
+                .read(cx)
+                .last_bounds
+                .expect("段落该有布局边界")
+        })
+    };
+    let first = bounds_of(0, cx);
+    let start = gpui::point(first.left() + px(1.0), first.center().y);
+    let dragged = gpui::point(first.left() + px(40.0), first.center().y);
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(dragged, gpui::MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(dragged, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    let selected_before = editor.read_with(cx, |editor, cx| {
+        editor.document.visible_blocks()[0]
+            .entity
+            .read(cx)
+            .selected_range
+            .clone()
+    });
+    assert!(!selected_before.is_empty(), "夹具：第一段该先有一段选区");
+
+    let second = bounds_of(1, cx);
+    let mut shift = Modifiers::none();
+    shift.shift = true;
+    let in_second = gpui::point(second.left() + px(1.0), second.center().y);
+    cx.simulate_mouse_down(in_second, gpui::MouseButton::Left, shift);
+    cx.simulate_mouse_up(in_second, gpui::MouseButton::Left, shift);
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let selection = editor
+            .cross_block_selection
+            .expect("已有块内选区时 shift+点另一段也该成跨块选区");
+        let visible = editor.document.visible_blocks();
+        assert_eq!(selection.anchor.entity_id, visible[0].entity.entity_id());
+        assert_eq!(selection.focus.entity_id, visible[1].entity.entity_id());
+        assert_eq!(
+            selection.anchor.offset, selected_before.start,
+            "锚点该沿用第一段选区的起点"
+        );
+    });
+}
