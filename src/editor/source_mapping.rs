@@ -1127,6 +1127,24 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
     /// 以及容器自己那份多行正文（空行段折进行数就对不上，见下）。
     /// 首行可接在脚注定义头后；前面已经消费的字节须从记录的绝对前缀扣除。
     /// 行数或前缀边界对不上时才退回量取。
+    /// 这一类的块分支一定会用到标题映射（行内标题树）。构造与八个消费分支
+    /// 共用这一条判据：往排除清单里加一类块时，两边同时看它，不再靠人工对齐
+    /// 和 `expect` 兜底。
+    fn has_title_mapping(kind: &BlockKind) -> bool {
+        !matches!(
+            kind,
+            BlockKind::Table
+                | BlockKind::CodeBlock { .. }
+                | BlockKind::Comment
+                | BlockKind::HtmlBlock
+                | BlockKind::MathBlock
+                | BlockKind::MermaidBlock
+                | BlockKind::RawMarkdown
+                | BlockKind::FrontMatter
+                | BlockKind::Separator
+        )
+    }
+
     fn recorded_block_line_prefixes(
         &self,
         block: &Entity<Block>,
@@ -1477,19 +1495,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         let (kind, list_ordinal, title, children) = {
             let block_ref = block.read(cx);
             let kind = block_ref.kind();
-            let title = (!matches!(
-                kind,
-                BlockKind::Table
-                    | BlockKind::CodeBlock { .. }
-                    | BlockKind::Comment
-                    | BlockKind::HtmlBlock
-                    | BlockKind::MathBlock
-                    | BlockKind::MermaidBlock
-                    | BlockKind::RawMarkdown
-                    | BlockKind::FrontMatter
-                    | BlockKind::Separator
-            ))
-            .then(|| block_ref.record.title.markdown_offset_map());
+            let title = Self::has_title_mapping(&kind)
+                .then(|| block_ref.record.title.markdown_offset_map());
             (
                 kind,
                 block_ref.list_ordinal,
@@ -1556,7 +1563,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 }
             }
             BlockKind::Heading { level } => {
-                let markdown = title.expect("heading title").markdown().to_string();
+                let Some(title) = title.as_ref() else { return 0 };
+                let markdown = title.markdown().to_string();
                 let measured_lines = line_prefixes(&markdown);
                 self.push_measured_inline_mapping(
                     block,
@@ -1574,7 +1582,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 )
             }
             BlockKind::Paragraph => {
-                let markdown = title.expect("paragraph title").markdown().to_string();
+                let Some(title) = title.as_ref() else { return 0 };
+                let markdown = title.markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
                 let measured_lines = line_prefixes(&markdown);
                 self.push_measured_inline_mapping(
@@ -1589,7 +1598,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 )
             }
             BlockKind::BulletedListItem => {
-                let markdown = title.expect("bullet title").markdown().to_string();
+                let Some(title) = title.as_ref() else { return 0 };
+                let markdown = title.markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
                 let measured_lines = line_prefixes(&markdown);
                 // 前缀必须与 markdown_line 的落笔同判据（记号与勾选框写法都照原文），
@@ -1607,7 +1617,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 )
             }
             BlockKind::TaskListItem { checked } => {
-                let markdown = title.expect("task title").markdown().to_string();
+                let Some(title) = title.as_ref() else { return 0 };
+                let markdown = title.markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
                 let measured_lines = line_prefixes(&markdown);
                 let list_marker = block.read(cx).record.list_marker;
@@ -1628,7 +1639,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 )
             }
             BlockKind::NumberedListItem => {
-                let markdown = title.expect("numbered title").markdown().to_string();
+                let Some(title) = title.as_ref() else { return 0 };
+                let markdown = title.markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
                 let ordinal = list_ordinal.unwrap_or(1);
                 let measured_lines = line_prefixes(&markdown);
@@ -1644,7 +1656,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 )
             }
             BlockKind::Quote => {
-                let title = title.expect("quote title").markdown().to_string();
+                let Some(title_map) = title.as_ref() else { return 0 };
+                let title = title_map.markdown().to_string();
                 if title.is_empty() && !children.is_empty() {
                     0
                 } else {
@@ -1662,7 +1675,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 }
             }
             BlockKind::Callout(variant) => {
-                let title_markdown = title.expect("callout title").markdown().to_string();
+                let Some(title_map) = title.as_ref() else { return 0 };
+                let title_markdown = title_map.markdown().to_string();
                 if title_markdown.is_empty() {
                     let full_text = Self::wrap_source_mapping_with_quotes(
                         format!("[!{}]", variant.marker()),
@@ -1694,7 +1708,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 }
             }
             BlockKind::FootnoteDefinition => {
-                let footnote_id = title.expect("footnote id").markdown().to_string();
+                let Some(title_map) = title.as_ref() else { return 0 };
+                let footnote_id = title_map.markdown().to_string();
                 let first_child = children.first().cloned();
                 let first_is_paragraph = first_child
                     .as_ref()

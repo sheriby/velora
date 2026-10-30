@@ -1685,3 +1685,18 @@ async fn table_mapping_survives_a_corrupt_source_span(cx: &mut TestAppContext) {
         "坏区间不该推出表格映射（旧实现会在这里 panic）"
     );
 }
+
+/// 产品路径禁 `expect`：标题映射的构造与八个消费分支共用 `has_title_mapping`
+/// 一条判据，往排除清单里加一类块时两边同时看它，不再靠人工对齐兜底。
+#[test]
+fn source_mapping_has_no_title_expects() {
+    let source = include_str!("../source_mapping.rs");
+    assert!(
+        !source.contains("title.expect("),
+        "source_mapping 的标题分支不该再用 title.expect"
+    );
+    assert!(
+        source.contains("fn has_title_mapping"),
+        "标题映射的存在性判据应收在 has_title_mapping 一处"
+    );
+}
