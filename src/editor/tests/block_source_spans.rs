@@ -1700,3 +1700,24 @@ fn source_mapping_has_no_title_expects() {
         "标题映射的存在性判据应收在 has_title_mapping 一处"
     );
 }
+
+/// 按单块取映射：目标所在的根块走完就该停。表格/分隔线/空段落这些目标自身
+/// 不产生文本映射，旧判据（映射里出现 target）永远不成立，会把后面整篇走一遍。
+#[gpui::test]
+async fn table_mapping_lookup_stops_after_the_target_root(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut markdown = String::from("| a | b |\n| --- | --- |\n| 1 | 2 |\n");
+    for index in 0..40 {
+        markdown.push_str(&format!("\n段落 {index}\n"));
+    }
+    let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().expect("表格根块");
+        let table_id = table.entity_id();
+        let before = editor.source_mapping_roots_walked.get();
+        let mapping = editor.source_mapping_for_entity(table_id, cx);
+        assert!(mapping.is_none(), "表格自身没有文本映射");
+        let walked = editor.source_mapping_roots_walked.get() - before;
+        assert_eq!(walked, 1, "目标根块之后还有 40 块，却走查了 {walked} 个");
+    });
+}

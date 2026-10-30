@@ -210,6 +210,9 @@ pub struct Editor {
     /// 性能计数器：其中「整篇重建」的次数。按单块取映射是 O(这一块)，整篇重建是
     /// O(文档)——打字这类每键动作只许付前者的钱。
     source_mapping_full_builds: std::cell::Cell<u64>,
+    /// 性能计数器：按单块取映射时走过的根块数。目标根块走完就该停，
+    /// 表格/分隔线这些自身不产生文本映射的目标也不例外。
+    source_mapping_roots_walked: std::cell::Cell<u64>,
     /// 性能计数器：状态栏整篇字数扫描次数（unicode 分词在大文档里很贵）。
     word_count_scans: std::cell::Cell<u64>,
     /// 性能计数器：文档命中表**重扫整篇**的次数。缓存命中不算；
@@ -991,6 +994,7 @@ impl Editor {
             row_plan_nanos: std::cell::Cell::default(),
             source_mapping_builds: std::cell::Cell::default(),
             source_mapping_full_builds: std::cell::Cell::default(),
+            source_mapping_roots_walked: std::cell::Cell::default(),
             word_count_scans: std::cell::Cell::default(),
             document_match_scans: std::cell::Cell::default(),
             row_plan_rebuilds: std::cell::Cell::default(),

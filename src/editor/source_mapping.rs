@@ -2078,14 +2078,26 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 .map(|span| (span.end + 1).min(self.buffer.byte_len()))
                 .unwrap_or(0);
         }
+        // 目标所在的根块走完就停。不能等「映射里出现 target」：表格只推格子映射、
+        // 分隔线与空根段落不推文本映射，那样判会从目标起把后面整篇都走一遍。
+        let target_root = target.and_then(|id| {
+            self.document
+                .root_ancestor_of(id)
+                .map(|root| root.entity_id())
+        });
         for block in roots.iter().skip(start_index) {
+            self.source_mapping_roots_walked
+                .set(self.source_mapping_roots_walked.get() + 1);
             let id = block.entity_id();
-            let prior_mapping_count = mappings.len();
+            let is_target_root = target_root == Some(id);
             if !self.push_root_source_mappings(block, &mut mappings, &mut block_ranges, cx) {
                 // 这个根块还没有区间（刚插进树、尚未写回缓冲区）：给一个
                 // 就近的零宽锚点，跨块选区的端点才解析得出来。真正的区间
                 // 要等写回那一步才有。
                 block_ranges.insert(id, next_anchor..next_anchor);
+                if is_target_root {
+                    break;
+                }
                 continue;
             }
             next_anchor = self
@@ -2094,11 +2106,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 .as_ref()
                 .map(|span| (span.end + 1).min(self.buffer.byte_len()))
                 .unwrap_or(next_anchor);
-            if target.is_some_and(|id| {
-                mappings[prior_mapping_count..]
-                    .iter()
-                    .any(|mapping| mapping.entity.entity_id() == id)
-            }) {
+            if is_target_root {
                 break;
             }
         }
