@@ -927,7 +927,6 @@ impl Editor {
             Ok(document) => document.text,
             Err(error) => {
                 return WorkspaceReplaceOutcome::Failed {
-                    path: path.to_path_buf(),
                     detail: format!("无法读取「{}」：{error}", path.display()),
                 };
             }
@@ -954,7 +953,6 @@ impl Editor {
                 replaced: count_matches_in_source(&source, matcher),
             },
             Err(error) => WorkspaceReplaceOutcome::Failed {
-                path: path.to_path_buf(),
                 detail: format!("无法写入「{}」：{error}", path.display()),
             },
         }
@@ -989,7 +987,7 @@ impl Editor {
                 WorkspaceReplaceOutcome::Conflict { path, detail } => {
                     self.report_external_change_conflict(path, detail, cx);
                 }
-                WorkspaceReplaceOutcome::Failed { path, detail } => {
+                WorkspaceReplaceOutcome::Failed { detail } => {
                     self.report_workspace_file_error(detail.clone(), cx);
                     self.show_message_modal("替换失败", detail, cx);
                 }
@@ -1017,7 +1015,6 @@ enum WorkspaceReplaceOutcome {
         detail: String,
     },
     Failed {
-        path: std::path::PathBuf,
         detail: String,
     },
 }
