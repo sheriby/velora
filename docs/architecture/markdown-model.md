@@ -44,7 +44,7 @@
 
 核心是 `inline/stacks.rs:choose_fragment_stacks`：为每个片段选**定界符栈**（markdown 记号 vs `<strong>`/`<sup>` 一类 HTML 记号），用 DP 最小化"关闭旧栈 + 开启新栈"的字节数，并对三类情况加惩罚——连续多个同种星/下划线（`****` 歧义）、侧翼不合法、HTML 变体。上下标的 markdown 记号要求前一片段以 ASCII 字母数字结尾，否则退 HTML 记号。
 
-**重建出的字节只保证"语义相同、写法可能不同"**。会不同的情形：DP 为避歧义换记号、手动 toggle 后强调记号统一成 `*`、行内代码两端的空格填充、`<br>` 统一写法（`<br/>`、`<br />`、`<BR>` 等一律写回 `<br>`，由 `br_variants_are_normalized_to_the_documented_form` 钉住）、脚注上标还原成 `[^id]`。因此：
+**重建出的字节只保证"语义相同、写法可能不同"**。会不同的情形：DP 为避歧义换记号、手动 toggle 后强调记号统一成 `*`、行内代码两端的空格填充、`<br>` 统一写法（`<br/>`、`<br />`、`<BR>` 等一律写回 `<br>`，由 `br_variants_are_normalized_to_the_documented_form` 钉住）、HTML 行内写法重建为等价 markdown 记号（`<strong>`/`<b>`→`**`、`<em>`/`<i>`→`*`、`<del>`→`~~`、`<ins>`→`<u>`；`<sup>` 在无前置字母数字时保留 HTML，由 `html_inline_forms_are_normalized_to_the_documented_equivalents` 钉住）、脚注上标还原成 `[^id]`。因此：
 
 > **写回必须只动真正改过的那段字节**（editor-core.md §5），不能"从块树重新生成这一块"。
 

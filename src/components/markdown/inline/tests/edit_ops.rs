@@ -1400,3 +1400,27 @@ fn br_variants_are_normalized_to_the_documented_form() {
         assert_eq!(tree.serialize_markdown(), "a<br>b", "{source} 的写法");
     }
 }
+
+/// HTML 行内写法在模型里塌成同一套样式属性，序列化重建为等价 markdown 记号
+/// 或 `<u>`（模型文档「语义相同、写法可能不同」一节）。`<sup>` 没有前置字母
+/// 数字时按 stacks 的侧翼规则保留 HTML 写法。这条把既有规范化固定进文档
+/// 口径，避免被当成静默改写反复报修，也防止有人半路改成保真。
+#[test]
+fn html_inline_forms_are_normalized_to_the_documented_equivalents() {
+    for (source, expected) in [
+        ("<strong>x</strong>", "**x**"),
+        ("<b>x</b>", "**x**"),
+        ("<em>y</em>", "*y*"),
+        ("<i>y</i>", "*y*"),
+        ("<del>x</del>", "~~x~~"),
+        ("<sup>x</sup>", "<sup>x</sup>"),
+        ("<ins>x</ins>", "<u>x</u>"),
+    ] {
+        let tree = InlineTextTree::from_markdown(source);
+        assert_eq!(
+            tree.serialize_markdown(),
+            expected,
+            "{source} 的规范化口径"
+        );
+    }
+}
