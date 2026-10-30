@@ -272,3 +272,44 @@ async fn setext_heading_across_a_chunk_seam_keeps_heading_color(cx: &mut TestApp
         );
     });
 }
+
+/// 引用块里的围栏代码（`> ```rust`）要进状态机：开栏后逐行按代码色着色，
+/// 闭合后引用继续按普通行分类。此前引用续行扫描没有围栏分支，整段只有零散
+/// 行内构造色，与渲染视图（引用内完整代码块）不一致。
+#[gpui::test]
+async fn quoted_fence_content_gets_code_color(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "> ```rust\n> let x = 1;\n> ```\n> 尾注\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let block = editor.document.root_blocks()[0].read(cx);
+        let text = block.display_text();
+        let result = block
+            .code_highlight_result()
+            .expect("源码分块应有高亮结果");
+        let code_at = text.find("let x = 1;").expect("围栏内容");
+        assert!(
+            result.spans.iter().any(|span| {
+                span.class == CodeHighlightClass::MarkdownCode
+                    && span.range.start <= code_at
+                    && code_at < span.range.end
+            }),
+            "引用内围栏内容应着代码色: {:?}",
+            result.spans
+        );
+        let tail_at = text.find("尾注").expect("尾注");
+        assert!(
+            !result.spans.iter().any(|span| {
+                span.class == CodeHighlightClass::MarkdownCode
+                    && span.range.start <= tail_at
+                    && tail_at < span.range.end
+            }),
+            "闭合后的引用正文不该继续代码色: {:?}",
+            result.spans
+        );
+    });
+}

@@ -35,6 +35,12 @@ pub(crate) enum MarkdownSourceState {
     /// 时它跨不过区间，但下一块的首行要先按下划线判定，否则接缝处的 setext
     /// 标题整条不出标题色。
     ParagraphCandidate,
+    /// 引用块里的围栏代码（`> ```lang`）。续行先剥引用前缀再按围栏处理；
+    /// 保守版整段按代码色着色，不做语言内高亮。
+    QuoteFence {
+        fence_char: char,
+        fence_len: usize,
+    },
 }
 
 /// 一次扫描的产出：着色区间 + 本块结束时的块级状态（给下一块的入口）。
@@ -153,6 +159,11 @@ impl<'a> Scanner<'a> {
             if matches!(state, MarkdownSourceState::ParagraphCandidate) {
                 self.state = None;
                 self.seam_pending_paragraph = true;
+            } else if matches!(state, MarkdownSourceState::QuoteFence { .. })
+                && quote_prefix_len(Self::strip_indent(line)) == 0
+            {
+                // 引用结束，围栏随之结束：这一行按普通行重新分类。
+                self.state = None;
             } else {
                 self.scan_inside_state(line_start, line, &state);
                 return;
@@ -414,6 +425,34 @@ impl<'a> Scanner<'a> {
                 }
                 self.append_nested_region(CodeLanguageKey::Yaml, line_start..line_end);
             }
+            MarkdownSourceState::QuoteFence {
+                fence_char,
+                fence_len,
+            } => {
+                let content = Self::strip_indent(line);
+                let indent_len = line.len() - content.len();
+                let marker_len = quote_prefix_len(content);
+                if marker_len > 0 {
+                    self.push(
+                        line_start + indent_len..line_start + indent_len + marker_len,
+                        CodeHighlightClass::MarkdownMarker,
+                    );
+                }
+                let content_start = line_start + indent_len + marker_len;
+                let body = &line[content_start - line_start..];
+                let run_chars = body.chars().take_while(|c| *c == *fence_char).count();
+                if run_chars * fence_char.len_utf8() >= *fence_len
+                    && body[run_chars * fence_char.len_utf8()..].trim().is_empty()
+                {
+                    self.push(
+                        content_start..content_start + run_chars * fence_char.len_utf8(),
+                        CodeHighlightClass::MarkdownMarker,
+                    );
+                    self.state = None;
+                    return;
+                }
+                self.push(content_start..line_end, CodeHighlightClass::MarkdownCode);
+            }
             MarkdownSourceState::HtmlComment => match line.find("-->") {
                 Some(offset) => {
                     self.push(line_start..line_start + offset + 3, CodeHighlightClass::Comment);
@@ -474,6 +513,16 @@ impl<'a> Scanner<'a> {
     fn scan_quoted_remainder(&mut self, rest_start: usize, rest: &str, line_end: usize) {
         let trimmed = rest.strip_prefix(' ').unwrap_or(rest);
         let trimmed_start = rest_start + (rest.len() - trimmed.len());
+        // 引用里的围栏代码块：开栏后整段按代码色着色（保守版，不做语言内高亮）。
+        if let Some(opener) = parse_fence_opener(trimmed) {
+            let run_end = trimmed_start + opener.run_len;
+            self.push(trimmed_start..run_end, CodeHighlightClass::MarkdownMarker);
+            self.state = Some(MarkdownSourceState::QuoteFence {
+                fence_char: opener.fence_char,
+                fence_len: opener.run_len,
+            });
+            return;
+        }
         if let Some(level) = parse_atx_heading(trimmed) {
             self.push(
                 trimmed_start..trimmed_start + level as usize,
