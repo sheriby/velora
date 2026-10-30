@@ -1,7 +1,6 @@
 use super::*;
 
 /// Markdown and HTML delimiter variants, avoiding ambiguous `****` runs.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InlineTextTree {
     pub(crate) fragments: Vec<InlineFragment>,
     /// 源码里由反斜杠转义而来的那些**序列**，在这棵树**可见文本**里的字节区间
@@ -13,6 +12,63 @@ pub struct InlineTextTree {
     /// 记下来，往后的每次编辑与重解析都原样带过去。序列化只在区间**起点**补回一个
     /// 反斜杠，未编辑块才能逐字节还原用户写法。
     pub(crate) escaped_offsets: Vec<std::ops::Range<u32>>,
+    /// 可见↔markdown 的偏移映射：树在两次解析之间不变，光标移动、选区拖拽
+    /// 反复查同一份映射，按树实例缓存一次即可。
+    offset_map_cache: std::sync::Mutex<Option<std::sync::Arc<InlineMarkdownOffsetMap>>>,
+}
+
+impl Clone for InlineTextTree {
+    fn clone(&self) -> Self {
+        Self {
+            fragments: self.fragments.clone(),
+            escaped_offsets: self.escaped_offsets.clone(),
+            offset_map_cache: std::sync::Mutex::new(None),
+        }
+    }
+}
+
+impl Default for InlineTextTree {
+    fn default() -> Self {
+        Self {
+            fragments: Vec::new(),
+            escaped_offsets: Vec::new(),
+            offset_map_cache: std::sync::Mutex::new(None),
+        }
+    }
+}
+
+impl std::fmt::Debug for InlineTextTree {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InlineTextTree")
+            .field("fragments", &self.fragments)
+            .field("escaped_offsets", &self.escaped_offsets)
+            .finish()
+    }
+}
+
+impl PartialEq for InlineTextTree {
+    fn eq(&self, other: &Self) -> bool {
+        self.fragments == other.fragments && self.escaped_offsets == other.escaped_offsets
+    }
+}
+
+impl Eq for InlineTextTree {}
+
+#[cfg(test)]
+thread_local! {
+    /// 测试记账：偏移映射真正建表的次数。
+    static OFFSET_MAP_BUILDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn offset_map_builds() -> u64 {
+    OFFSET_MAP_BUILDS.with(|builds| builds.get())
+}
+
+#[cfg(test)]
+pub(crate) fn reset_offset_map_builds() {
+    OFFSET_MAP_BUILDS.with(|builds| builds.set(0));
 }
 
 impl InlineTextTree {
@@ -162,6 +218,7 @@ impl InlineTextTree {
         let mut tree = Self {
             fragments,
             escaped_offsets: Vec::new(),
+            offset_map_cache: std::sync::Mutex::new(None),
         };
         tree.normalize_fragments();
         tree
@@ -356,7 +413,24 @@ impl InlineTextTree {
         output
     }
 
-    pub(crate) fn markdown_offset_map(&self) -> InlineMarkdownOffsetMap {
+    /// 可见↔markdown 偏移映射（按树实例缓存）。树在两次解析之间不变，
+    /// 光标移动、选区拖拽会反复查同一份映射，建一次即可。
+    pub(crate) fn markdown_offset_map(&self) -> std::sync::Arc<InlineMarkdownOffsetMap> {
+        if let Ok(cached) = self.offset_map_cache.lock()
+            && let Some(cached) = cached.clone()
+        {
+            return cached;
+        }
+        #[cfg(test)]
+        OFFSET_MAP_BUILDS.with(|builds| builds.set(builds.get() + 1));
+        let map = std::sync::Arc::new(self.build_markdown_offset_map());
+        if let Ok(mut cache) = self.offset_map_cache.lock() {
+            *cache = Some(map.clone());
+        }
+        map
+    }
+
+    fn build_markdown_offset_map(&self) -> InlineMarkdownOffsetMap {
         if self.fragments.is_empty() {
             return InlineMarkdownOffsetMap {
                 markdown: String::new(),

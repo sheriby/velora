@@ -613,3 +613,29 @@
         );
         assert_eq!(italic.serialize_markdown(), "*a**b*");
     }
+
+    /// 可见↔markdown 偏移映射按树缓存：同一棵树反复查询只建一次，克隆出的
+    /// 新树各自建一份。光标移动、选区拖拽查的都是同一棵持久树。
+    #[test]
+    fn offset_map_is_built_once_per_tree_and_shared_between_queries() {
+        let tree = InlineTextTree::from_markdown("前 **粗** 与 [链接](https://a.test) 后");
+        crate::components::markdown::inline::reset_offset_map_builds();
+        let first = tree.markdown_offset_map();
+        let second = tree.markdown_offset_map();
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "同一棵树应复用同一份映射"
+        );
+        assert_eq!(
+            crate::components::markdown::inline::offset_map_builds(),
+            1,
+            "同一棵树只该建一次表"
+        );
+        let cloned = tree.clone();
+        let _ = cloned.markdown_offset_map();
+        assert_eq!(
+            crate::components::markdown::inline::offset_map_builds(),
+            2,
+            "克隆出的树各自建一份"
+        );
+    }

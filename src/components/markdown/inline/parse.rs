@@ -35,7 +35,7 @@ impl InlineSourceOffsetMap {
         if serialized.markdown == source {
             let identity: Vec<usize> = (0..=source.len()).collect();
             return Self {
-                markdown: serialized.markdown,
+                markdown: serialized.markdown.clone(),
                 markdown_to_source: identity.clone(),
                 source_to_markdown: identity,
             };
@@ -53,7 +53,7 @@ impl InlineSourceOffsetMap {
             &serialized.markdown_to_visible,
         );
         Self {
-            markdown: serialized.markdown,
+            markdown: serialized.markdown.clone(),
             markdown_to_source,
             source_to_markdown,
         }
