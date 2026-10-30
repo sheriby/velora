@@ -318,7 +318,16 @@ impl Editor {
             DocumentMenuCommand::Cut => selectable && editable,
             DocumentMenuCommand::Copy => self.copy_is_available(cx),
             DocumentMenuCommand::Paste | DocumentMenuCommand::PasteAsPlainText => {
-                editable && cx.read_from_clipboard().is_some()
+                // 菜单打开时拍过快照：开着期间每帧重读两次剪贴板是白付的，
+                // 用户也改不了剪贴板内容。菜单没开时（直接调用判定）才现读。
+                let clipboard_has_content = match self.context_menu.as_ref() {
+                    Some(ContextMenuState::Document {
+                        clipboard_has_content,
+                        ..
+                    }) => *clipboard_has_content,
+                    _ => cx.read_from_clipboard().is_some(),
+                };
+                editable && clipboard_has_content
             }
             _ => false,
         }

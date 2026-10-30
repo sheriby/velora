@@ -52,6 +52,8 @@ pub(super) enum ContextMenuState {
         /// 鼠标正停在一级面板与二级面板中间那条缝里吗（缝只有几个像素宽，
         /// 从父行横到面板上时正好会经过它，停在那儿不该算离开）。
         submenu_bridge_hovered: bool,
+        /// 打开那一刻剪贴板里有没有内容：菜单开着期间的按键/渲染不再逐帧读剪贴板。
+        clipboard_has_content: bool,
     },
     /// Table row or column context menu for an existing native table.
     TableAxis {
@@ -181,6 +183,7 @@ impl Editor {
             parent_row_hovered: None,
             submenu_panel_hovered: false,
             submenu_bridge_hovered: false,
+            clipboard_has_content: cx.read_from_clipboard().is_some(),
         });
         cx.notify();
     }

@@ -1539,3 +1539,36 @@ fn document_menu_geometry_fits_measured_punctuation_in_custom_labels(cx: &mut Te
         f32::from(geometry.size.width)
     );
 }
+
+/// 剪贴板可用性在菜单打开时拍一次快照：菜单开着期间每帧重读两次剪贴板是白付的，
+/// 而开菜单期间用户也改不了剪贴板内容。关掉再开才读新的。
+#[gpui::test]
+async fn paste_availability_is_snapshotted_when_the_menu_opens(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    redraw(cx);
+    let paste_index = DOCUMENT_MENU_QUICK_ACTIONS
+        .iter()
+        .position(|command| *command == DocumentMenuCommand::Paste)
+        .expect("图标条里有粘贴");
+    right_click(&editor, 0, cx);
+    assert!(
+        !quick_action_states(&editor, cx)[paste_index],
+        "剪贴板为空时粘贴该灰着"
+    );
+    cx.update(|_window, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("新内容".into()))
+    });
+    redraw(cx);
+    assert!(
+        !quick_action_states(&editor, cx)[paste_index],
+        "菜单打开期间的判定应来自打开时的快照"
+    );
+    cx.simulate_keystrokes("escape");
+    redraw(cx);
+    right_click(&editor, 0, cx);
+    assert!(
+        quick_action_states(&editor, cx)[paste_index],
+        "重新打开菜单应读到新的剪贴板状态"
+    );
+}
