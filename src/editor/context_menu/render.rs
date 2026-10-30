@@ -74,7 +74,7 @@ impl Editor {
         let viewport = window.viewport_size();
         let c = &theme.colors;
         let d = &theme.dimensions;
-        let s = cx.global::<I18nManager>().strings().clone();
+        let s = cx.global::<I18nManager>().strings_arc();
 
         match menu {
             ContextMenuState::Document {
@@ -524,7 +524,7 @@ impl Editor {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
-        let s = cx.global::<I18nManager>().strings().clone();
+        let s = cx.global::<I18nManager>().strings_arc();
         let dialog_focus = dialog.focus.clone();
         let [rows_dec, rows_inc, columns_dec, columns_inc] = dialog.steppers.clone();
         let owner = cx.entity().downgrade();

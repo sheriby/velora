@@ -630,3 +630,18 @@ async fn source_line_numbers_are_shaped_once_per_text_generation(cx: &mut TestAp
         "行号内容没变，后续帧不该重新整形（{first} → {second}）"
     );
 }
+
+/// 渲染热路径不得深拷贝整份 I18nStrings（约 567 个 String）：选中工具栏与
+/// 右键菜单每帧都会走到，文案表只读，取 strings_arc 即可。
+#[test]
+fn render_hot_paths_borrow_the_i18n_string_table() {
+    for (name, source) in [
+        ("selection_toolbar.rs", include_str!("../selection_toolbar.rs")),
+        ("context_menu/render.rs", include_str!("../context_menu/render.rs")),
+    ] {
+        assert!(
+            !source.contains("strings().clone()"),
+            "{name} 仍在每帧深拷贝整份 I18nStrings"
+        );
+    }
+}

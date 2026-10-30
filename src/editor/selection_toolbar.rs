@@ -270,7 +270,7 @@ impl Editor {
             self.selection_toolbar = None;
             return None;
         };
-        let strings = cx.global::<I18nManager>().strings().clone();
+        let strings = cx.global::<I18nManager>().strings_arc();
         let viewport = window.viewport_size();
         if !Self::selection_is_on_screen(selection, viewport) {
             self.selection_toolbar = None;
