@@ -736,10 +736,12 @@ impl Editor {
                     {
                         tab.markdown.clone()
                     } else {
-                        match crate::editor::encoding::read_document_string(&path) {
-                            Ok(source) => source,
-                            Err(error) => {
-                                eprintln!("统计替换匹配失败（{}）：{error}", path.display());
+                        // 与侧栏搜索共用内容缓存（mtime+len 校验）：刚搜过的文件
+                        // 在确认阶段零读盘，不再整篇重新解码一遍。
+                        match cached_file_source(&path) {
+                            Some(source) => source.to_string(),
+                            None => {
+                                eprintln!("统计替换匹配失败（{}）：无法读取", path.display());
                                 continue;
                             }
                         }

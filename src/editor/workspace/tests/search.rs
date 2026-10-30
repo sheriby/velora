@@ -3187,3 +3187,44 @@ async fn document_list_navigation_moves_the_active_hit(cx: &mut TestAppContext) 
         assert_eq!(editor.workspace.document_active_index, Some(0));
     });
 }
+
+/// 全部替换的确认计数复用搜索缓存：刚搜过的文件不再整篇重新读盘解码一遍。
+#[gpui::test]
+async fn workspace_replace_counting_reuses_the_search_content_cache(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!(
+        "velora-replace-cache-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("创建工作区");
+    let first = root.join("first.md");
+    let second = root.join("second.md");
+    fs::write(&first, "a1b").expect("写入夹具");
+    fs::write(&second, "c1d").expect("写入夹具");
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init_with_language_id(cx, "zh-CN");
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    assert!(super::super::cached_file_source(&first).is_some());
+    assert!(super::super::cached_file_source(&second).is_some());
+    crate::editor::encoding::DOCUMENT_READS.with(|reads| reads.set(0));
+    editor.update(cx, |editor, cx| {
+        editor.workspace.root = Some(root.clone());
+        editor.workspace.files_on_disk = vec![first.clone(), second.clone()];
+        editor.workspace.files_on_disk_root = Some(root.clone());
+        editor.workspace.active_tab = WorkspaceTab::Search;
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
+        editor.workspace.search_query = "1".into();
+        editor.workspace.replace_query = "2".into();
+        editor.request_replace_all_matches(cx);
+        let spec = editor.modal_spec().expect("确认弹窗");
+        assert_eq!(
+            spec.detail.as_ref().map(|detail| detail.as_ref()),
+            Some("「1」 → 「2」\n共 2 处"),
+        );
+    });
+    let reads = crate::editor::encoding::DOCUMENT_READS.with(|reads| reads.get());
+    assert_eq!(reads, 0, "计数阶段又整篇读盘了 {reads} 次，没有复用搜索缓存");
+    fs::remove_dir_all(root).expect("清理夹具");
+}
