@@ -366,4 +366,24 @@ mod tests {
             "混合可视路径没有删除线样式"
         );
     }
+/// 中文没有空格：整段若是一个 flex 项，超宽后会在项内换行、把相邻的行内
+/// 公式/图片整体挤到下一行。长 CJK 段要按字素簇限量切成可折行的块；
+/// 拉丁长词保持原样。
+#[test]
+fn inline_word_chunks_split_cjk_runs_into_wrappable_pieces() {
+    let text = "中文整段没有空格的一句话需要按字素折行";
+    let chunks = inline_word_chunks(text, false, false);
+    assert!(chunks.len() > 1, "中文长段应切成可折行的块: {chunks:?}");
+    assert!(
+        chunks.iter().all(|chunk| chunk.chars().count() <= 12),
+        "每块不超过 12 个字素: {chunks:?}"
+    );
+    assert_eq!(chunks.concat(), text, "切分不该丢字或改字");
+    assert_eq!(
+        inline_word_chunks("unbreakableidentifier", false, false),
+        vec!["unbreakableidentifier"],
+        "拉丁长词不在词内断开"
+    );
+    assert_eq!(inline_word_chunks("a b", false, false), vec!["a ", "b"]);
+}
 }
