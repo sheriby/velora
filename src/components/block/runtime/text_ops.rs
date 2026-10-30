@@ -738,26 +738,43 @@ impl Block {
             .unwrap_or(text.len())
     }
 
+    /// 词起点表（UAX#29）：同一代显示文本只建一次，导航与词级删除共用。
+    fn shared_word_starts(&self) -> std::sync::Arc<Vec<usize>> {
+        use unicode_segmentation::UnicodeSegmentation;
+        let generation = self.display_generation;
+        if let Some((cached_generation, starts)) = self.word_starts_cache.borrow().as_ref()
+            && *cached_generation == generation
+        {
+            return starts.clone();
+        }
+        #[cfg(test)]
+        self.word_index_scans.set(self.word_index_scans.get() + 1);
+        let text = self.shared_display_text();
+        let starts = std::sync::Arc::new(
+            text.unicode_word_indices()
+                .map(|(start, _)| start)
+                .collect::<Vec<_>>(),
+        );
+        *self.word_starts_cache.borrow_mut() = Some((generation, starts.clone()));
+        starts
+    }
+
     /// Offset of the start of the word before `offset`, or 0 if there is none.
     pub fn previous_word_start(&self, offset: usize) -> usize {
-        let text = self.display_text();
-        let offset = offset.min(text.len());
-        text.unicode_word_indices()
-            .map(|(start, _)| start)
-            .take_while(|start| *start < offset)
-            .last()
-            .unwrap_or(0)
+        let offset = offset.min(self.display_text().len());
+        let starts = self.shared_word_starts();
+        let before = starts.partition_point(|start| *start < offset);
+        if before == 0 { 0 } else { starts[before - 1] }
     }
 
     /// Offset of the start of the word after `offset`, or the text length if
     /// there is none.
     pub fn next_word_start(&self, offset: usize) -> usize {
-        let text = self.display_text();
-        let offset = offset.min(text.len());
-        text.unicode_word_indices()
-            .map(|(start, _)| start)
-            .find(|start| *start > offset)
-            .unwrap_or(text.len())
+        let text_len = self.display_text().len();
+        let offset = offset.min(text_len);
+        let starts = self.shared_word_starts();
+        let after = starts.partition_point(|start| *start <= offset);
+        starts.get(after).copied().unwrap_or(text_len)
     }
 
     /// Reverse of `display_offset`: maps an expanded display offset

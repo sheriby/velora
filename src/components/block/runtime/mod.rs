@@ -232,6 +232,12 @@ pub struct Block {
     /// Arc 后，这是行表侧的对应收口）。
     hard_line_ranges_cache:
         std::cell::RefCell<Option<(u64, std::sync::Arc<Vec<std::ops::Range<usize>>>)>>,
+    /// 词起点表按 display_generation 缓存：Option+←/→ 每键都跑一遍
+    /// unicode_word_indices（53KB 的源码分块一次数万词元），同一代文本只建
+    /// 一次，导航与词级删除用二分查表。
+    word_starts_cache: std::cell::RefCell<Option<(u64, std::sync::Arc<Vec<usize>>)>>,
+    #[cfg(test)]
+    pub(crate) word_index_scans: std::cell::Cell<u64>,
     /// P3：跨帧 shape 备忘。键命中时布局闭包跳过 build_text_runs 与
     /// shape_text（taffy 一次布局会对同一元素多次 measure）。
     pub(crate) shape_memo: Option<ShapeMemoEntry>,
@@ -401,6 +407,9 @@ impl Block {
             display_generation: 0,
             render_generation: 0,
             hard_line_ranges_cache: std::cell::RefCell::new(None),
+            word_starts_cache: std::cell::RefCell::new(None),
+            #[cfg(test)]
+            word_index_scans: std::cell::Cell::new(0),
             shape_memo: None,
             long_line_plan: None,
             expanded_long_lines: std::collections::BTreeSet::new(),

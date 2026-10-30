@@ -978,3 +978,36 @@ async fn select_document_command_selects_the_whole_source_buffer(cx: &mut TestAp
     });
 }
 
+
+/// Option+→ 连续跳词不该每键重建整块词索引：同一代文本只扫一遍，
+/// 十字光标逐词前进的结果与逐键全量扫描一致。
+#[gpui::test]
+async fn word_navigation_reuses_the_word_index_within_one_text_generation(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = "alpha beta gamma delta epsilon zeta eta theta";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    editor.update(cx, |editor, _| editor.focus_block(block.entity_id()));
+    block.update(cx, |block, _| block.selected_range = 0..0);
+    redraw(cx);
+
+    let before = block.read_with(cx, |block, _| block.word_index_scans.get());
+    for _ in 0..4 {
+        cx.dispatch_action(crate::components::WordMoveRight);
+    }
+    redraw(cx);
+    let scans = block.read_with(cx, |block, _| block.word_index_scans.get()) - before;
+    assert_eq!(scans, 1, "同一代文本的词索引应只建一次，实际建了 {scans} 次");
+    let cursor = block.read_with(cx, |block, _| block.selected_range.start);
+    assert_eq!(
+        &source[cursor..],
+        "epsilon zeta eta theta",
+        "逐词前进应落在第四个词边界上"
+    );
+}
