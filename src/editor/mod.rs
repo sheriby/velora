@@ -313,6 +313,9 @@ pub struct Editor {
     scroll_settle_frames: u8,
     /// 冷启动续挂已排的帧数（上限 COLD_FILL_MAX_FRAMES，避免每帧重排）。
     cold_fill_frames: u8,
+    /// 高频续挂到达上限后的低频重试任务：每 250ms 刷一帧直到视口铺满，
+    /// 不能因上限到了就无限期放弃（行高被严重低估时视口会长期留白）。
+    cold_fill_retry_task: Option<Task<()>>,
     close_guard_installed: bool,
     show_unsaved_changes_dialog: bool,
     /// When true, the window will close after the next successful save.
@@ -1016,6 +1019,7 @@ impl Editor {
             prev_mounted_run: None,
             scroll_settle_frames: 0,
             cold_fill_frames: 0,
+            cold_fill_retry_task: None,
             close_guard_installed: false,
             show_unsaved_changes_dialog: false,
             pending_close_after_save: false,

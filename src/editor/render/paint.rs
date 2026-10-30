@@ -409,11 +409,17 @@ impl Render for Editor {
 
         // 冷启动续挂：行高仍被低估时一帧铺不满视口，立刻排下一帧继续补，
         // 而不是把整屏 spacer 留给读者、等到下一次输入才补上。
-        if render_window.needs_fill && self.cold_fill_frames < COLD_FILL_MAX_FRAMES {
-            self.cold_fill_frames += 1;
-            self.schedule_followup_frame(cx);
+        if render_window.needs_fill {
+            if self.cold_fill_frames < COLD_FILL_MAX_FRAMES {
+                self.cold_fill_frames += 1;
+                self.schedule_followup_frame(cx);
+            } else {
+                // 高频帧数到顶不代表放弃：切低频续挂，铺满之前一直补。
+                self.schedule_cold_fill_retry(cx);
+            }
         } else {
             self.cold_fill_frames = 0;
+            self.cold_fill_retry_task = None;
         }
 
         let island = render_window.focus_island;

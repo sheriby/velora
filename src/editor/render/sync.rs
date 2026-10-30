@@ -445,6 +445,23 @@ impl Editor {
     /// is swallowed when called from within `render`, so without this the retry
     /// would wait for the next external notify (e.g. the cursor blink, ~0.5s
     /// later).
+    /// 冷启动高频续挂到上限后的降频续挂：每 250ms 刷一帧，直到铺满。
+    /// 同一个重试只保留一个任务（降频期间每帧都会命中「已达上限」）。
+    pub(crate) fn schedule_cold_fill_retry(&mut self, cx: &mut Context<Self>) {
+        if self.cold_fill_retry_task.is_some() {
+            return;
+        }
+        self.cold_fill_retry_task = Some(cx.spawn(async move |this: WeakEntity<Self>, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(250))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.cold_fill_retry_task = None;
+                cx.notify();
+            });
+        }));
+    }
+
     pub(crate) fn schedule_followup_frame(&mut self, cx: &mut Context<Self>) {
         self.scroll_recheck_task = Some(cx.spawn(async move |this: WeakEntity<Self>, cx| {
             cx.background_executor()

@@ -1488,3 +1488,31 @@ async fn switching_to_source_mode_uses_the_source_mapping_for_a_markup_block(
         );
     });
 }
+
+
+/// 冷启动续挂的 8 帧上限只是约束高频重排：到顶后要降频续挂（每 250ms 一帧）
+/// 直到铺满，不能无限期放弃。这里直接验证续挂调度本身：重复请求只保留一个
+/// 任务，到点清掉任务并再刷一帧。连续 8 帧 needs_fill 的极端行高夹具造不出来，
+/// paint 分支的触发条件未单测。
+#[gpui::test]
+async fn cold_fill_cap_schedules_a_single_low_frequency_retry(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "# a\n".into(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        editor.schedule_cold_fill_retry(cx);
+        editor.schedule_cold_fill_retry(cx);
+        assert!(
+            editor.cold_fill_retry_task.is_some(),
+            "到顶后应安排低频续挂"
+        );
+    });
+    cx.executor().advance_clock(Duration::from_millis(300));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.cold_fill_retry_task.is_none(),
+            "续挂到点后应清任务并再刷一帧"
+        );
+    });
+}
