@@ -654,3 +654,45 @@ async fn copy_as_markdown_ignores_a_lingering_selection_on_a_non_active_block(
         "复制取的是活动块的选区，不是文档前部残留的那一段"
     );
 }
+
+/// 同一剪贴板条目同时挂图片与文字时按文字粘：图片只在「条目里没有可用文字」
+/// 时才优先，否则用户看到的文字会被一张图无声顶掉。
+#[gpui::test]
+async fn pasting_a_clipboard_item_with_text_and_an_image_prefers_the_text(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原文".into(), None));
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    editor.update(cx, |editor, _| editor.focus_block(block.entity_id()));
+    block.update(cx, |block, cx| {
+        let end = block.display_text().len();
+        block.move_to(end, cx);
+    });
+    redraw(cx);
+    cx.update(|_window, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem {
+            entries: vec![
+                gpui::ClipboardEntry::Image(gpui::Image::from_bytes(
+                    gpui::ImageFormat::Png,
+                    vec![0x89, b'P', b'N', b'G'],
+                )),
+                gpui::ClipboardEntry::String(gpui::ClipboardString::new(
+                    "粘贴的文字".into(),
+                )),
+            ],
+        });
+    });
+    cx.dispatch_action(Paste);
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.buffer.text(),
+            "原文粘贴的文字",
+            "带文字的混合剪贴板条目应按文字粘贴"
+        );
+    });
+}

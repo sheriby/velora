@@ -271,7 +271,15 @@ impl Block {
             Some(crate::components::markdown::html_paste::clipboard_change_count())
         };
         if let Some(item) = cx.read_from_clipboard() {
-            if let Some(source) = Self::pasted_image_source_from_clipboard(&item) {
+            let text = item.text();
+            // 同一 ClipboardItem 可能同时挂 image 与 text（部分应用复制图片时如此）。
+            // 有条目文字时按用户看得见的文字粘；只有纯图片（或只剩空白文字）才落图。
+            let has_visible_text = text
+                .as_deref()
+                .is_some_and(|text| !text.trim().is_empty());
+            if !has_visible_text
+                && let Some(source) = Self::pasted_image_source_from_clipboard(&item)
+            {
                 let (leading, trailing) = self.paste_image_split();
                 cx.emit(BlockEvent::RequestPasteImage {
                     leading,
@@ -281,7 +289,7 @@ impl Block {
                 return;
             }
 
-            let Some(text) = item.text() else {
+            let Some(text) = text else {
                 return;
             };
             // 缓冲区是 LF 规范空间（行尾由 FileShape 在保存时还原）：剪贴板里的
