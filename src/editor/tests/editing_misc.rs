@@ -721,3 +721,49 @@ fn insert_block_entry_has_no_product_expects() {
         "插入块入口不该用 expect：锚点/布局竞态应当直接放弃本次插入"
     );
 }
+
+/// 多行引用里普通打字不改变引用结构，不该每次都触发整棵快照重排；行首块
+/// 语法变化（回车/换行）才需要。闸门数 `document.snapshot_rebuilds`。
+#[gpui::test]
+async fn typing_inside_a_multiline_quote_does_not_rebuild_the_snapshot(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "> 第一行\n> 第二行\n\n正文\n".into(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+    let quote_block = editor
+        .read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).quote_depth > 0)
+                .map(|visible| visible.entity.clone())
+        })
+        .expect("夹具应有引用内的正文块");
+    editor.update(cx, |editor, _cx| editor.focus_block(quote_block.entity_id()));
+    redraw(cx);
+    // 首键可能补建一次指纹（打开时没建过），之后同结构继续打字不该再重排。
+    cx.simulate_input("甲");
+    redraw(cx);
+    let after_first =
+        editor.read_with(cx, |editor, _cx| editor.document.snapshot_rebuilds.get());
+    cx.simulate_input("乙");
+    redraw(cx);
+    let after_typing =
+        editor.read_with(cx, |editor, _cx| editor.document.snapshot_rebuilds.get());
+    assert_eq!(
+        after_typing, after_first,
+        "引用里普通打字不该重排整棵快照"
+    );
+    // 正向对照：回车会改行首结构，应当触发重建。
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    let after_enter =
+        editor.read_with(cx, |editor, _cx| editor.document.snapshot_rebuilds.get());
+    assert!(
+        after_enter > after_typing,
+        "回车改变引用行结构时应重建快照：{after_typing} → {after_enter}"
+    );
+}

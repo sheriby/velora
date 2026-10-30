@@ -20,7 +20,24 @@ impl Editor {
         if !self.block_is_quote_structure_related(block, cx) {
             return;
         }
+        // 按键路径的代际短路：只有「引用结构指纹」变了才重排整棵快照。
+        // 多行引用里普通打字不增删行、不改块种类，指纹不变；引用快捷键刚
+        // 创建容器（种类变）或增删了行（行数变）才会触发。
+        let signature = {
+            let block_ref = block.read(cx);
+            (
+                block_ref.kind().is_quote_container(),
+                block_ref.quote_depth,
+                block_ref.display_text().lines().count(),
+            )
+        };
 
+        if block.read(cx).quote_metadata_signature == Some(signature) {
+            return;
+        }
+        block.update(cx, |block, _cx| {
+            block.quote_metadata_signature = Some(signature);
+        });
         self.document.rebuild_metadata_and_snapshot(cx);
     }
 
