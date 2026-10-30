@@ -129,6 +129,9 @@ pub(crate) fn push_draft_undo(state: &mut FormulaEditorState, coalescible: bool)
     state.last_edit_coalesced = coalescible;
 }
 
+/// 草稿布局 memo 的失效键。
+type FormulaMeasureKey = (String, Range<usize>, String, usize);
+
 /// 草稿一行的渲染输入：行文本 + 铺满该行的样式段。
 pub(crate) struct FormulaDraftLine {
     pub(crate) text: SharedString,
@@ -309,6 +312,9 @@ pub(crate) struct FormulaEditorState {
     /// 草稿的实时预览：ratex 渲染好的缓存 SVG。渲染失败时为 Err（界面上
     /// 显示 LaTeX 源码 + 错误），空草稿为 None（显示占位提示）。
     pub(crate) preview_path: Option<PathBuf>,
+    /// 草稿布局的 memo：键是（草稿、选区、代码字体、主题），渲染、光标、
+    /// 补全浮层与命中四处共用，避免每帧/每次指针事件重跑整份 shape_text。
+    measure_cache: Option<(FormulaMeasureKey, std::rc::Rc<Vec<DraftLineLayout>>)>,
     /// 上一次渲染预览用的（正文色, 字号）：主题变化时据此判断要不要重渲，
     /// 否则预览会停在旧主题的缓存 SVG 上。
     preview_theme: Option<(gpui::Hsla, f32)>,
@@ -563,6 +569,7 @@ impl Editor {
             initial_draft: draft.clone(),
             draft,
             preview_path: None,
+            measure_cache: None,
             preview_theme: None,
             preview_error: None,
             preview_task: None,
@@ -1248,17 +1255,34 @@ impl Editor {
     /// 量出草稿当前的分行换行布局（文本、run、软换行后的行高与顶部）。
     /// 渲染、光标、补全浮层、指针命中四处共用这一份：各算各的就会在长行软换行
     /// 之后对不上。
-    fn measure_formula_draft(&self, window: &Window, cx: &App) -> Vec<DraftLineLayout> {
-        let Some(state) = self.formula_editor.as_ref() else {
-            return Vec::new();
+    fn measure_formula_draft(
+        &mut self,
+        window: &Window,
+        cx: &App,
+    ) -> std::rc::Rc<Vec<DraftLineLayout>> {
+        let theme = cx.global::<crate::theme::ThemeManager>().current_arc();
+        let code_family = crate::config::EditorSettings::fonts(cx).code_family.clone();
+        let theme_ptr = std::sync::Arc::as_ptr(&theme) as usize;
+        let Some(state) = self.formula_editor.as_mut() else {
+            return std::rc::Rc::new(Vec::new());
         };
         let draft = state.draft.clone();
-        let theme = cx.global::<crate::theme::ThemeManager>().current_arc();
-        let font = font(crate::config::EditorSettings::fonts(cx).code_family);
         let selection_start = draft_clamp_boundary(&draft, state.selected_range.start);
         let selection_end = draft_clamp_boundary(&draft, state.selected_range.end)
             .max(selection_start)
             .min(draft.len());
+        let key = (
+            draft.clone(),
+            selection_start..selection_end,
+            code_family.to_string(),
+            theme_ptr,
+        );
+        if let Some((cached_key, layouts)) = state.measure_cache.as_ref()
+            && *cached_key == key
+        {
+            return layouts.clone();
+        }
+        let font = font(code_family);
         let lines = formula_draft_lines(
             &draft,
             &theme.colors,
@@ -1269,7 +1293,13 @@ impl Editor {
         let line_height = px(INPUT_LINE_HEIGHT);
         let mut layouts = Vec::with_capacity(lines.len());
         let mut top = px(0.0);
+        #[cfg(test)]
+        let mut lines_shaped = 0u64;
         for (range, line) in ranges.into_iter().zip(lines.into_iter()) {
+            #[cfg(test)]
+            {
+                lines_shaped += 1;
+            }
             let wrapped = window
                 .text_system()
                 .shape_text(
@@ -1303,18 +1333,32 @@ impl Editor {
                 top: px(0.0),
             });
         }
+        let layouts = std::rc::Rc::new(layouts);
+        #[cfg(test)]
+        draft_measure_probe::note_shaped(lines_shaped);
+        self.formula_editor
+            .as_mut()
+            .map(|state| state.measure_cache = Some((key, layouts.clone())));
         layouts
     }
 
     /// 输入区里的一个点 → 草稿偏移。滚动句柄给的是可视框原点与滚动偏移
     /// （向下滚为负），所以内容原点 = bounds.origin + offset。
-    fn draft_offset_for_point(&self, position: Point<Pixels>, window: &Window, cx: &App) -> usize {
-        let Some(state) = self.formula_editor.as_ref() else {
+    fn draft_offset_for_point(
+        &mut self,
+        position: Point<Pixels>,
+        window: &Window,
+        cx: &App,
+    ) -> usize {
+        let Some((draft, bounds, scroll)) = self.formula_editor.as_ref().map(|state| {
+            (
+                state.draft.clone(),
+                state.input_scroll.bounds(),
+                state.input_scroll.offset(),
+            )
+        }) else {
             return 0;
         };
-        let draft = state.draft.clone();
-        let bounds = state.input_scroll.bounds();
-        let scroll = state.input_scroll.offset();
         let layouts = self.measure_formula_draft(window, cx);
         let local = point(
             position.x - bounds.left() - scroll.x - px(INPUT_CONTENT_INSET_X),
@@ -2056,5 +2100,21 @@ impl Editor {
                 )
                 .into_any_element(),
         )
+    }
+}
+
+/// thread-local 探针：弹窗草稿 shape_text 的总行数。布局按（草稿、选区、字体、
+/// 主题）缓存后，静止帧与纯指针事件应为 0；并行用例各数各的。
+#[cfg(test)]
+pub(crate) mod draft_measure_probe {
+    use std::cell::Cell;
+    thread_local! {
+        static DRAFT_SHAPED_LINES: Cell<u64> = const { Cell::new(0) };
+    }
+    pub(crate) fn note_shaped(line_count: u64) {
+        DRAFT_SHAPED_LINES.with(|counter| counter.set(counter.get() + line_count));
+    }
+    pub(crate) fn shaped_lines() -> u64 {
+        DRAFT_SHAPED_LINES.with(|counter| counter.get())
     }
 }

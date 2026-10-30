@@ -2942,3 +2942,44 @@ async fn applying_an_unclosed_math_block_does_not_nest_delimiters(cx: &mut TestA
         assert!(markdown.contains("xy"), "草稿内容应写回：{markdown:?}");
     });
 }
+
+/// 弹窗里的草稿布局要 memo：渲染、光标、补全浮层与命中四处共用，不能每帧
+/// 或每次指针事件都把整份草稿重新 shape_text 一遍（多行草稿拖选跟手性）。
+#[gpui::test]
+async fn formula_editor_measures_the_draft_once_per_change(cx: &mut TestAppContext) {
+    use crate::editor::formula_editor::draft_measure_probe;
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_formula_editor_for_block(math.entity_id(), window, cx);
+    });
+    let frac = &LATEX_SYMBOLS[0];
+    editor.update(cx, |editor, cx| editor.insert_formula_symbol(frac, cx));
+    redraw(cx);
+    redraw(cx);
+    let measured = draft_measure_probe::shaped_lines();
+    assert!(measured > 0, "前置：首帧应量过草稿");
+
+    redraw(cx);
+    redraw(cx);
+    assert_eq!(
+        draft_measure_probe::shaped_lines(),
+        measured,
+        "静止帧不该重跑 shape_text"
+    );
+
+    // 纯指针移动（未拖动选择）同样不该重量。
+    let anchor = cx.update(|window, _cx| window.viewport_size().center());
+    cx.simulate_mouse_move(anchor, None, Modifiers::none());
+    redraw(cx);
+    assert_eq!(
+        draft_measure_probe::shaped_lines(),
+        measured,
+        "指针移动不该重跑 shape_text"
+    );
+}
