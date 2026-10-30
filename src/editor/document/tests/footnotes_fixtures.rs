@@ -448,3 +448,57 @@
             assert_eq!(editor.document.markdown_text(cx), "");
         });
     }
+
+/// 段落里有未闭合反引号时，后文的反引号不能让列表标记接着被吞：
+/// 块结构优先于行内代码候选，`- 项` 这一行照常起新块。
+#[gpui::test]
+async fn unclosed_inline_code_does_not_swallow_following_list_markers(cx: &mut TestAppContext) {
+    let source = "前言 `未闭合\n\n- 列表项\n- 第二项\n\n后文 `闭合`";
+    let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
+
+    editor.update(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks();
+        let kinds: Vec<_> = visible
+            .iter()
+            .map(|visible| visible.entity.read(cx).kind())
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                BlockKind::Paragraph,
+                BlockKind::BulletedListItem,
+                BlockKind::BulletedListItem,
+                BlockKind::Paragraph,
+            ],
+            "列表标记不能被未闭合反引号吞进段落"
+        );
+        assert_eq!(editor.document.markdown_text(cx), source, "字节应原样保留");
+    });
+}
+
+/// 同一条块结构优先判据也覆盖 ATX 标题与围栏：未闭合反引号不能把它们吞进段落。
+#[gpui::test]
+async fn unclosed_inline_code_does_not_swallow_headings_or_fences(cx: &mut TestAppContext) {
+    for (source, marker) in [
+        ("前言 `未闭合\n\n# 标题\n\n后文 `闭合`", "Heading { level: 1 }"),
+        (
+            "前言 `未闭合\n\n```\ncode\n```\n\n后文 `闭合`",
+            "CodeBlock { language: None }",
+        ),
+    ] {
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
+        editor.update(cx, |editor, cx| {
+            let kinds: Vec<String> = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .map(|visible| format!("{:?}", visible.entity.read(cx).kind()))
+                .collect();
+            assert!(
+                kinds.iter().any(|kind| kind == marker),
+                "{source:?} 的结构行被吞了：{kinds:?}"
+            );
+            assert_eq!(editor.document.markdown_text(cx), source, "字节应原样保留");
+        });
+    }
+}

@@ -47,10 +47,35 @@ impl Editor {
                     .and_then(|next| BlockKind::parse_setext_underline(next))
                     .filter(|_| line_is_setext_heading_content(line))
                     .is_some();
+            let blank_break = line.trim().is_empty();
+            // 空行豁免只在「下一个根块起点之前」确实有同长反引号游程时成立：
+            // 闭合点在列表/标题/围栏之后时，这段代码 span 根本跨不过块边界。
+            // 空行本身不算边界——既有写法模型允许 code span 跨空行（空行吸收）。
+            let closes_before_next_block = blank_break
+                && inline_code.pending_run.is_some_and(|length| {
+                    let next_boundary = lines
+                        .iter()
+                        .enumerate()
+                        .skip(index + 1)
+                        .find(|(candidate, next)| {
+                            !next.trim().is_empty()
+                                && looks_like_root_block_start(lines, *candidate)
+                        })
+                        .map(|(candidate, _)| candidate)
+                        .unwrap_or(lines.len());
+                    lookahead.has_backtick_after_before(
+                        length,
+                        line_base + index,
+                        line_base + next_boundary,
+                    )
+                });
             if !continues_paragraph
                 && !setext_continuation
-                && (line.trim().is_empty() || looks_like_root_block_start(lines, index))
-                && !inline_code.pending_run.is_some_and(|length| lookahead.has_backtick_after(length, line_base + index))
+                && (blank_break || looks_like_root_block_start(lines, index))
+                // 未闭合反引号只豁免空行（既有写法模型对跨空行 code span 的选择）；
+                // 列表/标题/围栏这些根块起点按 CommonMark 的块结构优先一律断段——
+                // 否则后文任意一个反引号就能让结构行被吞进段落。
+                && !closes_before_next_block
             {
                 break;
             }

@@ -135,8 +135,17 @@ impl MarkdownLookahead {
         Self { backtick_last_line, fence_suffix_max }
     }
 
-    pub(crate) fn has_backtick_after(&self, length: usize, line: usize) -> bool {
-        self.backtick_last_line.get(&length).is_some_and(|last| *last >= line)
+    /// 同长反引号游程是否在 `line..before` 之间出现：空行豁免要先确认闭合同一段落内
+    /// 真的存在，别让下一个根块（列表/标题/围栏）之后的反引号影响当前段落的断行。
+    pub(crate) fn has_backtick_after_before(
+        &self,
+        length: usize,
+        line: usize,
+        before: usize,
+    ) -> bool {
+        self.backtick_last_line
+            .get(&length)
+            .is_some_and(|last| *last >= line && *last < before)
     }
 
     pub(super) fn matching_fence(&self, lines: &[String], start: usize, opener: &FenceInfo, line_base: usize) -> Option<usize> {
