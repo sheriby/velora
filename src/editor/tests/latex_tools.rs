@@ -2881,3 +2881,64 @@ async fn formula_editor_preview_follows_theme_changes(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// 未闭合的公式块（`$$\nx`）解析不出分段：打开弹窗时草稿若直接取含定界符
+/// 的整段 raw，「应用」会把它再包一层 `$$`，写回成嵌套定界符、渲染必报错。
+#[gpui::test]
+async fn applying_an_unclosed_math_block_does_not_nest_delimiters(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$x$$\n".into(), None));
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| {
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|block| block.read(cx).kind() == BlockKind::MathBlock)
+                .cloned()
+        })
+        .expect("夹具应是数学块");
+    // 在块里删掉收尾的 `$$`：块种类仍是数学块，但已经解析不出分段。
+    editor.update(cx, |_editor, cx| {
+        math.update(cx, |block, cx| {
+            block.replace_text_in_visible_range(3..5, "", None, false, cx);
+        });
+    });
+    redraw(cx);
+    editor.read_with(cx, |_editor, cx| {
+        let text = math.read(cx).display_text();
+        assert_eq!(text, "$$x", "前置：块里已是解析不出分段的形状");
+        assert!(
+            crate::components::latex::parse_display_math_segments(&text).is_none(),
+            "前置：该形状解析不出分段"
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_formula_editor_for_block(math.entity_id(), window, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗该开着");
+        assert_eq!(state.draft, "x", "草稿不该带着外层定界符");
+    });
+    editor.update(cx, |editor, cx| {
+        let end = editor
+            .formula_editor
+            .as_ref()
+            .map(|state| state.draft.len())
+            .unwrap_or(0);
+        editor.replace_formula_draft(end..end, "y", None, false, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| editor.apply_formula_editor(window, cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let markdown = editor.document.markdown_text(cx);
+        assert_eq!(
+            markdown.matches("$$").count(),
+            2,
+            "写回不该产出嵌套定界符：{markdown:?}"
+        );
+        assert!(markdown.contains("xy"), "草稿内容应写回：{markdown:?}");
+    });
+}

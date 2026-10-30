@@ -473,6 +473,24 @@ fn draft_offset_for_content_point(
     draft_clamp_offset(draft, layout.range.start + index.min(layout.range.len()))
 }
 
+/// 打开弹窗时的草稿：解析成功取正文；解析失败但仍带外层定界符的形状
+/// （用户在块里把收尾 `$$` 删掉后的 `$$x`）去掉定界符——否则「应用」会
+/// 把整段 raw 再包一层 `$$`，写回成嵌套定界符、渲染必报错。
+fn formula_editor_initial_draft(raw: &str) -> String {
+    if let Some(source) = crate::components::latex::parse_display_math_source(raw) {
+        return source.body;
+    }
+    let trimmed = raw.trim();
+    match trimmed.strip_prefix("$$") {
+        Some(rest) => rest
+            .strip_suffix("$$")
+            .unwrap_or(rest)
+            .trim_matches('\n')
+            .to_string(),
+        None => raw.to_string(),
+    }
+}
+
 /// 草稿输入区的 `\` 命令补全会话（弹窗内的，与块编辑的 latex_completion
 /// 互不相干）。
 pub(crate) struct FormulaDraftCompletion {
@@ -520,9 +538,7 @@ impl Editor {
             return;
         };
         let raw = block.read(cx).display_text().to_string();
-        let draft = crate::components::latex::parse_display_math_source(&raw)
-            .map(|source| source.body)
-            .unwrap_or(raw);
+        let draft = formula_editor_initial_draft(&raw);
         self.dismiss_contextual_overlays(cx);
         self.overlay_focus_restore_target = self.focused_edit_target_entity_id(window, cx);
         let focus = cx.focus_handle();
