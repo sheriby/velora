@@ -53,6 +53,48 @@ pub(crate) fn backtick_run_len(tokens: &[CharToken], index: usize) -> usize {
     len
 }
 
+/// 定界串的完整游程长度（`index` 可以落在游程中间）。
+pub(crate) fn emphasis_run_length(tokens: &[CharToken], index: usize) -> usize {
+    let ch = tokens[index].ch;
+    let mut start = index;
+    while start > 0 && tokens[start - 1].ch == ch {
+        start -= 1;
+    }
+    let mut end = index;
+    while end + 1 < tokens.len() && tokens[end + 1].ch == ch {
+        end += 1;
+    }
+    end - start + 1
+}
+
+/// CommonMark 的「rule of 3」：一对 `*`/`_` 定界串里只要有一侧既能开又能闭，
+/// 两串长度之和是 3 的倍数、又不同时是 3 的倍数时禁止配对。
+/// 少了这条，`**a*b**` 里的单星号会和收尾串的前半配成斜体，`*a**b*` 会配成
+/// 两段斜体——界面读法与 CommonMark / 导出都不一致。
+pub(crate) fn emphasis_pair_blocked_by_rule_of_three(
+    tokens: &[CharToken],
+    open_index: usize,
+    close_index: usize,
+) -> bool {
+    let Some(open) = tokens.get(open_index) else {
+        return false;
+    };
+    let marker = open.ch;
+    if !matches!(marker, '*' | '_') || close_index <= open_index {
+        return false;
+    }
+    let (open_prev, open_next) = emphasis_run_bounds(tokens, open_index);
+    let (close_prev, close_next) = emphasis_run_bounds(tokens, close_index);
+    let open_can_close = delimiter_can_close(marker, open_prev, open_next);
+    let close_can_open = delimiter_can_open(marker, close_prev, close_next);
+    if !(open_can_close || close_can_open) {
+        return false;
+    }
+    let open_len = emphasis_run_length(tokens, open_index);
+    let close_len = emphasis_run_length(tokens, close_index);
+    (open_len + close_len) % 3 == 0 && !(open_len % 3 == 0 && close_len % 3 == 0)
+}
+
 pub(crate) fn has_closing_delimiter(tokens: &[CharToken], index: usize, delimiter: Delimiter) -> bool {
     let skip = delimiter.token_len();
     let close_str = delimiter.close();
@@ -104,7 +146,9 @@ pub(crate) fn has_closing_delimiter(tokens: &[CharToken], index: usize, delimite
             }
             // 与 `parse_until` 用同一套闭合判定。否则这里报“有闭合”、正文扫描却拒
             // 绝全部候选（例如 `_a_b` 里的下划线不能闭合），正文就会被输出两次。
-            if can_close_emphasis(tokens, cursor) {
+            if can_close_emphasis(tokens, cursor)
+                && !emphasis_pair_blocked_by_rule_of_three(tokens, index, cursor)
+            {
                 return true;
             }
             cursor += 1;

@@ -581,3 +581,35 @@
 
         assert_eq!(tree.serialize_markdown(), source);
     }
+
+    /// CommonMark 的「rule of 3」：既能开又能闭的定界串，两串长度之和为 3 的
+    /// 倍数时禁止配对。`**a*b**` 整段是粗体（单星号按字面），`*a**b*` 整段是
+    /// 斜体（双星号按字面）；此前分别读成「字面 + 斜体 + 字面」与两段斜体，
+    /// 可见文本与导出都对不上。
+    #[test]
+    fn rule_of_three_keeps_mixed_strong_and_emphasis_markers_matching_commonmark() {
+        let bold = InlineTextTree::from_markdown("**a*b**");
+        assert_eq!(bold.visible_text(), "a*b");
+        assert!(
+            bold.render_cache()
+                .spans()
+                .iter()
+                .any(|span| span.style.bold && span.range == (0.."a*b".len())),
+            "整段应是粗体：{:?}",
+            bold.render_cache().spans()
+        );
+        assert_eq!(bold.serialize_markdown(), "**a*b**");
+
+        let italic = InlineTextTree::from_markdown("*a**b*");
+        assert_eq!(italic.visible_text(), "a**b");
+        assert!(
+            italic
+                .render_cache()
+                .spans()
+                .iter()
+                .any(|span| span.style.italic && span.range == (0.."a**b".len())),
+            "整段应是斜体：{:?}",
+            italic.render_cache().spans()
+        );
+        assert_eq!(italic.serialize_markdown(), "*a**b*");
+    }

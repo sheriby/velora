@@ -632,6 +632,11 @@ pub(crate) fn parse_until(
                 _ => {
                     matches_sequence(tokens, index, &end_delim.close())
                         && can_close_emphasis(tokens, index)
+                        && !emphasis_pair_blocked_by_rule_of_three(
+                            tokens,
+                            body_start.saturating_sub(end_delim.token_len()),
+                            index,
+                        )
                 }
             };
 
