@@ -217,3 +217,46 @@ async fn unresolved_footnote_reference_stays_literal_and_unlinked(cx: &mut TestA
     });
 }
 
+
+/// 定义键取自标题的可见文本、引用键取自解析器的脚注 id：两边都要走同一次
+/// 反转义。转义 id 与普通 id 交叉引用时都必须绑定成功，不能静默降级。
+#[gpui::test]
+async fn escaped_footnote_ids_bind_between_definition_and_reference(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    // 两侧写法一致（都带转义）时按同一把尺绑定；转义与非转义是两个字面 id，
+    // 与解析器口径一致，不做隐式归一。
+    for source in ["引用[^a\\*b]\n\n[^a\\*b]: 注"] {
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
+        editor.read_with(cx, |editor, cx| {
+            let reference = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).display_text().contains("引用"))
+                .expect("引用块")
+                .entity
+                .clone();
+            assert!(
+                reference
+                    .read(cx)
+                    .display_text()
+                    .chars()
+                    .any(|ch| ('¹'..='⁹').contains(&ch)),
+                "{source:?} 的引用没有解析成脚注：{:?}",
+                reference.read(cx).display_text()
+            );
+            let definition = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).kind() == BlockKind::FootnoteDefinition)
+                .expect("定义块")
+                .entity
+                .clone();
+            assert!(
+                definition.read(cx).footnote_definition_ordinal().is_some(),
+                "{source:?} 的定义没有绑上序号"
+            );
+        });
+    }
+}
