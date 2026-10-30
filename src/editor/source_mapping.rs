@@ -1061,6 +1061,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         list_dedent: usize,
         kind: &BlockKind,
     ) -> Option<(usize, usize)> {
+        self.measured_prefix_calls
+            .set(self.measured_prefix_calls.get() + 1);
         // 起点落在多字节字符中间，说明上游的字节账已经错了，量不出这一行是啥。
         if !self.buffer.is_char_boundary(at) {
             return None;
@@ -1509,9 +1511,6 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         // 还没记到的形状（引用/列表里的子块、代码围栏、表格格子）才退回按文件量
         // ——量的口径见 `measured_block_prefix`：按模型拼（列表每级两个空格、引用一律
         // `> `）在缩进四格、制表符、`>引用` 这类写法里会整体漂。
-        // 子块的续行还要按上级列表的缩进量，那个数只能从本块的第一行量出来。
-        let measured_first_line =
-            self.measured_block_prefix(absolute_start, quote_depth, list_dedent, &kind);
         let kind_for_measure = kind.clone();
         let line_prefixes = |markdown: &str| {
             self.recorded_block_line_prefixes(block, markdown, absolute_start, cx)
@@ -1797,9 +1796,15 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         }
 
         let child_list_depth = list_depth + usize::from(kind.is_list_item());
-        let child_list_dedent = measured_first_line
-            .map(|(_, dedent)| dedent)
-            .unwrap_or(list_dedent + 2 * usize::from(kind.is_list_item()));
+        // 子块的续行要按上级列表的缩进量，那个数只能从本块第一行量出来——
+        // 只有真带子块的容器才付这份行切片，叶子块（表格/代码块/段落）不需要。
+        let child_list_dedent = if children.is_empty() {
+            list_dedent
+        } else {
+            self.measured_block_prefix(absolute_start, quote_depth, list_dedent, &kind)
+                .map(|(_, dedent)| dedent)
+                .unwrap_or(list_dedent + 2 * usize::from(kind.is_list_item()))
+        };
         let child_quote_depth = quote_depth + usize::from(kind.is_quote_container());
         let mut total_len = own_len;
         for child in children {

@@ -213,6 +213,9 @@ pub struct Editor {
     /// 性能计数器：按单块取映射时走过的根块数。目标根块走完就该停，
     /// 表格/分隔线这些自身不产生文本映射的目标也不例外。
     source_mapping_roots_walked: std::cell::Cell<u64>,
+    /// 性能计数器：量「本块第一行的记号宽度」的次数。只有带子块的容器需要它
+    /// 换算子块缩进，叶子块不该付这份行切片。
+    measured_prefix_calls: std::cell::Cell<u64>,
     /// 性能计数器：状态栏整篇字数扫描次数（unicode 分词在大文档里很贵）。
     word_count_scans: std::cell::Cell<u64>,
     /// 性能计数器：文档命中表**重扫整篇**的次数。缓存命中不算；
@@ -995,6 +998,7 @@ impl Editor {
             source_mapping_builds: std::cell::Cell::default(),
             source_mapping_full_builds: std::cell::Cell::default(),
             source_mapping_roots_walked: std::cell::Cell::default(),
+            measured_prefix_calls: std::cell::Cell::default(),
             word_count_scans: std::cell::Cell::default(),
             document_match_scans: std::cell::Cell::default(),
             row_plan_rebuilds: std::cell::Cell::default(),

@@ -1721,3 +1721,23 @@ async fn table_mapping_lookup_stops_after_the_target_root(cx: &mut TestAppContex
         assert_eq!(walked, 1, "目标根块之后还有 40 块，却走查了 {walked} 个");
     });
 }
+
+/// 只有带子块的容器才需要量「本块第一行记号宽度」来换算子块缩进：
+/// 表格/代码块/普通段落这些叶子块不该为它白付一次行切片。
+#[gpui::test]
+async fn leaf_blocks_skip_the_first_line_prefix_measurement(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut markdown = String::new();
+    for index in 0..10 {
+        markdown.push_str(&format!("段落 {index}\n\n"));
+        markdown.push_str("```rust\nlet x = 1;\n```\n\n");
+        markdown.push_str("| a | b |\n| --- | --- |\n| 1 | 2 |\n\n");
+    }
+    let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+    editor.update(cx, |editor, cx| {
+        let before = editor.measured_prefix_calls.get();
+        let _ = editor.build_source_target_mappings(cx);
+        let calls = editor.measured_prefix_calls.get() - before;
+        assert_eq!(calls, 0, "叶子块不该量首行前缀，实际量了 {calls} 次");
+    });
+}
