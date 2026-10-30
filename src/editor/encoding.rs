@@ -72,17 +72,17 @@ fn decode_loaded_document(path: &Path, raw: Vec<u8>) -> io::Result<LoadedDocumen
     Ok(LoadedDocument { raw, text })
 }
 
-/// 读并解码一个文档文件，只要文本。
-///
-/// 与 [`load_document`] 同样拒绝不能无损写回的字节：凡是要把这份文本再写回磁盘
-/// 的调用方（跨文件替换、恢复快照比对）都不该拿到它；只读的调用方（索引）本来
-/// 就该用 [`decode_document_bytes`]。
 #[cfg(test)]
 thread_local! {
     /// 测试记账：走 `read_document_string` 的整篇读盘次数（线程级，测试各自隔离）。
     pub(crate) static DOCUMENT_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+/// 读并解码一个文档文件，只要文本。
+///
+/// 与 [`load_document`] 同样拒绝不能无损写回的字节：凡是要把这份文本再写回磁盘
+/// 的调用方（跨文件替换、恢复快照比对）都不该拿到它；只读的调用方（索引）本来
+/// 就该用 [`decode_document_bytes`]。
 pub(crate) fn read_document_string(path: &Path) -> io::Result<String> {
     #[cfg(test)]
     DOCUMENT_READS.with(|reads| reads.set(reads.get() + 1));
