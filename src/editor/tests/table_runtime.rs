@@ -1217,3 +1217,48 @@ fn native_object_context_menu_table_retargeting_returns_focus_to_the_document(
         });
     }
 }
+
+/// 表格块自身的 padding/缩进区也该走块级命中链：点在这里应聚焦表格（落进
+/// 格子），而不是落回上一段——表格臂曾另起裸 div，丢掉 render_shell 的
+/// track_focus 与鼠标监听。
+#[gpui::test]
+async fn clicking_table_block_padding_focuses_the_table(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = ["内文", "", "| A | B |", "| --- | --- |", "| 1 | 2 |", "", "后记"].join("\n");
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.clone(), None));
+    redraw(cx);
+    redraw(cx);
+    let (header, table_id, cell_ids) = editor.read_with(cx, |editor, cx| {
+        let table = editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|block| block.read(cx).kind() == BlockKind::Table)
+            .cloned()
+            .expect("table root");
+        let runtime = table.read(cx).table_runtime.clone().expect("table runtime");
+        let bounds = runtime.header[0].read(cx).last_bounds.expect("header bounds");
+        let ids: Vec<gpui::EntityId> = runtime
+            .header
+            .iter()
+            .chain(runtime.rows.iter().flatten())
+            .map(|cell| cell.entity_id())
+            .collect();
+        (bounds, table.entity_id(), ids)
+    });
+    let shell = cx
+        .debug_bounds("table-block-shell")
+        .expect("表格块的焦点壳");
+    // 表格宿主按 95% 宽居中：壳左缘与宿主左缘之间留着一块块自己的 padding。
+    let point = gpui::point(shell.left() + px(8.0), header.center().y);
+    cx.simulate_click(point, Modifiers::none());
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        let active = editor.active_entity_id.expect("点击后应有活动块");
+        assert!(
+            active == table_id || cell_ids.contains(&active),
+            "点表格 padding 应聚焦表格/格子，实际落在 {active:?}"
+        );
+    });
+}

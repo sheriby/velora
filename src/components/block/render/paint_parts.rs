@@ -1414,6 +1414,7 @@ impl Render for Block {
                             canvas(move |bounds, _, cx| {
                                 let width = bounds.size.width;
                                 if let Err(error) = measure_block.update(cx, |block, cx| {
+                                    block.table_host_bounds = Some(bounds);
                                     if width > px(0.0) && block.table_container_width != Some(width) {
                                         block.table_container_width = Some(width);
                                         cx.notify();
@@ -1428,8 +1429,13 @@ impl Render for Block {
                             .right_0()
                             .bottom_0(),
                         );
+                    // 表格宿主不走 render_shell：那层 track_focus 会在按下时
+                    // 抢走格子的焦点（自动聚焦外壳，输入就落空）。这里只补
+                    // 一个只处理「表格宿主体外」的按下监听：点块自己的
+                    // padding/缩进区时把焦点送进表格第一格。
                     div()
                         .id(block_id)
+                        .debug_selector(|| "table-block-shell".to_string())
                         .w_full()
                         .min_w(px(0.0))
                         .pl(px(depth_padding))
@@ -1437,6 +1443,10 @@ impl Render for Block {
                         .flex()
                         .flex_col()
                         .items_center()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(Self::on_table_padding_mouse_down),
+                        )
                         .child(table_host)
                         .into_any_element()
                 }

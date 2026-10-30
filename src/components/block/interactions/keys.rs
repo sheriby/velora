@@ -600,6 +600,23 @@ impl Block {
         });
     }
 
+    /// 表格块 padding/缩进区的按下：落在宿主体内就什么也不做（格子/轴条
+    /// 自己会处理），否则把焦点送进表格，别让这一次按下落回上一段。
+    pub(crate) fn on_table_padding_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.table_host_bounds.is_some_and(|bounds| bounds.contains(&event.position)) {
+            return;
+        }
+        let from_top = self
+            .table_host_bounds
+            .is_none_or(|bounds| event.position.y < bounds.top());
+        cx.emit(BlockEvent::RequestFocusTableEntry { from_top });
+    }
+
     pub(crate) fn on_mouse_up(
         &mut self,
         event: &MouseUpEvent,

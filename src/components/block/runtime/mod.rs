@@ -205,6 +205,9 @@ pub struct Block {
     /// 这一块最近一次用过的强调写法（`*` / `_`）。关闭强调时片段上的 marker
     /// 会被清掉，重新开启要沿用块里的写法而不是一律写成星号。
     preferred_emphasis_marker: Option<char>,
+    /// 表格宿主上一帧的屏幕区域：块 padding 区按下时用它区分「点在格子上」
+    /// 与「点在表格外面那圈空白」。
+    pub(crate) table_host_bounds: Option<gpui::Bounds<gpui::Pixels>>,
     /// Cached projection used to show editable inline delimiters for the
     /// currently touched inline span(s).
     pub(crate) projection: Option<ExpandedInlineProjection>,
@@ -386,6 +389,7 @@ impl Block {
             math_edit_preview_source: None,
             math_text_segment_cache: None,
             preferred_emphasis_marker: None,
+            table_host_bounds: None,
             projection: None,
             hide_markdown_markers: crate::config::EditorSettings::hide_markdown_markers(cx),
             projection_cache_key: None,

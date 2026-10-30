@@ -1217,6 +1217,9 @@ pub enum BlockEvent {
     RequestTableCellMoveHorizontal { delta: i32 },
     /// Move focus vertically across native table cells.
     RequestTableCellMoveVertical { delta: i32 },
+    /// 点在表格块自身的 padding/缩进区（宿主体外）：把焦点送进表格，
+    /// `from_top` 决定从表头还是末行走。
+    RequestFocusTableEntry { from_top: bool },
     /// A native table axis handle was entered or left by the pointer.
     /// `hovered` distinguishes the two so the editor can ignore a leave
     /// that arrives after an adjacent handle has already taken the preview.

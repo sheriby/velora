@@ -104,6 +104,7 @@ impl Editor {
                     | BlockEvent::RequestFocus
                     // 只读文档也要能用 Shift+↑/↓ 扩选（纯阅读导航）。
                     | BlockEvent::RequestSelectVertical { .. }
+                    | BlockEvent::RequestFocusTableEntry { .. }
             )
         {
             return;
@@ -1083,6 +1084,11 @@ impl Editor {
                 self.clear_cross_block_selection(cx);
                 block.update(cx, |block, cx| block.select_to(*target_offset, cx));
                 cx.notify();
+            }
+            BlockEvent::RequestFocusTableEntry { from_top } => {
+                if self.focus_table_entry_cell(&block, *from_top, cx) {
+                    cx.notify();
+                }
             }
             BlockEvent::RequestBlockUp => {
                 let Some(target) = self.vertical_neighbor_entity(block.entity_id(), -1, cx) else {
