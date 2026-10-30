@@ -383,9 +383,33 @@ pub(crate) fn looks_like_non_autolink_html_tag(tokens: &[CharToken], end_index: 
     let Some((tag_name, _)) = html_tag_name_with_attrs(target) else {
         return false;
     };
-    let rest = tokens_to_string(&tokens[end_index + 1..]).to_ascii_lowercase();
-    let tag_name = tag_name.to_ascii_lowercase();
-    rest.contains(&format!("</{tag_name}>"))
+    has_later_closing_tag(tokens, end_index + 1, tag_name)
+}
+
+/// 后文是否出现 `</tag>`（大小写不敏感）。直接在 token 上滑动匹配：
+/// 不物化剩余后缀字符串，也不为每个 `<` 生成 `</tag>` 临时串。
+fn has_later_closing_tag(tokens: &[CharToken], from: usize, tag_name: &str) -> bool {
+    let mut cursor = from;
+    while cursor < tokens.len() {
+        if tokens[cursor].ch == '<' && tokens.get(cursor + 1).is_some_and(|token| token.ch == '/') {
+            let mut probe = cursor + 2;
+            let mut matched = true;
+            for expected in tag_name.chars() {
+                match tokens.get(probe) {
+                    Some(token) if token.ch.eq_ignore_ascii_case(&expected) => probe += 1,
+                    _ => {
+                        matched = false;
+                        break;
+                    }
+                }
+            }
+            if matched && tokens.get(probe).is_some_and(|token| token.ch == '>') {
+                return true;
+            }
+        }
+        cursor += 1;
+    }
+    false
 }
 
 pub(crate) fn html_tag_name_with_attrs(target: &str) -> Option<(&str, bool)> {

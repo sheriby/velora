@@ -1424,3 +1424,23 @@ fn html_inline_forms_are_normalized_to_the_documented_equivalents() {
         );
     }
 }
+
+/// autolink 候选判定不得把「当前 token 之后的整段」拼成字符串再整体转小写：
+/// 判据只是「后文是否出现同名闭合标签」，直接在 token 上做不区分大小写的
+/// 滑动匹配即可（一段 100 个 `<` 的正文不该有 100 次整段后缀分配）。
+#[test]
+fn autolink_candidate_scan_does_not_materialize_the_remaining_suffix() {
+    let source = include_str!("../links.rs");
+    assert!(
+        !source.contains("tokens_to_string(&tokens[end_index + 1..])"),
+        "autolink 候选判定又去物化剩余后缀了"
+    );
+    for (fixture, is_autolink) in [("<span>a</span> b", false), ("<报告.pdf>", true)] {
+        let tree = InlineTextTree::from_markdown(fixture);
+        assert_eq!(
+            tree.render_cache().link_at(0).is_some(),
+            is_autolink,
+            "{fixture} 的判定口径"
+        );
+    }
+}
