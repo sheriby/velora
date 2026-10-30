@@ -120,6 +120,24 @@
         }
     }
 
+    /// 引用式链接的三种写法在两条序列化实现里都要原样写回（full/collapsed/
+    /// shortcut），且彼此逐字节一致。
+    #[test]
+    fn reference_link_forms_match_between_plain_and_offset_map_serializers() {
+        let definitions = crate::components::markdown::link::parse_link_reference_definitions(
+            "[a]: https://x\n[b]: https://y\n[c]: https://z",
+        );
+        for source in ["[a][a]", "[b][]", "[c]"] {
+            let tree = InlineTextTree::from_markdown_with_link_references(source, &definitions);
+            assert_eq!(tree.serialize_markdown(), source, "{source} 应原样写回");
+            assert_eq!(
+                tree.serialize_markdown(),
+                tree.markdown_offset_map().markdown,
+                "{source} 两条序列化实现不一致"
+            );
+        }
+    }
+
     #[test]
     fn inline_code_does_not_force_the_mixed_visual_path() {
         // 行内代码曾为了缩小字号而走「混合分段」渲染路径（逐词一个元素），

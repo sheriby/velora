@@ -675,7 +675,8 @@
         assert_eq!(tree.render_cache().link_at(0), Some("https://example.org"));
         assert_eq!(
             tree.serialize_markdown(),
-            "[collapsed reference][collapsed reference]"
+            "[collapsed reference][]",
+            "collapsed 写法要原样写回"
         );
     }
 
@@ -691,8 +692,27 @@
         assert_eq!(tree.render_cache().link_at(0), Some("https://example.net"));
         assert_eq!(
             tree.serialize_markdown(),
-            "[shortcut reference][shortcut reference]"
+            "[shortcut reference]",
+            "shortcut 写法要原样写回"
         );
+    }
+
+    /// 三种引用写法各自原样写回：full / collapsed / shortcut 不再统一改写成
+    /// full（未编辑保存要逐字节还原）。
+    #[test]
+    fn reference_link_forms_round_trip_without_rewriting() {
+        let definitions = crate::components::markdown::link::parse_link_reference_definitions(
+            "[alpha]: https://example.com/a\n[beta]: https://example.com/b\n[gamma]: https://example.com/c",
+        );
+        for source in ["[alpha][alpha]", "[beta][]", "[gamma]"] {
+            let tree =
+                InlineTextTree::from_markdown_with_link_references(source, &definitions);
+            assert_eq!(
+                tree.serialize_markdown(),
+                source,
+                "引用写法 {source} 应原样写回"
+            );
+        }
     }
 
     #[test]

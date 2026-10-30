@@ -119,6 +119,11 @@ pub(crate) fn locate_inline_link(
             };
 
             let raw_label = tokens_to_string(&tokens[reference_start..reference_end]);
+            let form = if raw_label.is_empty() {
+                crate::components::markdown::inline::ReferenceLinkForm::Collapsed
+            } else {
+                crate::components::markdown::inline::ReferenceLinkForm::Full
+            };
             let link_label = if raw_label.is_empty() {
                 tokens_to_string(&tokens[index + 1..label_end])
             } else {
@@ -133,6 +138,7 @@ pub(crate) fn locate_inline_link(
                 link: InlineLink::Reference {
                     label: link_label,
                     destination,
+                    form,
                     syntax_id: 0,
                 },
             })
@@ -148,6 +154,7 @@ pub(crate) fn locate_inline_link(
                 link: InlineLink::Reference {
                     label: raw_label,
                     destination,
+                    form: crate::components::markdown::inline::ReferenceLinkForm::Shortcut,
                     syntax_id: 0,
                 },
             })

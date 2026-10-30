@@ -211,6 +211,7 @@ pub enum InlineLink {
     Reference {
         label: String,
         destination: String,
+        form: ReferenceLinkForm,
         syntax_id: u32,
     },
     /// Autolink target from a standalone `<…>` shape. CommonMark 只认
@@ -221,6 +222,15 @@ pub enum InlineLink {
         target: String,
         syntax_id: u32,
     },
+}
+
+/// 引用式链接在源文件里的写法：full `[x][ref]`、collapsed `[x][]`、
+/// shortcut `[x]`。序列化按原写法写回，未编辑保存不改变字节。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReferenceLinkForm {
+    Full,
+    Collapsed,
+    Shortcut,
 }
 
 /// Link target pair used by hit-testing and open-link prompts.
@@ -267,6 +277,10 @@ impl InlineLink {
     pub(crate) fn middle_marker(&self) -> Option<&'static str> {
         match self {
             Self::Inline { .. } => Some("]("),
+            Self::Reference {
+                form: ReferenceLinkForm::Shortcut,
+                ..
+            } => None,
             Self::Reference { .. } => Some("]["),
             Self::Autolink { .. } => None,
         }
@@ -277,7 +291,12 @@ impl InlineLink {
             Self::Inline { destination, title, .. } => {
                 Some(format_inline_link_target(destination, title.as_deref()))
             }
-            Self::Reference { label, .. } => Some(label.clone()),
+            Self::Reference {
+                label,
+                form: ReferenceLinkForm::Full,
+                ..
+            } => Some(label.clone()),
+            Self::Reference { .. } => None,
             Self::Autolink { .. } => None,
         }
     }
