@@ -1342,6 +1342,16 @@ impl DocumentTree {
                 lines.push(format!("{indentation}{fence}"));
             }
             BlockKind::Quote => {
+                // 单行引用的尾随空格只有原文知道：根级空引用按记录的整行写回，
+                // 补成规范 `> ` 会把未编辑的行改写。
+                if list_depth == 0
+                    && block_ref.children.is_empty()
+                    && block_ref.record.title.visible_text().is_empty()
+                    && let Some(literal) = block_ref.record.quote_literal.as_ref()
+                {
+                    lines.push(literal.to_string());
+                    return;
+                }
                 let title_markdown =
                     CalloutVariant::escape_plain_quote_header(&block_ref.record.title_markdown());
                 let indentation = "  ".repeat(list_depth);

@@ -531,6 +531,8 @@ impl Editor {
                 let mut record =
                     BlockRecord::new(BlockKind::Separator, InlineTextTree::plain(String::new()));
                 record.separator_marker = crate::components::SeparatorMarker::detect(line);
+                record.separator_text =
+                    Some(SharedString::from(line.trim().to_string()));
                 roots.push(Self::new_block(cx, record));
                 spans.push(index..index + 1);
                 index += 1;

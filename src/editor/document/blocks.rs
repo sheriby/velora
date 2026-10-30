@@ -240,9 +240,12 @@ impl Editor {
                 (*width as u32).saturating_sub(inherited as u32)
             })
             .collect::<Vec<_>>();
+        let single_line_literal = (end == start + 1).then(|| lines[start].clone());
         block.update(cx, |block, _cx| {
             block.record.source_line_prefixes = ledger;
             block.record.quote_marker_widths = Some(marker_widths);
+            // 单行引用整行原文（空引用只有它能还原尾随空格）。
+            block.record.quote_literal = single_line_literal.map(gpui::SharedString::from);
         });
 
         (block, end)

@@ -217,6 +217,16 @@ pub enum SeparatorMarker {
 }
 
 impl SeparatorMarker {
+    /// 文件里的原文写法（`***`、`______`、`--------` 等）：分隔线的长度也是
+    /// 用户写法的一部分，规范化会让未编辑的行被改写。
+    /// 记录在 `BlockRecord::separator_text`，序列化时原样写回。
+    pub(crate) fn literal_or_default(text: Option<&str>) -> String {
+        text.map(str::to_string)
+            .unwrap_or_else(|| Self::Hyphen.marker_str().to_string())
+    }
+}
+
+impl SeparatorMarker {
     /// 从分隔线原文认出写法；认不出（含规范 `---`）回退默认。
     pub fn detect(value: &str) -> Self {
         let trimmed = value.trim();
@@ -733,6 +743,12 @@ pub struct BlockRecord {
     /// 补自己的前缀，只有本层宽度才能逐层拼回原文；两者不能混用。
     /// `None` 是「不是引用或没记」，序列化退回规范的 `> ` 形状。
     pub quote_marker_widths: Option<Vec<u32>>,
+    /// 分隔线在文件里的原文字节（`***`、`______`、`--------`）：未编辑的行
+    /// 保存时必须逐字节还原，不能统一写成 `---`。
+    pub separator_text: Option<SharedString>,
+    /// 单行引用的原文字节（含 `>` 后的空格与缩进）：空引用的尾随空格只有原文
+    /// 知道，补成规范 `> ` 会改写未编辑的行。
+    pub quote_literal: Option<SharedString>,
     /// 标题树版本：每次 `set_title` 递增。markdown 序列化备忘键就靠它，
     /// 块自己的 markdown 只在自己被改时重算（P2：序列化曾占每键成本大半）。
     title_revision: u64,
@@ -774,6 +790,8 @@ impl BlockRecord {
             math_on_marker_line: false,
             setext_underline: None,
             quote_marker_widths: None,
+            separator_text: None,
+            quote_literal: None,
             title_revision: 0,
             markdown_memo: std::cell::RefCell::new(None),
         };
@@ -924,7 +942,9 @@ impl BlockRecord {
         let title_markdown = self.title_markdown_for_output();
         match self.kind {
             BlockKind::Paragraph => indent_multiline(&title_markdown, &indentation),
-            BlockKind::Separator => self.separator_marker.marker_str().to_string(),
+            BlockKind::Separator => {
+                SeparatorMarker::literal_or_default(self.separator_text.as_deref())
+            }
             BlockKind::Heading { level } => {
                 format!(
                     "{indentation}{} {title_markdown}",

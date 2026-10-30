@@ -2534,3 +2534,25 @@ async fn quoted_list_continuation_keeps_its_quote_marker(cx: &mut TestAppContext
         });
     }
 }
+
+/// 分隔线的原文写法（字符族与长度）是用户写法：未编辑保存必须逐字节还原。
+#[gpui::test]
+async fn separator_marker_spelling_round_trips_without_edit(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "***\n\n______\n\n--------\n\n-----\n\n---";
+    let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.document.markdown_text(cx), source);
+    });
+}
+
+/// 空引用的记号写法（裸 `>`、带尾随空格）也是原文：不能补成 `> ` 两字节。
+#[gpui::test]
+async fn empty_quote_marker_spelling_round_trips(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for source in [">", ">   ", "> >"] {
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
+        let round_tripped = editor.read_with(cx, |editor, cx| editor.document.markdown_text(cx));
+        assert_eq!(round_tripped, source, "空引用记号被改写：{source:?}");
+    }
+}
