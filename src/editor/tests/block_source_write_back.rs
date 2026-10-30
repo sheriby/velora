@@ -3718,3 +3718,25 @@ async fn continuation_prefix_bytes_reverse_map_to_the_next_line_start(
         });
     }
 }
+
+/// 块模型的行数比缓冲区多（树与缓冲区暂时不同步）时，量行前缀必须整块放弃：
+/// 越界行 line_range 钳成空区间，零前缀据此记成 0 字节会让后续块整体漂移。
+#[gpui::test]
+async fn recorded_line_prefixes_refuse_out_of_range_buffer_lines(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "> 第一行\n第二行";
+    let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.first_root().expect("引用根块").clone();
+        let content = block.read(cx).record.title_markdown();
+        let truncate_to = "> 第一行".len();
+        editor
+            .buffer
+            .edit(truncate_to..editor.buffer.byte_len(), "");
+        let measured = editor.recorded_block_line_prefixes(&block, &content, 0, cx);
+        assert!(
+            measured.is_none(),
+            "缓冲区只剩一行时不该量出两行前缀"
+        );
+    });
+}

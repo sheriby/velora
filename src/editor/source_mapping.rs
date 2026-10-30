@@ -41,7 +41,7 @@ pub(crate) fn clip_hit_to_span(
 /// 逐行量出来的结果：每行在自己那一行里让开几个前缀字节，以及这一行在**文件里**占几个
 /// 字节。后者与模型的 markdown 那行可以不等长（模型为保住一个字面反斜杠会多写一位），
 /// 位置换算按文件的长度走，`content_to_source` 说的才是缓冲区的坐标。
-pub(super) struct MeasuredBlockLines {
+pub(crate) struct MeasuredBlockLines {
     pub prefixes: Vec<usize>,
     pub file_lens: Vec<usize>,
 }
@@ -1162,7 +1162,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         )
     }
 
-    fn recorded_block_line_prefixes(
+    pub(crate) fn recorded_block_line_prefixes(
         &self,
         block: &Entity<Block>,
         content_markdown: &str,
@@ -1179,6 +1179,11 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         let mut prefixes = Vec::with_capacity(recorded.len());
         let mut file_lens = Vec::with_capacity(recorded.len());
         for (offset, prefix) in recorded.iter().enumerate() {
+            // 行号越界时 line_range 会钳到文末给出空区间，零前缀据此记成 0 字节
+            // 会让后续块整体漂移；与同文件其它量取函数一样整块放弃。
+            if first_line + offset >= self.buffer.line_count() {
+                return None;
+            }
             let range = self.buffer.line_range(first_line + offset);
             let prefix = *prefix as usize;
             if prefix > range.len() {
