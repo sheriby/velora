@@ -74,6 +74,14 @@ use self::workspace::WorkspaceState;
 /// The editor subscribes to every [`BlockEvent`](crate::components::BlockEvent)
 /// emitted by child blocks. Structural changes are handled centrally so focus,
 /// scrolling, dirty tracking, and serialization stay synchronized.
+/// 本次会话为粘贴/插入图片新建的磁盘文件。保存时若当前缓冲区与其它打开文档
+/// 都不再引用它，就删掉——撤销可以重做，所以不在撤销那一刻删。
+pub(crate) struct SessionCreatedImage {
+    pub(crate) path: std::path::PathBuf,
+    /// 文件名（含扩展名）：引用检查按它扫开放文档的源码。
+    pub(crate) file_name: String,
+}
+
 pub struct Editor {
     ai_session: Option<ai_assistant::AiSession>,
     ai_task_sessions: Vec<ai_assistant::AiSession>,
@@ -216,6 +224,8 @@ pub struct Editor {
     /// 性能计数器：量「本块第一行的记号宽度」的次数。只有带子块的容器需要它
     /// 换算子块缩进，叶子块不该付这份行切片。
     measured_prefix_calls: std::cell::Cell<u64>,
+    /// 本次会话新建的图片文件：保存时清掉不再被任何打开文档引用的那些。
+    session_created_images: Vec<SessionCreatedImage>,
     /// 性能计数器：状态栏整篇字数扫描次数（unicode 分词在大文档里很贵）。
     word_count_scans: std::cell::Cell<u64>,
     /// 性能计数器：文档命中表**重扫整篇**的次数。缓存命中不算；
@@ -999,6 +1009,7 @@ impl Editor {
             source_mapping_full_builds: std::cell::Cell::default(),
             source_mapping_roots_walked: std::cell::Cell::default(),
             measured_prefix_calls: std::cell::Cell::default(),
+            session_created_images: Vec::new(),
             word_count_scans: std::cell::Cell::default(),
             document_match_scans: std::cell::Cell::default(),
             row_plan_rebuilds: std::cell::Cell::default(),

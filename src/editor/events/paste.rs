@@ -548,6 +548,8 @@ impl Editor {
             // 图片文件已经落盘、文档却没接收（锚点不在树里等边角）：删掉刚建的
             // 文件，别在磁盘上留孤儿资源。
             Self::discard_unaccepted_pasted_image(created_path);
+        } else if let Some(path) = created_path {
+            self.remember_session_created_image(path);
         }
 
         // 一段变三段（前面 + 图片行 + 后面）改的是根块序列，但变的只有落点那一段：
@@ -559,6 +561,50 @@ impl Editor {
         }
         self.finalize_pending_undo_capture(cx);
         cx.notify();
+    }
+
+    /// 记下这次会话新建的图片：保存时若没有任何打开文档再引用它，就删掉。
+    /// 撤销那一刻不删——撤销之后用户还可能重做。
+    fn remember_session_created_image(&mut self, path: PathBuf) {
+        let Some(file_name) = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .filter(|name| !name.is_empty())
+        else {
+            return;
+        };
+        self.session_created_images
+            .push(crate::editor::SessionCreatedImage { path, file_name });
+    }
+
+    /// 保存后的清扫：本次会话新建、且当前缓冲区与其它打开文档都不再引用的图片
+    /// 文件从磁盘删除。引用检查按文件名做——宁可多留一个孤儿，也不能删掉还有
+    /// 别处引用的素材。删除失败只记日志，文件留在原处。
+    pub(crate) fn cleanup_unreferenced_session_images(&mut self) {
+        if self.session_created_images.is_empty() {
+            return;
+        }
+        let current = self.buffer.text();
+        let mut sources: Vec<&str> = vec![current.as_str()];
+        sources.extend(self.workspace.open_document_sources());
+        let mut kept = Vec::new();
+        for image in std::mem::take(&mut self.session_created_images) {
+            if sources.iter().any(|source| source.contains(&image.file_name)) {
+                kept.push(image);
+                continue;
+            }
+            match std::fs::remove_file(&image.path) {
+                Ok(()) => {}
+                Err(error) => {
+                    eprintln!(
+                        "velora: 未能清理保存后不再引用的粘贴图片 {}：{error}",
+                        image.path.display()
+                    );
+                    kept.push(image);
+                }
+            }
+        }
+        self.session_created_images = kept;
     }
 
     fn discard_unaccepted_pasted_image(path: Option<PathBuf>) {

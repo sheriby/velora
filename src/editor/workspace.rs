@@ -711,6 +711,14 @@ pub(crate) use search_backend::{search_files_parallel, LiteralTermsQuery};
 pub(super) use search_engine::*;
 pub(super) use document_matches::*;
 
+impl WorkspaceState {
+    /// 所有打开标签的 markdown 源码（只读）：保存后的孤儿图片清扫按它判断
+    /// 素材是否仍被引用。
+    pub(crate) fn open_document_sources(&self) -> impl Iterator<Item = &str> {
+        self.open_documents.iter().map(|tab| tab.markdown.as_str())
+    }
+}
+
 actions!(workspace_menu, [RenameWorkspaceEntry]);
 
 mod context_menus;

@@ -900,6 +900,9 @@ impl Editor {
             eprintln!("failed to remove saved document recovery snapshot: {error}");
         }
         self.sync_workspace_after_document_path_change(cx);
+        // 保存落下之后才知道哪些本次会话新建的图片已经没人引用：撤销过的插入
+        // 到这里一并收走，重做仍可引用它们（保存前不动文件）。
+        self.cleanup_unreferenced_session_images();
         cx.notify();
         self.record_saved_history(&path, &saved_bytes, source, cx)
     }
