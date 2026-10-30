@@ -109,27 +109,35 @@ impl Editor {
             .insert_blocks_at(None, insert_index, vec![block.clone()], cx);
         let Some(offset) = insert_offset else {
             // 锚点块没有源码区间（后台续建到一半）：字节没法按插入点算，整篇重投影兜底。
-            self.ensure_trailing_paragraph_after_structural(&block, cx);
-            self.mark_dirty(cx);
-            self.finalize_pending_undo_capture(cx);
-            cx.notify();
+            self.finish_block_insertion(&block, target, false, cx);
             return true;
         };
 
         let (before, after) = self.insertion_seams(target, offset);
         let written = self.write_inserted_block_bytes(offset, before, after, &markdown, &block);
-        if written {
-            self.ensure_trailing_paragraph_after_structural(&block, cx);
+        self.finish_block_insertion(&block, target, written, cx);
+        true
+    }
+
+    /// 插入块的收尾清单：按区间写回与整篇重投影兜底共用同一份顺序，
+    /// 漏掉任何一步（聚焦、运行时注册表）都会留下「块在、打不进字」的状态。
+    fn finish_block_insertion(
+        &mut self,
+        block: &Entity<Block>,
+        target: InsertBlockTarget,
+        written_back: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.ensure_trailing_paragraph_after_structural(block, cx);
+        if written_back {
             self.mark_dirty_written_back(cx);
         } else {
-            self.ensure_trailing_paragraph_after_structural(&block, cx);
             self.mark_dirty(cx);
         }
         self.rebuild_image_runtimes(cx);
-        self.focus_inserted_block(&block, target, cx);
+        self.focus_inserted_block(block, target, cx);
         self.finalize_pending_undo_capture(cx);
         cx.notify();
-        true
     }
 
     /// 「插入 → 图片」这一行现在能不能点：渲染态、写得动缓冲区，并且有一个编辑目标。

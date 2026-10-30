@@ -401,3 +401,28 @@ async fn every_inserted_block_reads_back_the_same_tree(cx: &mut TestAppContext) 
         );
     }
 }
+
+/// 锚点块没有源码区间（后台续建中间态）时插入走整篇重投影兜底；兜底分支
+/// 与主路径共用同一份收尾清单——光标必须交给新块，否则插进去的块可见却打不进字。
+#[gpui::test]
+async fn inserting_after_a_block_without_a_source_span_still_focuses_the_new_block(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(ONE_PARAGRAPH, cx);
+    redraw(cx);
+
+    put_caret(&editor, 0, 3, cx);
+    let anchor = visible_block(&editor, 0, cx);
+    editor.update(cx, |editor, _cx| {
+        editor.document.clear_source_span(anchor.entity_id());
+    });
+    assert!(insert(&editor, InsertBlockTarget::Separator, cx));
+    redraw(cx);
+
+    assert_eq!(
+        focused_entity(&editor, cx),
+        Some(visible_block(&editor, 1, cx).entity_id()),
+        "兜底路径插入后光标该交给新插的那一块"
+    );
+}
