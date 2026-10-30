@@ -238,3 +238,37 @@ async fn self_closing_html_comments_do_not_swallow_following_lines(
         });
     }
 }
+
+/// setext 标题恰好跨 512 行分块接缝：正文行是前一块最后一行、下划线行是后一
+/// 块首行。接缝状态要带过「上一行是段落候选」，下划线才不会被当成分隔线。
+#[gpui::test]
+async fn setext_heading_across_a_chunk_seam_keeps_heading_color(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let chunk = crate::editor::file_drop::SOURCE_DOCUMENT_CHUNK_LINES;
+    let mut source = "x\n".repeat(chunk - 1);
+    source.push_str("标题\n=====\n正文\n");
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source, None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let roots = editor.document.root_blocks();
+        assert!(roots.len() >= 2, "夹具该跨块：{} 块", roots.len());
+        let second = roots[1].read(cx);
+        let result = second
+            .code_highlight_result()
+            .expect("第二块应有高亮结果");
+        let text = second.display_text();
+        let underline = text.find("=====").expect("下划线行落在第二块");
+        assert!(
+            result.spans.iter().any(|span| {
+                matches!(span.class, CodeHighlightClass::MarkdownHeading(1))
+                    && span.range.start <= underline
+                    && underline < span.range.end
+            }),
+            "接缝后的下划线行应出标题色: {:?}",
+            result.spans
+        );
+    });
+}

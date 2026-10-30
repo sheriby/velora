@@ -31,6 +31,10 @@ pub(crate) enum MarkdownSourceState {
     Frontmatter,
     /// HTML 注释 `<!--` … `-->` 内。
     HtmlComment,
+    /// 上一块的最后一行是可能的 setext 标题正文（还没看到下划线）。分块着色
+    /// 时它跨不过区间，但下一块的首行要先按下划线判定，否则接缝处的 setext
+    /// 标题整条不出标题色。
+    ParagraphCandidate,
 }
 
 /// 一次扫描的产出：着色区间 + 本块结束时的块级状态（给下一块的入口）。
@@ -54,6 +58,7 @@ pub(crate) fn highlight_markdown_source(
         spans: Vec::new(),
         state: entry,
         pending_paragraph: None,
+        seam_pending_paragraph: false,
         nested_regions: Vec::new(),
     };
     let mut is_first_line = at_document_start;
@@ -62,12 +67,20 @@ pub(crate) fn highlight_markdown_source(
         is_first_line = false;
     }
     let _ = at_document_start;
+    // 收尾还押着一行段落候选：它是下一块首行可能的 setext 正文。本块的着色
+    // 只能先按正文发（区间跨不过分块），把「候选」这件事交给接缝状态。
+    let pending_at_end = scanner.pending_paragraph.is_some();
     scanner.flush_pending_paragraph();
     scanner.highlight_nested_regions();
     scanner.merge_spans();
+    let state = if pending_at_end && scanner.state.is_none() {
+        Some(MarkdownSourceState::ParagraphCandidate)
+    } else {
+        scanner.state
+    };
     MarkdownSourceHighlight {
         spans: scanner.spans,
-        state: scanner.state,
+        state,
     }
 }
 
@@ -112,6 +125,9 @@ struct Scanner<'a> {
     state: Option<MarkdownSourceState>,
     /// 可能是 setext 标题正文的上一行：看到下划线行才定性，押着不发。
     pending_paragraph: Option<Range<usize>>,
+    /// 入口状态是 `ParagraphCandidate`：本块首行要按下划线判定（上一块那行
+    /// 的区间不在这里，不能一起上色，但下划线本身仍归标题）。
+    seam_pending_paragraph: bool,
     /// 带语言的围栏正文区间：主循环收着，扫完统一递归着色。
     nested_regions: Vec<(CodeLanguageKey, Range<usize>)>,
 }
@@ -134,9 +150,16 @@ impl<'a> Scanner<'a> {
 
     fn scan_line(&mut self, line_start: usize, line: &str, is_first_line: bool) {
         if let Some(state) = self.state.clone() {
-            self.scan_inside_state(line_start, line, &state);
-            return;
+            if matches!(state, MarkdownSourceState::ParagraphCandidate) {
+                self.state = None;
+                self.seam_pending_paragraph = true;
+            } else {
+                self.scan_inside_state(line_start, line, &state);
+                return;
+            }
         }
+        // 接缝候选只对本块首行有效；首行不是下划线就作废。
+        let seam_pending_paragraph = std::mem::take(&mut self.seam_pending_paragraph);
 
         if line.trim().is_empty() {
             self.flush_pending_paragraph();
@@ -174,6 +197,10 @@ impl<'a> Scanner<'a> {
             let level = if trimmed.starts_with('=') { 1u8 } else { 2u8 };
             if let Some(pending) = self.pending_paragraph.take() {
                 self.push(pending, CodeHighlightClass::MarkdownHeading(level));
+                self.push(content_start..line_end, CodeHighlightClass::MarkdownHeading(level));
+                return;
+            }
+            if seam_pending_paragraph {
                 self.push(content_start..line_end, CodeHighlightClass::MarkdownHeading(level));
                 return;
             }
@@ -331,6 +358,9 @@ impl<'a> Scanner<'a> {
     fn scan_inside_state(&mut self, line_start: usize, line: &str, state: &MarkdownSourceState) {
         let line_end = line_start + line.len();
         match state {
+            // 接缝候选在 `scan_line` 里就消费掉了，走不到这里；留一条空臂
+            // 让匹配保持穷尽。
+            MarkdownSourceState::ParagraphCandidate => {}
             MarkdownSourceState::Fence {
                 fence_char,
                 fence_len,
@@ -1192,7 +1222,10 @@ mod tests {
 
         let second = "y = 2\n```\n正文二";
         let (second_spans, second_state) = highlight_with(second, false, state);
-        assert_eq!(second_state, None);
+        assert!(
+            !matches!(second_state, Some(MarkdownSourceState::Fence { .. })),
+            "围栏该在第二块闭合: {second_state:?}"
+        );
         assert!(
             second_spans
                 .iter()
@@ -1411,7 +1444,8 @@ mod tests {
     fn frontmatter_highlights_as_yaml_only_at_document_start() {
         let doc = "---\ntitle: \"甲\"\n---\n正文";
         let (spans, state) = highlight_with(doc, true, None);
-        assert!(state.is_none());
+        // 收尾的普通段落会留下 setext 候选状态，这里只关心不再是 frontmatter。
+        assert!(!matches!(state, Some(MarkdownSourceState::Frontmatter)));
         assert!(
             spans
                 .iter()
@@ -1449,7 +1483,7 @@ mod tests {
     fn html_comments_color_across_lines() {
         let text = "<!-- 第一行\n第二行 -->\n正文";
         let (spans, state) = highlight_with(text, false, None);
-        assert!(state.is_none());
+        assert!(!matches!(state, Some(MarkdownSourceState::HtmlComment)));
         assert!(
             spans.iter().any(|(range, class)| *class == CodeHighlightClass::Comment
                 && text[range.clone()].contains("第一行")),
@@ -1468,7 +1502,7 @@ mod tests {
         // 行中的金额、非行首的 $$ 都不进公式状态。
         let text = "价格 $$5 与 $6 不同";
         let (spans, state) = highlight_with(text, false, None);
-        assert!(state.is_none());
+        assert!(!matches!(state, Some(MarkdownSourceState::Math)));
         assert!(
             !spans
                 .iter()
@@ -1521,7 +1555,10 @@ mod tests {
         // 信息串里再出现定界字符就不是围栏（CommonMark），整行当正文。
         let text = "```a`b\n正文";
         let (spans, state) = highlight_with(text, false, None);
-        assert!(state.is_none(), "信息串含反引号不该开栏");
+        assert!(
+            !matches!(state, Some(MarkdownSourceState::Fence { .. })),
+            "信息串含反引号不该开栏"
+        );
         assert!(spans.is_empty(), "不该有围栏记号: {spans:?}");
     }
 
