@@ -1334,3 +1334,18 @@ fn inline_code_paint_paths_have_no_shaping_expects() {
         "语言输入框绘制不该 expect 排版结果"
     );
 }
+
+/// 排版失败不许静默吞成零尺寸：至少要留下失败详情，并给块一个保守高度，
+/// 让「内容消失」变成用户看得见、日志查得到的事故。
+#[test]
+fn shaping_failures_are_logged_and_keep_the_block_visible() {
+    let source = include_str!("text_element.rs");
+    assert!(
+        !source.contains("Err(_) => return Size::default()"),
+        "shape 失败不该静默返回零尺寸"
+    );
+    assert!(
+        source.matches("排版失败").count() >= 2,
+        "按行与整块两条 shape 路径都要记录失败详情"
+    );
+}

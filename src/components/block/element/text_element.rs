@@ -358,7 +358,17 @@ impl Element for BlockTextElement {
                                 );
                                 all_lines.extend(line);
                             }
-                            Err(_) => return Size::default(),
+                            Err(error) => {
+                                eprintln!(
+                                    "按行排版失败（第 {line_idx} 行，{} 字节）：{error}",
+                                    line_src.len()
+                                );
+                                let estimate_lines = plan.ranges.len().max(1) as f32;
+                                return Size::new(
+                                    px(1.0),
+                                    px(estimate_lines * f32::from(line_height)),
+                                );
+                            }
                         }
                     }
                     all_lines
@@ -371,7 +381,17 @@ impl Element for BlockTextElement {
                         None,
                     ) {
                         Ok(lines) => lines.into_vec(),
-                        Err(_) => return Size::default(),
+                        Err(error) => {
+                            eprintln!(
+                                "整块排版失败（{} 字节，换行宽 {wrap_width:?}）：{error}",
+                                display_text.len()
+                            );
+                            let estimate_lines = display_text.split('\n').count().max(1) as f32;
+                            return Size::new(
+                                px(1.0),
+                                px(estimate_lines * f32::from(line_height)),
+                            );
+                        }
                     }
                 };
                 if space_prose {
