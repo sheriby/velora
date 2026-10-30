@@ -121,6 +121,15 @@ pub(super) fn set_test_update_backend(cx: &mut App, backend: Arc<dyn UpdateBacke
     cx.update_global::<UpdateSession, _>(|session, _| session.backend = backend);
 }
 
+/// 下载中每 100ms 的刻度：进度值没变就不需要重绘。
+fn download_tick_needs_redraw(last: &mut u64, current: u64) -> bool {
+    if *last == current {
+        return false;
+    }
+    *last = current;
+    true
+}
+
 fn init_update_session(cx: &mut App) {
     if cx.try_global::<UpdateSession>().is_some() {
         return;
@@ -498,13 +507,19 @@ impl Editor {
             use futures::FutureExt;
             let worker = worker.fuse();
             futures::pin_mut!(worker);
+            let mut last_notified_progress = progress.load(Ordering::Relaxed);
             let result = loop {
                 let tick = timer.timer(std::time::Duration::from_millis(100)).fuse();
                 futures::pin_mut!(tick);
                 futures::select! {
                     result = worker => break result,
                     _ = tick => {
-                        if let Err(error) = weak_editor.update(cx, |_, cx| cx.notify()) { eprintln!("更新下载窗口已关闭：{error}"); }
+                        // 只有进度刻度真的变了才重绘：网络慢、进度长时间停在某一档时，
+                        // 10Hz 的全窗重绘是纯后台功耗。
+                        let current = progress.load(Ordering::Relaxed);
+                        if download_tick_needs_redraw(&mut last_notified_progress, current) {
+                            if let Err(error) = weak_editor.update(cx, |_, cx| cx.notify()) { eprintln!("更新下载窗口已关闭：{error}"); }
+                        }
                     }
                 }
             };
@@ -1010,6 +1025,21 @@ mod tests {
         assert!(cancelled.load(std::sync::atomic::Ordering::Relaxed));
         visual.update(|_, cx| assert!(!cx.global::<UpdateSession>().download_active));
     }
+    #[test]
+    fn download_ticks_only_redraw_when_the_progress_changes() {
+        let mut last = 0;
+        assert!(
+            !super::download_tick_needs_redraw(&mut last, 0),
+            "进度没变不该重绘"
+        );
+        assert!(super::download_tick_needs_redraw(&mut last, 50));
+        assert!(
+            !super::download_tick_needs_redraw(&mut last, 50),
+            "停在 50% 的刻度不该重绘"
+        );
+        assert!(super::download_tick_needs_redraw(&mut last, 100));
+    }
+
     #[test]
     fn update_message_templates_replace_versions() {
         assert_eq!(
