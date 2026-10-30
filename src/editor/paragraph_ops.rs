@@ -409,6 +409,9 @@ impl BlockKindTarget {
             Self::NumberedList => BlockKind::NumberedListItem,
             // 任务项再点一次是去掉复选框，回到普通无序项，不是变段落。
             Self::TaskList if current.is_task_list_item() => BlockKind::BulletedListItem,
+            // 任务项在模型与序列化里只有无序记号；有序项换过来会把 `1.` 静默改写成
+            // `- `，序号族丢掉。宁可置灰（三个入口同一条判据）也不静默降级。
+            Self::TaskList if *current == BlockKind::NumberedListItem => return None,
             Self::TaskList => BlockKind::TaskListItem { checked: false },
             Self::Quote if *current == BlockKind::Quote => BlockKind::Paragraph,
             Self::Quote => BlockKind::Quote,

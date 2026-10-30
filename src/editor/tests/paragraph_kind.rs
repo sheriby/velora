@@ -1088,3 +1088,28 @@ async fn kind_conversion_survives_a_corrupt_neighbor_span(cx: &mut TestAppContex
         assert!(editor.buffer.text().contains('文'), "缓冲区不该损坏或 panic");
     });
 }
+
+/// 任务项在模型里只有无序族：有序项上的「任务列表」不可用（菜单置灰、动作不生效），
+/// 不能把 `1.` 静默改写成 `- ` 再宣称换成了任务项。
+#[gpui::test]
+async fn task_list_is_unavailable_on_numbered_items(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "1. 待办\n\n- 普通项\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+
+    put_caret(&editor, 0, 3, cx);
+    assert!(
+        !available(&editor, BlockKindTarget::TaskList, cx),
+        "有序项上的任务列表应置灰"
+    );
+    assert!(!apply(&editor, BlockKindTarget::TaskList, cx));
+    assert_eq!(buffer_text(&editor, cx), source, "有序记号不能被悄悄换掉");
+
+    put_caret(&editor, 1, 3, cx);
+    assert!(
+        available(&editor, BlockKindTarget::TaskList, cx),
+        "无序项仍可转任务项"
+    );
+}

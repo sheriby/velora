@@ -48,6 +48,8 @@
 
 > **写回必须只动真正改过的那段字节**（editor-core.md §5），不能"从块树重新生成这一块"。
 
+任务项只做无序族：`- [ ] x` / `* [ ] x` / `+ [ ] x` 是任务项；有序写法 `1. [ ] x` 按普通有序项解析（正文里保留 `[ ] ` 字样）。块树里只有一种 `TaskListItem`，段落菜单在有序项上不提供「任务列表」——把 `1.` 静默改写成 `- ` 会丢掉序号族。
+
 `serialize_markdown_plain`（不建映射）与 `markdown_offset_map`（建映射）是**两条实现**，一致性由 `inline/tests/serialize.rs:serialize_markdown_matches_offset_map` 守着；改一条必须同步另一条。
 
 ## 5. 三套偏移映射
