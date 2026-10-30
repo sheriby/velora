@@ -377,3 +377,30 @@ async fn inline_format_does_not_turn_an_escaped_heading_prefix_into_a_heading(
         );
     });
 }
+
+/// 换种类与进入代码块/转分隔线同一收尾：IME 标记作废、选区两端收敛到新长度。
+/// 标题树原样保留，显示长度通常不变，所以「越界」这一半不可达；仍按同族补齐，
+/// 免得将来某种转换真的缩短显示文本时留下悬空标记与越界选区。
+#[gpui::test]
+async fn kind_switch_clamps_selection_and_drops_ime_marks(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::with_plain_text(
+                BlockKind::CodeBlock { language: None },
+                "**bold**",
+            ),
+        )
+    });
+    block.update(cx, |block, cx| {
+        block.selected_range = 0..8;
+        block.marked_range = Some(2..6);
+        assert!(block.set_kind_in_place(BlockKind::Paragraph, None, cx));
+        assert!(
+            block.marked_range.is_none(),
+            "换种类后 IME 标记应作废（修复前原样留着）"
+        );
+        assert!(block.selected_range.end <= block.visible_len());
+    });
+}

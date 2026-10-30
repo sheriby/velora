@@ -76,6 +76,7 @@ impl Block {
         &mut self,
         next: BlockKind,
         marker: Option<crate::components::ListMarkerStyle>,
+        cx: &mut Context<Self>,
     ) -> bool {
         // 源码原文那份不动；代码块是「整块正文就是原文」，换得出去也换得进来，
         // 由 `sync_edit_mode_from_kind` 改编辑模式。
@@ -96,6 +97,13 @@ impl Block {
         self.clear_inline_projection();
         self.sync_edit_mode_from_kind();
         self.sync_render_cache();
+        // 编辑模式切换意味着显示坐标系整体变了：选区两端按新长度收敛、
+        // 光标亲和重置，IME 标记作废；与 `enter_code_block` / 转分隔线同收尾。
+        let len = self.visible_len();
+        self.selected_range =
+            self.selected_range.start.min(len)..self.selected_range.end.min(len);
+        self.collapsed_caret_affinity = CollapsedCaretAffinity::Default;
+        self.set_marked_range(None, cx);
         true
     }
 

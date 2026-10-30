@@ -63,7 +63,7 @@ impl Editor {
                 continue;
             };
             let marker = self.list_marker_for_conversion(root, &next, cx);
-            if root.update(cx, |block, _cx| block.set_kind_in_place(next, marker)) {
+            if root.update(cx, |block, cx| block.set_kind_in_place(next, marker, cx)) {
                 changed.push(root.clone());
             }
         }
