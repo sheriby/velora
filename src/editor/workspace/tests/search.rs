@@ -1925,6 +1925,8 @@ async fn workspace_replace_all_keeps_disk_files_unchanged_until_explicit_confirm
         editor.request_replace_all_matches(cx);
     });
     editor.update_in(cx, |editor, window, cx| editor.dismiss_modal(1, window, cx));
+    // 确认后闭文件的读改写交给后台任务，跑完再断言磁盘。
+    cx.run_until_parked();
     assert_eq!(
         fs::read_to_string(&path).expect("读取夹具"),
         "ab",
@@ -3226,5 +3228,50 @@ async fn workspace_replace_counting_reuses_the_search_content_cache(cx: &mut Tes
     });
     let reads = crate::editor::encoding::DOCUMENT_READS.with(|reads| reads.get());
     assert_eq!(reads, 0, "计数阶段又整篇读盘了 {reads} 次，没有复用搜索缓存");
+    fs::remove_dir_all(root).expect("清理夹具");
+}
+
+/// 全部替换确认后，磁盘上未被打开的文件应在后台写：UI 线程返回时文件还没动，
+/// 后台跑完后才落盘。确认弹窗回调里同步读改写整库会让大 vault 冻结数秒。
+#[gpui::test]
+async fn workspace_replace_defers_closed_file_writes_to_the_background(
+    cx: &mut TestAppContext,
+) {
+    let root = std::env::temp_dir().join(format!(
+        "velora-replace-background-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("创建工作区");
+    let first = root.join("first.md");
+    let second = root.join("second.md");
+    fs::write(&first, "a1b").expect("写入夹具");
+    fs::write(&second, "c1d").expect("写入夹具");
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init_with_language_id(cx, "zh-CN");
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.workspace.root = Some(root.clone());
+            editor.workspace.files_on_disk = vec![first.clone(), second.clone()];
+            editor.workspace.files_on_disk_root = Some(root.clone());
+            editor.workspace.active_tab = WorkspaceTab::Search;
+            editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
+            editor.workspace.search_query = "1".into();
+            editor.workspace.replace_query = "2".into();
+            let _ = editor.replace_all_workspace_matches(window, cx);
+        });
+    });
+    assert_eq!(
+        fs::read_to_string(&first).expect("读取夹具"),
+        "a1b",
+        "确认后的同步返回点还不该写盘：读改写要交给后台"
+    );
+    assert_eq!(fs::read_to_string(&second).expect("读取夹具"), "c1d");
+    cx.run_until_parked();
+    assert_eq!(fs::read_to_string(&first).expect("读取夹具"), "a2b");
+    assert_eq!(fs::read_to_string(&second).expect("读取夹具"), "c2d");
     fs::remove_dir_all(root).expect("清理夹具");
 }

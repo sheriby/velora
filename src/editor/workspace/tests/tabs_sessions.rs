@@ -272,8 +272,10 @@ async fn review_workspace_replace_preserves_all_supported_file_shapes(cx: &mut T
         });
         editor.workspace.search_query = "old".into();
         editor.workspace.replace_query = "new".into();
-        assert_eq!(editor.replace_all_workspace_matches(window, cx), 5);
+        // 脏标签同步替换，其余闭文件由后台写盘；总计数不再是返回值。
+        let _ = editor.replace_all_workspace_matches(window, cx);
     }));
+    cx.run_until_parked();
     for (path, (_, _, expected)) in files.iter().zip(&cases) {
         assert_eq!(fs::read(path).unwrap(), *expected, "{}", path.display());
     }
@@ -2167,8 +2169,10 @@ fn history_workspace_replace_records_a_checkpoint_and_original_disk_bytes(cx: &m
     editor.update_in(cx, |editor, window, cx| {
         editor.workspace.files_on_disk = vec![path.clone()];
         editor.workspace.search_query = "前".into(); editor.workspace.replace_query = "后".into();
-        assert_eq!(editor.replace_all_workspace_matches(window, cx), 1);
+        let _ = editor.replace_all_workspace_matches(window, cx);
     });
+    // 闭文件的替换在后台完成，等它落盘并回主线程记历史。
+    cx.run_until_parked();
     let versions = crate::config::file_history::list_versions(&path, Default::default(), std::time::SystemTime::now()).expect("历史");
     assert!(versions.iter().any(|version| std::fs::read(&version.path).expect("版本") == "替换前\r\n".as_bytes()));
     assert!(versions.iter().any(|version| version.source == crate::config::file_history::HistorySource::Manual && std::fs::read(&version.path).expect("检查点") == "替换后\r\n".as_bytes()));

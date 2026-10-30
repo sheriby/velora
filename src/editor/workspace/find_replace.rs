@@ -816,6 +816,9 @@ impl Editor {
         let files = self.text_files_on_disk();
         let mut total = 0usize;
         let mut changed_paths = Vec::new();
+        // 没有打开标签的文件整批交给后台：读盘、整文替换、原子写盘都不该压在
+        // 确认弹窗的回调里（大 vault 上会冻结数秒）。结果回主线程再记历史/刷新。
+        let mut background_jobs: Vec<std::path::PathBuf> = Vec::new();
         for path in files {
             if Some(&path) == active_path.as_ref() {
                 // The active document goes through the live editor path so the
@@ -828,6 +831,10 @@ impl Editor {
                 .open_documents
                 .iter()
                 .position(|tab| tab.path == path);
+            if open_tab_index.is_none() {
+                background_jobs.push(path);
+                continue;
+            }
             let (source, expected_version) = match open_tab_index {
                 Some(index) if self.workspace.open_documents[index].dirty => {
                     let tab = &self.workspace.open_documents[index];
@@ -876,10 +883,141 @@ impl Editor {
                 }
             }
         }
+        if !background_jobs.is_empty() {
+            let query = self.workspace.search_query.clone();
+            let options = self.search_options();
+            let replacement = replacement.clone();
+            let weak_editor = cx.entity().downgrade();
+            cx.spawn(
+                async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                    let worker = cx.background_executor().spawn(async move {
+                        let matcher = SearchMatcher::new(query.trim(), options);
+                        background_jobs
+                            .into_iter()
+                            .map(|path| {
+                                Self::replace_workspace_file_on_disk(&path, &matcher, &replacement)
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    let outcomes = worker.await;
+                    if let Err(error) = weak_editor.update(cx, |editor, cx| {
+                        editor.apply_workspace_replace_outcomes(outcomes, cx);
+                    }) {
+                        eprintln!("工作区替换的后台结果无人接收：{error}");
+                    }
+                },
+            )
+            .detach();
+        }
         if total > 0 {
             self.refresh_workspace_paths(&changed_paths, cx);
             self.refresh_workspace_file_consumers(cx);
         }
         total
     }
+
+    /// 后台替换一个磁盘文件：读盘、替换、按刚读到的版本原子写盘。
+    /// 只做 IO 与纯计算，不碰任何实体；结果回 UI 线程统一入账。
+    fn replace_workspace_file_on_disk(
+        path: &std::path::Path,
+        matcher: &SearchMatcher,
+        replacement: &str,
+    ) -> WorkspaceReplaceOutcome {
+        let source = match crate::editor::encoding::load_document(path) {
+            Ok(document) => document.text,
+            Err(error) => {
+                return WorkspaceReplaceOutcome::Failed {
+                    path: path.to_path_buf(),
+                    detail: format!("无法读取「{}」：{error}", path.display()),
+                };
+            }
+        };
+        let updated = replace_in_source(&source, matcher, replacement);
+        if updated == source {
+            return WorkspaceReplaceOutcome::Skipped;
+        }
+        let expected_version = crate::editor::persistence::file_content_version(&source);
+        let bytes = match crate::editor::persistence::tab_write_bytes(path, &updated, expected_version)
+        {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return WorkspaceReplaceOutcome::Conflict {
+                    path: path.to_path_buf(),
+                    detail: error.to_string(),
+                };
+            }
+        };
+        match crate::editor::persistence::write_atomic(path, &bytes) {
+            Ok(()) => WorkspaceReplaceOutcome::Written {
+                path: path.to_path_buf(),
+                bytes,
+                replaced: count_matches_in_source(&source, matcher),
+            },
+            Err(error) => WorkspaceReplaceOutcome::Failed {
+                path: path.to_path_buf(),
+                detail: format!("无法写入「{}」：{error}", path.display()),
+            },
+        }
+    }
+
+    /// 后台替换的结果回主线程统一入账：写成功的记历史并刷新树/消费者，
+    /// 冲突与失败仍走既有的上报通道。
+    fn apply_workspace_replace_outcomes(
+        &mut self,
+        outcomes: Vec<WorkspaceReplaceOutcome>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed_paths = Vec::new();
+        let mut total = 0usize;
+        for outcome in outcomes {
+            match outcome {
+                WorkspaceReplaceOutcome::Skipped => {}
+                WorkspaceReplaceOutcome::Written {
+                    path,
+                    bytes,
+                    replaced,
+                } => {
+                    self.record_saved_history(
+                        &path,
+                        &bytes,
+                        crate::config::file_history::HistorySource::Manual,
+                        cx,
+                    );
+                    changed_paths.push(path);
+                    total += replaced;
+                }
+                WorkspaceReplaceOutcome::Conflict { path, detail } => {
+                    self.report_external_change_conflict(path, detail, cx);
+                }
+                WorkspaceReplaceOutcome::Failed { path, detail } => {
+                    self.report_workspace_file_error(detail.clone(), cx);
+                    self.show_message_modal("替换失败", detail, cx);
+                }
+            }
+        }
+        if total > 0 {
+            self.refresh_workspace_paths(&changed_paths, cx);
+            self.refresh_workspace_file_consumers(cx);
+            self.schedule_workspace_search(cx);
+            cx.notify();
+        }
+    }
+}
+
+/// 后台替换一个文件的三种结果；`Skipped` 表示没有命中、不需要写盘。
+enum WorkspaceReplaceOutcome {
+    Skipped,
+    Written {
+        path: std::path::PathBuf,
+        bytes: Vec<u8>,
+        replaced: usize,
+    },
+    Conflict {
+        path: std::path::PathBuf,
+        detail: String,
+    },
+    Failed {
+        path: std::path::PathBuf,
+        detail: String,
+    },
 }
