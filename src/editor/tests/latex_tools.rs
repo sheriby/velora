@@ -2826,3 +2826,58 @@ async fn formula_editor_apply_without_changes_keeps_body_only_block_verbatim(
         assert_eq!(editor.undo_history.len(), undo_before, "无变更的「应用」不得多出撤销组");
     });
 }
+
+/// 弹窗开着时切主题，预览也要跟着重渲：输入区与语法色实时跟随新主题，
+/// 预览此前停在旧主题色/字号的缓存 SVG，直到下一次按键编辑才更新。
+#[gpui::test]
+async fn formula_editor_preview_follows_theme_changes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_formula_editor_for_block(math.entity_id(), window, cx);
+    });
+    let frac = &LATEX_SYMBOLS[0];
+    editor.update(cx, |editor, cx| editor.insert_formula_symbol(frac, cx));
+    cx.executor().advance_clock(Duration::from_millis(150));
+    redraw(cx);
+    let before = editor.read_with(cx, |editor, _cx| {
+        editor
+            .formula_editor
+            .as_ref()
+            .expect("弹窗该开着")
+            .preview_path
+            .clone()
+    });
+    assert!(before.is_some(), "前置：预览已渲染");
+
+    // 切到另一套颜色：正文色变化即可让预览的缓存键失效。
+    cx.update(|_, cx| {
+        let mut theme = cx
+            .global::<crate::theme::ThemeManager>()
+            .current_arc()
+            .as_ref()
+            .clone();
+        theme.colors.text_default = gpui::hsla(0.08, 0.9, 0.55, 1.0);
+        theme.colors.editor_background = gpui::hsla(0.6, 0.4, 0.12, 1.0);
+        cx.global_mut::<crate::theme::ThemeManager>().set_theme(theme);
+    });
+    redraw(cx);
+    cx.executor().advance_clock(Duration::from_millis(150));
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗该开着");
+        assert!(
+            state.preview_path.is_some(),
+            "切主题后预览仍应存在"
+        );
+        assert_ne!(
+            state.preview_path, before,
+            "切主题后预览要按新颜色重渲，不能停在旧缓存"
+        );
+    });
+}

@@ -309,6 +309,9 @@ pub(crate) struct FormulaEditorState {
     /// 草稿的实时预览：ratex 渲染好的缓存 SVG。渲染失败时为 Err（界面上
     /// 显示 LaTeX 源码 + 错误），空草稿为 None（显示占位提示）。
     pub(crate) preview_path: Option<PathBuf>,
+    /// 上一次渲染预览用的（正文色, 字号）：主题变化时据此判断要不要重渲，
+    /// 否则预览会停在旧主题的缓存 SVG 上。
+    preview_theme: Option<(gpui::Hsla, f32)>,
     pub(crate) preview_error: Option<String>,
     /// 防抖中的预览渲染任务。挂在 state 上：连打时新一轮调度替换掉它（Task
     /// 被丢弃即取消），弹窗关闭（state 被 take 走）时也随之取消。
@@ -544,6 +547,7 @@ impl Editor {
             initial_draft: draft.clone(),
             draft,
             preview_path: None,
+            preview_theme: None,
             preview_error: None,
             preview_task: None,
             completion: None,
@@ -620,6 +624,7 @@ impl Editor {
         if state.draft.trim().is_empty() {
             state.preview_path = None;
             state.preview_error = None;
+            state.preview_theme = None;
             return;
         }
         let draft = state.draft.clone();
@@ -630,6 +635,7 @@ impl Editor {
                 crate::components::latex::display_math_font_size(theme.typography.text_size),
             )
         };
+        state.preview_theme = Some((color, font_size));
         state.preview_task = Some(cx.spawn(async move |editor, cx: &mut AsyncApp| {
             cx.background_executor().timer(PREVIEW_DEBOUNCE).await;
             let rendered = cx
@@ -670,6 +676,25 @@ impl Editor {
                 eprintln!("公式预览写回失败：{error}");
             }
         }));
+    }
+
+    /// 主题变化时让公式预览跟上：输入区与语法色是实时读主题的，预览是缓存
+    /// SVG，不重渲就停在旧颜色/字号上，与 mermaid 预览的行为对齐。
+    pub(crate) fn sync_formula_preview_theme(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.formula_editor.as_ref() else {
+            return;
+        };
+        let Some((color, font_size)) = state.preview_theme else {
+            return;
+        };
+        let theme = cx.global::<crate::theme::ThemeManager>().current_arc();
+        let current = (
+            theme.colors.text_default,
+            crate::components::latex::display_math_font_size(theme.typography.text_size),
+        );
+        if current != (color, font_size) {
+            self.schedule_formula_preview(cx);
+        }
     }
 
     /// 在草稿光标处替换/插入文本（输入系统、符号面板共用这一条），随后

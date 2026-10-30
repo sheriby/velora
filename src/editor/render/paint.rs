@@ -70,6 +70,7 @@ impl Render for Editor {
         self.sync_ai_availability(cx);
         self.sync_ai_settings(cx);
         self.sync_mermaid_preview_theme(window, cx);
+        self.sync_formula_preview_theme(cx);
         self.sync_ai_task_navigation(cx);
         self.sync_ai_review_document(cx);
         self.sync_ai_surface_visibility(cx);
