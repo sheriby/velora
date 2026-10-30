@@ -129,7 +129,8 @@ impl Element for BlockTextElement {
         let font_prefs = crate::config::EditorSettings::scaled_fonts(cx);
         // 行内代码字号按「本块正文 / 段落字号」缩放：标题里正文被放大了，代码不跟着走
         // 就会在 H1/H2 里变成一小撮（报修）。行高与 runs 上的字号取同一个值。
-        // 没有行内代码的块也跟着算：这个值恒小于本块正文行高，不影响它们的行高。
+        // 只有真带行内代码的块才付这份保底：代码字号设置大于正文字号时，
+        // 拿 code_size × 1.35 当所有块的行高会把整篇正文一起抬高。
         let code_size = px(crate::components::block::render::inline_code_font_size(
             font_prefs.code_size as f32,
             f32::from(font_size),
@@ -137,7 +138,11 @@ impl Element for BlockTextElement {
         ));
         #[cfg(test)]
         probe::note_inline_code_size(code_size);
-        let line_height = window.line_height().max(code_size * 1.35);
+        let line_height = if code_ranges.is_empty() {
+            window.line_height()
+        } else {
+            window.line_height().max(code_size * 1.35)
+        };
         let source_line_start = input.source_line_start();
         // 栏宽按全文档基准算（整篇总行数），分块上下才右对齐；基准没挂上时
         // 退回块内口径。
@@ -447,7 +452,13 @@ impl Element for BlockTextElement {
             f32::from(font_size),
             crate::config::EditorSettings::scaled_font_sizes(cx).0,
         );
-        let line_height = window.line_height().max(px(code_size) * 1.35);
+        // 与 request_layout 同一条判据：只有带行内代码的块才容纳代码字号。
+        let has_inline_code = input.inline_spans().iter().any(|span| span.style.code);
+        let line_height = if has_inline_code {
+            window.line_height().max(px(code_size) * 1.35)
+        } else {
+            window.line_height()
+        };
         let focused = input.focus_handle.is_focused(window);
         let show_inline_code_backgrounds = !input.is_source_raw_mode();
         let show_source_line_numbers = input.show_source_line_numbers();

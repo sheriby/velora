@@ -544,3 +544,61 @@ async fn ai_review_marks_are_located_by_row_range(cx: &mut TestAppContext) {
         "一帧比较了 {probes} 个评审标记：仍在逐行扫全部标记"
     );
 }
+
+/// 代码字号只该抬高真正带行内代码的块：没有行内代码的段落用正文行高，
+/// 不能被「代码字号 × 1.35」的保底抬起来。
+#[gpui::test]
+async fn a_large_code_font_does_not_grow_paragraphs_without_inline_code(
+    cx: &mut TestAppContext,
+) {
+    use crate::config::preferences::{AppPreferences, open_preferences_window_with_state};
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    let preferences = cx.update(|cx| {
+        open_preferences_window_with_state(cx, AppPreferences::default(), Vec::new(), "字体".into())
+    });
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "只有正文的一行。\n\n带 `行内代码` 的一行。\n".into(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+    let heights = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .iter()
+                .filter(|visible| !visible.entity.read(cx).display_text().is_empty())
+                .map(|visible| {
+                    visible
+                        .entity
+                        .read(cx)
+                        .last_bounds
+                        .expect("正文块有几何")
+                        .size
+                        .height
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    let before = heights(cx);
+    assert_eq!(before.len(), 2);
+    let mut settings = AppPreferences::default();
+    settings.fonts.code_size = 28;
+    preferences
+        .update(cx, |preferences, window, cx| {
+            preferences.apply_saved_preferences(settings, window, cx)
+        })
+        .expect("偏好窗口应可更新");
+    redraw(cx);
+    redraw(cx);
+    let after = heights(cx);
+    assert_eq!(
+        after[0], before[0],
+        "没有行内代码的段落被代码字号抬高了行高"
+    );
+    assert!(
+        after[1] > before[1],
+        "带行内代码的段落应容纳放大的代码字号"
+    );
+}
