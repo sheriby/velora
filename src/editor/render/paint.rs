@@ -340,6 +340,12 @@ impl Render for Editor {
                 Self::scrollbar_geometry(viewport_height, max_scroll_y, current_scroll_y);
             let max_position = self.scrollbar_document_position(max_scroll_y, false);
             let position = self.scrollbar_document_position(current_scroll_y, false);
+            // 口径取捨：位置按行权重、长度按像素占比，两者刻意不同源。
+            // 位置用权重是为了首次滚动时「实测高度替换估算」不让滑块倒退
+            // （`first_pass_down_a_long_document_never_moves_the_scrollbar_backwards`）；
+            // 长度若也换成权重，视口覆盖的权重跨度会随所在行剧烈变化（滚进长
+            // 代码块时变大），滑块反而在向下滚动中缩小、位置倒退。拖动的抓点
+            // 换算用的是同一对 (track, thumb_height)，与渲染所见一致。
             let progress = if max_position > 0.0 {
                 (position / max_position).clamp(0.0, 1.0)
             } else {
