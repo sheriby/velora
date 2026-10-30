@@ -9,7 +9,11 @@ use super::*;
 /// 一个字节区间（搜索命中、选区）与这一块有没有交集。
 ///
 /// 跨块的区间要落到它盖住的**每一**块上，所以判据不是「被这块整条包住」。
-/// 零宽区间按起点归块——它没有长度，沾不到下一块去。
+/// 零宽区间按起点归块；起点恰好落在块交界（等于前一块的 `span.end`、也等于
+/// 后一块的 `span.start`）时**两块都算**：两侧都能渲染它，谁先拿到都不丢。
+/// 渲染侧对空区间不产出色块（`range_segment_bounds` 返回空），不会画出
+/// 重复高亮；`search_cross_block::hit_segmentation_clips_at_the_block_boundary`
+/// 钉住这一口径。
 pub(crate) fn hit_overlaps(hit: &Range<usize>, span: &Range<usize>) -> bool {
     if hit.is_empty() {
         return hit.start >= span.start && hit.start <= span.end;
@@ -19,8 +23,9 @@ pub(crate) fn hit_overlaps(hit: &Range<usize>, span: &Range<usize>) -> bool {
 
 /// 把区间裁到 `block_start..block_end` 这一段里；裁完是空段就说明这块不沾。
 ///
-/// 零宽区间（空命中、光标）没有长度，只有起点落在块内才算沾到这块——直接取
-/// `max/min` 会算出 `8..5` 这种反向区间，端点相减就下溢，所以单独走一支。
+/// 零宽区间（空命中、光标）没有长度，只有起点落在块内（含右端点，与
+/// [`hit_overlaps`] 的交界口径一致）才算沾到这块——直接取 `max/min` 会算出
+/// `8..5` 这种反向区间，端点相减就下溢，所以单独走一支。
 pub(crate) fn clip_hit_to_span(
     hit: &Range<usize>,
     block_start: usize,
