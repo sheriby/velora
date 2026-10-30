@@ -91,6 +91,9 @@ struct UpdateSession {
     download_cancel: Option<Arc<AtomicBool>>,
     download_window: Option<WindowId>,
     pending_install: Option<InstallPlan>,
+    /// pending_install 是「启动失败后保留的计划」而不是「准备重启的安装」：
+    /// 前者不拦重新下载（用户可能想重走一遍检查/下载），后者拦。
+    pending_install_retry: bool,
     fallback_notification: Option<UpdateVersionInfo>,
     closed_subscription: Option<Subscription>,
 }
@@ -105,6 +108,7 @@ impl Default for UpdateSession {
             download_cancel: None,
             download_window: None,
             pending_install: None,
+            pending_install_retry: false,
             fallback_notification: None,
             closed_subscription: None,
         }
@@ -161,6 +165,7 @@ pub(crate) fn cancel_pending_install(cx: &mut App) {
     {
         cx.update_global::<UpdateSession, _>(|session, _| {
             session.pending_install = None;
+            session.pending_install_retry = false;
             session.download_active = false;
             session.download_cancel = None;
             session.download_window = None;
@@ -200,6 +205,7 @@ pub(crate) fn install_pending_update(cx: &mut App) -> bool {
             // 磁盘/权限问题再退出时 plan 已丢，只能重新检查与下载整个安装包。
             cx.update_global::<UpdateSession, _>(|session, _| {
                 session.pending_install = Some(plan);
+                session.pending_install_retry = true;
             });
             false
         }
@@ -436,9 +442,10 @@ impl Editor {
 
     fn download_update(&mut self, cx: &mut Context<Self>) {
         init_update_session(cx);
-        if cx.global::<UpdateSession>().download_active
-            || cx.global::<UpdateSession>().pending_install.is_some()
-        {
+        let session = cx.global::<UpdateSession>();
+        // 失败保留的旧计划不算「正在准备」：允许重新检查与下载，开工前把它换掉。
+        let install_queued = session.pending_install.is_some() && !session.pending_install_retry;
+        if session.download_active || install_queued {
             let message = cx
                 .global::<I18nManager>()
                 .strings()
@@ -446,6 +453,12 @@ impl Editor {
                 .clone();
             self.show_message_modal(message.clone(), message, cx);
             return;
+        }
+        if session.pending_install_retry {
+            cx.update_global::<UpdateSession, _>(|session, _| {
+                session.pending_install = None;
+                session.pending_install_retry = false;
+            });
         }
         let Some(info) = self.update_notification.clone() else {
             return;
@@ -516,7 +529,7 @@ impl Editor {
                             }
                             match backend.prepare_install(&package,&path,arguments) {
                                 Ok(plan) => {
-                                    cx.update_global::<UpdateSession,_>(|session,_| session.pending_install = Some(plan));
+                                    cx.update_global::<UpdateSession,_>(|session,_| { session.pending_install = Some(plan); session.pending_install_retry = false; });
                                     crate::app_menu::request_quit_application(cx);
                                 }
                                 Err(error) => show_failure_on_app(cx,&error.to_string()),
