@@ -528,3 +528,37 @@ async fn quick_open_and_command_palette_close_each_other(cx: &mut TestAppContext
         assert!(editor.quick_open.is_some());
     });
 }
+
+/// 命令面板每帧都会取过滤后的命令清单：查询与 AI 可用性没变时应复用缓存，
+/// 不再逐帧重新本地化文案、构造 boxed action 并过滤一遍。
+#[gpui::test]
+async fn command_palette_reuses_filtered_entries_between_frames(cx: &mut TestAppContext) {
+    use crate::editor::command_palette::command_palette_probe;
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::app_menu::init(cx));
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        window.activate_window();
+        editor.update(cx, |editor, cx| editor.toggle_command_palette(window, cx));
+    });
+    redraw(cx);
+    redraw(cx);
+    let built = command_palette_probe::entries_built();
+    assert!(built > 0, "前置：首帧应构造过条目");
+
+    redraw(cx);
+    redraw(cx);
+    assert_eq!(
+        command_palette_probe::entries_built(),
+        built,
+        "静止帧不该重建命令条目"
+    );
+
+    cx.simulate_input("a");
+    redraw(cx);
+    assert!(
+        command_palette_probe::entries_built() > built,
+        "查询变化后应重建一次条目"
+    );
+}

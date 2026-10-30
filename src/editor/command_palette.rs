@@ -17,21 +17,31 @@ use crate::i18n::{I18nManager, I18nStrings};
 pub(in crate::editor) struct CommandPaletteState {
     pub(super) input: Entity<InputState>,
     pub(super) list: Entity<CommandState>,
+    /// 过滤结果缓存键（查询, AI 是否可用）与条目。面板每帧渲染都会要这份
+    /// 列表：逐帧重新本地化文案并构造 boxed action 是纯浪费。
+    entries_cache: std::cell::RefCell<
+        Option<(
+            String,
+            bool,
+            std::rc::Rc<Vec<CommandEntry>>,
+        )>,
+    >,
     _subscription: Subscription,
 }
 
+#[derive(Clone)]
 struct CommandEntry {
     id: &'static str,
-    label: String,
-    action: Box<dyn Action>,
+    label: SharedString,
+    action: std::rc::Rc<dyn Action>,
 }
 
 impl CommandEntry {
     fn from_spec(spec: &crate::commands::CommandSpec, strings: &I18nStrings) -> Self {
         Self {
             id: spec.id,
-            label: spec.label(strings),
-            action: spec.boxed_action(),
+            label: SharedString::from(spec.label(strings)),
+            action: std::rc::Rc::from(spec.boxed_action()),
         }
     }
 }
@@ -84,6 +94,7 @@ impl Editor {
         self.command_palette = Some(CommandPaletteState {
             input,
             list,
+            entries_cache: std::cell::RefCell::new(None),
             _subscription: subscription,
         });
         window.focus(&focus, cx);
@@ -97,20 +108,36 @@ impl Editor {
         }
     }
 
-    fn filtered_commands(&self, cx: &Context<Self>) -> Vec<CommandEntry> {
+    fn filtered_commands(&self, cx: &Context<Self>) -> std::rc::Rc<Vec<CommandEntry>> {
         let query = self
             .command_palette
             .as_ref()
             .map(|state| state.list.read(cx).query(cx))
             .unwrap_or_default();
         let query = query.trim().to_lowercase();
+        let ai_enabled = crate::ai::settings::AiFeature::enabled(cx);
+        let Some(palette) = self.command_palette.as_ref() else {
+            return std::rc::Rc::new(Vec::new());
+        };
+        if let Some((cached_query, cached_ai, entries)) = palette.entries_cache.borrow().as_ref()
+            && *cached_query == query
+            && *cached_ai == ai_enabled
+        {
+            return entries.clone();
+        }
         let strings = cx.global::<I18nManager>().strings();
-        crate::commands::commands()
+        let entries: Vec<CommandEntry> = crate::commands::commands()
             .iter()
-            .filter(|spec| !spec.requires_ai() || crate::ai::settings::AiFeature::enabled(cx))
+            .filter(|spec| !spec.requires_ai() || ai_enabled)
             .map(|spec| CommandEntry::from_spec(spec, strings))
             .filter(|entry| query.is_empty() || entry.label.to_lowercase().contains(&query))
-            .collect()
+            .collect();
+        // 探针：面板条目构造次数。静止帧不该涨。
+        #[cfg(test)]
+        command_palette_probe::note_entries(entries.len() as u64);
+        let entries = std::rc::Rc::new(entries);
+        *palette.entries_cache.borrow_mut() = Some((query, ai_enabled, entries.clone()));
+        entries
     }
 
     fn run_palette_command(
@@ -156,7 +183,7 @@ pub(super) fn render_command_palette_overlay(
     }
     let entries = editor.filtered_commands(cx);
     let commands: Vec<_> = entries.iter().map(|entry| entry.id).collect();
-    let items = entries.into_iter().map(|entry| {
+    let items = entries.iter().cloned().map(|entry| {
         CommandItem::new()
             .label(entry.label.clone())
             .child(move |window, _| {
@@ -293,4 +320,19 @@ pub(super) fn render_command_palette_overlay(
                 .child(content),
         )
         .into_any_element()
+}
+
+/// thread-local 探针：命令面板条目构造次数。并行用例各数各的。
+#[cfg(test)]
+pub(crate) mod command_palette_probe {
+    use std::cell::Cell;
+    thread_local! {
+        static PALETTE_ENTRIES_BUILT: Cell<u64> = const { Cell::new(0) };
+    }
+    pub(crate) fn note_entries(count: u64) {
+        PALETTE_ENTRIES_BUILT.with(|counter| counter.set(counter.get() + count));
+    }
+    pub(crate) fn entries_built() -> u64 {
+        PALETTE_ENTRIES_BUILT.with(|counter| counter.get())
+    }
 }
