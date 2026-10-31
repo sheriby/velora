@@ -1,5 +1,16 @@
 use super::*;
 
+// 计数器（测试）：闭合预扫逐 token 走了多少步。超长未闭合段落里每个 opener
+// 都从自己扫到块尾时，这个数随段落长度平方增长。
+#[cfg(test)]
+thread_local! {
+    pub(crate) static CLOSE_SCAN_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_close_scan_step() {
+    CLOSE_SCAN_STEPS.with(|counter| counter.set(counter.get() + 1));
+}
 
 pub(crate) fn match_open_delimiter(tokens: &[CharToken], index: usize) -> Option<Delimiter> {
     if matches_sequence(tokens, index, "<strong>") {
@@ -95,7 +106,19 @@ pub(crate) fn emphasis_pair_blocked_by_rule_of_three(
     (open_len + close_len) % 3 == 0 && !(open_len % 3 == 0 && close_len % 3 == 0)
 }
 
-pub(crate) fn has_closing_delimiter(tokens: &[CharToken], index: usize, delimiter: Delimiter) -> bool {
+/// 一次闭合预扫的结果。`saw_closable` 记录「扫到过右翼可闭合的候选、只是
+/// 被 rule-of-3 之类与 opener 相关的判据拒掉」：只有它为假时，后续 opener
+/// 才能安全地复用「从这里往后没有闭合」的负结论。
+pub(crate) struct ClosingScan {
+    pub(crate) found: bool,
+    pub(crate) saw_closable: bool,
+}
+
+pub(crate) fn scan_closing_delimiter(
+    tokens: &[CharToken],
+    index: usize,
+    delimiter: Delimiter,
+) -> ClosingScan {
     let skip = delimiter.token_len();
     let close_str = delimiter.close();
 
@@ -105,12 +128,18 @@ pub(crate) fn has_closing_delimiter(tokens: &[CharToken], index: usize, delimite
         let mut cursor = index + skip;
         while cursor < tokens.len() {
             if tokens[cursor].ch == '`' && backtick_run_len(tokens, cursor) == skip {
-                return true;
+                return ClosingScan {
+                    found: true,
+                    saw_closable: true,
+                };
             }
 
             cursor += 1;
         }
-        return false;
+        return ClosingScan {
+            found: false,
+            saw_closable: false,
+        };
     }
 
     if matches!(
@@ -122,12 +151,24 @@ pub(crate) fn has_closing_delimiter(tokens: &[CharToken], index: usize, delimite
             Delimiter::SubscriptMarkdown => '~',
             _ => unreachable!(),
         };
-        return locate_script_close(tokens, index + skip, marker).is_some();
+        return match locate_script_close(tokens, index + skip, marker) {
+            Some(_) => ClosingScan {
+                found: true,
+                saw_closable: true,
+            },
+            // 脚本闭合遇到第一个记号时只因正文不合法就提前返回，不能据此
+            // 断言「后面没有闭合」；更晚的 opener 正文更短，仍可能成立。
+            None => ClosingScan {
+                found: false,
+                saw_closable: true,
+            },
+        };
     }
 
     let body_start = index + skip;
     let requires_body = emphasis_requires_body(delimiter);
     let mut cursor = body_start;
+    let mut saw_closable = false;
     while cursor < tokens.len() {
         if tokens[cursor].ch == '\\'
             && let Some(escaped_len) = escaped_sequence_token_len(tokens, cursor)
@@ -146,19 +187,27 @@ pub(crate) fn has_closing_delimiter(tokens: &[CharToken], index: usize, delimite
             }
             // 与 `parse_until` 用同一套闭合判定。否则这里报“有闭合”、正文扫描却拒
             // 绝全部候选（例如 `_a_b` 里的下划线不能闭合），正文就会被输出两次。
-            if can_close_emphasis(tokens, cursor)
-                && !emphasis_pair_blocked_by_rule_of_three(tokens, index, cursor)
-            {
-                return true;
+            let closable = can_close_emphasis(tokens, cursor);
+            saw_closable |= closable;
+            if closable && !emphasis_pair_blocked_by_rule_of_three(tokens, index, cursor) {
+                return ClosingScan {
+                    found: true,
+                    saw_closable: true,
+                };
             }
             cursor += 1;
             continue;
         }
 
+        #[cfg(test)]
+        note_close_scan_step();
         cursor += 1;
     }
 
-    false
+    ClosingScan {
+        found: false,
+        saw_closable,
+    }
 }
 
 /// Whether `delimiter` requires a non-empty body. Emphasis and strikethrough

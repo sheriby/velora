@@ -1,4 +1,21 @@
     use super::super::InlineTextTree;
+    use crate::components::markdown::inline::delimiters::CLOSE_SCAN_STEPS;
+
+    /// 一段未闭合的强调记号：闭合预扫不能对每个 opener 都把剩余 token
+    /// 重扫一遍，否则长段落变成 O(n²)、每敲一键都要付。
+    #[test]
+    fn unclosed_emphasis_scans_stay_linear_in_paragraph_length() {
+        let source = ".*a".repeat(400);
+        CLOSE_SCAN_STEPS.with(|counter| counter.set(0));
+        let tree = InlineTextTree::from_markdown(&source);
+        assert_eq!(tree.visible_text(), source, "未闭合记号应原样保留");
+        let steps = CLOSE_SCAN_STEPS.with(|counter| counter.get());
+        assert!(
+            steps <= source.len() as u64 * 4,
+            "未闭合定界符的预扫步数应随段落线性增长：{steps} 步 / {} 字节",
+            source.len()
+        );
+    }
 
     #[test]
     fn review_escaped_dollar_neighbor_keeps_inline_math_delimiter() {

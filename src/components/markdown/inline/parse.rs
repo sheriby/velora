@@ -606,6 +606,9 @@ pub(crate) fn parse_until(
     builder: &mut NormalizeBuilder,
     inside_code: bool,
     reference_definitions: &LinkReferenceDefinitions,
+    // 已证明「从某下标起该定界符没有闭合」的负结论（同一 token 片断内有效）：
+    // 未闭合的长段落里每个 opener 都从自己扫到块尾是 O(n²)，命中即跳过。
+    close_scan_memo: &mut Vec<(Delimiter, usize)>,
     depth: usize,
 ) -> ParseResult {
     let body_start = index;
@@ -760,9 +763,19 @@ pub(crate) fn parse_until(
             }
 
             if let Some(delimiter) = match_open_delimiter(tokens, index) {
-                if depth < MAX_INLINE_NESTING_DEPTH
-                    && has_closing_delimiter(tokens, index, delimiter)
-                {
+                let memoized_no_close = close_scan_memo
+                    .iter()
+                    .any(|(kind, from)| *kind == delimiter && index >= *from);
+                let has_close = !memoized_no_close && {
+                    let scan = scan_closing_delimiter(tokens, index, delimiter);
+                    // 只有「连可闭合候选都没扫到」才与 opener 无关，能跨 opener 复用；
+                    // rule-of-3 的结论依赖 opener 的游程长度，不能记负。
+                    if !scan.found && !scan.saw_closable {
+                        close_scan_memo.push((delimiter, index));
+                    }
+                    scan.found
+                };
+                if depth < MAX_INLINE_NESTING_DEPTH && has_close {
                     let mark = builder.mark();
                     for token in &tokens[index..index + delimiter.token_len()] {
                         builder.drop_token(token);
@@ -778,6 +791,7 @@ pub(crate) fn parse_until(
                         builder,
                         is_code_delim,
                         reference_definitions,
+                        close_scan_memo,
                         depth + 1,
                     );
                     if parsed.closed {
@@ -1255,6 +1269,7 @@ pub(crate) fn parse_inline_html_container(
     for token in &tokens[index..=tag.end_index] {
         builder.drop_token(token);
     }
+    let mut close_scan_memo = Vec::new();
     let _ = parse_until(
         &tokens[tag.end_index + 1..close_start],
         0,
@@ -1264,6 +1279,7 @@ pub(crate) fn parse_inline_html_container(
         builder,
         false,
         reference_definitions,
+        &mut close_scan_memo,
         depth + 1,
     );
     for token in &tokens[close_start..=close_end] {

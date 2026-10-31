@@ -1194,6 +1194,7 @@ impl InlineTextTree {
         let visible_text = self.visible_text();
         let tokens = flatten_tokens(&self.fragments, visible_text_mode, &self.escaped_offsets);
         let mut builder = NormalizeBuilder::new(visible_text.len());
+        let mut close_scan_memo = Vec::new();
         let _ = parse_until(
             &tokens,
             0,
@@ -1203,6 +1204,7 @@ impl InlineTextTree {
             &mut builder,
             false,
             reference_definitions,
+            &mut close_scan_memo,
             0,
         );
         let mut tree = InlineTextTree::from_fragments(builder.fragments);
