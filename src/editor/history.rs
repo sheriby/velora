@@ -1002,6 +1002,138 @@ impl Editor {
         self.sync_vim_block_carets(cx);
     }
 
+    /// 单条缓冲区编辑之后只重解析受影响的一段根块，区间外的实体原样保留。
+    ///
+    /// 返回 false 表示这段区间算不准或带不了（未物化尾部、源码视图、表格、
+    /// 引用/脚注定义、行内图片等需要整篇运行时收尾的形状），调用方退回
+    /// [`Self::rebuild_document_from_buffer`]。
+    pub(crate) fn reproject_after_buffer_edit(
+        &mut self,
+        edit: &buffer::AppliedEdit,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.view_mode != ViewMode::Rendered || self.document.pending_tail().is_some() {
+            return false;
+        }
+        let old_start = edit.new_range.start;
+        let old_end = old_start + edit.removed.len();
+        let new_len = edit.new_range.len();
+        let total = self.buffer.byte_len();
+        let root_ids: Vec<_> = self
+            .document
+            .root_blocks()
+            .iter()
+            .map(|root| root.entity_id())
+            .collect();
+        if root_ids.is_empty() {
+            return false;
+        }
+        let mut first: Option<usize> = None;
+        let mut last: Option<usize> = None;
+        for (index, id) in root_ids.iter().enumerate() {
+            let Some(span) = self.document.source_span_of(*id) else {
+                return false;
+            };
+            if span.end < old_start {
+                continue;
+            }
+            if span.start > old_end {
+                break;
+            }
+            first.get_or_insert(index);
+            last = Some(index);
+        }
+        let (Some(first), Some(last)) = (first, last) else {
+            return false;
+        };
+        // 编辑越过最后一根块的末尾：新内容落在所有旧区间之外，重投影窗口里
+        // 的探针根不会被安装，新增的根会静默丢掉。交给整篇重建。
+        if last + 1 == root_ids.len()
+            && self
+                .document
+                .source_span_of(root_ids[last])
+                .is_some_and(|span| old_end >= span.end)
+        {
+            return false;
+        }
+        // 边界一侧的根也可能被这次编辑并掉/拆开，扩一根一起重解析。
+        let first = first.saturating_sub(1);
+        let last = (last + 1).min(root_ids.len() - 1);
+        let old_roots: Vec<_> = self.document.root_blocks()[first..=last].to_vec();
+        let old_spans: Vec<_> = (first..=last)
+            .filter_map(|index| {
+                self.document
+                    .root_blocks()
+                    .get(index)
+                    .and_then(|root| {
+                        self.document
+                            .source_span_of(root.entity_id())
+                            .map(|span| (root.entity_id(), span))
+                    })
+            })
+            .collect();
+        let old_count = last + 1 - first;
+
+        // 表格/引用定义/脚注等需要整篇运行时收尾的形状：宁可整篇重建，
+        // 也不在半接好的区域上继续写。
+        let mut needs_full = false;
+        let mut walk: Vec<_> = old_roots.clone();
+        while let Some(root) = walk.pop() {
+            if root.read(cx).kind() == BlockKind::Table
+                || root.read(cx).record.table.is_some()
+                || self.changed_block_needs_runtime_context_refresh(&root, cx)
+            {
+                needs_full = true;
+                break;
+            }
+            walk.extend(root.read(cx).children.iter().cloned());
+        }
+        if needs_full {
+            return false;
+        }
+
+        let delta = new_len as i64 - edit.removed.len() as i64;
+        if delta != 0 {
+            let map_offset = |offset: usize| -> usize {
+                if offset <= old_start {
+                    offset
+                } else if offset >= old_end {
+                    (offset as i64 + delta).max(0) as usize
+                } else {
+                    old_start + new_len
+                }
+            };
+            self.document.shift_source_spans_after(old_end, delta, total);
+            for (id, span) in old_spans {
+                let start = map_offset(span.start).min(total);
+                let end = map_offset(span.end).min(total).max(start);
+                self.document.set_source_span(id, start..end);
+            }
+        }
+
+        if self.reproject_root_range(first, last, false, cx).is_none() {
+            return false;
+        }
+        let new_count = old_count + self.document.root_blocks().len().saturating_sub(root_ids.len());
+        let new_roots: Vec<_> = self
+            .document
+            .root_blocks()
+            .iter()
+            .skip(first)
+            .take(new_count)
+            .cloned()
+            .collect();
+        let base_dir = self.local_link_base_dir();
+        let mut region: Vec<_> = new_roots;
+        while let Some(block) = region.pop() {
+            region.extend(block.read(cx).children.iter().cloned());
+            self.sync_runtime_context_for_block(&block, base_dir.as_deref(), cx);
+        }
+        self.sync_table_axis_visuals(cx);
+        self.sync_vim_block_carets(cx);
+        true
+    }
+
     /// 撤销/重做一步的收尾：把选区放回那一步之前的现场。
     fn apply_restored_selection(&mut self, entry: &HistoryEntry, cx: &mut Context<Self>) {
         self.cancel_pending_view_mode_scroll();

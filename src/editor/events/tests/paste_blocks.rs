@@ -462,3 +462,58 @@
             assert!(text.contains("- 甲"), "粘贴内容没落进缓冲区：{text:?}");
         });
     }
+
+    /// 粘贴只动落点那一段：其它根块的实体不该被整篇重投影换掉，
+    /// 重解析的根块数也应停在受影响区间附近。
+    #[gpui::test]
+    async fn multiline_paste_reprojects_only_the_affected_roots(cx: &mut TestAppContext) {
+        let markdown = (0..40)
+            .map(|index| format!("paragraph {index}\n\n"))
+            .collect::<String>();
+        let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+
+        editor.update(cx, |editor, cx| {
+            let before: Vec<_> = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .map(|visible| visible.entity.clone())
+                .collect();
+            let target = before[10].clone();
+            let reprojected_before = editor.roots_reprojected.get();
+            editor.on_block_event(
+                target,
+                &BlockEvent::RequestPasteMultiline {
+                    leading: InlineTextTree::plain(String::new()),
+                    lines: vec![
+                        "pasted one".to_string(),
+                        "pasted two".to_string(),
+                        "pasted three".to_string(),
+                    ],
+                    trailing: InlineTextTree::plain(String::new()),
+                },
+                cx,
+            );
+            let after: Vec<_> = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .map(|visible| visible.entity.clone())
+                .collect();
+            assert_eq!(
+                after[0].entity_id(),
+                before[0].entity_id(),
+                "粘贴之外的根块被换掉了"
+            );
+            assert_eq!(
+                after[1].entity_id(),
+                before[1].entity_id(),
+                "粘贴之外的根块被换掉了"
+            );
+            let reprojected = editor.roots_reprojected.get() - reprojected_before;
+            assert!(
+                reprojected > 0 && reprojected <= 4,
+                "应只重解析落点附近几根块：{reprojected}"
+            );
+        });
+    }

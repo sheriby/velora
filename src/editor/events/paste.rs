@@ -55,8 +55,10 @@ impl Editor {
         let applied = self.buffer.edit(source_range, &inserted);
         // 光标停在粘贴文本的末尾：插入点之后、原文剩下的那截之前。
         let caret = applied.new_range.end;
-        self.record_buffer_edit(applied);
-        self.rebuild_document_from_buffer(cx);
+        self.record_buffer_edit(applied.clone());
+        if !self.reproject_after_buffer_edit(&applied, cx) {
+            self.rebuild_document_from_buffer(cx);
+        }
         if let Some(last_root) = self.document.root_blocks().last().cloned() {
             // 结构块落在文档末尾时下面没有行，光标得有段落落脚。
             self.ensure_trailing_paragraph_after_structural(&last_root, cx);
