@@ -221,3 +221,58 @@ async fn core_repair_cross_block_copy_and_replace_use_the_original_html_boundary
         assert_eq!(editor.buffer.text(), source);
     });
 }
+/// 跨块替换只重解析落点区间：区间外根块的实体不该被整篇重投影换掉。
+#[gpui::test]
+async fn cross_block_replace_reprojects_only_the_affected_roots(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = (0..40)
+        .map(|index| format!("paragraph {index}\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.clone(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let before: Vec<_> = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| visible.entity.clone())
+            .collect();
+        let reprojected_before = editor.roots_reprojected.get();
+        editor.cross_block_selection = Some(crate::editor::CrossBlockSelection {
+            anchor: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: before[10].entity_id(),
+                offset: 0,
+            },
+            focus: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: before[12].entity_id(),
+                offset: 0,
+            },
+        });
+        assert!(editor.replace_cross_block_selection_with_text(
+            "X",
+            None,
+            false,
+            UndoCaptureKind::NonCoalescible,
+            cx
+        ));
+        let after: Vec<_> = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| visible.entity.clone())
+            .collect();
+        assert_eq!(
+            after[0].entity_id(),
+            before[0].entity_id(),
+            "跨块替换换掉了区间外的根块"
+        );
+        let reprojected = editor.roots_reprojected.get() - reprojected_before;
+        assert!(
+            reprojected > 0 && reprojected <= 6,
+            "应只重解析落点附近几根块：{reprojected}"
+        );
+        editor.undo_document(cx);
+        assert_eq!(editor.buffer.text(), source, "撤销应恢复原文");
+    });
+}
+

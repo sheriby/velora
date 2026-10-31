@@ -864,9 +864,12 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let applied = self.buffer.edit(source_range, new_text);
-        self.record_buffer_edit(applied);
+        self.record_buffer_edit(applied.clone());
         // 再从缓冲区重建投影：只有重建，根块才挂得上区间，之后的位置换算才有锚点。
-        self.rebuild_document_from_buffer(cx);
+        // 区间能定位时只重解析那一段；表格/定义/越过文末等形状退回整篇。
+        if !self.reproject_after_buffer_edit(&applied, cx) {
+            self.rebuild_document_from_buffer(cx);
+        }
     }
 
     fn apply_marked_source_range(&mut self, source_range: Range<usize>, cx: &mut Context<Self>) {
