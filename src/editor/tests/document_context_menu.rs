@@ -1572,3 +1572,22 @@ async fn paste_availability_is_snapshotted_when_the_menu_opens(cx: &mut TestAppC
         "重新打开菜单应读到新的剪贴板状态"
     );
 }
+
+/// 菜单开着期间行与主题都不变：几何实测一次就该复用，光标闪烁的每一帧重测
+/// 全部 label/快捷键/箭头是白付的。
+#[gpui::test]
+async fn menu_geometry_is_measured_once_per_open(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    redraw(cx);
+    right_click(&editor, 0, cx);
+    let after_open = editor.read_with(cx, |editor, _| editor.context_menu_measurements.get());
+    redraw(cx);
+    redraw(cx);
+    let after_frames = editor.read_with(cx, |editor, _| editor.context_menu_measurements.get());
+    assert_eq!(
+        after_frames, after_open,
+        "菜单开着期间又重测了 {} 次几何",
+        after_frames - after_open
+    );
+}

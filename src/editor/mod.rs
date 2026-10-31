@@ -226,6 +226,9 @@ pub struct Editor {
     source_kind_writes: std::cell::Cell<u64>,
     /// 性能计数器：指针会话收尾时实际更新的块/格子数。
     pointer_session_updates: std::cell::Cell<u64>,
+    /// 性能计数器：正文右键菜单几何的实测次数。菜单开着期间行与主题不变，
+    /// 不该每帧重测。
+    context_menu_measurements: std::cell::Cell<u64>,
     /// 性能计数器：量「本块第一行的记号宽度」的次数。只有带子块的容器需要它
     /// 换算子块缩进，叶子块不该付这份行切片。
     measured_prefix_calls: std::cell::Cell<u64>,
@@ -1015,6 +1018,7 @@ impl Editor {
             source_mapping_roots_walked: std::cell::Cell::default(),
             source_kind_writes: std::cell::Cell::default(),
             pointer_session_updates: std::cell::Cell::default(),
+            context_menu_measurements: std::cell::Cell::default(),
             measured_prefix_calls: std::cell::Cell::default(),
             session_created_images: Vec::new(),
             word_count_scans: std::cell::Cell::default(),

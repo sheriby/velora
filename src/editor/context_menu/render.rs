@@ -75,162 +75,213 @@ impl Editor {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let s = cx.global::<I18nManager>().strings_arc();
-
-        match menu {
+        // 先把菜单状态快照下来，后面写几何缓存要用 &mut self。
+        let (position, open_submenu, menu_focus, rows) = match menu {
             ContextMenuState::Document {
                 position,
                 open_submenu,
-                focus: menu_focus,
+                focus,
+                rows,
                 ..
-            } => {
-                let rows = self.document_menu_rows(cx);
+            } => (*position, *open_submenu, focus.clone(), rows.clone()),
+            _ => return None,
+        };
+
+        // 打开时拍下的行数据与几何：菜单开着期间行/主题不变，逐帧重建
+        // 行、逐帧重测 label 宽度都是白付的。主题代数变了才重测。
+        let theme_generation = cx
+            .global::<crate::theme::ThemeManager>()
+            .current_theme_generation();
+        let cached_panel = match self.context_menu.as_ref() {
+            Some(ContextMenuState::Document {
+                geometry: Some((generation, geometry)),
+                ..
+            }) if *generation == theme_generation => Some(geometry.clone()),
+            _ => None,
+        };
+        let panel = match cached_panel {
+            Some(panel) => panel,
+            None => {
                 // 平台快捷键的文字宽度不同，定位与绘制必须共用实测尺寸。
-                let panel = DocumentMenuGeometry::measure_in_window(&rows, &s, theme, window, cx);
-                // 二级面板与父行顶部对齐；父行离底部太近时由落点函数向上收。
-                let submenu_panels = open_submenu.map(|submenu| {
-                    let sub_rows = self.document_submenu_rows(submenu, cx);
-                    let index = rows.iter().position(|row| {
-                        matches!(row, DocumentMenuRow::Submenu { id, .. } if *id == submenu)
-                    });
-                    (
-                        DocumentMenuGeometry::measure_in_window(&sub_rows, &s, theme, window, cx),
-                        panel.row_top(index),
-                    )
-                });
-                let (origin, submenu_origin) = document_menu_origins(
-                    *position,
-                    viewport,
-                    &panel,
-                    submenu_panels
-                        .as_ref()
-                        .map(|(geometry, top)| (geometry, *top)),
-                    px(d.context_menu_submenu_gap),
-                );
-                let submenu_panel = match (open_submenu, submenu_origin, submenu_panels.as_ref()) {
-                    (Some(submenu), Some(origin), Some((geometry, _))) => Some(
-                        self.render_document_submenu_panel(theme, &s, *submenu, origin, geometry, cx),
-                    ),
-                    _ => None,
-                };
-                // 两块面板中间那条缝的感应带：从主面板边缘一直盖到二级面板外沿，
-                // 高度跟着二级面板走。缝只有几个像素宽，鼠标从父行横过去时就会
-                // 经过它，停在那儿不该被当成离开菜单。
-                // 与二级面板有重叠：两块各记一份悬停，同一次移动里谁后到都不影响判定。
-                let submenu_bridge = match (submenu_origin, submenu_panels.as_ref()) {
-                    (Some(submenu_origin), Some((geometry, _))) => {
-                        let (left, right) = submenu_bridge_span(
-                            origin.x,
-                            panel.size.width,
-                            submenu_origin.x,
-                            geometry.size.width,
-                        );
-                        Some(
-                            div()
-                                .id("editor-context-menu-submenu-bridge")
-                                .debug_selector(|| "editor-context-menu-submenu-bridge".to_string())
-                                .absolute()
-                                .left(left)
-                                .top(submenu_origin.y)
-                                .w(right - left)
-                                .h(geometry.size.height)
-                                .on_hover(cx.listener(
-                                    |editor, hovered: &bool, _window, cx| {
-                                        editor.set_document_submenu_bridge_hover(*hovered, cx);
-                                    },
-                                ))
-                                .into_any_element(),
-                        )
-                    }
-                    _ => None,
-                };
-
-                // 菜单要接管键盘：焦点落在面板上并登记焦点陷阱，打字、
-                // vim 普通模式按键都留在菜单里，不再打进遮罩后面的正文。
-                // Esc 走全局的 DismissTransientUi 绑定照常关闭并归还焦点。
-                let menu_focus = menu_focus.clone();
-                let overlay = div()
-                    .id("editor-context-menu-overlay")
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .occlude()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(Self::on_dismiss_context_menu_overlay),
-                    )
-                    .child(
-                        div()
-                            .id("editor-context-menu-panel")
-                            // 测试按这个名字点名的就是这一份面板的边界（与工具栏
-                            // `editor-selection-toolbar` 同一个写法）。
-                            .debug_selector(|| "editor-context-menu-panel".to_string())
-                            .absolute()
-                            .left(origin.x)
-                            .top(origin.y)
-                            .w(panel.size.width)
-                            .p(px(d.menu_panel_padding))
-                            .flex()
-                            .flex_col()
-                            .gap(px(d.menu_panel_gap))
-                            .occlude()
-                            .bg(c.dialog_surface)
-                            .border(px(d.dialog_border_width))
-                            .border_color(c.dialog_border)
-                            .rounded(px(d.menu_panel_radius))
-                            .shadow_lg()
-                            .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
-                                cx.stop_propagation()
-                            })
-                            .on_prepaint({
-                                // 与模态同一套做法：挂载的第一帧先记住正文里的焦点，
-                                // 再把焦点交给菜单；关闭路径负责归还。
-                                let owner = cx.entity().downgrade();
-                                move |_, window, cx| {
-                                    if let Err(error) = owner.update(cx, |editor, cx| {
-                                        let Some(ContextMenuState::Document {
-                                            focus,
-                                            restore_focus,
-                                            ..
-                                        }) = editor.context_menu.as_mut()
-                                        else {
-                                            return;
-                                        };
-                                        if restore_focus.is_some() {
-                                            return;
-                                        }
-                                        *restore_focus =
-                                            Some(window.focused(cx).map(|focus| focus.downgrade()));
-                                        let focus = focus.clone();
-                                        focus.focus(window, cx);
-                                    }) {
-                                        eprintln!("聚焦正文菜单失败：{error}");
-                                    }
-                                }
-                            })
-                            .focus_trap("editor-document-menu-focus-trap", &menu_focus)
-                            .children(
-                                rows.into_iter()
-                                    .map(|row| {
-                                        self.render_document_menu_row(theme, &s, row, *open_submenu, cx)
-                                    }),
-                            ),
-                    );
-
-                Some(match (submenu_panel, submenu_bridge) {
-                    (Some(panel), Some(bridge)) => {
-                        overlay.child(bridge).child(panel).into_any_element()
-                    }
-                    (Some(panel), None) => overlay.child(panel).into_any_element(),
-                    (None, Some(bridge)) => overlay.child(bridge).into_any_element(),
-                    (None, None) => overlay.into_any_element(),
-                })
+                self.context_menu_measurements
+                    .set(self.context_menu_measurements.get() + 1);
+                let panel = std::rc::Rc::new(DocumentMenuGeometry::measure_in_window(
+                    rows.as_slice(),
+                    &s,
+                    theme,
+                    window,
+                    cx,
+                ));
+                if let Some(ContextMenuState::Document { geometry, .. }) =
+                    self.context_menu.as_mut()
+                {
+                    *geometry = Some((theme_generation, panel.clone()));
+                }
+                panel
             }
-            ContextMenuState::TableAxis { .. }
-            | ContextMenuState::TableCell { .. }
-            | ContextMenuState::Image { .. } => None,
-        }
+        };
+        // 二级面板与父行顶部对齐；父行离底部太近时由落点函数向上收。
+        let submenu_panels = open_submenu.map(|submenu| {
+            let cached = match self.context_menu.as_ref() {
+                Some(ContextMenuState::Document {
+                    submenu_cache: Some((id, rows, geometry)),
+                    ..
+                }) if *id == submenu => Some((rows.clone(), geometry.clone())),
+                _ => None,
+            };
+            let (sub_rows, sub_geometry) = match cached {
+                Some(cached) => cached,
+                None => {
+                    let sub_rows = std::rc::Rc::new(self.document_submenu_rows(submenu, cx));
+                    let sub_geometry = std::rc::Rc::new(DocumentMenuGeometry::measure_in_window(
+                        sub_rows.as_slice(),
+                        &s,
+                        theme,
+                        window,
+                        cx,
+                    ));
+                    if let Some(ContextMenuState::Document { submenu_cache, .. }) =
+                        self.context_menu.as_mut()
+                    {
+                        *submenu_cache = Some((submenu, sub_rows.clone(), sub_geometry.clone()));
+                    }
+                    (sub_rows, sub_geometry)
+                }
+            };
+            let index = rows.iter().position(|row| {
+                matches!(row, DocumentMenuRow::Submenu { id, .. } if *id == submenu)
+            });
+            (sub_rows, sub_geometry, panel.row_top(index))
+        });
+        let (origin, submenu_origin) = document_menu_origins(
+            position,
+            viewport,
+            &panel,
+            submenu_panels
+                .as_ref()
+                .map(|(_, geometry, top)| (geometry.as_ref(), *top)),
+            px(d.context_menu_submenu_gap),
+        );
+        let submenu_panel = match (open_submenu, submenu_origin, submenu_panels.as_ref()) {
+            (Some(submenu), Some(origin), Some((sub_rows, geometry, _))) => {
+                Some(self.render_document_submenu_panel(
+                    theme,
+                    &s,
+                    submenu,
+                    origin,
+                    sub_rows.as_slice(),
+                    geometry,
+                    cx,
+                ))
+            }
+            _ => None,
+        };
+        // 两块面板中间那条缝的感应带：从主面板边缘一直盖到二级面板外沿，
+        // 高度跟着二级面板走。缝只有几个像素宽，鼠标从父行横过去时就会
+        // 经过它，停在那儿不该被当成离开菜单。
+        // 与二级面板有重叠：两块各记一份悬停，同一次移动里谁后到都不影响判定。
+        let submenu_bridge = match (submenu_origin, submenu_panels.as_ref()) {
+            (Some(submenu_origin), Some((_, geometry, _))) => {
+                let (left, right) = submenu_bridge_span(
+                    origin.x,
+                    panel.size.width,
+                    submenu_origin.x,
+                    geometry.size.width,
+                );
+                Some(
+                    div()
+                        .id("editor-context-menu-submenu-bridge")
+                        .debug_selector(|| "editor-context-menu-submenu-bridge".to_string())
+                        .absolute()
+                        .left(left)
+                        .top(submenu_origin.y)
+                        .w(right - left)
+                        .h(geometry.size.height)
+                        .on_hover(cx.listener(|editor, hovered: &bool, _window, cx| {
+                            editor.set_document_submenu_bridge_hover(*hovered, cx);
+                        }))
+                        .into_any_element(),
+                )
+            }
+            _ => None,
+        };
+
+        // 菜单要接管键盘：焦点落在面板上并登记焦点陷阱，打字、
+        // vim 普通模式按键都留在菜单里，不再打进遮罩后面的正文。
+        // Esc 走全局的 DismissTransientUi 绑定照常关闭并归还焦点。
+        let overlay = div()
+            .id("editor-context-menu-overlay")
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(Self::on_dismiss_context_menu_overlay),
+            )
+            .child(
+                div()
+                    .id("editor-context-menu-panel")
+                    // 测试按这个名字点名的就是这一份面板的边界（与工具栏
+                    // `editor-selection-toolbar` 同一个写法）。
+                    .debug_selector(|| "editor-context-menu-panel".to_string())
+                    .absolute()
+                    .left(origin.x)
+                    .top(origin.y)
+                    .w(panel.size.width)
+                    .p(px(d.menu_panel_padding))
+                    .flex()
+                    .flex_col()
+                    .gap(px(d.menu_panel_gap))
+                    .occlude()
+                    .bg(c.dialog_surface)
+                    .border(px(d.dialog_border_width))
+                    .border_color(c.dialog_border)
+                    .rounded(px(d.menu_panel_radius))
+                    .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
+                        cx.stop_propagation()
+                    })
+                    .on_prepaint({
+                        // 与模态同一套做法：挂载的第一帧先记住正文里的焦点，
+                        // 再把焦点交给菜单；关闭路径负责归还。
+                        let owner = cx.entity().downgrade();
+                        move |_, window, cx| {
+                            if let Err(error) = owner.update(cx, |editor, cx| {
+                                let Some(ContextMenuState::Document {
+                                    focus,
+                                    restore_focus,
+                                    ..
+                                }) = editor.context_menu.as_mut()
+                                else {
+                                    return;
+                                };
+                                if restore_focus.is_some() {
+                                    return;
+                                }
+                                *restore_focus =
+                                    Some(window.focused(cx).map(|focus| focus.downgrade()));
+                                let focus = focus.clone();
+                                focus.focus(window, cx);
+                            }) {
+                                eprintln!("聚焦正文菜单失败：{error}");
+                            }
+                        }
+                    })
+                    .focus_trap("editor-document-menu-focus-trap", &menu_focus)
+                    .children(rows.iter().cloned().map(|row| {
+                        self.render_document_menu_row(theme, &s, row, open_submenu, cx)
+                    })),
+            );
+
+        Some(match (submenu_panel, submenu_bridge) {
+            (Some(panel), Some(bridge)) => overlay.child(bridge).child(panel).into_any_element(),
+            (Some(panel), None) => overlay.child(panel).into_any_element(),
+            (None, Some(bridge)) => overlay.child(bridge).into_any_element(),
+            (None, None) => overlay.into_any_element(),
+        })
     }
 
     fn render_object_context_menu(
@@ -960,11 +1011,11 @@ impl Editor {
         strings: &crate::i18n::I18nStrings,
         submenu: DocumentSubmenu,
         origin: Point<Pixels>,
+        rows: &[DocumentMenuRow],
         geometry: &DocumentMenuGeometry,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let d = &theme.dimensions;
-        let rows = self.document_submenu_rows(submenu, cx);
         let panel_id = match submenu {
             DocumentSubmenu::Format => "editor-context-menu-format",
             DocumentSubmenu::Paragraph => "editor-context-menu-paragraph",
@@ -997,7 +1048,7 @@ impl Editor {
             }))
             .children(
                 rows.into_iter()
-                    .map(|row| self.render_document_menu_row(theme, strings, row, None, cx)),
+                    .map(|row| self.render_document_menu_row(theme, strings, row.clone(), None, cx)),
             )
             .into_any_element()
     }

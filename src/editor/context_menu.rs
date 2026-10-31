@@ -54,6 +54,15 @@ pub(super) enum ContextMenuState {
         submenu_bridge_hovered: bool,
         /// 打开那一刻剪贴板里有没有内容：菜单开着期间的按键/渲染不再逐帧读剪贴板。
         clipboard_has_content: bool,
+        /// 打开时拍下的行数据与实测几何：菜单开着期间行/主题不变，逐帧重建
+        /// 行、逐帧重测 label 宽度都是白付的。
+        rows: std::rc::Rc<Vec<DocumentMenuRow>>,
+        geometry: Option<(u64, std::rc::Rc<DocumentMenuGeometry>)>,
+        submenu_cache: Option<(
+            DocumentSubmenu,
+            std::rc::Rc<Vec<DocumentMenuRow>>,
+            std::rc::Rc<DocumentMenuGeometry>,
+        )>,
     },
     /// Table row or column context menu for an existing native table.
     TableAxis {
@@ -174,6 +183,7 @@ impl Editor {
         self.close_menu_bar(cx);
         self.context_menu_submenu_close_task = None;
         self.context_menu_popup = None;
+        let rows = std::rc::Rc::new(self.document_menu_rows(cx));
         self.context_menu = Some(ContextMenuState::Document {
             position,
             target,
@@ -184,6 +194,9 @@ impl Editor {
             submenu_panel_hovered: false,
             submenu_bridge_hovered: false,
             clipboard_has_content: cx.read_from_clipboard().is_some(),
+            rows,
+            geometry: None,
+            submenu_cache: None,
         });
         cx.notify();
     }

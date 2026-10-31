@@ -229,6 +229,7 @@ impl DocumentMenuCommand {
 }
 
 /// 渲染用的一行：条目、二级菜单入口，或分隔线。
+#[derive(Clone)]
 pub(crate) enum DocumentMenuRow {
     Item {
         command: DocumentMenuCommand,
