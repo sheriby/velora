@@ -3554,3 +3554,23 @@ async fn block_visual_replace_char_rewrites_each_selected_line(cx: &mut TestAppC
     );
     assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
 }
+
+/// 空文本对象（`()`、`""`）的 inner 区间为空：操作符应无操作，
+/// 不能把闭括号/闭引号当成对象内容删掉。
+#[gpui::test]
+async fn empty_text_objects_are_a_no_op(cx: &mut TestAppContext) {
+    for (source, keys) in [
+        ("()", "d i ("),
+        ("()", "l d i ("),
+        ("\"\"", "d i \""),
+        ("\"\"", "l d i \""),
+    ] {
+        let (editor, cx) = vim_editor(cx, source);
+        cx.simulate_keystrokes(keys);
+        assert_eq!(
+            document_text(&editor, &cx),
+            source,
+            "{keys} 作用在 {source:?} 上应无操作"
+        );
+    }
+}
