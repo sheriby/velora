@@ -599,6 +599,32 @@ impl Editor {
         let pattern = parts.first().copied().unwrap_or("");
         let replacement = parts.get(1).copied().unwrap_or("");
         let flags = parts.get(2).copied().unwrap_or("");
+        // 只实现了 g/i；其余标志与 `~` 复用上次替换串若静默忽略，用户会以为
+        // 确认/大小写语义生效却得到一次性改写，这里显式拒绝并不落笔。
+        if flags.contains('c') {
+            self.show_message_modal(
+                "vim",
+                "暂不支持逐处确认（c 标志）".to_string(),
+                cx,
+            );
+            return;
+        }
+        if flags.chars().any(|flag| !matches!(flag, 'g' | 'i')) {
+            self.show_message_modal(
+                "vim",
+                format!("E488: Trailing characters: {flags}"),
+                cx,
+            );
+            return;
+        }
+        if replacement == "~" {
+            self.show_message_modal(
+                "vim",
+                "暂不支持 :s 的「~」复用上次替换串".to_string(),
+                cx,
+            );
+            return;
+        }
         let global = flags.contains('g');
         let case_insensitive = flags.contains('i');
         let Ok(regex) = regex::RegexBuilder::new(pattern)

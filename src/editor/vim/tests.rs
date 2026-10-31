@@ -3715,3 +3715,35 @@ async fn gv_survives_structural_edits_before_the_last_visual(cx: &mut TestAppCon
         .unwrap_or_default();
     assert_eq!(selected, "c", "gv 应重新选中原来的 c 块");
 }
+
+/// `:s` 暂不支持的标志与替换语法要显式拒绝，不能静默按 g/i 之外的含义执行：
+/// c（逐处确认）、未知标志、`~`（复用上次替换串）。
+#[gpui::test]
+async fn substitute_rejects_unsupported_flags_and_replacement(cx: &mut TestAppContext) {
+    for (command, expect) in [
+        ("s/one/TWO/c", "暂不支持"),
+        ("s/one/TWO/q", "E488"),
+        ("s/one/~", "~"),
+    ] {
+        let (editor, cx) = vim_editor(cx, "one two");
+        cx.simulate_keystrokes(":");
+        cx.simulate_input(command);
+        cx.simulate_keystrokes("enter");
+        redraw(cx);
+        editor.read_with(cx, |editor, _| {
+            let detail = editor
+                .modal_spec()
+                .and_then(|modal| modal.detail.as_ref().map(|detail| detail.to_string()))
+                .unwrap_or_default();
+            assert!(
+                detail.contains(expect),
+                "{command} 应有显式提示（含 {expect:?}）：{detail:?}"
+            );
+        });
+        assert_eq!(
+            document_text(&editor, &cx),
+            "one two",
+            "{command} 不应落笔改写正文"
+        );
+    }
+}
