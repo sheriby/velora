@@ -1125,6 +1125,7 @@ impl Render for Block {
                     .w_full()
                     .flex()
                     .gap(px(0.0))
+                    .debug_selector(|| "table-header-row".into())
                     .child(
                         // Left-edge band mirrors the body rows so the header row
                         // can be hovered, selected, and right-clicked just like
@@ -1136,8 +1137,9 @@ impl Render for Block {
                             .absolute()
                             .top_0()
                             .bottom_0()
-                            .left(-activation_band)
-                            .w(activation_band)
+                            .left_0()
+                            .w(px(6.0))
+                            .debug_selector(|| "table-header-axis-band".into())
                             .rounded(px(6.0))
                             .bg(header_band_bg)
                             .cursor_pointer()
@@ -1298,6 +1300,7 @@ impl Render for Block {
                                 .w_full()
                                 .flex()
                                 .gap(px(0.0))
+                                .debug_selector(|| "table-body-row".into())
                                 .child(
                                     div()
                                         .id(ElementId::Name(
@@ -1310,8 +1313,9 @@ impl Render for Block {
                                         .absolute()
                                         .top_0()
                                         .bottom_0()
-                                        .left(-activation_band)
-                                        .w(activation_band)
+                                        .left_0()
+                                        .w(px(6.0))
+                                        .debug_selector(|| "table-body-axis-band".into())
                                         .rounded(px(6.0))
                                         .bg(band_bg)
                                         .cursor_pointer()

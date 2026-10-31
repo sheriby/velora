@@ -1293,3 +1293,30 @@ async fn clicking_the_header_top_edge_edits_text_instead_of_selecting_the_column
         );
     });
 }
+/// 行轴选择带不能再伸出表格左边：祖先一旦裁切，整条带会消失。
+/// 现在它贴在行内左侧（格内留白里），行的布局尺寸不变。
+#[gpui::test]
+async fn row_axis_bands_stay_inside_the_table(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "| a | b |\n| --- | --- |\n| c | d |\n".into(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+    for (row_selector, band_selector) in [
+        ("table-header-row", "table-header-axis-band"),
+        ("table-body-row", "table-body-axis-band"),
+    ] {
+        let row = cx.debug_bounds(row_selector).expect("行应有布局");
+        let band = cx.debug_bounds(band_selector).expect("选择带应有布局");
+        assert!(
+            band.left() >= row.left() - gpui::px(0.5),
+            "{band_selector} 伸到了行外：{band:?} / {row:?}"
+        );
+        assert!(
+            band.right() <= row.right() + gpui::px(0.5),
+            "{band_selector} 超出行的右边界"
+        );
+    }
+}
+
