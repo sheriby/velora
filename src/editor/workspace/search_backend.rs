@@ -252,10 +252,10 @@ pub(crate) fn cached_file_source(path: &Path) -> Option<std::sync::Arc<str>> {
     if len > SEARCH_CACHE_MAX_FILE_BYTES {
         // 超大文件不进缓存，但仍要读出来搜：搜索与「全部替换」必须看同一批
         // 文件，否则搜索里看不见的命中会被批量替换掉（确认框计数也没有它）。
+        // 与执行路径同一条无损判据：不可无损写回的文件两边都不收。
         let bytes = fs::read(path).ok()?;
-        return Some(std::sync::Arc::from(
-            crate::editor::encoding::decode_document_bytes(bytes),
-        ));
+        let text = crate::editor::encoding::decode_document_bytes_lossless(bytes)?;
+        return Some(std::sync::Arc::from(text));
     }
 
     {
@@ -276,8 +276,11 @@ pub(crate) fn cached_file_source(path: &Path) -> Option<std::sync::Arc<str>> {
     // `return None`，整个文件跳过内容搜索——中文 Windows 上的 GBK/GB18030 笔记
     // 因此永远搜不到正文（缺陷 #5）。缓存里存的仍是解码后的 UTF-8 文本，
     // 所以后续的字节偏移一律按解码文本算。
-    let contents: std::sync::Arc<str> =
-        std::sync::Arc::from(crate::editor::encoding::decode_document_bytes(bytes));
+    // 「全部替换」的确认计数与执行都消费这份文本（评审 1b0d669）：必须与
+    // 执行的 load_document 同一条无损判据，不可无损写回的文件返回 None。
+    let contents: std::sync::Arc<str> = std::sync::Arc::from(
+        crate::editor::encoding::decode_document_bytes_lossless(bytes)?,
+    );
 
     if let Ok(mut cache) = search_content_cache().lock() {
         if let Some(existing) = cache.get(path) {

@@ -95,6 +95,16 @@ pub(crate) fn decode_document_bytes(bytes: Vec<u8>) -> String {
     FileShape::detect_and_decode(&bytes).1
 }
 
+/// 与 [`load_document`] 同一条「能不能无损写回」判据的只要文本版。
+///
+/// 消费方是「解码完还要写回磁盘」的链路（跨文件替换的确认计数与执行）：
+/// 两边必须看同一批文件，否则计数有命中、执行却拒绝（或反之）。不可无损
+/// 表示的文件返回 None——它们本来就打不开，搜不到/替换不到是一致的。
+pub(crate) fn decode_document_bytes_lossless(bytes: Vec<u8>) -> Option<String> {
+    let (shape, text) = FileShape::detect_and_decode(&bytes);
+    shape.is_lossless().then_some(text)
+}
+
 /// 拒绝打开的理由：说清楚「为什么不能打开」和「文件还在原地」。
 fn unrepresentable_encoding_error(path: &Path) -> io::Error {
     io::Error::new(

@@ -3275,3 +3275,27 @@ async fn workspace_replace_defers_closed_file_writes_to_the_background(
     assert_eq!(fs::read_to_string(&second).expect("读取夹具"), "c2d");
     fs::remove_dir_all(root).expect("清理夹具");
 }
+
+/// 「全部替换」的确认计数消费 cached_file_source（评审 1b0d669），执行走
+/// load_document：两边必须看同一批文件。不可无损写回的文件（坏 UTF-16）
+/// 计数与执行都不收——旧实现计数拿到 lossy 文本照常计数，执行却拒绝，
+/// 弹窗数字与实际写入分叉。
+#[test]
+fn unrepresentable_files_are_skipped_by_the_shared_source() {
+    let root = std::env::temp_dir().join(format!("velora-lossless-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let broken = root.join("broken.md");
+    // UTF-16 BOM + 孤立代理项：load_document 拒绝（InvalidData）。
+    fs::write(&broken, [0xFF, 0xFE, 0x00, 0x00, 0xFF, 0xD8]).unwrap();
+    assert!(
+        super::super::cached_file_source(&broken).is_none(),
+        "不可无损写回的文件不该拿到文本（执行路径必然拒绝它）"
+    );
+    let good = root.join("good.md");
+    fs::write(&good, "中文 GBK 之外的正常内容").unwrap();
+    assert!(
+        super::super::cached_file_source(&good).is_some(),
+        "正常文件（含中文）必须仍可搜索"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
