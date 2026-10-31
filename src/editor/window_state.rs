@@ -221,6 +221,22 @@ impl Editor {
         )
     }
 
+    /// 焦点岛引导高度的冻结策略：同一个岛在并回挂载区之前沿用创建时的
+    /// 估计高度，避免中间行逐帧量高把远处的光标块一格一格地推走。
+    pub(super) fn freeze_focus_island_lead(
+        lock: &mut Option<(usize, f32)>,
+        island: Option<&mut FocusIsland>,
+    ) {
+        let Some(island) = island else {
+            *lock = None;
+            return;
+        };
+        match *lock {
+            Some((row, lead)) if row == island.row => island.lead_h = lead,
+            _ => *lock = Some((island.row, island.lead_h)),
+        }
+    }
+
     pub(super) fn rendered_window_with_row_floor(
         prefix: &[f32],
         scroll_y: f32,

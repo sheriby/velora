@@ -1,4 +1,5 @@
 use super::common::*;
+use crate::editor::FocusIsland;
 
 #[gpui::test]
 async fn core_repair_cold_blank_rows_fill_the_viewport_without_cursor_repaints(cx: &mut TestAppContext) {
@@ -128,6 +129,27 @@ async fn core_repair_changed_row_plan_rejects_previous_frame_geometry(cx: &mut T
         editor.fold_state_version += 1;
         assert!(!editor.mounted_run_is_addressable(run), "结构版本变化后旧几何不能继续参与命中与量高");
     });
+}
+
+/// 焦点岛在并回挂载区之前沿用创建时的引导高度：中间行量高只会改变
+/// 挂载区与岛之间的间隔，不该把岛本身一格一格地推走。
+#[test]
+fn focus_island_lead_freezes_until_it_merges_into_the_run() {
+    let mut lock = None;
+    let mut first = FocusIsland { row: 5, lead_h: 80.0 };
+    Editor::freeze_focus_island_lead(&mut lock, Some(&mut first));
+    assert_eq!(first.lead_h, 80.0);
+
+    let mut remeasured = FocusIsland { row: 5, lead_h: 95.0 };
+    Editor::freeze_focus_island_lead(&mut lock, Some(&mut remeasured));
+    assert_eq!(remeasured.lead_h, 80.0, "同一岛的引导高度应冻结");
+
+    Editor::freeze_focus_island_lead(&mut lock, None);
+    assert_eq!(lock, None, "并回挂载区后锁应释放");
+
+    let mut reappeared = FocusIsland { row: 5, lead_h: 200.0 };
+    Editor::freeze_focus_island_lead(&mut lock, Some(&mut reappeared));
+    assert_eq!(reappeared.lead_h, 200.0, "重新出现时接受新的估计高度");
 }
 
 #[gpui::test]

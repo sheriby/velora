@@ -207,6 +207,9 @@ pub struct Editor {
     /// 持有已测高度对应的派生主题，字体、字号和主题度量变化时一起失效。
     row_stride_theme: Option<Arc<crate::theme::Theme>>,
     restored_row_start: Option<usize>,
+    /// 焦点岛冻结的引导高度（行号 + 创建时的估计值）：并回挂载区之前，
+    /// 中间行逐帧量高只改变岛与挂载区的间隔，不推走岛本身。
+    focus_island_lead_lock: Option<(usize, f32)>,
     /// 性能计数器：逐行量高缓存被整体清空的次数（列宽或字号变化）。
     /// 形状探针用，守「⌘± 后不许沿用旧字号的高度」。
     row_stride_cache_clears: std::cell::Cell<u64>,
@@ -1008,6 +1011,7 @@ impl Editor {
             row_stride_width: None,
             row_stride_theme: None,
             restored_row_start: None,
+            focus_island_lead_lock: None,
             row_stride_cache_clears: std::cell::Cell::default(),
             source_serializations: std::cell::Cell::default(),
             source_serialization_nanos: std::cell::Cell::default(),

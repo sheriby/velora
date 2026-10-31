@@ -395,6 +395,10 @@ impl Render for Editor {
                 self.restored_row_start,
             )
         };
+        Self::freeze_focus_island_lead(
+            &mut self.focus_island_lead_lock,
+            render_window.focus_island.as_mut(),
+        );
         let unmeasured = (render_window.run_start..render_window.run_end)
             .chain(render_window.focus_island.map(|island| island.row))
             .any(|row| row_first_ids.get(row).is_some_and(|id| !self.row_stride_cache.contains_key(id)));
