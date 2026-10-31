@@ -28,6 +28,8 @@
                 button_widths: vec![48.0],
                 hamburger_labels: vec!["文件".into()],
                 hamburger_list_width: 120.0,
+                item_labels: Vec::new(),
+                item_panel_widths: Vec::new(),
             }
         };
         let first = refresh_window_menu_metrics_cache(&cache, 7, 11, "zh-CN", || build(&builds));

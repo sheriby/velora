@@ -380,8 +380,15 @@ impl Editor {
         let d = &theme.dimensions;
         let t = &theme.typography;
         let editor = cx.entity().downgrade();
-        let menu_item_labels = owned_menu_item_labels(&menu_items);
-        let menu_panel_width = menu_panel_width_for_labels(&menu_item_labels, d);
+        let metrics = self.window_menu_metrics(cx, menus, d);
+        let menu_panel_width = metrics
+            .item_panel_widths
+            .get(open_index)
+            .copied()
+            .unwrap_or_else(|| {
+                let labels = owned_menu_item_labels(&menu_items);
+                menu_panel_width_for_labels(&labels, d)
+            });
         let submenu_bridge = self.menu_submenu_open.and_then(|submenu_index| {
             match menu_items.get(submenu_index)? {
                 OwnedMenuItem::Submenu(submenu) => {
