@@ -722,6 +722,30 @@ fn insert_block_entry_has_no_product_expects() {
     );
 }
 
+/// 纯段落文档的结构编辑不该为叶子块付 children 实体写：叶子没有子块，
+/// 重排入口连 take 都不该做。
+#[gpui::test]
+async fn structural_edit_does_not_touch_leaf_child_lists(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "一\n\n二\n\n三\n\n四\n".into(), None)
+    });
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(block.entity_id()));
+    redraw(cx);
+    let before = crate::editor::tree::NORMALIZE_CHILD_WRITES.with(|counter| counter.get());
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    let after = crate::editor::tree::NORMALIZE_CHILD_WRITES.with(|counter| counter.get());
+    assert_eq!(
+        after, before,
+        "纯段落结构编辑不该为叶子块 take/put children"
+    );
+}
+
 /// 多行引用里普通打字不改变引用结构，不该每次都触发整棵快照重排；行首块
 /// 语法变化（回车/换行）才需要。闸门数 `document.snapshot_rebuilds`。
 #[gpui::test]

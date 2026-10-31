@@ -15,6 +15,18 @@ use super::document::{ChunkCursor, line_is_list_marker};
 use crate::components::serialize_table_markdown_lines;
 use crate::components::{Block, BlockKind, CalloutVariant, parse_standalone_image};
 
+// 计数器（测试）：结构重排时为 children 字段付出实体写的次数。叶子块
+// 没有子块，入口应当连 take 都不做。
+#[cfg(test)]
+thread_local! {
+    pub(crate) static NORMALIZE_CHILD_WRITES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_normalize_child_write() {
+    NORMALIZE_CHILD_WRITES.with(|counter| counter.set(counter.get() + 1));
+}
+
 /// Part of a document whose lines have not been turned into blocks yet.
 ///
 /// A huge document is imported in chunks (roadmap G8): the editor holds the
@@ -144,7 +156,7 @@ pub(super) struct DocumentTree {
     /// 同步整棵重排、增量追加、或某一块的行标记（`is_toc`/`had_toc`）翻面时 +1。
     /// 行计划的缓存键用它而不是「文档修订」——打字只改块内文字时行元数据不动，
     /// 16 万行的计划不该为此重排（10 MiB 实测一次重排 ~42ms、每键两次）。
-    row_meta_version: u64,
+    pub(crate) row_meta_version: u64,
 }
 
 impl DocumentTree {
@@ -945,16 +957,30 @@ impl DocumentTree {
         let mut index = 0;
         while index < blocks.len() {
             let block = blocks[index].clone();
-            let mut children = Self::take_children(&block, cx);
+            // 叶子块（绝大多数）没有子块：连 `std::mem::take` 都不做，
+            // 每根块少一次实体写；容器只有本就有子块或子块被挪进来时
+            // 才写回 children。
+            let had_children = !block.read(cx).children.is_empty();
+            let mut children = if had_children {
+                #[cfg(test)]
+                note_normalize_child_write();
+                Self::take_children(&block, cx)
+            } else {
+                Vec::new()
+            };
             Self::normalize_block_list(&mut children, cx);
 
             if block.read(cx).kind().supports_children() {
-                block.update(cx, {
-                    let children = children.clone();
-                    move |block, _cx| {
-                        block.children = children.clone();
-                    }
-                });
+                if had_children || !children.is_empty() {
+                    #[cfg(test)]
+                    note_normalize_child_write();
+                    block.update(cx, {
+                        let children = children.clone();
+                        move |block, _cx| {
+                            block.children = children.clone();
+                        }
+                    });
+                }
             } else if !children.is_empty() {
                 blocks.splice(index + 1..index + 1, children);
             }
