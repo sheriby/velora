@@ -3700,3 +3700,18 @@ async fn linewise_paste_over_char_selection_keeps_prefix_above_the_paste(
         "顺序应为前缀行、粘贴行、后缀行：{blocks:?}"
     );
 }
+
+/// gv 的 last_visual 不能只存块下标：结构编辑（删掉前面的块）后下标整体
+/// 位移，再 gv 会选到别的块或越界。应按实体 id + 块内偏移重定位。
+#[gpui::test]
+async fn gv_survives_structural_edits_before_the_last_visual(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "a\n\nb\n\nc");
+    cx.simulate_keystrokes("j j v escape");
+    cx.simulate_keystrokes("g g d d");
+    cx.simulate_keystrokes("g v");
+    assert!(matches!(current_mode(&editor, &cx), VimMode::Visual(_)));
+    let selected = editor
+        .read_with(cx, |editor, cx| editor.selected_visible_text(cx))
+        .unwrap_or_default();
+    assert_eq!(selected, "c", "gv 应重新选中原来的 c 块");
+}

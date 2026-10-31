@@ -50,7 +50,22 @@ impl Editor {
         if let Some(cursor) = landed
             && let Some(anchor) = self.vim.visual_anchor
         {
-            self.vim.last_visual = Some((anchor, cursor, self.vim_visual_kind()));
+            let resolve = |position: VimPosition| {
+                entities
+                    .get(position.block_index)
+                    .map(|entity| (entity.entity_id(), position.offset))
+            };
+            if let (Some((start_entity, start_offset)), Some((end_entity, end_offset))) =
+                (resolve(anchor), resolve(cursor))
+            {
+                self.vim.last_visual = Some(super::VimLastVisual {
+                    start_entity,
+                    start_offset,
+                    end_entity,
+                    end_offset,
+                    kind: self.vim_visual_kind(),
+                });
+            }
         }
         self.vim.visual_anchor = None;
         self.vim.visual_focus = None;
@@ -400,13 +415,34 @@ impl Editor {
 
     /// gv：重选上次可视选区。
     pub(super) fn vim_reselect_inner(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((start, end, kind)) = self.vim.last_visual else { return };
+        let Some(last) = self.vim.last_visual else { return };
         let entities = self.vim_navigation_entities(cx);
-        if entities.get(start.block_index).is_none() || entities.get(end.block_index).is_none() {
+        let Some(start_index) = entities
+            .iter()
+            .position(|entity| entity.entity_id() == last.start_entity)
+        else {
             return;
-        }
+        };
+        let Some(end_index) = entities
+            .iter()
+            .position(|entity| entity.entity_id() == last.end_entity)
+        else {
+            return;
+        };
+        let start = VimPosition {
+            block_index: start_index,
+            offset: last
+                .start_offset
+                .min(entities[start_index].read(cx).display_text().len()),
+        };
+        let end = VimPosition {
+            block_index: end_index,
+            offset: last
+                .end_offset
+                .min(entities[end_index].read(cx).display_text().len()),
+        };
         self.vim.visual_anchor = Some(start);
-        self.vim_enter_mode(VimMode::Visual(kind), cx);
+        self.vim_enter_mode(VimMode::Visual(last.kind), cx);
         self.vim_set_cursor(&entities, end, cx);
         self.vim_refresh_visual_selection(cx);
         let _ = window;

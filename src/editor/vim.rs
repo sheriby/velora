@@ -213,6 +213,17 @@ pub(super) struct VimSearchState {
     pub whole_word: bool,
 }
 
+/// 上次可视选区：按**实体 id + 块内偏移**记，结构编辑（增删块）后仍能
+/// 重定位；块下标会在结构编辑后整体位移，不能当身份用。
+#[derive(Clone, Copy)]
+pub(super) struct VimLastVisual {
+    pub(super) start_entity: gpui::EntityId,
+    pub(super) start_offset: usize,
+    pub(super) end_entity: gpui::EntityId,
+    pub(super) end_offset: usize,
+    pub(super) kind: VisualKind,
+}
+
 /// vim 会话状态，挂在 `Editor` 实体上（分屏各自一份会话）。
 pub(crate) struct VimState {
     pub(super) mode: VimMode,
@@ -224,7 +235,7 @@ pub(crate) struct VimState {
     pub(super) visual_focus: Option<VimPosition>,
     /// 块状可视的锚点列（硬行内字素序号，口径见 visual.rs）。
     pub(super) visual_block_anchor_column: Option<usize>,
-    pub(super) last_visual: Option<(VimPosition, VimPosition, VisualKind)>,
+    pub(super) last_visual: Option<VimLastVisual>,
     pub(super) registers: operate::VimRegisters,
     /// 宏寄存器（与文本寄存器分开存：q 录的是键序列不是文本）。
     pub(super) macro_registers: HashMap<char, Vec<VimKey>>,

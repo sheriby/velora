@@ -2800,12 +2800,12 @@ impl Editor {
     ) {
         let identity = self.buffer.identity();
         let resolved: Option<(gpui::EntityId, usize)> = match mark {
-            '<' | '>' => self.vim.last_visual.and_then(|(start, end, _)| {
-                let position = if mark == '<' { start } else { end };
-                let entities = self.vim_navigation_entities(cx);
-                entities
-                    .get(position.block_index)
-                    .map(|entity| (entity.entity_id(), position.offset))
+            '<' | '>' => self.vim.last_visual.map(|last| {
+                if mark == '<' {
+                    (last.start_entity, last.start_offset)
+                } else {
+                    (last.end_entity, last.end_offset)
+                }
             }),
             _ => self
                 .vim
