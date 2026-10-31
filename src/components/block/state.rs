@@ -946,6 +946,23 @@ impl BlockRecord {
         self.markdown_line_with_root(depth, list_ordinal, true)
     }
 
+    /// 根下列表项的缩进：`source_line_prefixes` 的首项是「缩进 + 记号」的
+    /// 绝对宽度，减掉本层记号宽度就是原文缩进；嵌套项（depth > 0）靠它
+    /// 保住 4 格这类非规范写法，不再一律按每级两格重拼。
+    fn list_indentation_for_output(&self, depth: usize, at_root: bool) -> String {
+        if at_root
+            && depth > 0
+            && let Some(marker_prefix) = self.list_marker_prefix.as_ref()
+            && let Some(columns) = self.source_line_prefixes.first().copied()
+        {
+            let marker_columns = marker_prefix.chars().count() as u32;
+            if columns >= marker_columns {
+                return " ".repeat((columns - marker_columns) as usize);
+            }
+        }
+        "  ".repeat(depth)
+    }
+
     /// `at_root` = 这一块直接落在文档根上（quote_depth == 0）：只有那时
     /// `source_line_prefixes` 才是「本层」的续行缩进，容器子块里它是绝对账。
     pub(crate) fn markdown_line_with_root(
@@ -968,13 +985,14 @@ impl BlockRecord {
                 )
             }
             BlockKind::BulletedListItem => {
+                let indentation = self.list_indentation_for_output(depth, at_root);
                 // 原文前缀是「本层」的（子块解析前已被父级 dedent），补回层级
                 // 缩进即可；没有原文账的新建项仍写规范记号。
                 let prefix = self
                     .list_marker_prefix
                     .as_ref()
-                    .filter(|_| depth == 0)
-                    .map(|prefix| prefix.to_string())
+                    .filter(|_| depth == 0 || at_root)
+                    .map(|prefix| format!("{indentation}{prefix}"))
                     .unwrap_or_else(|| {
                         format!("{indentation}{} ", self.list_marker.bullet_or_default())
                     });
@@ -983,7 +1001,7 @@ impl BlockRecord {
                     &title_markdown,
                     &prefix,
                     &format!("{indentation}  "),
-                    depth == 0 && at_root,
+                    at_root,
                 )
             }
             BlockKind::TaskListItem { checked } => {
@@ -994,10 +1012,11 @@ impl BlockRecord {
                 };
                 // 原文前缀里的勾选框要跟当前状态一致：勾选/取消之后那一格变了，
                 // 不能把导入时记下的旧 `[ ]` 原样写回去。
+                let indentation = self.list_indentation_for_output(depth, at_root);
                 let prefix = self
                     .list_marker_prefix
                     .as_ref()
-                    .filter(|_| depth == 0)
+                    .filter(|_| depth == 0 || at_root)
                     .filter(|prefix| {
                         prefix.rfind('[').and_then(|start| {
                             prefix[start + 1..].find(']').and_then(|end| {
@@ -1005,7 +1024,7 @@ impl BlockRecord {
                             })
                         }) == Some(box_char)
                     })
-                    .map(|prefix| prefix.to_string())
+                    .map(|prefix| format!("{indentation}{prefix}"))
                     .unwrap_or_else(|| {
                         format!(
                             "{indentation}{} [{box_char}] ",
@@ -1017,18 +1036,19 @@ impl BlockRecord {
                     &title_markdown,
                     &prefix,
                     &format!("{indentation}      "),
-                    depth == 0 && at_root,
+                    at_root,
                 )
             }
             BlockKind::NumberedListItem => {
                 let ordinal = list_ordinal.unwrap_or(1);
                 let delimiter = self.list_marker.delimiter_or_default();
+                let indentation = self.list_indentation_for_output(depth, at_root);
                 // 序号本身会按列表组重排，但分隔符后的空白是用户写法：
                 // 从原文前缀里取分隔符之后那一段照抄。
                 let gap = self
                     .list_marker_prefix
                     .as_ref()
-                    .filter(|_| depth == 0)
+                    .filter(|_| depth == 0 || at_root)
                     .and_then(|prefix| {
                         prefix
                             .rfind(delimiter)
@@ -1040,7 +1060,7 @@ impl BlockRecord {
                     &title_markdown,
                     &format!("{indentation}{ordinal}{delimiter}{gap}"),
                     &format!("{indentation}   "),
-                    depth == 0 && at_root,
+                    at_root,
                 )
             }
             BlockKind::Quote => prefixed_multiline(

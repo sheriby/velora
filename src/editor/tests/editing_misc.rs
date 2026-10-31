@@ -722,6 +722,37 @@ fn insert_block_entry_has_no_product_expects() {
     );
 }
 
+/// 未编辑的列表写法要逐字节往返：4 格嵌套、非规范续行缩进、记号后 tab
+/// 都不能被「每级两格+空格」的规范形状洗掉。
+#[gpui::test]
+async fn untouched_list_spellings_round_trip_byte_for_byte(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for source in [
+        "    - b\n",
+        "- a\n    - b\n",
+        "- a\n      续行\n",
+        "-\tfoo\n",
+    ] {
+        let (editor, cx) = cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, source.to_string(), None)
+        });
+        redraw(cx);
+        let serialized = editor.read_with(cx, |editor, cx| {
+            let roots = editor.document.root_blocks().len();
+            editor
+                .document
+                .markdown_region_for_roots(0..roots, cx)
+                .expect("整篇根块应可序列化")
+                .0
+        });
+        assert_eq!(
+            serialized,
+            source.trim_end_matches('\n'),
+            "未编辑列表写法被改写：{source:?}"
+        );
+    }
+}
+
 /// 纯段落文档的结构编辑不该为叶子块付 children 实体写：叶子没有子块，
 /// 重排入口连 take 都不该做。
 #[gpui::test]

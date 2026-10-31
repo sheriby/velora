@@ -513,10 +513,10 @@
                 .find(|visible| visible.entity.read(cx).display_text() == "child")
                 .expect("nested child");
             assert_eq!(child.entity.read(cx).list_ordinal, Some(4));
-            // 子项缩进按规范洗成两个空格（既有嵌套用例同口径），序号仍带作者写的 4、5。
+            // 作者写的 3 格缩进与序号 4、5 都按原文写回，不再洗成两格。
             assert_eq!(
                 editor.document.markdown_text(cx),
-                "1) parent\n  4) child\n  5) child two"
+                "1) parent\n   4) child\n   5) child two"
             );
         });
     }

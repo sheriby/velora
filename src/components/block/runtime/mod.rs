@@ -230,6 +230,9 @@ pub struct Block {
     pub last_bounds: Option<Bounds<Pixels>>,
     pub last_line_height: Pixels,
     pub render_depth: usize,
+    /// 首次同步之前 render_depth 只是默认值；只有同步过一次之后再变深/变浅，
+    /// 才说明块被重新挂过（缩进/降级），解析期记的行前缀随之作废。
+    pub(crate) render_depth_synced: bool,
     pub quote_depth: usize,
     pub(crate) quote_group_anchor: Option<uuid::Uuid>,
     pub(crate) visible_quote_depth: usize,
@@ -445,6 +448,7 @@ impl Block {
             last_bounds: None,
             last_line_height: px(20.0),
             render_depth: 0,
+            render_depth_synced: false,
             quote_depth: 0,
             quote_group_anchor: None,
             visible_quote_depth: 0,

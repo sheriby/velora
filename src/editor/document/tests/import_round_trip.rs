@@ -567,7 +567,8 @@
             assert_eq!(visible[0].entity.read(cx).display_text(), "parent");
             assert_eq!(visible[1].entity.read(cx).display_text(), "child");
             assert_eq!(visible[1].entity.read(cx).render_depth, 1);
-            assert_eq!(editor.document.markdown_text(cx), "1) parent\n  1) child");
+            // 三格缩进是作者写法，原样写回，不再洗成两格。
+            assert_eq!(editor.document.markdown_text(cx), "1) parent\n   1) child");
         });
     }
 

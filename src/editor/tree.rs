@@ -1152,6 +1152,11 @@ impl DocumentTree {
                 }
                 block.record.parent = parent_id;
                 block.record.content = content.clone();
+                if block.render_depth_synced && block.render_depth != list_depth {
+                    // 重新挂过：原文前缀的绝对宽度不再对应这一层，退回规范缩进。
+                    block.record.source_line_prefixes.clear();
+                }
+                block.render_depth_synced = true;
                 block.render_depth = list_depth;
                 block.quote_depth = quote_depth;
                 block.quote_group_anchor = quote_group_anchor;
