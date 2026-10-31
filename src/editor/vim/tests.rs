@@ -3777,3 +3777,19 @@ async fn search_next_reuses_the_existing_hit_table(cx: &mut TestAppContext) {
     let after = editor.read_with(cx, |editor, _| editor.workspace.search_generation());
     assert_eq!(after, generation, "n 不该重新调度整篇搜索");
 }
+
+/// 插入会话里用了重放端没有等价实现的键（Delete/方向键/ctrl-r 等）时，
+/// 该会话不能进 `.` 素材：重放会插错位置、丢删除效果。宁可放弃 dot，
+/// 也不做错位重放。
+#[gpui::test]
+async fn insert_sessions_with_unreplayable_keys_do_not_poison_dot(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "abcdef");
+    cx.simulate_keystrokes("i a b delete escape");
+    assert_eq!(document_text(&editor, &cx), "abbcdef");
+    cx.simulate_keystrokes("$ .");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "abbcdef",
+        "含 Delete 的会话不应被 `.` 错位重放"
+    );
+}

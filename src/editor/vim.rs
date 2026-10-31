@@ -267,6 +267,9 @@ pub(crate) struct VimState {
     /// 触发本插入会话的命令键（`3o` 的重放素材）。
     pub(super) insert_entry_keys: Vec<VimKey>,
     pub(super) insert_repeat_count: u32,
+    /// 本次插入会话里出现了重放端没有等价实现的键（Delete/方向键/ctrl-r 等）：
+    /// 结束时放弃 `.` 素材，宁可 dot 不重放也不做错位重放。
+    pub(super) insert_session_replayable: bool,
     /// ctrl-o 单次普通命令结束后回插入模式。
     pub(super) insert_one_shot_normal: bool,
     /// insert 里 ctrl-r 等待寄存器名。
@@ -321,6 +324,7 @@ impl Default for VimState {
             insert_visual_repeat: None,
             insert_entry_keys: Vec::new(),
             insert_repeat_count: 0,
+            insert_session_replayable: true,
             insert_one_shot_normal: false,
             insert_awaiting_register: false,
             last_insert_position: None,
@@ -701,6 +705,7 @@ impl Editor {
             }
             VimKey::Ctrl('r') => {
                 self.vim.insert_awaiting_register = true;
+                self.vim.insert_session_replayable = false;
                 true
             }
             VimKey::Ctrl('v') | VimKey::Ctrl('q') => {
@@ -837,6 +842,25 @@ impl Editor {
     }
 
     fn vim_record_insert_typed(&mut self, key: VimKey) {
+        if matches!(
+            key,
+            VimKey::Delete
+                | VimKey::Left
+                | VimKey::Right
+                | VimKey::Up
+                | VimKey::Down
+                | VimKey::Home
+                | VimKey::End
+                | VimKey::PageUp
+                | VimKey::PageDown
+                | VimKey::Ctrl('u')
+                | VimKey::Ctrl('w')
+                | VimKey::Ctrl('a')
+                | VimKey::Ctrl('v')
+                | VimKey::Ctrl('r')
+        ) {
+            self.vim.insert_session_replayable = false;
+        }
         self.vim.insert_typed.push(key);
         if self.vim.insert_typed.len() > 4096 {
             // 防失控：超长会话放弃 `. 重放素材（正常输入不会到这个量级）。

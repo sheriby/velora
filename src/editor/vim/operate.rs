@@ -2913,6 +2913,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.vim.insert_session_replayable = true;
         // 块状可视的 I/A：在每一行的区块左/右沿插入同一段文字。
         if matches!(self.vim.mode, VimMode::Visual(super::VisualKind::Block))
             && matches!(placement, InsertPlacement::LineStart | InsertPlacement::LineEnd)
@@ -3113,7 +3114,10 @@ impl Editor {
             }
         }
         let insert_visual_repeat = self.vim.insert_visual_repeat.take();
-        if !self.vim.replaying && !self.vim.insert_entry_keys.is_empty() {
+        if !self.vim.replaying
+            && self.vim.insert_session_replayable
+            && !self.vim.insert_entry_keys.is_empty()
+        {
             self.vim.dot = Some(DotRecord {
                 entry_keys: self.vim.insert_entry_keys.clone(),
                 insert_keys: self.vim.insert_typed.clone(),
@@ -3124,7 +3128,7 @@ impl Editor {
         let repeat = self.vim.insert_repeat_count;
         let entry_keys = self.vim.insert_entry_keys.clone();
         self.vim.insert_repeat_count = 0;
-        if repeat > 1 && !self.vim.replaying {
+        if repeat > 1 && !self.vim.replaying && self.vim.insert_session_replayable {
             let record = DotRecord {
                 entry_keys,
                 insert_keys: self.vim.insert_typed.clone(),
