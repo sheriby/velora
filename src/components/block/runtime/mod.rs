@@ -104,6 +104,54 @@ impl EditMode {
 
 impl EventEmitter<BlockEvent> for Block {}
 
+/// 一次标题编辑在可见文本坐标里的变化形状：`start` 起删掉 `removed` 字节、
+/// 换成 `inserted` 字节。多段编辑会被前后缀比对并成一段，跨编辑跟踪
+/// （vim 标记/跳转表）只需要这一段与净增量。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct VisibleTextEdit {
+    pub(crate) start: usize,
+    pub(crate) removed: usize,
+    pub(crate) inserted: usize,
+}
+
+/// 前后缀比对求单段编辑形状；两串相同则返回 `None`。边界回退到字符边界，
+/// 多字节字符被改掉时整个字符都算进变化段。
+fn visible_text_edit(old: &str, new: &str) -> Option<VisibleTextEdit> {
+    if old == new {
+        return None;
+    }
+    let old_bytes = old.as_bytes();
+    let new_bytes = new.as_bytes();
+    let mut prefix = 0;
+    while prefix < old_bytes.len()
+        && prefix < new_bytes.len()
+        && old_bytes[prefix] == new_bytes[prefix]
+    {
+        prefix += 1;
+    }
+    while prefix > 0 && (!old.is_char_boundary(prefix) || !new.is_char_boundary(prefix)) {
+        prefix -= 1;
+    }
+    let mut suffix = 0;
+    while suffix < old_bytes.len() - prefix
+        && suffix < new_bytes.len() - prefix
+        && old_bytes[old_bytes.len() - 1 - suffix] == new_bytes[new_bytes.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    while suffix > 0
+        && (!old.is_char_boundary(old_bytes.len() - suffix)
+            || !new.is_char_boundary(new_bytes.len() - suffix))
+    {
+        suffix -= 1;
+    }
+    Some(VisibleTextEdit {
+        start: prefix,
+        removed: old_bytes.len() - prefix - suffix,
+        inserted: new_bytes.len() - prefix - suffix,
+    })
+}
+
 /// 把可见文本拼进 markdown 时的转义：只有反斜杠要再转义一次。其余标记字符
 /// （`*`、`` ` ``、`~` 等）保持原样，与渲染路径的实时标记解析一致。
 fn escape_markdown_insertion(text: &str) -> String {
@@ -218,6 +266,9 @@ pub struct Block {
     /// 共同决定，焦点这一维只由 prepaint 的 `sync_inline_projection_for_focus`
     /// 写入；批量同步（撤销/重做、注册表刷新）据此跳过失焦块的重建。
     pub(crate) inline_projection_focus: bool,
+    /// 最近一次标题编辑的可见文本变化形状。编辑器在 `Changed` 里取走它，
+    /// 平移同一块上的 vim 标记/跳转表；编辑本身只报「变了」，不带区间。
+    pub(crate) last_visible_edit: Option<VisibleTextEdit>,
     hide_markdown_markers: bool,
     /// Inputs that produced the current `projection`. When the next
     /// `sync_inline_projection_for_focus` computes the same inputs, the
@@ -416,6 +467,7 @@ impl Block {
             table_host_bounds: None,
             projection: None,
             inline_projection_focus: false,
+            last_visible_edit: None,
             hide_markdown_markers: crate::config::EditorSettings::hide_markdown_markers(cx),
             projection_cache_key: None,
             cached_display_text: SharedString::default(),

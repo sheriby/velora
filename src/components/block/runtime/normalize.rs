@@ -1,6 +1,11 @@
 use super::*;
 
 impl Block {
+    /// 取走并清空最近一次标题编辑的可见变化形状。
+    pub(crate) fn take_last_visible_edit(&mut self) -> Option<VisibleTextEdit> {
+        self.last_visible_edit.take()
+    }
+
     /// Detect Markdown shortcut prefixes in the edited title and convert the
     /// block's kind accordingly (e.g. `"- " -> BulletedListItem`).
     ///
@@ -546,6 +551,8 @@ impl Block {
         self.record.list_marker = next_list_marker;
         let old_visible_text = old_title.visible_text();
         self.record.set_title(normalized_title);
+        let next_visible_text = self.record.title.visible_text();
+        self.last_visible_edit = visible_text_edit(&old_visible_text, &next_visible_text);
         // 这两族的每一行就是文件里的那一行，行数改了那份账也得跟着改（见其定义）。
         if self.record.kind.is_code_block() || self.record.kind == BlockKind::Quote {
             let next_visible_text = self.record.title.visible_text();

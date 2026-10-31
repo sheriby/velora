@@ -11,7 +11,9 @@ use std::collections::VecDeque;
 
 use gpui::{App, Context, Entity, EntityInputHandler as _, Window};
 
-use crate::components::{Block, BlockEvent, BlockKind, BlockRecord, Newline, UndoCaptureKind};
+use crate::components::{
+    Block, BlockEvent, BlockKind, BlockRecord, Newline, UndoCaptureKind, VisibleTextEdit,
+};
 use crate::editor::Editor;
 
 use super::motion::{next_grapheme_start, prev_grapheme_start, VimDocStream, VimPosition};
@@ -2789,6 +2791,56 @@ impl Editor {
             .entry(identity)
             .or_default()
             .insert(mark, (entity.entity_id(), cursor.offset));
+    }
+
+    /// 块内编辑后平移该块上的标记、跳转表与上次可视选区。插入点之后的
+    /// 偏移加净增量；被删除区间覆盖的标记失效（跳转表条目钳到删除起点，
+    /// 历史位置不丢）。
+    pub(crate) fn vim_adjust_tracked_offsets(
+        &mut self,
+        entity_id: gpui::EntityId,
+        edit: VisibleTextEdit,
+    ) {
+        if edit.removed == 0 && edit.inserted == 0 {
+            return;
+        }
+        let start = edit.start;
+        let end = start + edit.removed;
+        let delta = edit.inserted as isize - edit.removed as isize;
+        let adjust = |offset: usize| -> Option<usize> {
+            if offset <= start {
+                Some(offset)
+            } else if offset >= end {
+                Some((offset as isize + delta).max(0) as usize)
+            } else {
+                None
+            }
+        };
+
+        for marks in self.vim.marks.values_mut() {
+            marks.retain(|_, (mark_entity, offset)| {
+                if *mark_entity != entity_id {
+                    return true;
+                }
+                let Some(next) = adjust(*offset) else { return false };
+                *offset = next;
+                true
+            });
+        }
+        for entry in &mut self.vim.jumplist {
+            if entry.1 != entity_id {
+                continue;
+            }
+            entry.2 = adjust(entry.2).unwrap_or(start);
+        }
+        if let Some(last) = self.vim.last_visual.as_mut() {
+            if last.start_entity == entity_id {
+                last.start_offset = adjust(last.start_offset).unwrap_or(start);
+            }
+            if last.end_entity == entity_id {
+                last.end_offset = adjust(last.end_offset).unwrap_or(start);
+            }
+        }
     }
 
     pub(super) fn vim_goto_mark_inner(

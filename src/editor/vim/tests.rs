@@ -694,6 +694,20 @@ async fn mark_and_backtick_restore_the_position(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn mark_tracks_text_inserted_before_it(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two three");
+    cx.simulate_keystrokes("w");
+    cx.simulate_keystrokes("m a");
+    cx.simulate_keystrokes("0 i T E S T space escape");
+    cx.simulate_keystrokes("` a");
+    assert_eq!(
+        first_block_caret(&editor, &cx),
+        9,
+        "标记应随插入点之后的插入平移"
+    );
+}
+
+#[gpui::test]
 async fn mark_linewise_jump_lands_on_first_non_blank(cx: &mut TestAppContext) {
     let (editor, cx) = vim_editor(cx, "one\n\ntwo");
     cx.simulate_keystrokes("m a");

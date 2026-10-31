@@ -1237,6 +1237,11 @@ impl Editor {
     fn on_block_changed(&mut self, block: Entity<crate::editor::Block>, cx: &mut Context<Self>) {
         // 用户改了文档：换投影交还的阅读位置按旧字节记账，一律作废。
         self.cancel_pending_view_mode_scroll();
+        // 块内编辑只报「变了」：变化形状由块在编辑出口记下，这里取走并平移
+        // 同一块上的 vim 标记/跳转表，跨编辑后 `` `a `` 才落在原位置。
+        if let Some(edit) = block.update(cx, |block, _| block.take_last_visible_edit()) {
+            self.vim_adjust_tracked_offsets(block.entity_id(), edit);
+        }
         let kind_changed = self.writes_through_the_buffer() && {
             let block = block.read(cx);
             block.record.kind != block.record.source_kind
