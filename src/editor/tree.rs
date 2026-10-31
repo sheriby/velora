@@ -39,6 +39,17 @@ fn note_snapshot_field_write() {
     SNAPSHOT_FIELD_WRITES.with(|counter| counter.set(counter.get() + 1));
 }
 
+// 计数器（测试）：快照同步这一趟访问了多少根/子块。局部重算应只碰后缀。
+#[cfg(test)]
+thread_local! {
+    pub(crate) static SNAPSHOT_SYNC_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_snapshot_sync_visit() {
+    SNAPSHOT_SYNC_VISITS.with(|counter| counter.set(counter.get() + 1));
+}
+
 macro_rules! assign_if_changed {
     ($block:expr, $field:ident, $value:expr) => {{
         let value = $value;
@@ -849,9 +860,140 @@ impl DocumentTree {
         blocks: Vec<Entity<Block>>,
         cx: &mut Context<Editor>,
     ) {
-        self.with_structure_mutation(cx, move |tree, cx| {
-            tree.insert_blocks_at_raw(parent, index, blocks, cx);
-        });
+        self.flush_pending_tail(cx);
+        self.flush_pending_source(cx);
+        let dirty = self.insertion_dirty_region(parent.as_ref(), index);
+        let result = self.insert_blocks_at_raw(parent, index, blocks, cx);
+        match dirty {
+            Some((first_root, visible_from)) => {
+                self.rebuild_metadata_and_snapshot_from_root(first_root, visible_from, cx)
+            }
+            None => self.rebuild_metadata_and_snapshot(cx),
+        }
+        result
+    }
+
+    /// 插入点影响的快照后缀起点：`(第一根受影响的根块, 该根块的可见行下标)`。
+    /// 插入只改锚点根块（含其后代）与后缀，前缀快照可以原样保留。
+    fn insertion_dirty_region(
+        &self,
+        parent: Option<&Entity<Block>>,
+        index: usize,
+    ) -> Option<(usize, usize)> {
+        match parent {
+            None => {
+                let first_root = index.min(self.roots.len());
+                let visible_from = match self.roots.get(first_root) {
+                    Some(root) => *self
+                        .snapshot
+                        .visible_index_by_entity
+                        .get(&root.entity_id())?,
+                    None => self.snapshot.visible.len(),
+                };
+                Some((first_root, visible_from))
+            }
+            Some(parent) => {
+                let root = self
+                    .root_ancestor_of(parent.entity_id())
+                    .unwrap_or_else(|| parent.clone());
+                let first_root = self
+                    .roots
+                    .iter()
+                    .position(|candidate| candidate.entity_id() == root.entity_id())?;
+                let visible_from = *self
+                    .snapshot
+                    .visible_index_by_entity
+                    .get(&root.entity_id())?;
+                Some((first_root, visible_from))
+            }
+        }
+    }
+
+    /// 只重排从 `first_root` 起的快照后缀：截断可见行与索引，按保存的接缝
+    /// 种子重跑这一段的同步。前缀根块的元数据与可见行原样保留。
+    pub(super) fn rebuild_metadata_and_snapshot_from_root(
+        &mut self,
+        first_root: usize,
+        visible_from: usize,
+        cx: &mut Context<Editor>,
+    ) {
+        let started = std::time::Instant::now();
+        let first_root = first_root.min(self.roots.len());
+        let visible_from = visible_from.min(self.snapshot.visible.len());
+        let mut suffix_roots = self.roots.split_off(first_root);
+        Self::normalize_block_list(&mut suffix_roots, cx);
+        self.roots.append(&mut suffix_roots);
+
+        let removed: Vec<EntityId> = self
+            .snapshot
+            .visible
+            .drain(visible_from..)
+            .map(|visible| visible.entity.entity_id())
+            .collect();
+        self.snapshot.row_spacing.truncate(visible_from);
+        for entity_id in &removed {
+            self.snapshot.visible_index_by_entity.remove(entity_id);
+            self.snapshot.location_by_entity.remove(entity_id);
+            self.snapshot.last_visible_descendant_by_entity.remove(entity_id);
+        }
+        self.snapshot
+            .math_blocks
+            .retain(|(index, _)| *index < visible_from);
+        self.snapshot.toc_rows = self
+            .snapshot
+            .row_spacing
+            .iter()
+            .filter(|row| row.is_toc)
+            .count();
+
+        let (numbered_list_ordinal, previous_was_list_item) = if first_root == 0 {
+            (0, false)
+        } else {
+            let previous = &self.roots[first_root - 1];
+            let previous_kind = previous.read(cx).kind();
+            // 根级编号计数器只由根级编号列表推进（子块递归各用各的），
+            // 从最近一根根级编号块回推。
+            let numbered = self.roots[..first_root]
+                .iter()
+                .rev()
+                .find(|root| root.read(cx).kind().is_numbered_list_item())
+                .and_then(|root| root.read(cx).list_ordinal)
+                .unwrap_or(0);
+            (numbered, previous_kind.is_list_item())
+        };
+        Self::sync_block_list(
+            &self.roots[first_root..],
+            None,
+            None,
+            0,
+            0,
+            None,
+            None,
+            0,
+            None,
+            None,
+            None,
+            cx,
+            &mut self.snapshot,
+            SyncSeeds {
+                numbered_list_ordinal,
+                previous_was_list_item,
+                reading_mode: None,
+            },
+        );
+        for (offset, root) in self.roots[first_root..].iter().enumerate() {
+            if let Some(location) = self.snapshot.location_by_entity.get_mut(&root.entity_id()) {
+                if location.parent.is_none() {
+                    location.index = first_root + offset;
+                }
+            }
+        }
+        self.snapshot_rebuilds
+            .set(self.snapshot_rebuilds.get() + 1);
+        self.row_meta_version = self.row_meta_version.wrapping_add(1);
+        self.snapshot_nanos.set(
+            self.snapshot_nanos.get() + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
     }
 
     /// 与 [`Self::insert_blocks_at`] 相同，但**不先物化未建完的尾部**。
@@ -865,8 +1007,14 @@ impl DocumentTree {
         blocks: Vec<Entity<Block>>,
         cx: &mut Context<Editor>,
     ) {
+        let dirty = self.insertion_dirty_region(parent.as_ref(), index);
         let result = self.insert_blocks_at_raw(parent, index, blocks, cx);
-        self.rebuild_metadata_and_snapshot(cx);
+        match dirty {
+            Some((first_root, visible_from)) => {
+                self.rebuild_metadata_and_snapshot_from_root(first_root, visible_from, cx)
+            }
+            None => self.rebuild_metadata_and_snapshot(cx),
+        }
         result
     }
 
@@ -1092,6 +1240,8 @@ impl DocumentTree {
             parent_entity.as_ref().and_then(|parent| parent.read(cx).reading_mode.clone())
         });
         for (index, block) in blocks.iter().enumerate() {
+            #[cfg(test)]
+            note_snapshot_sync_visit();
             let entity_id = block.entity_id();
             let (
                 block_id,

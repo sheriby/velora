@@ -985,4 +985,35 @@ async fn structural_snapshot_matches_a_fresh_reparse(cx: &mut TestAppContext) {
         assert_snapshot_matches_fresh_reparse(&editor, cx);
     }
 }
+/// 在文末回车只该重排尾部几根块，而不是整棵快照 DFS。
+#[gpui::test]
+async fn newline_near_the_end_resyncs_only_the_tail(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..40)
+        .map(|index| format!("paragraph {index}\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, markdown, None)
+    });
+    redraw(cx);
+    let last = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .visible_blocks()
+            .last()
+            .expect("有根块")
+            .entity
+            .clone()
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(last.entity_id()));
+    redraw(cx);
+    let before = crate::editor::tree::SNAPSHOT_SYNC_VISITS.with(|counter| counter.get());
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    let visited = crate::editor::tree::SNAPSHOT_SYNC_VISITS.with(|counter| counter.get()) - before;
+    assert!(
+        visited <= 4,
+        "文末回车应只重排尾部几块，实际访问 {visited} 块"
+    );
+}
 
