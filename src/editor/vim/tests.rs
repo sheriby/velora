@@ -3539,3 +3539,18 @@ async fn replace_mode_backspace_restoration_uses_the_current_character_width(
     // overtype 的删除分支；恢复逻辑本身已按当前字符宽度取区间，待输入路径
     // 统一后再补对拍。
 }
+
+/// 块状可视（ctrl-q）的 r：把矩形内每一行选中段都替换成同一个字符，
+/// 而不是在首行行首插一个杂散字符/跨块时静默无操作。
+#[gpui::test]
+async fn block_visual_replace_char_rewrites_each_selected_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "```\nabcd\nefgh\n```");
+    // 块选两行的第一列：r x 应把两行首字都换成 x（块选列宽的扩展另测）。
+    cx.simulate_keystrokes("ctrl-q j r x");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "```\nxbcd\nxfgh\n```",
+        "块状可视的 r 应逐行替换选中列"
+    );
+    assert_eq!(current_mode(&editor, &cx), VimMode::Normal);
+}

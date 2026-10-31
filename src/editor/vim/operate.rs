@@ -2355,6 +2355,51 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let entities = self.vim_navigation_entities(cx);
+        // 块状可视：按逐行矩形区间替换每一行的选中段。不能走统一选区换算——
+        // 那条只服务字符级/行级，Block 的哨兵区间会被钳成空区间变成插入。
+        if matches!(self.vim.mode, VimMode::Visual(super::VisualKind::Block)) {
+            let Some(ranges) = self.vim_block_visual_ranges(&entities, cx) else {
+                return;
+            };
+            super::visual::vim_exit_visual(self, cx);
+            let mut touched = Vec::new();
+            for (block_index, range) in ranges {
+                let Some(block) = entities.get(block_index).cloned() else {
+                    continue;
+                };
+                let length = block.read(cx).visible_len();
+                let start = range.start.min(length);
+                let end = range.end.min(length).max(start);
+                if start == end {
+                    continue;
+                }
+                let text = block.read(cx).display_text()[start..end].to_string();
+                let mut graphemes = 0usize;
+                let mut walk = 0usize;
+                while walk < text.len() {
+                    walk = next_grapheme_start(&text, walk).unwrap_or(text.len());
+                    graphemes += 1;
+                }
+                let replaced = ch.to_string().repeat(graphemes.max(1));
+                block.update(cx, |block, cx| {
+                    block.prepare_undo_capture(block.text_edit_undo_kind(), cx);
+                    block.replace_text_in_visible_range(
+                        start..end,
+                        &replaced,
+                        Some(0..0),
+                        false,
+                        cx,
+                    );
+                });
+                touched.push(block);
+            }
+            for block in touched {
+                self.vim_mark_single_block_dirty(&block, cx);
+            }
+            self.vim_enter_mode(VimMode::Normal, cx);
+            let _ = window;
+            return;
+        }
         let Some(range) = super::visual::vim_selection_as_range(self, &entities, cx) else {
             return;
         };
