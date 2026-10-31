@@ -214,6 +214,10 @@ pub struct Block {
     /// Cached projection used to show editable inline delimiters for the
     /// currently touched inline span(s).
     pub(crate) projection: Option<ExpandedInlineProjection>,
+    /// 本块上一帧是不是编辑焦点。投影「是否应存在」由模式与焦点两维判据
+    /// 共同决定，焦点这一维只由 prepaint 的 `sync_inline_projection_for_focus`
+    /// 写入；批量同步（撤销/重做、注册表刷新）据此跳过失焦块的重建。
+    pub(crate) inline_projection_focus: bool,
     hide_markdown_markers: bool,
     /// Inputs that produced the current `projection`. When the next
     /// `sync_inline_projection_for_focus` computes the same inputs, the
@@ -411,6 +415,7 @@ impl Block {
             quote_metadata_signature: None,
             table_host_bounds: None,
             projection: None,
+            inline_projection_focus: false,
             hide_markdown_markers: crate::config::EditorSettings::hide_markdown_markers(cx),
             projection_cache_key: None,
             cached_display_text: SharedString::default(),

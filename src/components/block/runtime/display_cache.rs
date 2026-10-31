@@ -14,8 +14,9 @@ impl Block {
         let (clean_anchor, clean_focus) = self.clean_selection_anchor_focus();
         let (anchor_affinity, focus_affinity) = self.selection_endpoint_affinities();
         let collapsed_affinity = self.current_collapsed_caret_affinity();
-        let keep_projection =
-            self.projection.is_some() && self.supports_inline_projection();
+        let keep_projection = self.inline_projection_focus
+            && self.projection.is_some()
+            && self.supports_inline_projection();
         if let Some(marker) = self.record.title.emphasis_marker_preference() {
             self.preferred_emphasis_marker = Some(marker);
         }
@@ -313,6 +314,7 @@ impl Block {
     }
 
     pub(crate) fn sync_inline_projection_for_focus(&mut self, focused: bool) {
+        self.inline_projection_focus = focused;
         let supports_projection = self.supports_inline_projection();
         if !focused || !supports_projection {
             self.clear_inline_projection();

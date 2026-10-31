@@ -767,3 +767,54 @@ async fn typing_inside_a_multiline_quote_does_not_rebuild_the_snapshot(cx: &mut 
         "回车改变引用行结构时应重建快照：{after_typing} → {after_enter}"
     );
 }
+
+/// 批量历史重放会逐块 sync_render_cache：失焦块只该清掉显形投影，
+/// 不该按焦点块那条路重建一遍。
+#[gpui::test]
+async fn syncing_an_unfocused_block_drops_its_projection(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(
+            cx,
+            "前 **粗体** 后\n\n乙 **粗二** 丁\n".into(),
+            None,
+        )
+    });
+    redraw(cx);
+    let second = editor.read_with(cx, |editor, _| {
+        editor.document.visible_blocks()[1].entity.clone()
+    });
+    second.update(cx, |block, _| {
+        block.selected_range = 4..4;
+        block.rebuild_inline_projection(4..4, None);
+    });
+    assert!(second.read_with(cx, |block, _| block.projection.is_some()));
+    second.update(cx, |block, _| block.sync_render_cache());
+    assert!(
+        second.read_with(cx, |block, _| block.projection.is_none()),
+        "失焦块同步时应清掉投影，而不是重建"
+    );
+}
+
+/// 焦点块在同步时仍要保住投影：光标停在显形记号内，重建后标记还在。
+#[gpui::test]
+async fn syncing_a_focused_block_keeps_its_projection(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "前 **粗体** 后\n\n另一段\n".into(), None)
+    });
+    redraw(cx);
+    let first = editor.read_with(cx, |editor, _| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    first.update(cx, |block, _| {
+        block.selected_range = 4..4;
+        block.sync_inline_projection_for_focus(true);
+    });
+    assert!(first.read_with(cx, |block, _| block.projection.is_some()));
+    first.update(cx, |block, _| block.sync_render_cache());
+    assert!(
+        first.read_with(cx, |block, _| block.projection.is_some()),
+        "焦点块同步后投影应保留"
+    );
+}
