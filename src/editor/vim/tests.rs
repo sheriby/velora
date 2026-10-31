@@ -3629,3 +3629,41 @@ async fn substitute_without_a_match_reports_e486(cx: &mut TestAppContext) {
     });
     assert_eq!(document_text(&editor, &cx), "one two");
 }
+
+/// 显式 `"0`/`"1` 前缀写入要进对应寄存器（读侧本来就读这两处）：
+/// `"0yy` 后 `"0p` 粘出的应是刚 yank 的行，`"1dd` 后 `"1p` 粘出刚删的行。
+#[gpui::test]
+async fn explicit_numbered_registers_write_where_they_read(cx: &mut TestAppContext) {
+    {
+        let (editor, cx) = vim_editor(cx, "aaa\nbbb");
+        cx.simulate_keystrokes("\" 0 y y");
+        cx.simulate_keystrokes("j");
+        cx.simulate_keystrokes("\" 0 p");
+        assert_eq!(
+            document_text(&editor, &cx),
+            "aaa\nbbb\n\naaa",
+            "\"0yy 后 \"0p 应粘出刚 yank 的行"
+        );
+    }
+    {
+        let (editor, cx) = vim_editor(cx, "keep\nfirst\nsecond");
+        cx.simulate_keystrokes("j");
+        cx.simulate_keystrokes("\" 1 d d");
+        assert_eq!(document_text(&editor, &cx), "keep\nsecond");
+        cx.simulate_keystrokes("\" 1 p");
+        let blocks: Vec<String> = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .iter()
+                .map(|visible| visible.entity.read(cx).display_text().to_string())
+                .filter(|text| !text.is_empty())
+                .collect()
+        });
+        assert_eq!(
+            blocks,
+            ["keep\nsecond".to_string(), "first".to_string()],
+            "\"1dd 后 \"1p 应粘出刚删的行"
+        );
+    }
+}

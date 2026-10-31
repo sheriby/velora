@@ -142,6 +142,21 @@ impl VimRegisters {
                 self.small_delete = Some(content.clone());
             }
         }
+        // 显式编号前缀按 vim 语义直接覆盖对应寄存器：读侧本来就读 yank /
+        // 编号链，写侧不落账会让 `"0dd` 之后 `"0p` 读回旧内容。
+        match name {
+            '0' => self.yank_register = Some(content.clone()),
+            '1'..='9' => {
+                let index = name as usize - '1' as usize;
+                if index < self.numbered.len() {
+                    self.numbered.insert(index, content.clone());
+                } else {
+                    self.numbered.push_back(content.clone());
+                }
+                self.numbered.truncate(9);
+            }
+            _ => {}
+        }
         if use_system_clipboard && (name == '"' || name == '+') {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(content.text.clone()));
         }
