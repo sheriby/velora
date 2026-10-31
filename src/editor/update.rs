@@ -87,7 +87,7 @@ impl UpdateBackend for SystemUpdateBackend {
 struct UpdateSession {
     backend: Arc<dyn UpdateBackend>,
     startup_checked: bool,
-    download_active: bool,
+    download_active: Arc<AtomicBool>,
     download_cancel: Option<Arc<AtomicBool>>,
     download_window: Option<WindowId>,
     pending_install: Option<InstallPlan>,
@@ -99,12 +99,22 @@ struct UpdateSession {
 }
 impl Global for UpdateSession {}
 
+/// 下载活动标志的 RAII 守卫：下载任务被丢弃（编辑器关闭、任务取消）时
+/// 也会把全局标志复位，不再依赖 weak_editor.update 还能成功。
+struct DownloadActiveGuard(Arc<AtomicBool>);
+
+impl Drop for DownloadActiveGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
+}
+
 impl Default for UpdateSession {
     fn default() -> Self {
         Self {
             backend: Arc::new(SystemUpdateBackend),
             startup_checked: false,
-            download_active: false,
+            download_active: Arc::new(AtomicBool::new(false)),
             download_cancel: None,
             download_window: None,
             pending_install: None,
@@ -149,7 +159,7 @@ fn init_update_session(cx: &mut App) {
                 if let Some(cancelled) = session.download_cancel.take() {
                     cancelled.store(true, Ordering::Relaxed);
                 }
-                session.download_active = false;
+                session.download_active.store(false, Ordering::Relaxed);
                 session.download_window = None;
             });
         }
@@ -175,7 +185,7 @@ pub(crate) fn cancel_pending_install(cx: &mut App) {
         cx.update_global::<UpdateSession, _>(|session, _| {
             session.pending_install = None;
             session.pending_install_retry = false;
-            session.download_active = false;
+            session.download_active.store(false, Ordering::Relaxed);
             session.download_cancel = None;
             session.download_window = None;
         });
@@ -224,7 +234,7 @@ pub(crate) fn install_pending_update(cx: &mut App) -> bool {
 fn show_failure_on_app(cx: &mut App, detail: &str) {
     cx.update_global::<UpdateSession, _>(|session, _| {
         session.pending_install = None;
-        session.download_active = false;
+        session.download_active.store(false, Ordering::Relaxed);
         if let Some(cancelled) = session.download_cancel.take() {
             cancelled.store(true, Ordering::Relaxed);
         }
@@ -321,7 +331,7 @@ impl Editor {
         }
         init_update_session(cx);
         if self.update_download_progress.is_some()
-            || (cx.global::<UpdateSession>().download_active
+            || (cx.global::<UpdateSession>().download_active.load(Ordering::Relaxed)
                 || cx.global::<UpdateSession>().pending_install.is_some())
         {
             let message = cx
@@ -427,7 +437,7 @@ impl Editor {
         // 其它窗口也能检查更新并关闭通知，只有下载所属窗口能解除全局互斥。
         if cancelled.is_some() && cx.try_global::<UpdateSession>().is_some() {
             cx.update_global::<UpdateSession, _>(|session, _| {
-                session.download_active = false;
+                session.download_active.store(false, Ordering::Relaxed);
                 session.download_cancel = None;
                 session.download_window = None;
             });
@@ -454,7 +464,7 @@ impl Editor {
         let session = cx.global::<UpdateSession>();
         // 失败保留的旧计划不算「正在准备」：允许重新检查与下载，开工前把它换掉。
         let install_queued = session.pending_install.is_some() && !session.pending_install_retry;
-        if session.download_active || install_queued {
+        if session.download_active.load(Ordering::Relaxed) || install_queued {
             let message = cx
                 .global::<I18nManager>()
                 .strings()
@@ -481,7 +491,7 @@ impl Editor {
             self.show_update_failure(&error.to_string(), cx);
             return;
         }
-        cx.update_global::<UpdateSession, _>(|session, _| session.download_active = true);
+        cx.update_global::<UpdateSession, _>(|session, _| session.download_active.store(true, Ordering::Relaxed));
         let progress = Arc::new(AtomicU64::new(0));
         let cancelled = Arc::new(AtomicBool::new(false));
         self.update_download_progress = Some(progress.clone());
@@ -503,7 +513,11 @@ impl Editor {
         });
         let weak_editor = cx.entity().downgrade();
         let timer = cx.background_executor().clone();
+        // 共享原子量的守卫：任务被丢弃（窗口/编辑器销毁）时也会复位
+        // 全局下载标志，避免永久卡住后续下载。
+        let activity = cx.global::<UpdateSession>().download_active.clone();
         self.update_task = Some(cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let _activity_guard = DownloadActiveGuard(activity);
             use futures::FutureExt;
             let worker = worker.fuse();
             futures::pin_mut!(worker);
@@ -523,10 +537,17 @@ impl Editor {
                     }
                 }
             };
+            // 先复位全局状态：这一笔不依赖编辑器实体还活着；任务被取消时
+            // 由 `DownloadActiveGuard` 在 Drop 里兜底复位。
+            cx.update(|app| {
+                app.update_global::<UpdateSession, _>(|session, _| {
+                    session.download_active.store(false, Ordering::Relaxed);
+                    session.download_cancel = None;
+                    session.download_window = None;
+                });
+            });
             if cancelled.load(Ordering::Relaxed) { return; }
             if let Err(error) = weak_editor.update(cx, |editor, cx| {
-                cx.update_global::<UpdateSession,_>(|session,_| { session.download_active = false; session.download_cancel = None;
-            session.download_window = None; });
                 match result {
                     Ok(path) => {
                         cx.defer(move |cx| {
@@ -735,6 +756,21 @@ mod tests {
     };
     use crate::net::update::UpdateSource;
     use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
+    use std::sync::atomic::Ordering;
+
+    /// 下载任务被丢弃（取消/编辑器销毁）时，全局下载标志必须复位；
+    /// 守卫不依赖任何编辑器实体或 App 上下文。
+    #[test]
+    fn download_active_guard_resets_the_global_flag_on_drop() {
+        let active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        {
+            let _guard = super::DownloadActiveGuard(active.clone());
+        }
+        assert!(
+            !active.load(Ordering::Relaxed),
+            "守卫 Drop 后下载活动标志必须为 false"
+        );
+    }
 
     #[gpui::test]
     fn update_notice_exposes_progress_and_keyboard_cancellation(cx: &mut TestAppContext) {
@@ -778,7 +814,7 @@ mod tests {
                     Some(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(50)));
                 editor.update_download_cancel = Some(cancelled.clone());
                 cx.update_global::<UpdateSession, _>(|session, _| {
-                    session.download_active = true;
+                    session.download_active.store(true, Ordering::Relaxed);
                     session.download_cancel = Some(cancelled.clone());
                     session.download_window = Some(window.window_handle().window_id());
                 });
@@ -826,7 +862,7 @@ mod tests {
         handle
             .read_with(&visual, |editor, cx| {
                 assert!(editor.update_notification.is_none());
-                assert!(!cx.global::<UpdateSession>().download_active);
+                assert!(!cx.global::<UpdateSession>().download_active.load(Ordering::Relaxed));
                 assert_eq!(editor.buffer.text(), "正文");
             })
             .unwrap();
@@ -988,7 +1024,7 @@ mod tests {
             assert!(editor.modal_is_open(), "错误应显示在当前窗口");
         });
         cx.update(|cx| {
-            assert!(!cx.global::<UpdateSession>().download_active);
+            assert!(!cx.global::<UpdateSession>().download_active.load(Ordering::Relaxed));
             assert!(
                 cx.global::<UpdateSession>().pending_install.is_some(),
                 "安装启动失败不能把计划丢掉"
@@ -1011,19 +1047,19 @@ mod tests {
         owner.update(visual, |editor, cx| {
             editor.update_download_cancel = Some(cancelled.clone());
             cx.update_global::<UpdateSession, _>(|session, _| {
-                session.download_active = true;
+                session.download_active.store(true, Ordering::Relaxed);
                 session.download_cancel = Some(cancelled.clone());
             });
         });
         other.update(visual, |editor, cx| editor.dismiss_update_notice(cx));
         visual.update(|_, cx| {
-            assert!(cx.global::<UpdateSession>().download_active,
+            assert!(cx.global::<UpdateSession>().download_active.load(Ordering::Relaxed),
                 "另一窗口取消通知不能解除进行中的下载保护");
         });
         assert!(!cancelled.load(std::sync::atomic::Ordering::Relaxed));
         owner.update(visual, |editor, cx| editor.dismiss_update_notice(cx));
         assert!(cancelled.load(std::sync::atomic::Ordering::Relaxed));
-        visual.update(|_, cx| assert!(!cx.global::<UpdateSession>().download_active));
+        visual.update(|_, cx| assert!(!cx.global::<UpdateSession>().download_active.load(Ordering::Relaxed)));
     }
     #[test]
     fn download_ticks_only_redraw_when_the_progress_changes() {
@@ -1155,7 +1191,7 @@ mod tests {
             editor.update(cx, |editor, cx| {
                 editor.update_download_cancel = Some(cancelled.clone());
                 cx.update_global::<UpdateSession, _>(|session, _| {
-                    session.download_active = true;
+                    session.download_active.store(true, Ordering::Relaxed);
                     session.download_cancel = Some(cancelled.clone());
                     session.download_window = Some(id);
                 });
@@ -1167,7 +1203,7 @@ mod tests {
             cancelled.load(std::sync::atomic::Ordering::Relaxed),
             "关闭窗口时应立即取消下载，不依赖实体释放时机"
         );
-        cx.update(|cx| assert!(!cx.global::<UpdateSession>().download_active));
+        cx.update(|cx| assert!(!cx.global::<UpdateSession>().download_active.load(Ordering::Relaxed)));
         drop(editor);
     }
 
