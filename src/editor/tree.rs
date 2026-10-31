@@ -854,6 +854,22 @@ impl DocumentTree {
         });
     }
 
+    /// 与 [`Self::insert_blocks_at`] 相同，但**不先物化未建完的尾部**。
+    ///
+    /// 只给「插入点所在根块之后还有材料化根块」的结构命令用：这时写回
+    /// 与快照都只涉及这一段，尾部字节原样留在缓冲区里，等后台续建。
+    pub(super) fn insert_blocks_at_keeping_tail(
+        &mut self,
+        parent: Option<Entity<Block>>,
+        index: usize,
+        blocks: Vec<Entity<Block>>,
+        cx: &mut Context<Editor>,
+    ) {
+        let result = self.insert_blocks_at_raw(parent, index, blocks, cx);
+        self.rebuild_metadata_and_snapshot(cx);
+        result
+    }
+
     /// Runs a tree mutation and then eagerly rebuilds metadata and the visible
     /// snapshot exactly once for that mutation batch.
     /// P6a：同步物化原始字节尾部（代码/纯文本文档流式续建用）。

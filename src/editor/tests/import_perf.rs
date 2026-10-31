@@ -298,4 +298,55 @@ async fn multiline_paste_before_the_pending_tail_keeps_the_tail(cx: &mut TestApp
         })
     });
 }
+/// 首次回车落在前段根块时不该把剩余尾部整段物化：结构命令只动这一根，
+/// 未物化尾部保持挂起，最后一根材料化根块原样保留。
+#[gpui::test]
+async fn newline_before_the_pending_tail_keeps_the_tail(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..10)
+        .map(|index| format!("paragraph {index}\n\n"))
+        .collect::<String>();
+    let editor = progressive_test_editor(cx, markdown, 3);
+    let (roots, last_root, first) = cx.read(|cx| {
+        editor.read_with(cx, |editor, _cx| {
+            assert!(editor.document.pending_tail().is_some(), "夹具应留有尾部");
+            let roots = editor.document.root_blocks().to_vec();
+            (
+                roots.clone(),
+                roots.last().map(|root| root.entity_id()),
+                roots[0].clone(),
+            )
+        })
+    });
+    assert!(roots.len() >= 2, "夹具应已物化至少两根根块");
+    let last_root = last_root.expect("有根块");
+    cx.update(|cx| {
+        editor.update(cx, |editor, cx| {
+            editor.on_block_event(
+                first,
+                &crate::components::BlockEvent::RequestNewline {
+                    trailing: crate::components::InlineTextTree::plain(String::new()),
+                    source_already_mutated: false,
+                },
+                cx,
+            );
+        });
+    });
+    cx.read(|cx| {
+        editor.read_with(cx, |editor, _cx| {
+            assert!(
+                editor.document.pending_tail().is_some(),
+                "前段回车不该把未物化尾部整段建完"
+            );
+            assert!(
+                editor
+                    .document
+                    .root_blocks()
+                    .iter()
+                    .any(|root| root.entity_id() == last_root),
+                "回车之外的根块被换掉了"
+            );
+        });
+    });
+}
 
