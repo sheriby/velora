@@ -625,6 +625,12 @@ impl Block {
         }
     }
 
+    /// 指针选择会话是否开着（按下后还没抬手）。收尾清扫按它预筛，
+    /// 不再给每个可见块都付一次实体写。
+    pub(crate) fn pointer_selection_active(&self) -> bool {
+        self.is_selecting
+    }
+
     pub fn display_text(&self) -> &str {
         self.current_cache().visible_text()
     }

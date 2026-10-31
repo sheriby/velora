@@ -2078,3 +2078,38 @@ async fn shift_click_on_a_block_extends_from_an_existing_in_block_selection(
         );
     });
 }
+
+/// 指针收尾只清扫真正开着选择会话的块：文档里其余块一个个 update 一遍是纯浪费。
+#[gpui::test]
+async fn ending_a_pointer_selection_only_touches_blocks_in_the_session(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = (0..40)
+        .map(|index| format!("段落 {index}"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, source, None)
+    });
+    redraw(cx);
+    redraw(cx);
+    let first = editor.read_with(cx, |editor, cx| {
+        editor.document.visible_blocks()[0]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("首段几何")
+    });
+    let point_in_first = gpui::point(first.left() + px(1.0), first.center().y);
+    let before = editor.read_with(cx, |editor, _| editor.pointer_session_updates.get());
+    cx.simulate_mouse_down(point_in_first, gpui::MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(point_in_first, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    let updates =
+        editor.read_with(cx, |editor, _| editor.pointer_session_updates.get()) - before;
+    assert!(
+        updates <= 2,
+        "40 段文档的一次点击清扫了 {updates} 个块（应只碰会话中的块）"
+    );
+}

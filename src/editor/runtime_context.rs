@@ -130,8 +130,17 @@ impl Editor {
             });
         }
 
-        for visible in self.document.visible_blocks().to_vec() {
-            visible.entity.update(cx, |block, _cx| {
+        let selecting_blocks: Vec<Entity<Block>> = self
+            .document
+            .visible_blocks()
+            .iter()
+            .filter(|visible| visible.entity.read(cx).pointer_selection_active())
+            .map(|visible| visible.entity.clone())
+            .collect();
+        for block in selecting_blocks {
+            self.pointer_session_updates
+                .set(self.pointer_session_updates.get() + 1);
+            block.update(cx, |block, _cx| {
                 changed |= block.end_pointer_selection_session();
             });
         }
@@ -145,9 +154,12 @@ impl Editor {
         let cells: Vec<Entity<Block>> = self
             .table_cells
             .values()
+            .filter(|binding| binding.cell.read(cx).pointer_selection_active())
             .map(|binding| binding.cell.clone())
             .collect();
         for cell in cells {
+            self.pointer_session_updates
+                .set(self.pointer_session_updates.get() + 1);
             cell.update(cx, |block, _cx| {
                 changed |= block.end_pointer_selection_session();
             });
