@@ -1048,10 +1048,32 @@ impl Editor {
         cx: &App,
     ) -> Option<VimPosition> {
         let last = entities.len().checked_sub(1)?;
+        // 基准是**视口内可见块**：已挂载块的 last_bounds 与滚动视口求交；
+        // 完全没有几何（首帧前）时退回整篇近似，避免 H/M/L 直接失效。
+        let viewport = self.scroll_handle.bounds();
+        let mut visible: Vec<usize> = entities
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entity)| {
+                entity
+                    .read(cx)
+                    .last_bounds
+                    .filter(|bounds| {
+                        bounds.bottom() > viewport.top() && bounds.top() < viewport.bottom()
+                    })
+                    .map(|_| index)
+            })
+            .collect();
+        if visible.is_empty() {
+            visible = (0..=last).collect();
+        }
+        let count = repeat.max(1) as usize;
         let index = match which {
-            ScreenCursorKind::Top => (repeat.max(1) as usize).saturating_sub(1).min(last),
-            ScreenCursorKind::Middle => last / 2,
-            ScreenCursorKind::Bottom => last.saturating_sub((repeat.max(1) as usize).saturating_sub(1)),
+            ScreenCursorKind::Top => visible[count.saturating_sub(1).min(visible.len() - 1)],
+            ScreenCursorKind::Middle => visible[visible.len() / 2],
+            ScreenCursorKind::Bottom => {
+                visible[visible.len().saturating_sub(count).min(visible.len() - 1)]
+            }
         };
         let entity = entities.get(index)?;
         let block = entity.read(cx);

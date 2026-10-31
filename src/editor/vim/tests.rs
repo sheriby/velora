@@ -3793,3 +3793,43 @@ async fn insert_sessions_with_unreplayable_keys_do_not_poison_dot(cx: &mut TestA
         "含 Delete 的会话不应被 `.` 错位重放"
     );
 }
+
+/// H/M/L 应以**视口内可见块**为基准，而不是整篇文档的首/中/末块：
+/// 滚到长文中间按 H，不能跳回文首。
+#[gpui::test]
+async fn h_m_l_target_the_viewport_not_the_whole_document(cx: &mut TestAppContext) {
+    let markdown = (0..120)
+        .map(|index| format!("段落 {index}"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let (editor, cx) = vim_editor(cx, &markdown);
+    cx.update(|window, _| window.resize(gpui::size(gpui::px(600.0), gpui::px(240.0))));
+    redraw(cx);
+    redraw(cx);
+    editor.update(cx, |editor, _| {
+        editor
+            .scroll_handle
+            .set_offset(gpui::point(gpui::px(0.0), gpui::px(900.0)));
+    });
+    redraw(cx);
+    redraw(cx);
+    for key in ["H", "M", "L"] {
+        cx.simulate_keystrokes(key);
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            let active = editor.active_entity_id.expect("活动块");
+            let bounds = editor
+                .document
+                .block_entity_by_id(active)
+                .expect("活动块实体")
+                .read(cx)
+                .last_bounds
+                .expect("活动块几何");
+            let viewport = editor.scroll_handle.bounds();
+            assert!(
+                bounds.bottom() > viewport.top() && bounds.top() < viewport.bottom(),
+                "{key} 落到了视口外：块 {bounds:?}，视口 {viewport:?}"
+            );
+        });
+    }
+}
