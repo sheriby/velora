@@ -90,7 +90,12 @@ impl VimRegisters {
             '0' => self.yank_register.clone(),
             '1'..='9' => {
                 let index = name as usize - '1' as usize;
-                self.numbered.get(index).cloned()
+                // 写侧的空档占位读回 None：vim 对未设置的编号寄存器报
+                // Nothing in register，空串不是可粘贴内容。
+                self.numbered
+                    .get(index)
+                    .filter(|content| !content.text.is_empty())
+                    .cloned()
             }
             '-' => self.small_delete.clone(),
             '_' => None,
@@ -153,6 +158,15 @@ impl VimRegisters {
                 if index < self.numbered.len() {
                     self.numbered.insert(index, content.clone());
                 } else {
+                    // 读侧按位取（get(N-1)）：链短于编号时内容必须落在自己的位
+                    // 上，push_back 会落错位（`"1dd` 后 `"3dd`，`"3p` 读到空）。
+                    // 空档补空占位，读侧把空串当「未设置」。
+                    while self.numbered.len() < index {
+                        self.numbered.push_back(RegisterContent {
+                            text: String::new(),
+                            linewise: false,
+                        });
+                    }
                     self.numbered.push_back(content.clone());
                 }
                 self.numbered.truncate(9);

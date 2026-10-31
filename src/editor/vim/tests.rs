@@ -3864,3 +3864,24 @@ async fn visual_line_dot_replay_uses_hard_lines_in_wrapped_paragraphs(cx: &mut T
         document_text(&editor, &cx)
     );
 }
+
+/// 显式编号寄存器按位落账：链短于编号时读侧按 get(N-1) 取，写侧 push_back
+/// 会落错位——`"1dd` 之后 `"3dd`，`"3p` 读到空、什么都不粘（vim 语义是
+/// `"3` 装着刚删的内容）。
+#[gpui::test]
+async fn explicit_numbered_register_lands_on_its_own_slot(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "keep\none\ntwo\nthree");
+    cx.simulate_keystrokes("j");
+    cx.simulate_keystrokes("\" 1 d d");
+    assert_eq!(document_text(&editor, &cx), "keep\ntwo\nthree");
+    cx.simulate_keystrokes("j");
+    cx.simulate_keystrokes("\" 3 d d");
+    assert_eq!(document_text(&editor, &cx), "keep\ntwo\n");
+    cx.simulate_keystrokes("\" 3 p");
+    let text = document_text(&editor, &cx);
+    assert_eq!(
+        text.matches("three").count(),
+        1,
+        "\"3dd 后 \"3p 应把 \"3 的内容粘回正文（旧实现落错位读回空，正文里没有 three）：{text:?}"
+    );
+}
