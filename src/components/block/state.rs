@@ -943,6 +943,17 @@ impl BlockRecord {
     /// indentation for nested blocks and list ordinal for numbered items.
     /// Raw-preserved blocks produce their fallback text when at depth 0.
     pub fn markdown_line(&self, depth: usize, list_ordinal: Option<usize>) -> String {
+        self.markdown_line_with_root(depth, list_ordinal, true)
+    }
+
+    /// `at_root` = 这一块直接落在文档根上（quote_depth == 0）：只有那时
+    /// `source_line_prefixes` 才是「本层」的续行缩进，容器子块里它是绝对账。
+    pub(crate) fn markdown_line_with_root(
+        &self,
+        depth: usize,
+        list_ordinal: Option<usize>,
+        at_root: bool,
+    ) -> String {
         let indentation = "  ".repeat(depth);
         let title_markdown = self.title_markdown_for_output();
         match self.kind {
@@ -967,7 +978,13 @@ impl BlockRecord {
                     .unwrap_or_else(|| {
                         format!("{indentation}{} ", self.list_marker.bullet_or_default())
                     });
-                prefixed_multiline(&title_markdown, &prefix, &format!("{indentation}  "))
+                prefixed_multiline_with_recorded_indent(
+                    self,
+                    &title_markdown,
+                    &prefix,
+                    &format!("{indentation}  "),
+                    depth == 0 && at_root,
+                )
             }
             BlockKind::TaskListItem { checked } => {
                 let box_char = if checked {
@@ -995,7 +1012,13 @@ impl BlockRecord {
                             self.list_marker.bullet_or_default()
                         )
                     });
-                prefixed_multiline(&title_markdown, &prefix, &format!("{indentation}      "))
+                prefixed_multiline_with_recorded_indent(
+                    self,
+                    &title_markdown,
+                    &prefix,
+                    &format!("{indentation}      "),
+                    depth == 0 && at_root,
+                )
             }
             BlockKind::NumberedListItem => {
                 let ordinal = list_ordinal.unwrap_or(1);
@@ -1012,10 +1035,12 @@ impl BlockRecord {
                             .map(|index| prefix[index + delimiter.len_utf8()..].to_string())
                     })
                     .unwrap_or_else(|| " ".to_string());
-                prefixed_multiline(
+                prefixed_multiline_with_recorded_indent(
+                    self,
                     &title_markdown,
                     &format!("{indentation}{ordinal}{delimiter}{gap}"),
                     &format!("{indentation}   "),
+                    depth == 0 && at_root,
                 )
             }
             BlockKind::Quote => prefixed_multiline(
@@ -1102,6 +1127,35 @@ fn indent_multiline(content: &str, indentation: &str) -> String {
         .map(|line| format!("{indentation}{line}"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// 列表项的多行写法：首行用调用方给的前缀；根级续行的缩进取解析期记账
+/// （`source_line_prefixes`，第 0 项是首行），没有记账时退回默认缩进。
+fn prefixed_multiline_with_recorded_indent(
+    record: &BlockRecord,
+    content: &str,
+    first_prefix: &str,
+    default_continuation: &str,
+    use_recorded_indent: bool,
+) -> String {
+    let mut lines = content.split('\n');
+    let mut rendered = String::new();
+    if let Some(first) = lines.next() {
+        rendered.push_str(first_prefix);
+        rendered.push_str(first);
+    }
+    for (index, line) in lines.enumerate() {
+        rendered.push('\n');
+        let recorded = use_recorded_indent
+            .then(|| record.source_line_prefixes.get(index + 1).copied())
+            .flatten();
+        match recorded {
+            Some(width) => rendered.push_str(&" ".repeat(width as usize)),
+            None => rendered.push_str(default_continuation),
+        }
+        rendered.push_str(line);
+    }
+    rendered
 }
 
 fn prefixed_multiline(content: &str, first_prefix: &str, continuation_prefix: &str) -> String {

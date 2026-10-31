@@ -1537,7 +1537,11 @@ impl DocumentTree {
                     let marker_line =
                         block_ref
                             .record
-                            .markdown_line(list_depth, block_ref.list_ordinal);
+                            .markdown_line_with_root(
+                                list_depth,
+                                block_ref.list_ordinal,
+                                block_ref.quote_depth == 0,
+                            );
                     lines.push(format!(
                         "{marker_line}{}",
                         math_lines.next().unwrap_or_default()
@@ -1550,7 +1554,11 @@ impl DocumentTree {
                     lines.push(
                         block_ref
                             .record
-                            .markdown_line(list_depth, block_ref.list_ordinal),
+                            .markdown_line_with_root(
+                                list_depth,
+                                block_ref.list_ordinal,
+                                block_ref.quote_depth == 0,
+                            ),
                     );
                 }
                 // 首个公式子块已经并进标记行时不再重复落笔。
@@ -1585,7 +1593,11 @@ impl DocumentTree {
                     lines.push(
                         block_ref
                             .record
-                            .markdown_line(list_depth, block_ref.list_ordinal),
+                            .markdown_line_with_root(
+                                list_depth,
+                                block_ref.list_ordinal,
+                                block_ref.quote_depth == 0,
+                            ),
                     );
                     let child_list_depth = list_depth + usize::from(block_ref.kind().is_list_item());
                     Self::collect_markdown_lines(
@@ -1601,7 +1613,11 @@ impl DocumentTree {
                 lines.push(
                     block_ref
                         .record
-                        .markdown_line(list_depth, block_ref.list_ordinal),
+                        .markdown_line_with_root(
+                            list_depth,
+                            block_ref.list_ordinal,
+                            block_ref.quote_depth == 0,
+                        ),
                 );
                 let child_list_depth = list_depth + usize::from(block_ref.kind().is_list_item());
                 Self::collect_markdown_lines(

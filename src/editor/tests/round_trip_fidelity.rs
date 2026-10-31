@@ -2574,3 +2574,18 @@ async fn list_marker_gap_and_indent_round_trip_without_edit(cx: &mut TestAppCont
     }
 }
 
+
+/// 多行列表项的续行缩进是原文写法（对齐到内容列可以不是「两个空格」）：
+/// `-   首行` 的续行若缩进四格，未编辑保存必须逐字节还原。
+#[gpui::test]
+async fn list_item_continuation_indent_round_trips_without_edit(cx: &mut TestAppContext) {
+    for source in [
+        "- 首行\n  续行",
+        "-   首行\n    续行",
+        "1)  首行\n    续行",
+    ] {
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
+        let round_tripped = editor.read_with(cx, |editor, cx| editor.document.markdown_text(cx));
+        assert_eq!(round_tripped, source, "列表续行缩进被改写：{source:?}");
+    }
+}
