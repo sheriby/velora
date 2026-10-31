@@ -443,12 +443,20 @@ impl DocumentTree {
     }
 
     pub(super) fn last_visible_descendant(&self, entity_id: EntityId) -> Option<Entity<Block>> {
+        // 叶子块没有表项：它就是自己的最后可见后代。未知 id 在这里同样
+        // 回落到自身，再由 `block_entity_by_id` 判成 None。
         let descendant_id = self
             .snapshot
             .last_visible_descendant_by_entity
             .get(&entity_id)
-            .copied()?;
+            .copied()
+            .unwrap_or(entity_id);
         self.block_entity_by_id(descendant_id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tracked_last_visible_descendants(&self) -> usize {
+        self.snapshot.last_visible_descendant_by_entity.len()
     }
 
     pub(super) fn replace_roots(&mut self, roots: Vec<Entity<Block>>, cx: &mut Context<Editor>) {
@@ -1231,9 +1239,13 @@ impl DocumentTree {
                     .unwrap_or_else(|| children.last().expect("children checked").entity_id())
             };
 
-            snapshot
-                .last_visible_descendant_by_entity
-                .insert(entity_id, last_descendant_id);
+            // 叶子块的「最后可见后代」就是自己，不必进表：查询端按缺省值
+            // 回落到自身。整篇都是段落时省掉每根块一次哈希插入。
+            if !children.is_empty() {
+                snapshot
+                    .last_visible_descendant_by_entity
+                    .insert(entity_id, last_descendant_id);
+            }
             previous_was_list_item = kind.is_list_item();
         }
     }

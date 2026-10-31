@@ -914,4 +914,32 @@ fn snapshot_rebuild_does_not_clone_the_root_list() {
         "normalize 又克隆了容器子块列表"
     );
 }
+/// 叶子块的「最后可见后代」按缺省值回落，不再为每根块写一条哈希表。
+#[gpui::test]
+async fn leaf_blocks_do_not_fill_the_descendant_map(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..40)
+        .map(|index| format!("paragraph {index}\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, markdown, None)
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.document.tracked_last_visible_descendants(),
+            0,
+            "纯段落文档不该为叶子块写后代表"
+        );
+        let first = editor.document.first_root().expect("首块");
+        assert_eq!(
+            editor
+                .document
+                .last_visible_descendant(first.entity_id())
+                .map(|block| block.entity_id()),
+            Some(first.entity_id()),
+            "叶子块的最后可见后代应回落为自身"
+        );
+    });
+}
 
