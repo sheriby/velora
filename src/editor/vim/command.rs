@@ -490,7 +490,14 @@ impl Editor {
             body if body.starts_with('s') => {
                 self.vim_execute_substitute(range, &body[1..], window, cx);
             }
-            _ => {}
+            _ => {
+                // 与 vim 一致的可见回显：未支持的命令不能无声丢弃。
+                self.show_message_modal(
+                    "vim",
+                    format!("E492: Not an editor command: {line}"),
+                    cx,
+                );
+            }
         }
     }
 
@@ -541,6 +548,11 @@ impl Editor {
             );
             // 占位：真正钳制在 substitute 执行时做。
             return (Some((parsed.0.unwrap_or(0), parsed.1.unwrap_or(0))), rest);
+        }
+        // 单独的 `.` 是「当前行」：范围交给执行端按光标行解释，命令体从 `s`
+        // 开始切出去；否则 `.` 会被并入命令体，`:.s/a/b` 匹配不到任何分支。
+        if range_text == "." {
+            return (None, rest);
         }
         if let Some(line_no) = parse_bound(range_text, usize::MAX) {
             return (Some((line_no, line_no)), rest);
@@ -658,6 +670,7 @@ impl Editor {
         }
         replaced.push_str(&segment[last_match..]);
         if count == 0 {
+            self.show_message_modal("vim", format!("E486: Pattern not found: {pattern}"), cx);
             return;
         }
         self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);

@@ -3574,3 +3574,58 @@ async fn empty_text_objects_are_a_no_op(cx: &mut TestAppContext) {
         );
     }
 }
+
+/// 冒号命令行的未支持命令不能静默吞掉：与 vim 一致给出 E492 回显。
+#[gpui::test]
+async fn unsupported_colon_command_reports_an_error(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one\ntwo\nthree");
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("5d");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.modal_is_open(),
+            "未支持的冒号命令应有可见回显"
+        );
+        let detail = editor
+            .modal_spec()
+            .and_then(|modal| modal.detail.as_ref().map(|detail| detail.to_string()))
+            .unwrap_or_default();
+        assert!(
+            detail.contains("E492"),
+            "回显应带 vim 风格的错误码与命令：{detail:?}"
+        );
+        assert!(detail.contains("5d"), "回显应指出是哪条命令：{detail:?}");
+    });
+    assert_eq!(document_text(&editor, &cx), "one\ntwo\nthree");
+}
+
+/// `:.s/a/b`（当前行替换）的范围前缀不能被解析吞进命令体。
+#[gpui::test]
+async fn dot_range_substitute_replaces_on_the_current_line(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two\none three");
+    cx.simulate_keystrokes(":");
+    cx.simulate_input(".s/one/ONE/");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    assert_eq!(document_text(&editor, &cx), "ONE two\none three");
+}
+
+/// `:s` 无命中与 vim 一致报 E486，而不是静默返回。
+#[gpui::test]
+async fn substitute_without_a_match_reports_e486(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "one two");
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("s/xyz/A/");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        let detail = editor
+            .modal_spec()
+            .and_then(|modal| modal.detail.as_ref().map(|detail| detail.to_string()))
+            .unwrap_or_default();
+        assert!(detail.contains("E486"), "无命中应有 E486 回显：{detail:?}");
+    });
+    assert_eq!(document_text(&editor, &cx), "one two");
+}
