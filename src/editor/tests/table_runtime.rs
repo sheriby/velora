@@ -1298,7 +1298,7 @@ async fn clicking_the_header_top_edge_edits_text_instead_of_selecting_the_column
 #[gpui::test]
 async fn row_axis_bands_stay_inside_the_table(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    let (editor, cx) = cx.add_window_view(|_, cx| {
+    let (_editor, cx) = cx.add_window_view(|_, cx| {
         Editor::from_markdown(cx, "| a | b |\n| --- | --- |\n| c | d |\n".into(), None)
     });
     redraw(cx);

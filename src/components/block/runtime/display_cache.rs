@@ -6,6 +6,7 @@ impl Block {
     }
 
     pub(crate) fn sync_render_cache(&mut self) {
+        let marked_before = self.marked_range.clone();
         let clean_selected = self.current_to_clean_range(self.selected_range.clone());
         let clean_marked = self
             .marked_range
@@ -54,6 +55,9 @@ impl Block {
             self.collapsed_caret_affinity = CollapsedCaretAffinity::Default;
         }
         self.refresh_cached_display_text();
+        if self.marked_range != marked_before {
+            self.composition_signal_pending = true;
+        }
     }
 
     /// 当前显示文本的硬行表，全编辑器共用这一份。表与 display_generation
@@ -409,7 +413,8 @@ impl Block {
     ) {
         let before = self.marked_range.clone();
         self.sync_inline_projection_for_focus(focused);
-        if self.marked_range != before {
+        if self.marked_range != before || self.composition_signal_pending {
+            self.composition_signal_pending = false;
             cx.emit(BlockEvent::CompositionChanged);
             cx.notify();
         }
@@ -421,6 +426,7 @@ impl Block {
             return;
         }
 
+        let marked_before = self.marked_range.clone();
         let clean_marked = self
             .marked_range
             .clone()
@@ -430,6 +436,9 @@ impl Block {
         self.projection_cache_key = None;
         self.set_selection_from_anchor_focus(clean_anchor, clean_focus);
         self.marked_range = clean_marked;
+        if self.marked_range != marked_before {
+            self.composition_signal_pending = true;
+        }
         self.collapsed_caret_affinity = CollapsedCaretAffinity::Default;
         self.refresh_cached_display_text();
     }

@@ -247,6 +247,53 @@ async fn table_preedit_survives_a_row_insert(cx: &mut TestAppContext) {
 }
 /// 组合跨度在每帧投影同步里被换算后，值变了要发 `CompositionChanged`；
 /// 否则撤销组会一直开着，下一次编辑并进这次组合。
+/// 文本编辑路径的 `sync_render_cache` 会静默换算组合跨度；下一次带事件的
+/// 同步（prepaint）即使自己不再改跨度，也要把这次变化补报出去。
+#[gpui::test]
+async fn silent_projection_sync_changes_are_reported_on_the_next_frame(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "前 **粗体** 后\n\n另一段\n".into(), None)
+    });
+    redraw(cx);
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    first.update_in(cx, |block, window, cx| {
+        block.focus_handle.focus(window, cx);
+        block.selected_range = 4..4;
+        block.sync_inline_projection_for_focus(true);
+    });
+    let changes = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let changes_for_subscription = changes.clone();
+    let subscription = cx.update(|_, cx| {
+        cx.subscribe(
+            &first,
+            move |_: gpui::Entity<crate::editor::Block>, event: &BlockEvent, _cx: &mut gpui::App| {
+                if matches!(event, BlockEvent::CompositionChanged) {
+                    changes_for_subscription.set(changes_for_subscription.get() + 1);
+                }
+            },
+        )
+    });
+    first.update_in(cx, |block, _window, cx| {
+        // 这一笔自身的 CompositionChanged 是基线，不算补报。
+        block.set_marked_range(Some(5..5), cx);
+        // 文本编辑路径：重建投影时把显示坐标的跨度静默换算回干净坐标；
+        // 紧接着这一帧的投影同步（prepaint 同一条入口）要把变化补报出去。
+        block.sync_render_cache();
+        block.sync_inline_projection_for_focus_notified(true, cx);
+    });
+    assert!(
+        changes.get() >= 2,
+        "静默换算的组合跨度应在下一次带事件的同步里补报：{}",
+        changes.get()
+    );
+    drop(subscription);
+}
+
 #[gpui::test]
 async fn projection_sync_reports_marked_range_changes(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

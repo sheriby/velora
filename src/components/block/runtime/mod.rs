@@ -272,6 +272,9 @@ pub struct Block {
     /// 最近一次标题编辑的可见文本变化形状。编辑器在 `Changed` 里取走它，
     /// 平移同一块上的 vim 标记/跳转表；编辑本身只报「变了」，不带区间。
     pub(crate) last_visible_edit: Option<VisibleTextEdit>,
+    /// 无 cx 的同步路径改过组合跨度、还没发 CompositionChanged。下一趟
+    /// 带事件的同步（prepaint）把它补报出去。
+    pub(crate) composition_signal_pending: bool,
     hide_markdown_markers: bool,
     /// Inputs that produced the current `projection`. When the next
     /// `sync_inline_projection_for_focus` computes the same inputs, the
@@ -472,6 +475,7 @@ impl Block {
             projection: None,
             inline_projection_focus: false,
             last_visible_edit: None,
+            composition_signal_pending: false,
             hide_markdown_markers: crate::config::EditorSettings::hide_markdown_markers(cx),
             projection_cache_key: None,
             cached_display_text: SharedString::default(),
