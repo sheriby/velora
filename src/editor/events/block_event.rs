@@ -274,18 +274,10 @@ impl Editor {
                 if self.view_mode == crate::editor::ViewMode::Source {
                     new_block.update(cx, |block, _cx| block.set_source_document_mode());
                 }
-                // 懒导入尾部还挂着、且插入点之后还有材料化根块：这次插入只动
-                // 这一段，不必先把尾部整段建完（首次回车卡顿的来源）。
-                let keeps_pending_tail = self.document.pending_tail().is_some()
-                    && self
-                        .document
-                        .root_ancestor_of(block.entity_id())
-                        .and_then(|root| {
-                            self.document.root_blocks().iter().position(|candidate| {
-                                candidate.entity_id() == root.entity_id()
-                            })
-                        })
-                        .is_some_and(|index| index + 1 < self.document.root_blocks().len());
+                // 懒导入尾部还挂着：回车只改插入点那一根与其新兄弟，不必先把
+                // 尾部整段建完（首次回车卡顿的来源）。分块边界只落在根边界，
+                // 接缝根块同样安全。
+                let keeps_pending_tail = self.document.pending_tail().is_some();
                 if keeps_pending_tail {
                     self.document.insert_blocks_at_keeping_tail(
                         location.parent,

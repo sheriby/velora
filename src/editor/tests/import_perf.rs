@@ -349,4 +349,52 @@ async fn newline_before_the_pending_tail_keeps_the_tail(cx: &mut TestAppContext)
         });
     });
 }
+/// 回车落在最后一根材料化根块上（紧邻未物化尾部）时同样不该整段物化：
+/// 懒导入的分块边界只落在根边界，回车只改这一根与它的新兄弟。
+#[gpui::test]
+async fn newline_at_the_materialized_boundary_keeps_the_tail(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..10)
+        .map(|index| format!("paragraph {index}\n\n"))
+        .collect::<String>();
+    let editor = progressive_test_editor(cx, markdown, 3);
+    let (last_root, first_root_id) = cx.read(|cx| {
+        editor.read_with(cx, |editor, _cx| {
+            assert!(editor.document.pending_tail().is_some(), "夹具应留有尾部");
+            let roots = editor.document.root_blocks();
+            (
+                roots.last().expect("有根块").clone(),
+                roots.first().expect("有根块").entity_id(),
+            )
+        })
+    });
+    cx.update(|cx| {
+        editor.update(cx, |editor, cx| {
+            editor.on_block_event(
+                last_root,
+                &crate::components::BlockEvent::RequestNewline {
+                    trailing: crate::components::InlineTextTree::plain(String::new()),
+                    source_already_mutated: false,
+                },
+                cx,
+            );
+        });
+    });
+    cx.read(|cx| {
+        editor.read_with(cx, |editor, _cx| {
+            assert!(
+                editor.document.pending_tail().is_some(),
+                "接缝上的回车不应把未物化尾部整段建完"
+            );
+            assert!(
+                editor
+                    .document
+                    .root_blocks()
+                    .iter()
+                    .any(|root| root.entity_id() == first_root_id),
+                "回车之外的根块被换掉了"
+            );
+        });
+    });
+}
 
