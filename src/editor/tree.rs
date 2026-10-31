@@ -537,8 +537,22 @@ impl DocumentTree {
         for block in &self.roots[range.clone()] {
             self.source_spans.remove(&block.entity_id());
         }
+        let first_root = range.start;
+        let visible_from = match self.roots.get(first_root) {
+            Some(root) => self
+                .snapshot
+                .visible_index_by_entity
+                .get(&root.entity_id())
+                .copied(),
+            None => Some(self.snapshot.visible.len()),
+        };
         self.roots.splice(range, roots);
-        self.rebuild_metadata_and_snapshot(cx);
+        match visible_from {
+            Some(visible_from) => {
+                self.rebuild_metadata_and_snapshot_from_root(first_root, visible_from, cx)
+            }
+            None => self.rebuild_metadata_and_snapshot(cx),
+        }
     }
 
     /// Appends freshly built roots and extends the cached snapshot instead of
