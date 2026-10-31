@@ -129,9 +129,43 @@ async fn gutter_click_expands_long_line_into_wrapped_rows(cx: &mut TestAppContex
                 long_height > short_height * 2.0,
                 "展开后的长行应显著高于单行（{long_height:?} vs {short_height:?}）"
             );
-
-            // 再点一次收起。
         });
+
+    // 展开行按容器宽折行后，命中测试与光标几何仍按「源行」记账：点第二
+    // 视觉行应落进长行内部，光标也要画在同一视觉行上，不能退回行首。
+    let (probe, offset, caret_top) = editor.update(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        let bounds = block.read(cx).last_bounds.expect("应已布局");
+        let line_height = block.read(cx).last_line_height;
+        let probe = gpui::point(
+            bounds.left() + gpui::px(4.0),
+            bounds.top() + line_height * 2.5,
+        );
+        let offset = block.read(cx).index_for_mouse_position(probe);
+        block.update(cx, |block, _| {
+            block.selected_range = offset..offset;
+        });
+        let caret_top = block
+            .read(cx)
+            .active_range_or_cursor_bounds()
+            .map(|bounds| bounds.top());
+        (probe, offset, caret_top)
+    });
+    assert!(
+        offset > 0 && offset < 2000,
+        "展开行第二视觉行的点击应落在长行内部：{offset}"
+    );
+    let caret_top = caret_top.expect("应有光标几何");
+    let line_height = editor.read_with(cx, |editor, cx| {
+        editor.document.visible_blocks()[0]
+            .entity
+            .read(cx)
+            .last_line_height
+    });
+    assert!(
+        (caret_top - probe.y).abs() < line_height,
+        "光标应画在被点中的视觉行上：caret {caret_top:?} / probe {probe:?}"
+    );
 
     let click_position = editor.read_with(cx, |editor, cx| {
         let block = editor.document.visible_blocks()[0].entity.read(cx);
