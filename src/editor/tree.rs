@@ -892,7 +892,7 @@ impl DocumentTree {
         Self::normalize_block_list(&mut self.roots, cx);
         self.snapshot.clear();
         Self::sync_block_list(
-            &self.roots.clone(),
+            &self.roots,
             None,
             None,
             0,

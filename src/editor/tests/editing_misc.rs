@@ -900,4 +900,14 @@ async fn structural_edit_does_not_rewrite_unchanged_snapshot_fields(cx: &mut Tes
         after - before
     );
 }
+/// 快照重建不该整篇克隆根块句柄列表（每根块一次引用计数登记）；
+/// 借用冲突用 take/restore 解，不要退回 `&self.roots.clone()`。
+#[test]
+fn snapshot_rebuild_does_not_clone_the_root_list() {
+    let source = include_str!("../tree.rs");
+    assert!(
+        !source.contains("&self.roots.clone()"),
+        "快照重建又整篇克隆了根块列表"
+    );
+}
 
