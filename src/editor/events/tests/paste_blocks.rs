@@ -517,3 +517,31 @@
             );
         });
     }
+    /// HTML flavor 的转换在后台执行，完成后把 Markdown 落进原块；测试
+    /// 环境不读平台剪贴板 HTML，走同一路径的测试入口验证收尾。
+    #[gpui::test]
+    async fn html_paste_converts_off_the_main_thread_and_inserts_markdown(
+        cx: &mut TestAppContext,
+    ) {
+        crate::editor::tests::common::init_editor_test_app(cx);
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, String::new(), None)
+        });
+        let block = editor.read_with(cx, |editor, _| {
+            editor.document.first_root().unwrap().clone()
+        });
+        cx.update(|window, cx| {
+            block.update(cx, |block, cx| {
+                block.focus_handle.focus(window, cx);
+                block.paste_html_for_test("<p><strong>加粗</strong> 文本</p>", "加粗 文本", window, cx);
+            });
+        });
+        assert!(
+            editor.read_with(cx, |editor, _| editor.buffer.text()).is_empty(),
+            "HTML 转换与落笔不该在调用线程上同步完成"
+        );
+        cx.run_until_parked();
+        let text = editor.read_with(cx, |editor, _| editor.buffer.text());
+        assert!(text.contains("**加粗**"), "HTML 未转换成 Markdown：{text:?}");
+    }
+

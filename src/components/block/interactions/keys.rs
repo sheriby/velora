@@ -307,14 +307,76 @@ impl Block {
                 self.paste_url_as_link(trimmed, window, cx);
                 return;
             }
-            // Clipboard HTML flavors convert to Markdown here (roadmap B3);
-            // plain-text clipboards pass through untouched.
-            let text = if plain_only {
-                text
+            // HTML flavor 的转换可能要解析几 MB 的 DOM：挪到后台，主线程只收结果。
+            let html = if plain_only {
+                None
             } else {
-                let html = clipboard_change.and_then(crate::components::markdown::html_paste::clipboard_html);
-                crate::components::markdown::html_paste::maybe_markdown_from_clipboard(html.as_deref(), &text)
+                clipboard_change.and_then(crate::components::markdown::html_paste::clipboard_html)
             };
+            if let Some(html) = html {
+                let plain = text;
+                cx.spawn_in(window, async move |weak_block, cx| {
+                    let converted = cx
+                        .background_executor()
+                        .spawn(async move {
+                            crate::components::markdown::html_paste::maybe_markdown_from_clipboard(
+                                Some(&html),
+                                &plain,
+                            )
+                        })
+                        .await;
+                    let _ = cx.update(|window, app| {
+                        weak_block.update(app, |block, block_cx| {
+                            block.paste_markdown_text(converted, plain_only, window, block_cx);
+                        })
+                    });
+                })
+                .detach();
+                return;
+            }
+            self.paste_markdown_text(text, plain_only, window, cx);
+        }
+    }
+
+    /// 测试入口：走与剪贴板 HTML 粘贴同一条异步路径（测试环境不读平台
+    /// 剪贴板的 HTML flavor，只能直接喂字符串）。
+    #[cfg(test)]
+    pub(crate) fn paste_html_for_test(
+        &mut self,
+        html: &str,
+        plain: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let html = html.to_string();
+        let plain = plain.to_string();
+        cx.spawn_in(window, async move |weak_block, cx| {
+            let converted = cx
+                .background_executor()
+                .spawn(async move {
+                    crate::components::markdown::html_paste::maybe_markdown_from_clipboard(
+                        Some(&html),
+                        &plain,
+                    )
+                })
+                .await;
+            let _ = cx.update(|window, app| {
+                weak_block.update(app, |block, block_cx| {
+                    block.paste_markdown_text(converted, false, window, block_cx);
+                })
+            });
+        })
+        .detach();
+    }
+
+    /// 粘贴落笔的公共尾部：HTML 转换完成后（或没有 HTML flavor 时同步）走这里。
+    fn paste_markdown_text(
+        &mut self,
+        text: String,
+        plain_only: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
             if !plain_only && let Some(source) = Self::pasted_image_source_from_text(&text) {
                 let (leading, trailing) = self.paste_image_split();
                 cx.emit(BlockEvent::RequestPasteImage {
@@ -381,8 +443,8 @@ impl Block {
 
             self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
             self.replace_text_in_range(None, &text, window, cx);
-        }
     }
+
 
     pub(crate) fn long_line_at_gutter(&self, position: Point<Pixels>) -> Option<usize> {
         if !self.long_line_folding_enabled() || self.last_gutter_width <= px(0.0) {
