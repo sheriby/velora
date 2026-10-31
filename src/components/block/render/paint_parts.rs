@@ -47,7 +47,7 @@ impl Render for Block {
         // source shows as editable text), so links and other styling in the same
         // block keep their attributes instead of collapsing to raw Markdown, the
         // same way script spans already behave.
-        self.sync_inline_projection_for_focus(focused && !showing_rendered_image);
+        self.sync_inline_projection_for_focus_notified(focused && !showing_rendered_image, cx);
 
         if input_active && self.cursor_blink_task.is_none() {
             self.start_cursor_blink(cx);

@@ -245,3 +245,44 @@ async fn table_preedit_survives_a_row_insert(cx: &mut TestAppContext) {
         );
     });
 }
+/// 组合跨度在每帧投影同步里被换算后，值变了要发 `CompositionChanged`；
+/// 否则撤销组会一直开着，下一次编辑并进这次组合。
+#[gpui::test]
+async fn projection_sync_reports_marked_range_changes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "前 **粗体** 后\n\n另一段\n".into(), None)
+    });
+    redraw(cx);
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    first.update_in(cx, |block, window, cx| {
+        block.focus_handle.focus(window, cx);
+        block.selected_range = 4..4;
+        block.sync_inline_projection_for_focus(true);
+        // 组合跨度落在显形记号之间：显示坐标与干净坐标不同，清投影会换算。
+        block.set_marked_range(Some(6..6), cx);
+    });
+    let changes = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let changes_for_subscription = changes.clone();
+    let subscription = cx.update(|_, cx| {
+        cx.subscribe(
+            &first,
+            move |_: gpui::Entity<crate::editor::Block>, event: &BlockEvent, _cx: &mut gpui::App| {
+                if matches!(event, BlockEvent::CompositionChanged) {
+                    changes_for_subscription.set(changes_for_subscription.get() + 1);
+                }
+            },
+        )
+    });
+    first.update(cx, |block, cx| {
+        block.sync_inline_projection_for_focus_notified(false, cx);
+    });
+    assert!(
+        changes.get() >= 1,
+        "组合跨度变化应发出 CompositionChanged"
+    );
+    drop(subscription);
+}
+

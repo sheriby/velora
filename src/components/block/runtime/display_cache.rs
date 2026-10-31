@@ -399,6 +399,22 @@ impl Block {
         self.marked_range = clean_marked.map(|range| self.clean_to_current_range(range));
     }
 
+    /// 与 [`Self::sync_inline_projection_for_focus`] 同一条同步，但把
+    /// 组合跨度（marked range）的变化报给编辑器：清投影会把显示坐标的
+    /// 跨度换算回干净坐标，值变了却不发事件，撤销组会跨过这次组合。
+    pub(crate) fn sync_inline_projection_for_focus_notified(
+        &mut self,
+        focused: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let before = self.marked_range.clone();
+        self.sync_inline_projection_for_focus(focused);
+        if self.marked_range != before {
+            cx.emit(BlockEvent::CompositionChanged);
+            cx.notify();
+        }
+    }
+
     pub(crate) fn clear_inline_projection(&mut self) {
         if self.projection.is_none() {
             self.projection_cache_key = None;
