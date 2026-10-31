@@ -1286,14 +1286,14 @@ impl EditorSettings {
             .map(|s| s.status_bar_settings.to_preferences())
             .unwrap_or_default();
         Self::set_global(cx, show_table_headers, Self::smart_punctuation(cx), &status_bar);
-        match read_app_preferences() {
-            Ok(mut preferences) => {
+        // 走带锁的读改写单点：这里与后台线程的窗口 frame 防抖写并发，无锁
+        // 三步 RMW 会让后落盘者带旧快照回滚前者的修改（02f51e4 只锁了一半）。
+        if let Err(err) =
+            crate::config::update_app_preferences(|preferences| {
                 preferences.show_table_headers = show_table_headers;
-                if let Err(err) = save_app_preferences(&preferences) {
-                    eprintln!("failed to save table header preference: {err}");
-                }
-            }
-            Err(err) => eprintln!("failed to read table header preference: {err}"),
+            })
+        {
+            eprintln!("failed to save table header preference: {err}");
         }
     }
 
@@ -1304,14 +1304,12 @@ impl EditorSettings {
             .unwrap_or_default();
         let show_table_headers = Self::show_table_headers(cx);
         Self::set_global(cx, show_table_headers, smart_punctuation, &status_bar);
-        match read_app_preferences() {
-            Ok(mut preferences) => {
+        if let Err(err) =
+            crate::config::update_app_preferences(|preferences| {
                 preferences.smart_punctuation = smart_punctuation;
-                if let Err(err) = save_app_preferences(&preferences) {
-                    eprintln!("failed to save smart punctuation preference: {err}");
-                }
-            }
-            Err(err) => eprintln!("failed to read smart punctuation preference: {err}"),
+            })
+        {
+            eprintln!("failed to save smart punctuation preference: {err}");
         }
     }
 
