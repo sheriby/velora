@@ -1741,3 +1741,54 @@ async fn leaf_blocks_skip_the_first_line_prefix_measurement(cx: &mut TestAppCont
         assert_eq!(calls, 0, "叶子块不该量首行前缀，实际量了 {calls} 次");
     });
 }
+/// 源码视图里块内打字只该写这一块那片字节；整篇序列化会让按键成本随
+/// 文档长度线性增长。
+#[gpui::test]
+async fn typing_in_source_mode_does_not_reserialize_the_whole_document(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = (0..50)
+        .map(|index| format!("line {index}\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, source.clone(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor.document.root_blocks()[0].clone()
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(first.entity_id()));
+    redraw(cx);
+    let before = editor.read_with(cx, |editor, _| editor.source_serializations.get());
+    cx.update(|window, cx| {
+        first.update(cx, |block, cx| {
+            block.move_to(0, cx);
+            block.replace_text_in_range(None, "x", window, cx);
+        });
+    });
+    redraw(cx);
+    let after_insert = editor.read_with(cx, |editor, _| editor.source_serializations.get());
+    assert_eq!(after_insert, before, "源码视图块内打字不该整篇序列化");
+    let text = editor.read_with(cx, |editor, _| editor.buffer.text());
+    assert!(text.starts_with("xline 0"), "打字没落进那一块：{text:?}");
+
+    cx.update(|window, cx| {
+        first.update(cx, |block, cx| {
+            block.replace_text_in_range(Some(1..2), "", window, cx);
+        });
+    });
+    redraw(cx);
+    let after_delete = editor.read_with(cx, |editor, _| editor.source_serializations.get());
+    assert_eq!(after_delete, after_insert, "源码视图块内删除不该整篇序列化");
+    let text = editor.read_with(cx, |editor, _| editor.buffer.text());
+    assert!(text.starts_with("xine 0"), "删除只该去掉选中的那个字符：{text:?}");
+    assert_eq!(
+        text,
+        format!("x{}", source.replacen('l', "", 1)),
+        "删错了字节：{text:?}"
+    );
+}
+
