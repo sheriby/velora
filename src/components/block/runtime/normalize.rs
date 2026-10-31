@@ -543,8 +543,9 @@ impl Block {
             .map(|range| Self::adjust_range_for_shortcut(range, shortcut_removed_len))
             .unwrap_or_else(|| adjusted_cursor..adjusted_cursor);
 
-        if self.record.kind != next_kind {
-            // 重解析换了种类：旧那一行的记号前缀原文作废。
+        if self.record.kind != next_kind || self.record.list_marker != next_list_marker {
+            // 重解析换了种类，或记号写法变了（`- `→`* `、勾选框增删、`1)`→`1.`）：
+            // 旧那一行的记号前缀原文与新记号对不上，作废，序列化按新记号落笔。
             self.record.list_marker_prefix = None;
         }
         self.record.kind = next_kind;
