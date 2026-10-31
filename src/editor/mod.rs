@@ -442,6 +442,16 @@ pub struct Editor {
     /// 整棵树（含「打开最近」的完整路径），树只在 install_menus 时变，按
     /// 菜单树代数缓存，未变帧只做 Rc 引用计数。
     window_menu_cache: Option<(u64, Option<std::rc::Rc<Vec<gpui::OwnedMenu>>>)>,
+    /// 菜单派生量（一级标签、按钮宽、汉堡列表标签与列宽）：只依赖菜单树、
+    /// 主题尺寸与语言。打开菜单/悬停换帧时直接取，不再逐帧估宽。
+    window_menu_metrics_cache: std::cell::RefCell<
+        Option<(
+            u64,
+            u64,
+            String,
+            std::rc::Rc<crate::editor::render::WindowMenuMetrics>,
+        )>,
+    >,
     workspace: WorkspaceState,
     context_menu: Option<ContextMenuState>,
     context_menu_popup: Option<context_menu::ContextMenuPopup>,
@@ -1102,6 +1112,7 @@ impl Editor {
             update_download_cancel: None,
             update_task: None,
             window_menu_cache: None,
+            window_menu_metrics_cache: std::cell::RefCell::new(None),
             workspace: WorkspaceState::default(),
             context_menu: None,
             context_menu_popup: None,

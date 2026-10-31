@@ -1099,10 +1099,13 @@ impl Render for Editor {
         // （Windows 上含「打开最近」的完整路径），树只在 install_menus 时变。
         // 两个渲染器（菜单栏行 / 汉堡竖列）与行高判定共用同一份 Rc。
         let menus = window_menus.filter(|menus| !menus.is_empty());
-        let menu_labels: Vec<SharedString> = menus
+        let menu_metrics = menus
             .as_ref()
-            .map(|m| m.iter().map(|menu| menu.name.clone()).collect())
-            .unwrap_or_default();
+            .map(|menus| self.window_menu_metrics(cx, menus, d));
+        let menu_labels: &[SharedString] = menu_metrics
+            .as_ref()
+            .map(|metrics| metrics.labels.as_slice())
+            .unwrap_or(&[]);
         // Windows：一级菜单入口是标题栏左侧的汉堡按钮，不再单占一行。
         let hamburger_menu = (supports_hamburger_menu() && menus.is_some())
             .then(|| self.render_hamburger_menu_button(&theme, cx));
@@ -1126,7 +1129,7 @@ impl Render for Editor {
                 &theme,
                 cx,
                 menus.as_deref().map(|menus| menus.as_slice()),
-                &menu_labels,
+                menu_metrics.as_deref(),
                 titlebar_height,
             ) {
                 base.child(menu_bar)
@@ -1170,7 +1173,7 @@ impl Render for Editor {
                 )
             } else {
                 MenuPanelOrigin {
-                    panel_left: menu_panel_left(open_index, &menu_labels, dimensions),
+                    panel_left: menu_panel_left(open_index, menu_labels, dimensions),
                     panel_top: titlebar_height,
                 }
             };

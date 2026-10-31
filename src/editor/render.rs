@@ -629,6 +629,62 @@ fn hamburger_menu_panel_top(titlebar_height: f32, dimensions: &ThemeDimensions) 
     (titlebar_height + dimensions.menu_bar_button_height) / 2.0 + dimensions.menu_bar_gap
 }
 
+/// 窗内菜单每帧都要的派生量：一级标签、按钮宽、汉堡列表标签与列宽。
+/// 只依赖（菜单树代数, 主题尺寸, 语言），打开菜单/悬停换帧时不该重算。
+pub(crate) struct WindowMenuMetrics {
+    pub(crate) labels: Vec<SharedString>,
+    pub(crate) button_widths: Vec<f32>,
+    pub(crate) hamburger_labels: Vec<SharedString>,
+    pub(crate) hamburger_list_width: f32,
+}
+
+pub(crate) fn build_window_menu_metrics(
+    menus: &[OwnedMenu],
+    strings: &I18nStrings,
+    dimensions: &ThemeDimensions,
+) -> WindowMenuMetrics {
+    let labels: Vec<SharedString> = menus.iter().map(|menu| menu.name.clone()).collect();
+    let button_widths = labels
+        .iter()
+        .map(|label| menu_bar_button_width(label, dimensions))
+        .collect();
+    let hamburger_labels = hamburger_menu_labels(menus, strings);
+    let hamburger_list_width = menu_panel_width_for_labels(&hamburger_labels, dimensions);
+    WindowMenuMetrics {
+        labels,
+        button_widths,
+        hamburger_labels,
+        hamburger_list_width,
+    }
+}
+
+type WindowMenuMetricsCache =
+    std::cell::RefCell<Option<(u64, u64, String, std::rc::Rc<WindowMenuMetrics>)>>;
+
+pub(super) fn refresh_window_menu_metrics_cache(
+    cache: &WindowMenuMetricsCache,
+    menu_generation: u64,
+    theme_generation: u64,
+    language: &str,
+    build: impl FnOnce() -> WindowMenuMetrics,
+) -> std::rc::Rc<WindowMenuMetrics> {
+    if let Some((cached_menu, cached_theme, cached_language, metrics)) = cache.borrow().as_ref()
+        && *cached_menu == menu_generation
+        && *cached_theme == theme_generation
+        && cached_language == language
+    {
+        return metrics.clone();
+    }
+    let metrics = std::rc::Rc::new(build());
+    *cache.borrow_mut() = Some((
+        menu_generation,
+        theme_generation,
+        language.to_string(),
+        metrics.clone(),
+    ));
+    metrics
+}
+
 pub(super) fn hamburger_menu_labels(menus: &[OwnedMenu], strings: &I18nStrings) -> Vec<SharedString> {
     menus.iter().map(|menu| menu.name.clone())
         .chain(crate::commands::hamburger_root_commands().map(|command| command.label(strings).into()))

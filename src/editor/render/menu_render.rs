@@ -52,8 +52,9 @@ impl Editor {
         let t = &theme.typography;
         let editor = cx.entity().downgrade();
         let strings = cx.global::<I18nManager>().strings().clone();
-        let labels = hamburger_menu_labels(menus, &strings);
-        let list_width = menu_panel_width_for_labels(&labels, d);
+        let metrics = self.window_menu_metrics(cx, menus, d);
+        let labels = &metrics.hamburger_labels;
+        let list_width = metrics.hamburger_list_width;
         Some(
             div()
                 .id("app-hamburger-menu-panel")
@@ -173,22 +174,21 @@ impl Editor {
         theme: &Theme,
         cx: &mut Context<Self>,
         menus: Option<&[gpui::OwnedMenu]>,
-        menu_labels: &[SharedString],
+        metrics: Option<&WindowMenuMetrics>,
         top_offset: f32,
     ) -> Option<AnyElement> {
         let menus = menus?;
         if menus.is_empty() {
             return None;
         }
+        let metrics = metrics?;
+        let menu_labels = &metrics.labels;
+        let button_widths = &metrics.button_widths;
 
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
         let editor = cx.entity().downgrade();
-        let button_widths = menu_labels
-            .iter()
-            .map(|label| menu_bar_button_width(label, d))
-            .collect::<Vec<_>>();
 
         Some(
             div()
@@ -717,6 +717,30 @@ impl Editor {
     /// 按百分比步进调整界面缩放（roadmap H5：菜单与命令面板共用）。
     /// 当前窗内菜单树（Windows/Linux 渲染与行高判定共用这一份）。macOS 走
     /// 原生菜单栏，直接 None——不碰 get_menus（它在平台层深拷整棵树）。
+    /// 菜单派生量的一帧缓存入口：菜单树、主题、语言任一未变就复用上一份。
+    pub(crate) fn window_menu_metrics(
+        &self,
+        cx: &App,
+        menus: &[gpui::OwnedMenu],
+        dimensions: &crate::theme::ThemeDimensions,
+    ) -> std::rc::Rc<WindowMenuMetrics> {
+        let theme_generation = cx
+            .global::<crate::theme::ThemeManager>()
+            .current_theme_generation();
+        let language = cx
+            .global::<I18nManager>()
+            .current_language_id()
+            .to_string();
+        let strings = cx.global::<I18nManager>().strings();
+        refresh_window_menu_metrics_cache(
+            &self.window_menu_metrics_cache,
+            crate::app_menu::menu_tree_generation(),
+            theme_generation,
+            &language,
+            || build_window_menu_metrics(menus, strings, dimensions),
+        )
+    }
+
     pub(crate) fn window_menus(&mut self, cx: &App) -> Option<std::rc::Rc<Vec<gpui::OwnedMenu>>> {
         if !supports_in_window_menu() {
             return None;

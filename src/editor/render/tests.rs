@@ -7,12 +7,40 @@
         scrollable_import_menu_scroll_height, submenu_bridge_geometry,
         supports_hamburger_menu_for_target_os, supports_in_window_menu_for_target_os,
         supports_menu_bar_row_for_target_os, tibetan_font_fallbacks_for_target_os,
-        typewriter_target_scroll_offset,
+        typewriter_target_scroll_offset, refresh_window_menu_metrics_cache, WindowMenuMetrics,
     };
     use crate::components::{AddLanguageConfig, AddThemeConfig};
     use crate::theme::Theme;
     use gpui::{OwnedMenu, OwnedMenuItem};
     use uuid::Uuid;
+
+    /// 菜单派生量只随（菜单树代数, 主题代数, 语言）变化：悬停换帧、打开面板
+    /// 都不该重新估宽；任一输入变了才重建。
+    #[test]
+    fn window_menu_metrics_cache_rebuilds_only_when_inputs_change() {
+        use std::cell::{Cell, RefCell};
+        let cache = RefCell::new(None);
+        let builds = Cell::new(0u32);
+        let build = |builds: &Cell<u32>| {
+            builds.set(builds.get() + 1);
+            WindowMenuMetrics {
+                labels: vec!["文件".into()],
+                button_widths: vec![48.0],
+                hamburger_labels: vec!["文件".into()],
+                hamburger_list_width: 120.0,
+            }
+        };
+        let first = refresh_window_menu_metrics_cache(&cache, 7, 11, "zh-CN", || build(&builds));
+        let same = refresh_window_menu_metrics_cache(&cache, 7, 11, "zh-CN", || build(&builds));
+        assert_eq!(builds.get(), 1, "同代数同语言不应重建");
+        assert!(std::rc::Rc::ptr_eq(&first, &same));
+        let _ = refresh_window_menu_metrics_cache(&cache, 7, 12, "zh-CN", || build(&builds));
+        assert_eq!(builds.get(), 2, "主题代数变了应重建");
+        let _ = refresh_window_menu_metrics_cache(&cache, 7, 12, "en-US", || build(&builds));
+        assert_eq!(builds.get(), 3, "语言变了应重建");
+        let _ = refresh_window_menu_metrics_cache(&cache, 8, 12, "en-US", || build(&builds));
+        assert_eq!(builds.get(), 4, "菜单树代数变了应重建");
+    }
 
     #[gpui::test]
     async fn review_folded_row_plan_uses_snapshot_coordinates(cx: &mut gpui::TestAppContext) {
