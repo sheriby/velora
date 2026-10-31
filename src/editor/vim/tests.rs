@@ -3667,3 +3667,36 @@ async fn explicit_numbered_registers_write_where_they_read(cx: &mut TestAppConte
         );
     }
 }
+
+/// 行级寄存器替换字符级选区：前后文顺序应是 [前缀][粘贴行][后缀]，
+/// 而不是把带前缀的整块压到粘贴块下面。
+#[gpui::test]
+async fn linewise_paste_over_char_selection_keeps_prefix_above_the_paste(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx) = vim_editor(cx, "LINE\n\none two three");
+    cx.simulate_keystrokes("y y");
+    cx.simulate_keystrokes("j");
+    cx.simulate_keystrokes("w");
+    cx.simulate_keystrokes("v e");
+    cx.simulate_keystrokes("p");
+    let blocks: Vec<String> = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| visible.entity.read(cx).display_text().to_string())
+            .filter(|text| !text.is_empty())
+            .collect()
+    });
+    assert_eq!(
+        blocks,
+        [
+            "LINE".to_string(),
+            "one ".to_string(),
+            "LINE".to_string(),
+            " three".to_string()
+        ],
+        "顺序应为前缀行、粘贴行、后缀行：{blocks:?}"
+    );
+}

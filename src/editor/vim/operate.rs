@@ -2595,10 +2595,60 @@ impl Editor {
             text: content.text.repeat(count.max(1) as usize),
             linewise: content.linewise,
         };
+        let linewise_selection = range.linewise;
         super::visual::vim_exit_visual(self, cx);
         self.vim_delete_range(&entities, &range, register, false, true, window, cx);
         if content.linewise || content.text.contains('\n') {
-            self.vim_paste_linewise(&content, false, window, cx);
+            if linewise_selection {
+                self.vim_paste_linewise(&content, false, window, cx);
+                return;
+            }
+            // 行级内容替换字符级选区：删除后原块还留着前缀（和后缀）。
+            // 把后缀拆成独立块，再把粘贴行插到前缀块之后，
+            // 顺序才是 [前缀行][粘贴行][后缀行]；直接「插到活动块上方」会把
+            // 带前缀的整块压到粘贴行下面。
+            let Some(active) = self.vim_active_block() else {
+                return;
+            };
+            let (start, suffix) = {
+                let block = active.read(cx);
+                let text = block.display_text();
+                let start = block.cursor_offset().min(text.len());
+                (start, text[start..].to_string())
+            };
+            if start == 0 {
+                self.vim_paste_linewise(&content, false, window, cx);
+                return;
+            }
+            if !suffix.is_empty() {
+                // 先把后缀从原块剪掉，原文只留前缀。
+                let length = active.read(cx).display_text().len();
+                active.update(cx, |block, cx| {
+                    block.prepare_undo_capture(block.text_edit_undo_kind(), cx);
+                    block.replace_text_in_visible_range(
+                        start..length,
+                        "",
+                        Some(0..0),
+                        false,
+                        cx,
+                    );
+                });
+                let lines: Vec<String> = suffix.split('\n').map(str::to_string).collect();
+                let mut suffix_blocks = Self::build_blocks_from_lines(cx, &lines);
+                if suffix_blocks.is_empty() {
+                    suffix_blocks.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
+                }
+                if let Some(location) = self.document.find_block_location(active.entity_id()) {
+                    self.document.insert_blocks_at(
+                        location.parent,
+                        location.index + 1,
+                        suffix_blocks,
+                        cx,
+                    );
+                }
+            }
+            self.vim_mark_single_block_dirty(&active, cx);
+            self.vim_paste_linewise(&content, true, window, cx);
         } else {
             self.vim_insert_raw_text(&content.text, window, cx);
         }
