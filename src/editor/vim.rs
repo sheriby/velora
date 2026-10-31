@@ -1570,11 +1570,50 @@ impl Editor {
                 }
             }
             VisualKind::Line => {
-                if repeat.forward {
-                    Motion::Down
-                } else {
-                    Motion::Up
+                // 采集时记的是**硬行差**；重放用 Down/Up 在软换行段落里走的是
+                // 视觉行，选出来的范围会比第一次小。这里直接按硬行步进。
+                let entities = self.vim_navigation_entities(cx);
+                let stream = motion::VimDocStream::new(&entities, cx);
+                let Some(mut current) = self.vim_current_position(&entities, cx) else {
+                    return;
+                };
+                for _ in 0..repeat.distance {
+                    let line = stream.hard_line_range(current.block_index, current.offset);
+                    let text_len = stream.text_for_line(current.block_index).len();
+                    let next = if repeat.forward {
+                        if line.end < text_len {
+                            Some(VimPosition {
+                                block_index: current.block_index,
+                                offset: line.end + 1,
+                            })
+                        } else if current.block_index + 1 < entities.len() {
+                            Some(VimPosition {
+                                block_index: current.block_index + 1,
+                                offset: 0,
+                            })
+                        } else {
+                            None
+                        }
+                    } else if line.start > 0 {
+                        Some(VimPosition {
+                            block_index: current.block_index,
+                            offset: line.start.saturating_sub(1),
+                        })
+                    } else if current.block_index > 0 {
+                        let previous = current.block_index - 1;
+                        Some(VimPosition {
+                            block_index: previous,
+                            offset: stream.text_for_line(previous).len().saturating_sub(1),
+                        })
+                    } else {
+                        None
+                    };
+                    let Some(next) = next else { break };
+                    current = next;
                 }
+                self.vim_set_cursor(&entities, current, cx);
+                self.vim_refresh_visual_selection(cx);
+                return;
             }
             VisualKind::Block => return,
         };

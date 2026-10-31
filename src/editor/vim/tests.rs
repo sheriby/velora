@@ -3833,3 +3833,20 @@ async fn h_m_l_target_the_viewport_not_the_whole_document(cx: &mut TestAppContex
         });
     }
 }
+
+/// 行级可视的 `.` 重放要按**硬行**步进：采集时记的是硬行差，重放若用 Down
+/// （非代码块里走视觉行），在软换行段落里会选得比第一次小。
+#[gpui::test]
+async fn visual_line_dot_replay_uses_hard_lines_in_wrapped_paragraphs(cx: &mut TestAppContext) {
+    let long = "长".repeat(200);
+    let source = format!("a\n\nb\n\n{long}\n\nc");
+    let (editor, cx) = vim_editor(cx, &source);
+    cx.simulate_keystrokes("V j d");
+    assert!(!document_text(&editor, &cx).contains("a"));
+    cx.simulate_keystrokes(".");
+    assert!(
+        document_text(&editor, &cx).trim().is_empty(),
+        "重放应删掉软换行段落及其下一段（旧实现留下 c）：{:?}",
+        document_text(&editor, &cx)
+    );
+}
