@@ -229,9 +229,12 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
 实体与运行时原样保留。以下形状直接返回 `false`，由调用方退回
 `rebuild_document_from_buffer`（整篇重建）：
 
-- 未物化的尾部（`document.pending_tail()`）或源码视图（块是缓冲区定长切片）；
+- 源码视图（块是缓冲区定长切片）；
 - 区域里有表格、引用/脚注定义，或行内图片等需要整篇运行时收尾的内容；
-- 编辑越过最后一根块的末尾：纯插入落在重投影窗口的探针区，新增的根不会被安装。
+- 编辑越过最后一根块的末尾：纯插入落在重投影窗口的探针区，新增的根不会被安装；
+- 懒导入还有未物化尾部（`document.pending_tail()`）且受影响区间碰到**最后一根
+  材料化根块**：接缝归尾部那段，窗口解析与整篇解析对不上。区间完全落在它之前时
+  两侧字节视图一致，尾部可以继续挂着。
 
 生产调用点：多行粘贴（`events/paste.rs`）、跨块替换/删除
 （`selection.rs:write_back_cross_block_source_edit`）。表格选区替换是特例：它落在
@@ -239,6 +242,11 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
 重解析表格根，再**整篇刷新表格运行时**（格子实体与引用表，不重新解析根块）。撤销/
 重做仍走整篇重建；把区域重投影接回撤销前，先解决 `reproject_root_region` 的区域
 边界与解析边界对齐（见 §4.4）。
+
+**懒导入尾部的回车**（`tree.rs:insert_blocks_at_keeping_tail`）。还有未物化尾部时，
+回车插入新块不必先 `flush_pending_tail`：分块边界只落在根边界，回车只改插入点
+那一根与其新兄弟，写回与快照都只涉及这一段，尾部字节原样留在缓冲区由后台续建。
+删除区间、引用拆合等其他结构命令仍按原路径整段物化。
 
 **脚注体的接缝账**（`parse.rs:build_native_footnote_definition_block`）。脚注体内的
 空行会被导入器建成空段落子块，且这些空段的 `source_separator_bytes` 恒为 0。解析
