@@ -923,6 +923,40 @@ impl DocumentTree {
         }
     }
 
+    /// 与 [`Self::with_structure_mutation`] 相同，但只有 `anchor` 所在的根块
+    /// 及其后缀需要重排；前缀快照原样保留。
+    pub(super) fn with_structure_mutation_from<R>(
+        &mut self,
+        anchor: EntityId,
+        cx: &mut Context<Editor>,
+        mutate: impl FnOnce(&mut Self, &mut Context<Editor>) -> R,
+    ) -> R {
+        self.flush_pending_tail(cx);
+        self.flush_pending_source(cx);
+        let dirty = self.dirty_region_for_entity(anchor);
+        let result = mutate(self, cx);
+        match dirty {
+            Some((first_root, visible_from)) => {
+                self.rebuild_metadata_and_snapshot_from_root(first_root, visible_from, cx)
+            }
+            None => self.rebuild_metadata_and_snapshot(cx),
+        }
+        result
+    }
+
+    fn dirty_region_for_entity(&self, entity_id: EntityId) -> Option<(usize, usize)> {
+        let root = self.root_ancestor_of(entity_id)?;
+        let first_root = self
+            .roots
+            .iter()
+            .position(|candidate| candidate.entity_id() == root.entity_id())?;
+        let visible_from = *self
+            .snapshot
+            .visible_index_by_entity
+            .get(&root.entity_id())?;
+        Some((first_root, visible_from))
+    }
+
     /// 只重排从 `first_root` 起的快照后缀：截断可见行与索引，按保存的接缝
     /// 种子重跑这一段的同步。前缀根块的元数据与可见行原样保留。
     pub(super) fn rebuild_metadata_and_snapshot_from_root(

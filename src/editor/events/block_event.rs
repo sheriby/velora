@@ -469,7 +469,7 @@ impl Editor {
                 let adopted_children = crate::editor::tree::DocumentTree::take_children(&block, cx);
                 let removed_entity_id = block.entity_id();
 
-                self.document.with_structure_mutation(cx, |document, cx| {
+                self.document.with_structure_mutation_from(prev.entity_id(), cx, |document, cx| {
                     prev.update(cx, {
                         let content = content.clone();
                         let adopted_children = adopted_children.clone();
@@ -530,7 +530,7 @@ impl Editor {
                 let removed_entity_id = next.entity_id();
                 let next_title = next.read(cx).record.title.clone();
 
-                self.document.with_structure_mutation(cx, |document, cx| {
+                self.document.with_structure_mutation_from(block.entity_id(), cx, |document, cx| {
                     block.update(cx, {
                         let next_title = next_title.clone();
                         let adopted_children = adopted_children.clone();
