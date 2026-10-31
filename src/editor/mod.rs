@@ -1211,6 +1211,21 @@ impl Editor {
         let Some(tail) = self.document.pending_tail().cloned() else {
             return false;
         };
+        // 续建的块按**打开时的行号**接在已有根块后面：这条路径的正确性押在
+        // 「用户打字只改行内字节、不改行数」上（行数变化必然是结构事件，而结构
+        // 事件先 flush 尾巴）。约定一旦破了，后面每一块都会落到错行的字节上，
+        // 所以这里把它变成显式守卫：行数对不上就先整条尾巴物化，宁可多一次
+        // 整篇落笔，也不把续建位置写偏。
+        if self.buffer.line_count() != tail.lines.len() {
+            debug_assert!(
+                false,
+                "非结构事件改变了缓冲区行数：续建行基址失效（{} != {}）",
+                self.buffer.line_count(),
+                tail.lines.len()
+            );
+            self.flush_pending_materialization(cx);
+            return false;
+        }
 
         let (roots, root_spans, consumed) = Self::build_root_block_chunk(
             cx,
