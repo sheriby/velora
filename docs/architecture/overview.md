@@ -135,6 +135,9 @@ scripts/ fixtures/       夹具生成、打包脚本；fixtures/perf 不进版�
 | 单块外观 | `src/components/block/render/paint_parts.rs`（kind 分派）+ `render/shell.rs`（公共壳） |
 | 文本绘制 / 命中测试几何 | `src/components/block/element/text_element.rs` + `element.rs` |
 | 块内缓存不失效 | `src/components/block/runtime/display_cache.rs:sync_render_cache`（失效枢纽） |
+| 编辑后只重解析一小段 / 什么形状退回整篇 | `src/editor/history.rs:reproject_after_buffer_edit`（判据与回退清单见 performance.md §6） |
+| 脚注体段间空行/接缝账 | `src/editor/document/parse.rs:build_native_footnote_definition_block` + `source_mapping.rs` 脚注分支 + `tree.rs` 脚注序列化（performance.md §6） |
+| 菜单标签/宽度每帧重算 | `render.rs:WindowMenuMetrics` 与 `render/menu_render.rs` 的缓存入口（performance.md §6） |
 | 代码高亮（围栏块 / 源码视图） | `markdown/code_highlight.rs`（tree-sitter）/ `markdown/source_highlight.rs`（手写扫描器） |
 | 公式、mermaid | `src/components/latex/`、`src/components/mermaid/` |
 | 图片路径/尺寸/加载 | `markdown/image.rs:resolve_image_source`（唯一路径口径）+ `block/runtime/image.rs` |

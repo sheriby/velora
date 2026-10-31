@@ -218,3 +218,55 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
 4. **把逐块读实体换成同趟记下的元数据**：可见列表同步那一趟顺手把结构量存进快照（两块 vec 同进同出），下游不再逐个 `read` 实体；`Entity::read_untracked` 用于纯读的热路径（跳过 accessed 集合登记）。
 
 改性能相关的代码，收尾要跑对应闸门并**当场实测数字**（不沿用记忆），把结论写进提交正文。
+
+## 6. 局部化与缓存（2026-10 编辑体验评审批次）
+
+这一节记录几条已经落地的判据，后续改动别在调用点上各写一份。
+
+**编辑后的区域重投影**（`Editor::reproject_after_buffer_edit`）。给一条已落地的
+`buffer::AppliedEdit`：用**旧**区间的源码账定位相交的根块，前后各扩一根（边界上的
+编辑可能并块/拆块），按 edit 平移全部根的区间账，然后只重解析这一段。区间外的根块
+实体与运行时原样保留。以下形状直接返回 `false`，由调用方退回
+`rebuild_document_from_buffer`（整篇重建）：
+
+- 未物化的尾部（`document.pending_tail()`）或源码视图（块是缓冲区定长切片）；
+- 区域里有表格、引用/脚注定义，或行内图片等需要整篇运行时收尾的内容；
+- 编辑越过最后一根块的末尾：纯插入落在重投影窗口的探针区，新增的根不会被安装。
+
+生产调用点：多行粘贴（`events/paste.rs`）、跨块替换/删除
+（`selection.rs:write_back_cross_block_source_edit`）。表格选区替换是特例：它落在
+表格根内，先按每条格内删除平移区间账（表格自己的尾随量、其后根块整体平移），只
+重解析表格根，再**整篇刷新表格运行时**（格子实体与引用表，不重新解析根块）。撤销/
+重做仍走整篇重建；把区域重投影接回撤销前，先解决 `reproject_root_region` 的区域
+边界与解析边界对齐（见 §4.4）。
+
+**脚注体的接缝账**（`parse.rs:build_native_footnote_definition_block`）。脚注体内的
+空行会被导入器建成空段落子块，且这些空段的 `source_separator_bytes` 恒为 0。解析
+收尾把「首段之后」的空段收进下一段的接缝账：账 = 空段数 + 1（相邻两行各自那一个
+换行不在空段里）；首段之前与尾部的空段保持原状。读侧
+（`source_mapping.rs` 的脚注分支）与写侧（`tree.rs` 的脚注序列化）都按「1 + 账」
+消费；紧邻的列表项之间按 0 空行写回。
+
+**焦点岛冻结**（`Editor::focus_island_lead_lock`）。焦点块离开挂载区时放在自己的
+岛上，岛前 spacer 用估计高度。编辑器缓存当前岛的 `(row, lead_h)`：同一岛在并回
+挂载区之前沿用创建时的值，岛消失（并回挂载区）时释放；中间行量高只改变岛与挂载区
+的间隔，不推走岛本身。
+
+**菜单派生量缓存**（`render.rs:WindowMenuMetrics`）。一级标签、按钮宽、汉堡列表标签
+与列宽、一级面板宽、子菜单标签与面板宽，统一按「菜单树代数 + 主题代数 + 语言」缓存；
+渲染期只取 `Rc`。汉堡面板原点用缓存的列表宽，不再按标签重估。只在支持窗内菜单的
+平台生效（macOS 走原生菜单栏）。
+
+**组合跨度信号**（`Block::composition_signal_pending`）。无 `cx` 的同步路径
+（`sync_render_cache`、清投影）会把 IME 组合跨度在显示坐标与干净坐标之间换算，值
+变化时只置位；prepaint 的带事件入口（`sync_inline_projection_for_focus_notified`）
+在值变化或位已置时补发 `CompositionChanged` 并清位。测试直接调用无 `cx` 的入口仍
+保持静默，由带事件入口补报。
+
+**快照同步的写过滤**（`tree.rs:sync_block_list`）。字段一律「值不同才赋值」，
+`record.content` 先比较再克隆，`render_depth_synced` 只在首次同步时落。快照仍是整棵
+DFS；结构编辑的剩余成本在遍历与快照表重建，不在实体写。
+
+**源码视图的按键**。块内插入/删除走块区间写回，`source_serializations` 计数不涨
+（`typing_in_source_mode_does_not_reserialize_the_whole_document`）；结构变更（回车
+新建块等）仍按整篇兜底。
