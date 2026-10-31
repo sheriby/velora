@@ -258,10 +258,11 @@ async fn the_insert_menu_offers_the_picture_row_on_the_same_terms(cx: &mut TestA
     );
 }
 
-/// 插入图片先落盘、后开撤销组：撤销把引用撤掉后，这个文件若不再被任何打开
-/// 文档引用，就该一起收走，别在附件目录里积累孤儿资源。
+/// 插入图片先落盘、后开撤销组。撤销把引用撤掉后，重做栈里的正向编辑仍能把
+/// 引用放回正文：保存**不许**清掉文件（旧实现清了，重做后引用指向缺失素材，
+/// 评审确认缺陷）。文件只在引用真正不可达（重做栈清空后的保存）时才收走。
 #[gpui::test]
-async fn undoing_an_inserted_image_removes_the_file_created_for_it(cx: &mut TestAppContext) {
+async fn undoing_an_inserted_image_keeps_the_file_while_redo_can_restore_it(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let dir = scratch_dir(cx, "image-undo-orphan");
     let (editor, cx) = open_document(DOC, &dir, cx);
@@ -294,18 +295,25 @@ async fn undoing_an_inserted_image_removes_the_file_created_for_it(cx: &mut Test
         DOC,
         "撤销该把图片引用整段退回"
     );
-    assert!(
-        created.exists(),
-        "撤销那一刻不删文件：重做还要引用它"
-    );
     editor.update_in(cx, |editor, window, cx| editor.save_document(window, cx));
     cx.run_until_parked();
     redraw(cx);
     assert!(
-        !created.exists(),
-        "保存后，本次会话落盘且已无人引用的图片应被清理：{}",
-        created.display()
+        created.exists(),
+        "重做还能把引用放回正文：保存不许清掉文件（旧实现清了，重做后指向缺失素材）"
     );
+
+    // 重做：引用回到正文，文件重新可达，一切照旧。
+    editor.update(cx, |editor, cx| editor.redo_document(cx));
+    cx.run_until_parked();
+    redraw(cx);
+    assert!(
+        editor
+            .read_with(cx, |editor, _| editor.buffer.text())
+            .contains("assets/"),
+        "重做该把图片引用放回正文"
+    );
+    assert!(created.exists(), "引用已恢复，文件必须还在");
 }
 
 /// 保存前的引用检查：撤销后重做，引用又回来了，保存不能把它当孤儿删掉。

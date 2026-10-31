@@ -589,10 +589,10 @@ impl Editor {
         let current = self.buffer.text();
         let mut sources: Vec<&str> = vec![current.as_str()];
         sources.extend(self.workspace.open_document_sources());
-        // 撤销/重做栈的 `removed` 是 undo/redo 会放回正文的文本：引用刚被删、
-        // 还没保存，重做（或撤销删它的那一步的下一步）就能把引用带回来——
-        // 此刻删文件会让重做指向缺失文件。整栈保守算「仍在引用」。
-        for entry in self.undo_history.iter().chain(self.redo_history.iter()) {
+        // 重做栈条目的 `removed` 是 redo 会放回正文的文本：引用刚被删、还没
+        // 保存，按一下重做就能把引用带回来——此刻删文件会让重做指向缺失
+        // 素材。撤销栈不算：撤销只会移除内容，活着的引用在重做栈里。
+        for entry in self.redo_history.iter() {
             for edit in &entry.edits {
                 sources.push(edit.removed.as_str());
             }
