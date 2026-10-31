@@ -235,9 +235,9 @@ impl Editor {
             return;
         }
 
-        if self.scroll_handle.bounds().contains(&event.position) {
-            self.workspace.search_navigation_selection = None;
-        }
+        // 捕获到的任何正文左键按下都算一次新的定位：清掉搜索导航选区。
+        // 落点在不在滚动区里只影响后面要不要继续落光标。
+        self.workspace.search_navigation_selection = None;
         // 源码模式的块也要武装跨块拖拽：回车新建的是逐行块，跨块拖选是刚需。
         // 同一根块里的拖动由 mouse_move 的同块早退交还给块内选区，这里武装
         // 只记锚点，不影响块内行为。按住 shift 的按下不落光标，直接换成扩选。
@@ -266,6 +266,12 @@ impl Editor {
         let Some(focus) =
             self.cross_block_endpoint_for_point(event.position, Some(drag.anchor), cx)
         else {
+            // 行计划过期（结构变化/重建中的一帧）：本帧没有可信几何，跳过；
+            // 排下一帧让 prepaint 重建计划，拖动会话保留继续跟手。
+            #[cfg(test)]
+            self.stale_drag_fallbacks.set(self.stale_drag_fallbacks.get() + 1);
+            self.pending_scroll_recheck_after_layout = true;
+            cx.notify();
             return;
         };
         // 在表格格子上按下的拖动：指针离开按下那一格之后由编辑器接手，把两格之间的

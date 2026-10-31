@@ -229,6 +229,9 @@ pub struct Editor {
     source_kind_writes: std::cell::Cell<u64>,
     /// 性能计数器：指针会话收尾时实际更新的块/格子数。
     pointer_session_updates: std::cell::Cell<u64>,
+    /// 计数器：拖动中行计划过期、按降级路径跳过本帧的次数。
+    #[cfg(test)]
+    pub(crate) stale_drag_fallbacks: std::cell::Cell<u64>,
     /// 性能计数器：正文右键菜单几何的实测次数。菜单开着期间行与主题不变，
     /// 不该每帧重测。
     context_menu_measurements: std::cell::Cell<u64>,
@@ -1032,6 +1035,8 @@ impl Editor {
             source_mapping_roots_walked: std::cell::Cell::default(),
             source_kind_writes: std::cell::Cell::default(),
             pointer_session_updates: std::cell::Cell::default(),
+            #[cfg(test)]
+            stale_drag_fallbacks: std::cell::Cell::default(),
             context_menu_measurements: std::cell::Cell::default(),
             measured_prefix_calls: std::cell::Cell::default(),
             session_created_images: Vec::new(),

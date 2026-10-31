@@ -1089,4 +1089,101 @@ async fn delete_near_the_end_resyncs_only_the_tail(cx: &mut TestAppContext) {
         "文末删除应只重排尾部几块，实际访问 {visited} 块"
     );
 }
+/// 编辑器捕获到的左键按下（即便落点不在正文滚动区内）也要收掉搜索导航
+/// 选区：否则点到编辑器空白处，搜索高亮残留在上一个命中上。
+#[gpui::test]
+async fn any_captured_left_press_clears_search_navigation_selection(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "第一段\n\n第二段\n".into(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+    let outside = editor.read_with(cx, |editor, _cx| {
+        let bounds = editor.scroll_handle.bounds();
+        gpui::point(bounds.origin.x + gpui::px(1.0), bounds.bottom() + gpui::px(8.0))
+    });
+    editor.update(cx, |editor, _cx| {
+        editor.workspace.search_navigation_selection = Some(0..1);
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.on_editor_capture_mouse_down(
+                &gpui::MouseDownEvent {
+                    button: gpui::MouseButton::Left,
+                    position: outside,
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+        });
+    });
+    assert!(
+        editor.read_with(cx, |editor, _cx| editor
+            .workspace
+            .search_navigation_selection
+            .is_none()),
+        "编辑器内的左键按下没收掉搜索导航选区"
+    );
+}
+/// 拖动中行计划过期（端点算不出）时：跳过本帧、排下一帧重算，拖动会话
+/// 不丢；不允许静默停在旧端点。
+#[gpui::test]
+async fn stale_row_plan_during_drag_requests_a_redraw(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "第一段\n\n第二段\n".into(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+    let (anchor_id, position) = editor.read_with(cx, |editor, _cx| {
+        let anchor_id = editor
+            .document
+            .visible_blocks()
+            .first()
+            .expect("有根块")
+            .entity
+            .entity_id();
+        let bounds = editor.scroll_handle.bounds();
+        (
+            anchor_id,
+            gpui::point(bounds.origin.x + gpui::px(4.0), bounds.origin.y + gpui::px(4.0)),
+        )
+    });
+    editor.update(cx, |editor, _cx| {
+        editor.cross_block_drag = Some(crate::editor::CrossBlockDrag {
+            anchor: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: anchor_id,
+                offset: 0,
+            },
+            anchor_table_cell: None,
+            anchor_is_whole_block: false,
+        });
+        // 模拟“行计划过期”：端点换算会因拿不到计划而返回 None。
+        editor.rendered_row_plan = None;
+    });
+    let before = editor.read_with(cx, |editor, _cx| editor.stale_drag_fallbacks.get());
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.on_editor_mouse_move(
+                &gpui::MouseMoveEvent {
+                    position,
+                    pressed_button: Some(gpui::MouseButton::Left),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+        });
+    });
+    let after = editor.read_with(cx, |editor, _cx| editor.stale_drag_fallbacks.get());
+    assert_eq!(after - before, 1, "过期计划应走一次降级路径");
+    assert!(
+        editor.read_with(cx, |editor, _cx| editor.cross_block_drag.is_some()),
+        "降级后拖动会话不应被清掉"
+    );
+}
 
