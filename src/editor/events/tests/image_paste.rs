@@ -332,3 +332,54 @@ use std::path::{Path, PathBuf};
         let _ = std::fs::remove_dir_all(&workdir);
         let _ = std::fs::remove_file(&source_path);
     }
+
+    /// 撤销/重做栈里的 `removed` 是 undo/redo 会放回正文的文本：引用刚被删、
+    /// 还没保存就重做的话，文件必须还在——旧实现只扫缓冲区与打开标签，把
+    /// 「撤销后保存」当成无引用清掉文件，重做后引用指向缺失素材。
+    #[gpui::test]
+    async fn undo_stack_reference_keeps_a_session_image_alive(cx: &mut TestAppContext) {
+        let workdir =
+            std::env::temp_dir().join(format!("velora-orphan-undo-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workdir).expect("workdir");
+        let image_path = workdir.join("assets/pic.png");
+        std::fs::create_dir_all(image_path.parent().unwrap()).expect("assets");
+        std::fs::write(&image_path, b"png").expect("image");
+        let file_name = "pic.png".to_string();
+
+        let editor = cx.new(|cx| {
+            Editor::from_markdown(cx, "![图](assets/pic.png)\n".to_string(), None)
+        });
+        editor.update(cx, |editor, _cx| {
+            editor
+                .session_created_images
+                .push(crate::editor::SessionCreatedImage {
+                    path: image_path.clone(),
+                    file_name: file_name.clone(),
+                });
+            // 删掉引用：撤销组记下的 `removed` 含文件名，重做能把引用放回来。
+            let range = 0..editor.buffer.byte_len();
+            editor.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, _cx);
+            let applied = editor.buffer.edit(range, "");
+            editor.record_buffer_edit(applied);
+            editor.finalize_pending_undo_capture(_cx);
+            assert!(!editor.undo_history.is_empty(), "撤销组该已记录");
+        });
+
+        editor.update(cx, |editor, _cx| {
+            editor.cleanup_unreferenced_session_images();
+        });
+        assert!(
+            image_path.exists(),
+            "撤销栈还能把引用放回正文，文件不许被清"
+        );
+
+        // 正控：撤销栈清空（模拟历史被丢弃）后再保存，文件才该被清。
+        editor.update(cx, |editor, _cx| {
+            editor.undo_history.clear();
+            editor.redo_history.clear();
+            editor.cleanup_unreferenced_session_images();
+        });
+        assert!(!image_path.exists(), "无任何引用后孤儿图片该被清");
+
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
