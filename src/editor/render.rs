@@ -629,8 +629,15 @@ fn hamburger_menu_panel_top(titlebar_height: f32, dimensions: &ThemeDimensions) 
     (titlebar_height + dimensions.menu_bar_button_height) / 2.0 + dimensions.menu_bar_gap
 }
 
-/// 窗内菜单每帧都要的派生量：一级标签、按钮宽、汉堡列表标签与列宽。
-/// 只依赖（菜单树代数, 主题尺寸, 语言），打开菜单/悬停换帧时不该重算。
+/// 子菜单的条目标签与面板宽（悬停哪个子菜单取哪一条）。
+pub(crate) struct WindowSubmenuMetrics {
+    pub(crate) labels: Vec<SharedString>,
+    pub(crate) panel_width: f32,
+}
+
+/// 窗内菜单每帧都要的派生量：一级标签、按钮宽、汉堡列表标签与列宽、
+/// 各子菜单标签与宽度。只依赖（菜单树代数, 主题尺寸, 语言），打开菜单/
+/// 悬停换帧时不该重算。
 pub(crate) struct WindowMenuMetrics {
     pub(crate) labels: Vec<SharedString>,
     pub(crate) button_widths: Vec<f32>,
@@ -638,6 +645,8 @@ pub(crate) struct WindowMenuMetrics {
     pub(crate) hamburger_list_width: f32,
     /// 一级菜单各自的面板宽度（按菜单树顺序）。
     pub(crate) item_panel_widths: Vec<f32>,
+    /// 一级菜单各条目里，子菜单对应位置上的标签与宽度；非子菜单为 None。
+    pub(crate) submenus: Vec<Vec<Option<WindowSubmenuMetrics>>>,
 }
 
 pub(crate) fn build_window_menu_metrics(
@@ -659,12 +668,32 @@ pub(crate) fn build_window_menu_metrics(
             menu_panel_width_for_labels(&labels, dimensions)
         })
         .collect();
+    let submenus = menus
+        .iter()
+        .map(|menu| {
+            menu.items
+                .iter()
+                .map(|item| match item {
+                    OwnedMenuItem::Submenu(submenu) => {
+                        let labels = owned_menu_item_labels(&submenu.items);
+                        let panel_width = menu_panel_width_for_labels(&labels, dimensions);
+                        Some(WindowSubmenuMetrics {
+                            labels: labels.into_iter().map(SharedString::from).collect(),
+                            panel_width,
+                        })
+                    }
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect();
     WindowMenuMetrics {
         labels,
         button_widths,
         hamburger_labels,
         hamburger_list_width,
         item_panel_widths,
+        submenus,
     }
 }
 
@@ -714,13 +743,12 @@ fn hamburger_menu_row_top(
 }
 
 /// 汉堡模式下，第 `index` 个菜单的条目面板该画在哪：贴在列表右侧、与它那一行对齐。
-pub(super) fn hamburger_menu_item_panel_origin<S: AsRef<str>>(
+pub(super) fn hamburger_menu_item_panel_origin(
     index: usize,
     titlebar_height: f32,
-    menu_labels: &[S],
+    list_width: f32,
     dimensions: &ThemeDimensions,
 ) -> MenuPanelOrigin {
-    let list_width = menu_panel_width_for_labels(menu_labels, dimensions);
     MenuPanelOrigin {
         panel_left: dimensions.menu_bar_padding_x + list_width + dimensions.menu_panel_gap,
         // 面板自身的 padding 与 menu_panel_top 要和行的位置对消，让第一行正好落在

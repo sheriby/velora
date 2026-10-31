@@ -29,6 +29,7 @@
                 hamburger_labels: vec!["文件".into()],
                 hamburger_list_width: 120.0,
                 item_panel_widths: Vec::new(),
+                submenus: Vec::new(),
             }
         };
         let first = refresh_window_menu_metrics_cache(&cache, 7, 11, "zh-CN", || build(&builds));
@@ -359,7 +360,8 @@
         let labels = vec!["File".to_string(), "Export".to_string()];
         let titlebar_height = 34.0;
 
-        let origin = hamburger_menu_item_panel_origin(1, titlebar_height, &labels, &dimensions);        let list_width = menu_panel_width_for_labels(&labels, &dimensions);
+        let list_width = menu_panel_width_for_labels(&labels, &dimensions);
+        let origin = hamburger_menu_item_panel_origin(1, titlebar_height, list_width, &dimensions);
         assert_eq!(
             origin.panel_left,
             dimensions.menu_bar_padding_x + list_width + dimensions.menu_panel_gap

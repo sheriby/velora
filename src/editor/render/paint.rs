@@ -1165,10 +1165,14 @@ impl Render for Editor {
         let base = if let Some(open_index) = self.menu_bar_open {
             let dimensions = &theme.dimensions;
             let origin = if self.hamburger_menu_open && supports_hamburger_menu() {
+                let list_width = menu_metrics
+                    .as_ref()
+                    .map(|metrics| metrics.hamburger_list_width)
+                    .unwrap_or(0.0);
                 hamburger_menu_item_panel_origin(
                     open_index,
                     titlebar_height,
-                    &hamburger_menu_labels(menus.as_deref().map(|menus| menus.as_slice()).unwrap_or_default(), &strings),
+                    list_width,
                     dimensions,
                 )
             } else {

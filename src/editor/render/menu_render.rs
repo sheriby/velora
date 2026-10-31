@@ -391,13 +391,17 @@ impl Editor {
             });
         let submenu_bridge = self.menu_submenu_open.and_then(|submenu_index| {
             match menu_items.get(submenu_index)? {
-                OwnedMenuItem::Submenu(submenu) => {
-                    let submenu_labels = owned_menu_item_labels(&submenu.items);
+                OwnedMenuItem::Submenu(_) => {
+                    let cached = metrics
+                        .submenus
+                        .get(open_index)
+                        .and_then(|submenus| submenus.get(submenu_index))
+                        .and_then(|submenu| submenu.as_ref())?;
                     let geometry = submenu_bridge_geometry(
                         origin.panel_left,
                         &menu_items,
                         submenu_index,
-                        &submenu_labels,
+                        &cached.labels,
                         d,
                     )?;
                     Some(
@@ -421,12 +425,20 @@ impl Editor {
             self.menu_submenu_open.and_then(|submenu_index| {
                 match menu_items.get(submenu_index)? {
                     OwnedMenuItem::Submenu(submenu) => {
-                        let submenu_labels = owned_menu_item_labels(&submenu.items);
+                        let submenu_width = metrics
+                            .submenus
+                            .get(open_index)
+                            .and_then(|submenus| submenus.get(submenu_index))
+                            .and_then(|submenu| submenu.as_ref())
+                            .map(|submenu| submenu.panel_width)
+                            .unwrap_or_else(|| {
+                                let labels = owned_menu_item_labels(&submenu.items);
+                                menu_panel_width_for_labels(&labels, d)
+                            });
                         let left = origin.panel_left
                             + menu_panel_width
                             + d.menu_panel_gap;
                         let top = submenu_panel_top(&menu_items, submenu_index, d);
-                        let submenu_width = menu_panel_width_for_labels(&submenu_labels, d);
                         let submenu_items = submenu.items.clone().into_iter().enumerate().map(
                             |(item_index, item)| match item {
                                 OwnedMenuItem::Separator => {

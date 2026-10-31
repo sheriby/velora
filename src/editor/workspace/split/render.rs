@@ -122,10 +122,13 @@ impl Editor {
                 root = root.child(deferred(menu).with_priority(20));
             }
             if let Some(index) = self.menu_bar_open {
+                let list_width = self
+                    .window_menu_metrics(cx, &menus, &theme.dimensions)
+                    .hamburger_list_width;
                 let origin = crate::editor::render::hamburger_menu_item_panel_origin(
                     index,
                     height,
-                    &crate::editor::render::hamburger_menu_labels(&menus, &strings),
+                    list_width,
                     &theme.dimensions,
                 );
                 if let Some(panel) = self.render_in_window_menu_panel(
