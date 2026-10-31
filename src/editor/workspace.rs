@@ -720,6 +720,7 @@ impl WorkspaceState {
 
     /// 搜索调度代数（每次 schedule_workspace_search +1）。测试用它钉住
     /// 「条件没变的导航不再重新调度」。
+    #[cfg(test)]
     pub(crate) fn search_generation(&self) -> u64 {
         self.search_generation
     }
