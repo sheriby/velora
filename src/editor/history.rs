@@ -1012,9 +1012,12 @@ impl Editor {
         edit: &buffer::AppliedEdit,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.view_mode != ViewMode::Rendered || self.document.pending_tail().is_some() {
+        if self.view_mode != ViewMode::Rendered {
             return false;
         }
+        // 未物化的尾部只影响「最后一根材料化根块」的接缝：区间落在它前面
+        // 时，窗口解析与整篇解析看到同一段字节，尾部可以继续挂着。
+        let has_pending_tail = self.document.pending_tail().is_some();
         let old_start = edit.new_range.start;
         let old_end = old_start + edit.removed.len();
         let new_len = edit.new_range.len();
@@ -1059,6 +1062,9 @@ impl Editor {
         // 边界一侧的根也可能被这次编辑并掉/拆开，扩一根一起重解析。
         let first = first.saturating_sub(1);
         let last = (last + 1).min(root_ids.len() - 1);
+        if has_pending_tail && last + 1 >= root_ids.len() {
+            return false;
+        }
         let old_roots: Vec<_> = self.document.root_blocks()[first..=last].to_vec();
         let old_spans: Vec<_> = (first..=last)
             .filter_map(|index| {

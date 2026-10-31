@@ -95,8 +95,11 @@ impl Editor {
 
     fn reproject_root_region_impl(&mut self, first: usize, last: usize, reuse_leaf: bool, cx: &mut Context<Self>) -> Option<usize> {
         const REGION_PROBE_LINES: usize = 2;
-        // 懒导入没建完时接缝归尾部那段，窗口解析与整篇解析对不上，走整篇那条路。
-        if self.document.pending_tail().is_some() {
+        // 懒导入没建完时，最后一根材料化根块的接缝归尾部那段，窗口解析
+        // 与整篇解析对不上；区间完全落在它之前时两边的字节视图一致。
+        if self.document.pending_tail().is_some()
+            && last + 1 >= self.document.root_blocks().len()
+        {
             return None;
         }
         if last < first {

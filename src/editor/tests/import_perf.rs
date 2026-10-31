@@ -244,4 +244,58 @@ fn progressive_import_fixture() -> String {
     ]
     .join("\n")
 }
+/// 懒导入还留着尾部时，落在前段根块里的粘贴不该整篇重建：区间之外的
+/// 材料化块原样保留，未物化的尾部继续挂着。
+#[gpui::test]
+async fn multiline_paste_before_the_pending_tail_keeps_the_tail(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..10)
+        .map(|index| format!("paragraph {index}\n\n"))
+        .collect::<String>();
+    let editor = progressive_test_editor(cx, markdown, 3);
+    let roots = cx.read(|cx| {
+        editor.read_with(cx, |editor, _cx| editor.document.root_blocks().to_vec())
+    });
+    assert!(
+        roots.len() >= 2,
+        "夹具应已物化至少两根根块，实际 {}",
+        roots.len()
+    );
+    cx.read(|cx| {
+        editor.read_with(cx, |editor, _cx| {
+            assert!(editor.document.pending_tail().is_some(), "夹具应留有尾部");
+        })
+    });
+    let unrelated = roots.last().expect("有根块").entity_id();
+    let first = roots[0].clone();
+    cx.update(|cx| {
+        editor.update(cx, |editor, cx| {
+            editor.on_block_event(
+                first,
+                &crate::components::BlockEvent::RequestPasteMultiline {
+                    leading: crate::components::InlineTextTree::plain(String::new()),
+                    lines: vec!["甲".to_string(), "乙".to_string()],
+                    trailing: crate::components::InlineTextTree::plain(String::new()),
+                },
+                cx,
+            );
+        });
+    });
+    cx.read(|cx| {
+        editor.read_with(cx, |editor, _cx| {
+            assert!(
+                editor.document.pending_tail().is_some(),
+                "前段粘贴不该把未物化尾部整段建完"
+            );
+            assert!(
+                editor
+                    .document
+                    .root_blocks()
+                    .iter()
+                    .any(|root| root.entity_id() == unrelated),
+                "粘贴之外的根块被换掉了"
+            );
+        })
+    });
+}
 
