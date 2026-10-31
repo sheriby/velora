@@ -270,3 +270,15 @@ DFS；结构编辑的剩余成本在遍历与快照表重建，不在实体写�
 **源码视图的按键**。块内插入/删除走块区间写回，`source_serializations` 计数不涨
 （`typing_in_source_mode_does_not_reserialize_the_whole_document`）；结构变更（回车
 新建块等）仍按整篇兜底。
+
+**HTML 粘贴**（`components/block/interactions/keys.rs:paste_html_flavor`）。HTML flavor
+的转换在后台 executor 上跑，主线程只收结果并调用共用的 `paste_markdown_text`；
+测试环境不读平台剪贴板的 HTML flavor，`paste_html_for_test` 走同一条路径。超过
+2 MiB 的 HTML 在调用线程直接弹应用内提示（`BlockEvent::RequestShowMessage`）并按
+纯文本落笔，不再静默降级。
+
+**结构重排的写过滤与零克隆**（`tree.rs`）。归一化只对有子块的容器写回（叶子零
+take），容器子块列表 move 而非克隆；快照 DFS 里字段按值过滤、`record.content` 先
+比较再克隆、根列表不再整体克隆、叶子块不写「最后可见后代」自映射（查询端缺省
+回落自身）。快照仍整棵 DFS；脏根区块 + 局部重算是下一步，动之前先写「局部结果
+与整棵重算一致」的差分测试。
