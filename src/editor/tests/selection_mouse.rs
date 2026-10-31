@@ -2003,6 +2003,9 @@ async fn shift_up_and_down_extend_the_selection_vertically(cx: &mut TestAppConte
             .map(|block| block.entity_id())
             .expect("首块");
         assert_eq!(selection.anchor.entity_id, anchor_block, "锚点该留在原块");
+        // 锚点必须是块内选区的固定端（0）：旧实现取光标（活动端 20），已选的
+        // 「第一行\n第二行\n」会被静默丢掉。
+        assert_eq!(selection.anchor.offset, 0, "锚点该在块内选区的起点");
         let text = editor.selected_visible_text(cx).expect("应有跨块选区文本");
         assert!(text.contains("第三行"), "选区该含原块末行：{text:?}");
     });

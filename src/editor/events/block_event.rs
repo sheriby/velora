@@ -51,9 +51,13 @@ impl Editor {
             .map(|selection| selection.anchor)
             .unwrap_or_else(|| {
                 let block_ref = block.read(cx);
+                // 锚点取选区的**固定端**而不是光标：块内已选 0..8、光标停在 8
+                // 时再往下扩，从 8 起算会把已选的前半段静默丢掉（与 shift+点击
+                // 的扩选口径一致）。
+                let (anchor_offset, _) = block_ref.selection_anchor_focus();
                 CrossBlockSelectionEndpoint {
                     entity_id: block.entity_id(),
-                    offset: block_ref.current_to_clean_offset(block_ref.cursor_offset()),
+                    offset: block_ref.current_to_clean_offset(anchor_offset),
                 }
             });
         let focus = {
