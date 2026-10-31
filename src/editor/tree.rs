@@ -459,6 +459,42 @@ impl DocumentTree {
         self.snapshot.last_visible_descendant_by_entity.len()
     }
 
+    /// 快照元数据的可比形状：父亲（按可见序下标）、深度、引用深度、
+    /// 序号与种类。用于「结构编辑后的快照 == 重新解析序列化文本」差分。
+    #[cfg(test)]
+    pub(crate) fn snapshot_metadata_shape(
+        &self,
+        cx: &App,
+    ) -> Vec<(Option<usize>, usize, usize, Option<usize>, String)> {
+        let order: HashMap<EntityId, usize> = self
+            .snapshot
+            .visible
+            .iter()
+            .enumerate()
+            .map(|(index, visible)| (visible.entity.entity_id(), index))
+            .collect();
+        self.snapshot
+            .visible
+            .iter()
+            .map(|visible| {
+                let block = visible.entity.read_untracked(cx);
+                let parent_index = self
+                    .snapshot
+                    .location_by_entity
+                    .get(&visible.entity.entity_id())
+                    .and_then(|location| location.parent.as_ref())
+                    .and_then(|parent| order.get(&parent.entity_id()).copied());
+                (
+                    parent_index,
+                    block.render_depth,
+                    block.quote_depth,
+                    block.list_ordinal,
+                    format!("{:?}", block.kind()),
+                )
+            })
+            .collect()
+    }
+
     pub(super) fn replace_roots(&mut self, roots: Vec<Entity<Block>>, cx: &mut Context<Editor>) {
         // 旧实体整棵作废（slotmap 的 id 带代次，槽位复用也不会撞上），它们的区间
         // 一起丢掉；新根块的区间由调用方在换进来之前挂好，这里按 id 保留。

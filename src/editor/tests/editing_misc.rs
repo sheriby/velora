@@ -942,4 +942,47 @@ async fn leaf_blocks_do_not_fill_the_descendant_map(cx: &mut TestAppContext) {
         );
     });
 }
+fn assert_snapshot_matches_fresh_reparse(
+    editor: &gpui::Entity<Editor>,
+    cx: &mut gpui::VisualTestContext,
+) {
+    let (shape, serialized) = editor.read_with(cx, |editor, cx| {
+        (
+            editor.document.snapshot_metadata_shape(cx),
+            editor.document.markdown_text(cx),
+        )
+    });
+    let fresh = cx.update(|_, app| {
+        app.new(|cx| Editor::from_markdown(cx, serialized.clone(), None))
+    });
+    let fresh_shape = fresh.read_with(cx, |editor, cx| {
+        editor.document.snapshot_metadata_shape(cx)
+    });
+    assert_eq!(
+        shape, fresh_shape,
+        "结构编辑后的快照与重新解析不一致：{serialized:?}"
+    );
+}
+
+/// 结构编辑后的快照元数据必须与「把当前序列化文本重新打开」完全一致：
+/// 这是将来做脏根区块局部重算的差分保险。
+#[gpui::test]
+async fn structural_snapshot_matches_a_fresh_reparse(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "- 甲\n  - 乙\n\n> 引用\n\n1. 一\n2. 二\n\n尾段\n";
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, source.to_string(), None)
+    });
+    redraw(cx);
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(first.entity_id()));
+    redraw(cx);
+    for keys in ["x enter y", "backspace", "ctrl-z", "ctrl-shift-z"] {
+        cx.simulate_keystrokes(keys);
+        redraw(cx);
+        assert_snapshot_matches_fresh_reparse(&editor, cx);
+    }
+}
 
