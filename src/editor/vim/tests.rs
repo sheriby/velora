@@ -3491,3 +3491,28 @@ async fn b_and_ge_stop_on_empty_blocks(cx: &mut TestAppContext) {
         assert_eq!(caret, 0, "{motion} 应停在空块块首");
     }
 }
+
+/// {Visual}J / gJ 按选区覆盖的全部行并：选三段按 J 应把三段并成一行，
+/// 而不是只并光标所在行与下一行。
+#[gpui::test]
+async fn visual_line_join_covers_the_whole_selection(cx: &mut TestAppContext) {
+    for keys in ["J", "g J"] {
+        let (editor, cx) = vim_editor(cx, "a\n\nb\n\nc\n\nd\n\ne");
+        cx.simulate_keystrokes("V j j");
+        cx.simulate_keystrokes(keys);
+        let blocks: Vec<String> = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .iter()
+                .map(|visible| visible.entity.read(cx).display_text().to_string())
+                .collect()
+        });
+        assert_eq!(blocks.len(), 3, "{keys} 应把选中的三段并成一段：{blocks:?}");
+        assert!(
+            blocks[0].contains('a') && blocks[0].contains('b') && blocks[0].contains('c'),
+            "{keys} 只并了光标所在行与下一行：{blocks:?}"
+        );
+        assert_eq!(&blocks[1..], ["d", "e"], "{keys} 不应波及选区之外");
+    }
+}

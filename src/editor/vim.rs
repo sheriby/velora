@@ -997,6 +997,42 @@ impl Editor {
         }
     }
 
+    /// 行级可视的 J/gJ：返回选区起点与覆盖的硬行数（至少 1）。
+    fn vim_visual_linewise_join_target(
+        &self,
+        cx: &App,
+    ) -> Option<(operate::VimRange, u32)> {
+        let entities = self.vim_navigation_entities(cx);
+        let range = visual::vim_selection_as_range(self, &entities, cx)?;
+        if !range.linewise {
+            return None;
+        }
+        let stream = motion::VimDocStream::new(&entities, cx);
+        let mut position = range.start;
+        let mut lines = 0u32;
+        while (position.block_index, position.offset)
+            < (range.end.block_index, range.end.offset)
+        {
+            lines += 1;
+            let line = stream.hard_line_range(position.block_index, position.offset);
+            let text_len = stream.text_for_line(position.block_index).len();
+            position = if line.end < text_len {
+                motion::VimPosition {
+                    block_index: position.block_index,
+                    offset: line.end + 1,
+                }
+            } else if position.block_index + 1 < entities.len() {
+                motion::VimPosition {
+                    block_index: position.block_index + 1,
+                    offset: 0,
+                }
+            } else {
+                break;
+            };
+        }
+        Some((range, lines.max(1)))
+    }
+
     // ---- 用户映射 ----
 
     fn vim_match_mapping(
@@ -1223,7 +1259,19 @@ impl Editor {
                 }
             }
             VimAction::JoinLines { count: join_count, keep_space } => {
-                operate::vim_join(self, join_count.max(1), keep_space, window, cx);
+                let mut join_count = join_count.max(1);
+                // 行级可视的 J/gJ 要把选区覆盖的全部行并成一行：解析阶段只拿到
+                // 按键前缀的 count（默认 2），这里按选区行数补上，并从首行开始。
+                if was_visual
+                    && matches!(self.vim.mode, VimMode::Visual(VisualKind::Line))
+                    && let Some((range, lines)) = self.vim_visual_linewise_join_target(cx)
+                {
+                    visual::vim_exit_visual(self, cx);
+                    let entities = self.vim_navigation_entities(cx);
+                    self.vim_set_cursor(&entities, range.start, cx);
+                    join_count = lines;
+                }
+                operate::vim_join(self, join_count, keep_space, window, cx);
             }
             VimAction::Undo => self.undo_document(cx),
             VimAction::Redo => self.redo_document(cx),
