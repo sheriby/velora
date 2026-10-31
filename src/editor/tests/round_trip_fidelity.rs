@@ -2566,9 +2566,11 @@ async fn list_marker_gap_and_indent_round_trip_without_edit(cx: &mut TestAppCont
         "-\tno space before tab",
         "  -  two-space nested item",
         "+   three spaces after plus",
+        "1)\ttab after delimiter",
     ] {
         let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
         let round_tripped = editor.read_with(cx, |editor, cx| editor.document.markdown_text(cx));
         assert_eq!(round_tripped, source, "列表记号写法被改写：{source:?}");
     }
 }
+

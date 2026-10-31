@@ -957,6 +957,8 @@ impl BlockRecord {
                 )
             }
             BlockKind::BulletedListItem => {
+                // 原文前缀是「本层」的（子块解析前已被父级 dedent），补回层级
+                // 缩进即可；没有原文账的新建项仍写规范记号。
                 let prefix = self
                     .list_marker_prefix
                     .as_ref()
@@ -997,12 +999,22 @@ impl BlockRecord {
             }
             BlockKind::NumberedListItem => {
                 let ordinal = list_ordinal.unwrap_or(1);
+                let delimiter = self.list_marker.delimiter_or_default();
+                // 序号本身会按列表组重排，但分隔符后的空白是用户写法：
+                // 从原文前缀里取分隔符之后那一段照抄。
+                let gap = self
+                    .list_marker_prefix
+                    .as_ref()
+                    .filter(|_| depth == 0)
+                    .and_then(|prefix| {
+                        prefix
+                            .rfind(delimiter)
+                            .map(|index| prefix[index + delimiter.len_utf8()..].to_string())
+                    })
+                    .unwrap_or_else(|| " ".to_string());
                 prefixed_multiline(
                     &title_markdown,
-                    &format!(
-                        "{indentation}{ordinal}{} ",
-                        self.list_marker.delimiter_or_default()
-                    ),
+                    &format!("{indentation}{ordinal}{delimiter}{gap}"),
                     &format!("{indentation}   "),
                 )
             }
