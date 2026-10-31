@@ -275,4 +275,44 @@ async fn cross_block_replace_reprojects_only_the_affected_roots(cx: &mut TestApp
         assert_eq!(editor.buffer.text(), source, "撤销应恢复原文");
     });
 }
+/// 脚注体内两段之间隔多个空行时：第二段的源码起点按解析账定位，整篇
+/// 序列化也要把空行数原样写回（不能多导一次就多一行）。
+#[gpui::test]
+async fn footnote_blank_runs_round_trip_and_map_to_the_right_child(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for blank_lines in 1..=3 {
+        let source = format!(
+            "正文 [^a]\n\n[^a]: 第一段\n{}\n    第二段\n",
+            "\n".repeat(blank_lines)
+        );
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, source.clone(), None)
+        });
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            let second = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).display_text().contains("第二段"))
+                .map(|visible| visible.entity.clone())
+                .expect("脚注第二段应建块");
+            let mapping = editor
+                .source_mapping_for_entity(second.entity_id(), cx)
+                .expect("第二段应有源码映射");
+            let start = mapping.full_source_range.start
+                + mapping.content_to_source.first().copied().unwrap_or_default();
+            let expected = source.find("第二段").expect("夹具含第二段");
+            assert_eq!(
+                start, expected,
+                "{blank_lines} 个空行时脚注第二段的源码起点漂了"
+            );
+            assert_eq!(
+                editor.document.markdown_text(cx),
+                source.trim_end_matches('\n'),
+                "{blank_lines} 个空行时脚注序列化改了字节"
+            );
+        });
+    }
+}
 

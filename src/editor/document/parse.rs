@@ -1273,11 +1273,42 @@ pub(crate) fn build_native_footnote_definition_block(
     let children =
         Editor::build_blocks_from_lines_with_origins(cx, &body_lines, false, ChunkCursor::WHOLE_DOCUMENT, &body_origins)
             .0;
+    // 脚注体里的空行被解析成空段落子块，它们不是内容，只是两段之间的
+    // 空隙。把「首段之后」的空段收进下一段的 `source_separator_bytes`
+    // （空段数 + 1：首尾两行自己那一个换行不在空段里），序列化与源码映射
+    // 才与普通子块用同一把尺。首段之前的空段与尾部空段保持原样。
+    let mut kept_children = Vec::with_capacity(children.len());
+    let mut pending_blank_children = Vec::new();
+    let mut seen_real_child = false;
+    for child in children {
+        let blank = {
+            let child = child.read(cx);
+            child.kind() == BlockKind::Paragraph
+                && child.record.title.visible_text().is_empty()
+                && child.children.is_empty()
+        };
+        if blank && seen_real_child {
+            pending_blank_children.push(child);
+            continue;
+        }
+        if !blank {
+            if !pending_blank_children.is_empty() {
+                let separators = pending_blank_children.len() as u32 + 1;
+                child.update(cx, |child, _cx| {
+                    child.record.source_separator_bytes = separators;
+                });
+                pending_blank_children.clear();
+            }
+            seen_real_child = true;
+        }
+        kept_children.push(child);
+    }
+    kept_children.extend(pending_blank_children);
     let block = Editor::new_block(
         cx,
         BlockRecord::new(BlockKind::FootnoteDefinition, InlineTextTree::plain(id)),
     );
-    attach_child_blocks(&block, children, cx);
+    attach_child_blocks(&block, kept_children, cx);
     Some(block)
 }
 

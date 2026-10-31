@@ -1489,8 +1489,32 @@ impl DocumentTree {
                     }
 
                     if block_ref.children.len() > 1 {
-                        lines.push(String::new());
-                        Self::collect_markdown_lines(&block_ref.children[1..], 2, cx, lines, true);
+                        // 段间空行数按解析期记在下一段上的账写回：一个空行
+                        // 不多补，两个也不吞；紧邻的列表项之间本来就不空行。
+                        let mut previous_kind = Some(block_ref.children[0].read(cx).kind());
+                        for child in &block_ref.children[1..] {
+                            let child_ref = child.read(cx);
+                            let tight_list_items = previous_kind
+                                .as_ref()
+                                .is_some_and(|previous| {
+                                    previous.is_list_item() && child_ref.kind().is_list_item()
+                                });
+                            let blanks = if tight_list_items {
+                                child_ref.record.source_separator_bytes
+                            } else {
+                                child_ref.record.source_separator_bytes.max(1)
+                            };
+                            for _ in 0..blanks {
+                                lines.push(String::new());
+                            }
+                            Self::collect_single_block_markdown_lines(
+                                child_ref,
+                                2,
+                                cx,
+                                lines,
+                            );
+                            previous_kind = Some(child_ref.kind());
+                        }
                     }
                 } else {
                     lines.push(format!("{indentation}[^{}]:", id));

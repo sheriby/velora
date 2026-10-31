@@ -1789,14 +1789,17 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             for child in children.iter().skip(child_index) {
                 let current_kind = child.read(cx).kind();
                 if total_len > 0 {
+                    // 与主循环同一把尺：接缝 = 一个换行 + 解析期记下的空行
+                    // 字节账。紧邻的列表项之间没有空行（账为 0）。
+                    let separators = child.read(cx).record.source_separator_bytes as usize;
                     total_len += if previous_kind.is_none() {
                         1
                     } else if previous_kind.as_ref().is_some_and(|previous| {
                         previous.is_list_item() && current_kind.is_list_item()
                     }) {
-                        1
+                        1 + separators
                     } else {
-                        2
+                        1 + separators.max(1)
                     };
                 }
                 total_len += self.collect_single_block_source_mappings(
