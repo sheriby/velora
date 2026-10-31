@@ -27,6 +27,29 @@ fn note_normalize_child_write() {
     NORMALIZE_CHILD_WRITES.with(|counter| counter.set(counter.get() + 1));
 }
 
+// 计数器（测试）：快照 DFS 里字段值真的变化、因此付出实体写的次数。
+// 未变化的块不该被逐字段重写（10 万根块 = 每次结构编辑几十万次写）。
+#[cfg(test)]
+thread_local! {
+    pub(crate) static SNAPSHOT_FIELD_WRITES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_snapshot_field_write() {
+    SNAPSHOT_FIELD_WRITES.with(|counter| counter.set(counter.get() + 1));
+}
+
+macro_rules! assign_if_changed {
+    ($block:expr, $field:ident, $value:expr) => {{
+        let value = $value;
+        if $block.$field != value {
+            $block.$field = value;
+            #[cfg(test)]
+            note_snapshot_field_write();
+        }
+    }};
+}
+
 /// Part of a document whose lines have not been turned into blocks yet.
 ///
 /// A huge document is imported in chunks (roadmap G8): the editor holds the
@@ -1148,31 +1171,41 @@ impl DocumentTree {
             let reading_mode = reading_mode.clone();
             block.update(cx, move |block, cx| {
                 if let Some(reading_mode) = reading_mode {
-                    block.reading_mode = Some(reading_mode);
+                    assign_if_changed!(block, reading_mode, Some(reading_mode));
                 }
-                block.record.parent = parent_id;
-                block.record.content = content.clone();
+                assign_if_changed!(block.record, parent, parent_id);
+                if block.record.content != content {
+                    block.record.content = content.clone();
+                    #[cfg(test)]
+                    note_snapshot_field_write();
+                }
                 if block.render_depth_synced && block.render_depth != list_depth {
                     // 重新挂过：原文前缀的绝对宽度不再对应这一层，退回规范缩进。
                     block.record.source_line_prefixes.clear();
                 }
-                block.render_depth_synced = true;
-                block.render_depth = list_depth;
-                block.quote_depth = quote_depth;
-                block.quote_group_anchor = quote_group_anchor;
-                block.visible_quote_depth = visible_quote_depth;
-                block.visible_quote_group_anchor = visible_quote_group_anchor;
-                block.callout_depth = callout_depth;
-                block.callout_anchor = callout_anchor;
-                block.callout_variant = callout_variant;
-                block.footnote_anchor = footnote_anchor;
-                block.parent_is_list_item = parent_is_list_item;
-                block.list_ordinal = list_ordinal;
+                if !block.render_depth_synced {
+                    block.render_depth_synced = true;
+                    #[cfg(test)]
+                    note_snapshot_field_write();
+                }
+                assign_if_changed!(block, render_depth, list_depth);
+                assign_if_changed!(block, quote_depth, quote_depth);
+                assign_if_changed!(block, quote_group_anchor, quote_group_anchor);
+                assign_if_changed!(block, visible_quote_depth, visible_quote_depth);
+                assign_if_changed!(block, visible_quote_group_anchor, visible_quote_group_anchor);
+                assign_if_changed!(block, callout_depth, callout_depth);
+                assign_if_changed!(block, callout_anchor, callout_anchor);
+                assign_if_changed!(block, callout_variant, callout_variant);
+                assign_if_changed!(block, footnote_anchor, footnote_anchor);
+                assign_if_changed!(block, parent_is_list_item, parent_is_list_item);
+                assign_if_changed!(block, list_ordinal, list_ordinal);
                 if block.math_ordinal != math_ordinal {
                     block.math_ordinal = math_ordinal;
+                    #[cfg(test)]
+                    note_snapshot_field_write();
                     cx.notify();
                 }
-                block.list_group_separator_candidate = list_group_separator_candidate;
+                assign_if_changed!(block, list_group_separator_candidate, list_group_separator_candidate);
             });
 
             let last_descendant_id = if children.is_empty() {

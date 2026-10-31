@@ -873,3 +873,31 @@ async fn syncing_a_focused_block_keeps_its_projection(cx: &mut TestAppContext) {
         "焦点块同步后投影应保留"
     );
 }
+/// 结构变更后的快照 DFS 只写真正变化的字段：未变化块不该被逐字段重写。
+#[gpui::test]
+async fn structural_edit_does_not_rewrite_unchanged_snapshot_fields(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..40)
+        .map(|index| format!("paragraph {index}\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, markdown, None)
+    });
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(block.entity_id()));
+    redraw(cx);
+    let before =
+        crate::editor::tree::SNAPSHOT_FIELD_WRITES.with(|counter| counter.get());
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    let after = crate::editor::tree::SNAPSHOT_FIELD_WRITES.with(|counter| counter.get());
+    assert!(
+        after - before <= 4,
+        "未变化块的快照字段被重写了：{} 次",
+        after - before
+    );
+}
+
