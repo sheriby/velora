@@ -997,11 +997,8 @@ impl DocumentTree {
                 if had_children || !children.is_empty() {
                     #[cfg(test)]
                     note_normalize_child_write();
-                    block.update(cx, {
-                        let children = children.clone();
-                        move |block, _cx| {
-                            block.children = children.clone();
-                        }
+                    block.update(cx, move |block, _cx| {
+                        block.children = children;
                     });
                 }
             } else if !children.is_empty() {

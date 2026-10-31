@@ -909,5 +909,9 @@ fn snapshot_rebuild_does_not_clone_the_root_list() {
         !source.contains("&self.roots.clone()"),
         "快照重建又整篇克隆了根块列表"
     );
+    assert!(
+        !source.contains("block.children = children.clone()"),
+        "normalize 又克隆了容器子块列表"
+    );
 }
 
