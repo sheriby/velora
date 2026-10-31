@@ -970,8 +970,10 @@ impl Editor {
     /// 否则单键又会命中同一条映射的前缀，再次挂起等待。
     fn vim_modal_resolve_key(&mut self, key: VimKey, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.vim.pending.push(key);
-        // 护栏：最长的合法序列（"a12d3fo）也远到不了 10 键。
-        if self.vim.pending.len() > 10 {
+        // 护栏：合法序列可以到 12 键（"a9999d9999w = 寄存器 2 键 + 两个 4 位
+        // 计数 + 操作符 + 动作），留一点余量到 16；解析器自己会在不可能成为
+        // 合法前缀时给出 Invalid。
+        if self.vim.pending.len() > 16 {
             self.vim.pending.clear();
             return true;
         }

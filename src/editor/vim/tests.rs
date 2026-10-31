@@ -3443,3 +3443,19 @@ async fn global_menu_chain_dispatches_toggle_vim_mode(cx: &mut TestAppContext) {
     assert_ne!(after, before, "全局菜单链必须能切换 Vim 模式");
     let _ = editor;
 }
+
+/// vim 合法的「寄存器前缀 + 两个 4 位计数 + 操作符 + 动作」是 12 键：
+/// `"a9999d9999w`。按键护栏必须容得下它，不能在第 11 键把整条 pending 清空。
+#[gpui::test]
+async fn a_twelve_key_register_and_two_counts_sequence_is_not_dropped(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx) = vim_editor(cx, "one two three four five six");
+    cx.simulate_keystrokes("\" a 9 9 9 9 d 9 9 9 9 w");
+    assert_eq!(
+        document_text(&editor, &cx),
+        "",
+        "d9999w 应删到行尾；序列被护栏吞掉时正文不变"
+    );
+    assert_eq!(first_block_caret(&editor, &cx), 0);
+}
