@@ -781,7 +781,9 @@ impl Editor {
                     .root_ancestor_of(target_parent.entity_id())
                     .unwrap_or_else(|| target_parent.clone());
 
-                let moved = self.document.with_structure_mutation(cx, |document, cx| {
+                let moved = self
+                    .document
+                    .with_structure_mutation_from(region_anchor.entity_id(), cx, |document, cx| {
                     let moved = document.remove_block_by_id_raw(block.entity_id(), cx)?.0;
                     let child_index = target_parent.read(cx).children.len();
                     document.insert_blocks_at_raw(
@@ -832,7 +834,9 @@ impl Editor {
                         return;
                     };
 
-                    let moved = self.document.with_structure_mutation(cx, |document, cx| {
+                    let moved = self
+                        .document
+                        .with_structure_mutation_from(region_anchor.entity_id(), cx, |document, cx| {
                         let moved = document.remove_block_by_id_raw(block.entity_id(), cx)?.0;
                         document.insert_blocks_at_raw(
                             parent_location.parent,
@@ -874,7 +878,9 @@ impl Editor {
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
                 let roots_before = self.document.root_layout();
 
-                let downgraded = self.document.with_structure_mutation(cx, |document, cx| {
+                let downgraded = self
+                    .document
+                    .with_structure_mutation_from(parent.entity_id(), cx, |document, cx| {
                     let (moved, removed_location) =
                         document.remove_block_by_id_raw(block.entity_id(), cx)?;
                     moved.update(cx, |block, cx| {
@@ -1169,7 +1175,9 @@ impl Editor {
                 };
 
                 let adopted_children = crate::editor::tree::DocumentTree::take_children(&block, cx);
-                let removed = self.document.with_structure_mutation(cx, |document, cx| {
+                let removed = self
+                    .document
+                    .with_structure_mutation_from(region_anchor.entity_id(), cx, |document, cx| {
                     let (_, location) = document.remove_block_by_id_raw(block.entity_id(), cx)?;
                     if !adopted_children.is_empty() {
                         document.insert_blocks_at_raw(

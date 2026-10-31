@@ -1056,4 +1056,37 @@ async fn backspace_merge_near_the_end_resyncs_only_the_tail(cx: &mut TestAppCont
         "文末块首退格应只重排尾部几块，实际访问 {visited} 块"
     );
 }
+/// 在文末删除一块只该重排尾部几根块。
+#[gpui::test]
+async fn delete_near_the_end_resyncs_only_the_tail(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..40)
+        .map(|index| format!("paragraph {index}\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, markdown, None)
+    });
+    redraw(cx);
+    let last = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .visible_blocks()
+            .last()
+            .expect("有根块")
+            .entity
+            .clone()
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(last.entity_id()));
+    redraw(cx);
+    let before = crate::editor::tree::SNAPSHOT_SYNC_VISITS.with(|counter| counter.get());
+    editor.update(cx, |editor, cx| {
+        editor.on_block_event(last, &crate::components::BlockEvent::RequestDelete, cx);
+    });
+    redraw(cx);
+    let visited = crate::editor::tree::SNAPSHOT_SYNC_VISITS.with(|counter| counter.get()) - before;
+    assert!(
+        visited <= 4,
+        "文末删除应只重排尾部几块，实际访问 {visited} 块"
+    );
+}
 
