@@ -3516,3 +3516,26 @@ async fn visual_line_join_covers_the_whole_selection(cx: &mut TestAppContext) {
         assert_eq!(&blocks[1..], ["d", "e"], "{keys} 不应波及选区之外");
     }
 }
+
+/// R 模式退格还原：删除区间要按**当前位置当前字符**的宽度算，不能拿原字符
+/// 的宽度去删——多字节覆写成单字节（或反向）时会连带吞掉相邻字符。
+#[gpui::test]
+async fn replace_mode_backspace_restoration_uses_the_current_character_width(
+    cx: &mut TestAppContext,
+) {
+    {
+        let (editor, cx) = vim_editor(cx, "世界ab");
+        cx.simulate_keystrokes("R");
+        cx.simulate_input("x");
+        assert_eq!(document_text(&editor, &cx), "x界ab");
+        cx.simulate_keystrokes("backspace");
+        assert_eq!(
+            document_text(&editor, &cx),
+            "世界ab",
+            "多字节原字符覆写成单字节后退格，不能吃掉后一个字"
+        );
+    }
+    // 反向（单字节原字符覆写成多字节）的输入走 IME 提交路径，当前不经过
+    // overtype 的删除分支；恢复逻辑本身已按当前字符宽度取区间，待输入路径
+    // 统一后再补对拍。
+}

@@ -2427,9 +2427,18 @@ impl Editor {
             }
             let restored = original.clone();
             let at = recorded_offset;
-            let after = next_grapheme_start(&original, 0)
-                .map(|len| at + len)
-                .unwrap_or(at + original.len());
+            // 删除区间取**当前文本**在这一位置的字素宽度：覆写过的位置现在放的是
+            // 替换字符，宽度与原字符未必相同（多字节↔单字节），按原字符宽度删会
+            // 吃掉相邻字符或切进多字节字符中间。
+            let after = {
+                let block_ref = block.read(cx);
+                let text = block_ref.display_text();
+                if at >= text.len() {
+                    text.len()
+                } else {
+                    next_grapheme_start(text, at).unwrap_or(text.len())
+                }
+            };
             block.update(cx, |block, cx| {
                 block.prepare_undo_capture(block.text_edit_undo_kind(), cx);
                 block.replace_text_in_visible_range(at..after.max(at + 1), &restored, Some(0..0), false, cx);
