@@ -475,6 +475,9 @@ impl I18nStrings {
             ..Self::en_us()
         };
         strings.image_paste_failed_title = "图片粘贴失败".into();
+        strings.clipboard_html_too_large_title = "剪贴板 HTML 过大".into();
+        strings.clipboard_html_too_large_detail =
+            "剪贴板里的 HTML 超过大小上限，已按纯文本粘贴。".into();
         strings.preferences_nav_image = "图像".into();
         strings.preferences_nav_status_bar = "状态栏".into();
         strings.preferences_status_bar_enabled = "显示状态栏".into();
@@ -739,6 +742,9 @@ impl I18nStrings {
             external_change_save_as: "Save As…".into(),
             export_failed_title: "Export Failed".into(),
             image_paste_failed_title: "Image Paste Failed".into(),
+            clipboard_html_too_large_title: "Clipboard HTML Too Large".into(),
+            clipboard_html_too_large_detail:
+                "The clipboard HTML exceeded the size limit; pasted as plain text.".into(),
             config_import_failed_title: "Config Import Failed".into(),
             preferences_window_title: "Preferences".into(),
             preferences_group_startup: "Startup".into(),

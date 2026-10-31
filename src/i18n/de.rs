@@ -112,6 +112,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) external_change_save_as: Option<String>,
     pub(crate) export_failed_title: Option<String>,
     pub(crate) image_paste_failed_title: Option<String>,
+    pub(crate) clipboard_html_too_large_title: Option<String>,
+    pub(crate) clipboard_html_too_large_detail: Option<String>,
     pub(crate) config_import_failed_title: Option<String>,
     pub(crate) preferences_window_title: Option<String>,
     pub(crate) preferences_group_startup: Option<String>,

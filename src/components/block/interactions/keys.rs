@@ -314,42 +314,32 @@ impl Block {
                 clipboard_change.and_then(crate::components::markdown::html_paste::clipboard_html)
             };
             if let Some(html) = html {
-                let plain = text;
-                cx.spawn_in(window, async move |weak_block, cx| {
-                    let converted = cx
-                        .background_executor()
-                        .spawn(async move {
-                            crate::components::markdown::html_paste::maybe_markdown_from_clipboard(
-                                Some(&html),
-                                &plain,
-                            )
-                        })
-                        .await;
-                    let _ = cx.update(|window, app| {
-                        weak_block.update(app, |block, block_cx| {
-                            block.paste_markdown_text(converted, plain_only, window, block_cx);
-                        })
-                    });
-                })
-                .detach();
+                self.paste_html_flavor(html, text, plain_only, window, cx);
                 return;
             }
             self.paste_markdown_text(text, plain_only, window, cx);
         }
     }
 
-    /// 测试入口：走与剪贴板 HTML 粘贴同一条异步路径（测试环境不读平台
-    /// 剪贴板的 HTML flavor，只能直接喂字符串）。
-    #[cfg(test)]
-    pub(crate) fn paste_html_for_test(
+    /// HTML flavor 的落笔：超过大小上限时提示并按纯文本粘贴；否则后台
+    /// 转换，完成后回主线程落笔。
+    fn paste_html_flavor(
         &mut self,
-        html: &str,
-        plain: &str,
+        html: String,
+        plain: String,
+        plain_only: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let html = html.to_string();
-        let plain = plain.to_string();
+        if html.len() > crate::components::markdown::html_paste::MAX_CLIPBOARD_HTML_BYTES {
+            let strings = cx.global::<crate::i18n::I18nManager>().strings();
+            cx.emit(BlockEvent::RequestShowMessage {
+                title: strings.clipboard_html_too_large_title.clone().into(),
+                detail: strings.clipboard_html_too_large_detail.clone().into(),
+            });
+            self.paste_markdown_text(plain, plain_only, window, cx);
+            return;
+        }
         cx.spawn_in(window, async move |weak_block, cx| {
             let converted = cx
                 .background_executor()
@@ -362,11 +352,24 @@ impl Block {
                 .await;
             let _ = cx.update(|window, app| {
                 weak_block.update(app, |block, block_cx| {
-                    block.paste_markdown_text(converted, false, window, block_cx);
+                    block.paste_markdown_text(converted, plain_only, window, block_cx);
                 })
             });
         })
         .detach();
+    }
+
+    /// 测试入口：走与剪贴板 HTML 粘贴同一条异步路径（测试环境不读平台
+    /// 剪贴板的 HTML flavor，只能直接喂字符串）。
+    #[cfg(test)]
+    pub(crate) fn paste_html_for_test(
+        &mut self,
+        html: &str,
+        plain: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.paste_html_flavor(html.to_string(), plain.to_string(), false, window, cx);
     }
 
     /// 粘贴落笔的公共尾部：HTML 转换完成后（或没有 HTML flavor 时同步）走这里。

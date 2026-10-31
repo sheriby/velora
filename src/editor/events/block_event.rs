@@ -1223,6 +1223,9 @@ impl Editor {
                     .set(self.focus_transfer_block_updates.get() + refreshed);
                 cx.notify();
             }
+            BlockEvent::RequestShowMessage { title, detail } => {
+                self.show_message_modal(title.clone(), detail.clone(), cx);
+            }
             BlockEvent::RequestRenderedSelectAll => {}
             BlockEvent::PrepareUndo { .. } => {}
             BlockEvent::CompositionChanged => {}

@@ -1307,6 +1307,11 @@ pub enum BlockEvent {
         source: PastedImageSource,
         trailing: InlineTextTree,
     },
+    /// 块级路径需要弹一条应用内提示（标题/正文已本地化）。
+    RequestShowMessage {
+        title: SharedString,
+        detail: SharedString,
+    },
     /// Replace the current editor-level cross-block selection with text
     /// submitted through the focused block input handler.
     RequestReplaceCrossBlockSelection {

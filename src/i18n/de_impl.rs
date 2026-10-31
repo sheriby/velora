@@ -248,6 +248,12 @@ impl I18nStringsDe {
             image_paste_failed_title: self
                 .image_paste_failed_title
                 .unwrap_or(defaults.image_paste_failed_title),
+            clipboard_html_too_large_title: self
+                .clipboard_html_too_large_title
+                .unwrap_or(defaults.clipboard_html_too_large_title),
+            clipboard_html_too_large_detail: self
+                .clipboard_html_too_large_detail
+                .unwrap_or(defaults.clipboard_html_too_large_detail),
             config_import_failed_title: self
                 .config_import_failed_title
                 .unwrap_or(defaults.config_import_failed_title),

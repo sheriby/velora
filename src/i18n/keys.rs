@@ -109,6 +109,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "external_change_save_as",
     "export_failed_title",
     "image_paste_failed_title",
+    "clipboard_html_too_large_title",
+    "clipboard_html_too_large_detail",
     "config_import_failed_title",
     "preferences_window_title",
     "preferences_group_startup",

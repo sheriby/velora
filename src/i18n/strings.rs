@@ -186,6 +186,10 @@ pub struct I18nStrings {
     pub export_failed_title: String,
     /// Title of the image-paste failure prompt.
     pub image_paste_failed_title: String,
+    /// 剪贴板 HTML 超过大小上限时的提示标题。
+    pub clipboard_html_too_large_title: String,
+    /// 剪贴板 HTML 超过大小上限时的提示正文。
+    pub clipboard_html_too_large_detail: String,
     /// Title of the custom configuration import failure prompt.
     pub config_import_failed_title: String,
     /// Preferences window title.

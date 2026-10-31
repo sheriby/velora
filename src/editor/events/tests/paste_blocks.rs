@@ -544,4 +544,36 @@
         let text = editor.read_with(cx, |editor, _| editor.buffer.text());
         assert!(text.contains("**加粗**"), "HTML 未转换成 Markdown：{text:?}");
     }
+    /// 超过 2 MiB 的 HTML flavor 不再静默丢弃：提示并按纯文本落笔。
+    #[gpui::test]
+    async fn oversized_html_paste_warns_and_inserts_plain_text(cx: &mut TestAppContext) {
+        crate::editor::tests::common::init_editor_test_app(cx);
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, String::new(), None)
+        });
+        let block = editor.read_with(cx, |editor, _| {
+            editor.document.first_root().unwrap().clone()
+        });
+        let oversized = format!(
+            "<p>{}</p>",
+            "a".repeat(
+                crate::components::markdown::html_paste::MAX_CLIPBOARD_HTML_BYTES + 1
+            )
+        );
+        cx.update(|window, cx| {
+            block.update(cx, |block, cx| {
+                block.focus_handle.focus(window, cx);
+                block.paste_html_for_test(&oversized, "纯文本回退", window, cx);
+            });
+        });
+        assert!(
+            editor.read_with(cx, |editor, _| editor.modal_is_open()),
+            "超限 HTML 应弹提示"
+        );
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.buffer.text()),
+            "纯文本回退",
+            "超限 HTML 应按纯文本粘贴"
+        );
+    }
 
