@@ -106,7 +106,9 @@ pub(crate) fn resolve_image_source(source: &str, base_dir: Option<&Path>) -> Ima
     if let Some(remote) = net::remote_image_uri(destination) {
         return ImageResolvedSource::Remote(SharedUri::from(remote));
     }
-    if destination.starts_with("data:image/") {
+    // 与 is_safe_image_url 同一条大小写口径：`DATA:image/png` 过了安全判据
+    // 就必须同样走远端分支，落到本地路径分支必然渲染失败。
+    if destination.to_ascii_lowercase().starts_with("data:image/") {
         return ImageResolvedSource::Remote(SharedUri::from(destination.to_string()));
     }
 

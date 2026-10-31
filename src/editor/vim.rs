@@ -699,6 +699,8 @@ impl Editor {
             }
             VimKey::Ctrl('o') => {
                 // 先切模式再立标记：vim_enter_mode 会清掉单次命令标记。
+                // 单次普通命令没有重放等价实现：会话不可重放，别污染 `.`。
+                self.vim.insert_session_replayable = false;
                 self.vim_enter_mode(VimMode::Normal, cx);
                 self.vim.insert_one_shot_normal = true;
                 true
@@ -712,6 +714,8 @@ impl Editor {
                 if !self.vim.replaying {
                     self.vim_record_insert_typed(key);
                 }
+                // 字面下一个键的重放没有等价实现：会话不可重放。
+                self.vim.insert_session_replayable = false;
                 self.vim.insert_literal_pending = true;
                 true
             }

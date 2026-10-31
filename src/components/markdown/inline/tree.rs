@@ -1236,8 +1236,10 @@ impl InlineTextTree {
                 None => counts.push((marker, 1)),
             }
         }
+        // max_by_key 平票返回最后一个：反转后取，平票才是「先出现的」。
         counts
             .into_iter()
+            .rev()
             .max_by_key(|(_, count)| *count)
             .map(|(marker, _)| marker)
     }

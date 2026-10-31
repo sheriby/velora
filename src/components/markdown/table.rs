@@ -966,11 +966,22 @@ pub fn collect_pipeless_table_region(lines: &[String], start: usize) -> Option<u
 /// 无外管道表格的结束边界：空行之外，任何块级起点都打断表格（GFM：表格在
 /// 另一个块级元素开始处结束）。四格以上缩进是缩进代码块，同样算边界。
 fn pipeless_table_stops_at(line: &str) -> bool {
-    let indent = line.bytes().take_while(|byte| *byte == b' ').count();
-    if indent > 3 {
+    // 缩进按列折算（空格 1 列、制表符补到 4 的倍数）：`\tcode` 是缩进代码块，
+    // 必须与块解析的「最多 3 列」同一条口径，只数空格会把 tab 行吞成表格数据。
+    let mut indent_columns = 0usize;
+    let mut indent_bytes = 0usize;
+    for ch in line.chars() {
+        match ch {
+            ' ' => indent_columns += 1,
+            '\t' => indent_columns += 4 - (indent_columns % 4),
+            _ => break,
+        }
+        indent_bytes += ch.len_utf8();
+    }
+    if indent_columns > 3 {
         return true;
     }
-    let rest = &line[indent..];
+    let rest = &line[indent_bytes..];
     if rest.is_empty() {
         return false;
     }

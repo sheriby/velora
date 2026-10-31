@@ -37,8 +37,16 @@ impl ImageFilePreview {
             self.pan = point(px(0.0), px(0.0));
             return;
         };
-        let scaled_width = px(image.size(0).width.0 as f32 * self.zoom);
-        let scaled_height = px(image.size(0).height.0 as f32 * self.zoom);
+        // 元素被 max_w/max_h(relative(zoom)) 约束成「contain 缩放」：渲染尺寸 =
+        // contain(原始, 视口) × zoom。钳制必须按渲染尺寸——按原始尺寸算，
+        // zoom=1 就能拖出空白，大 zoom 能把图整体拖出视口。
+        let natural_width = image.size(0).width.0 as f32;
+        let natural_height = image.size(0).height.0 as f32;
+        let fit = (f32::from(viewport.width) / natural_width)
+            .min(f32::from(viewport.height) / natural_height)
+            .min(1.0);
+        let scaled_width = px(natural_width * fit * self.zoom);
+        let scaled_height = px(natural_height * fit * self.zoom);
         let max_x = ((scaled_width - viewport.width) / 2.0).max(px(0.0));
         let max_y = ((scaled_height - viewport.height) / 2.0).max(px(0.0));
         self.pan.x = self.pan.x.min(max_x).max(-max_x);
