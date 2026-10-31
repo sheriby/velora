@@ -17,11 +17,12 @@ use crate::i18n::{I18nManager, I18nStrings};
 pub(in crate::editor) struct CommandPaletteState {
     pub(super) input: Entity<InputState>,
     pub(super) list: Entity<CommandState>,
-    /// 过滤结果缓存键（查询, AI 是否可用）与条目。面板每帧渲染都会要这份
-    /// 列表：逐帧重新本地化文案并构造 boxed action 是纯浪费。
+    /// 过滤结果缓存键（查询, AI 是否可用, 是否只读）与条目。面板每帧渲染
+    /// 都会要这份列表：逐帧重新本地化文案并构造 boxed action 是纯浪费。
     entries_cache: std::cell::RefCell<
         Option<(
             String,
+            bool,
             bool,
             std::rc::Rc<Vec<CommandEntry>>,
         )>,
@@ -30,8 +31,8 @@ pub(in crate::editor) struct CommandPaletteState {
 }
 
 #[derive(Clone)]
-struct CommandEntry {
-    id: &'static str,
+pub(crate) struct CommandEntry {
+    pub(crate) id: &'static str,
     label: SharedString,
     action: std::rc::Rc<dyn Action>,
 }
@@ -108,7 +109,7 @@ impl Editor {
         }
     }
 
-    fn filtered_commands(&self, cx: &Context<Self>) -> std::rc::Rc<Vec<CommandEntry>> {
+    pub(crate) fn filtered_commands(&self, cx: &Context<Self>) -> std::rc::Rc<Vec<CommandEntry>> {
         let query = self
             .command_palette
             .as_ref()
@@ -116,12 +117,15 @@ impl Editor {
             .unwrap_or_default();
         let query = query.trim().to_lowercase();
         let ai_enabled = crate::ai::settings::AiFeature::enabled(cx);
+        let read_only = self.is_read_only();
         let Some(palette) = self.command_palette.as_ref() else {
             return std::rc::Rc::new(Vec::new());
         };
-        if let Some((cached_query, cached_ai, entries)) = palette.entries_cache.borrow().as_ref()
+        if let Some((cached_query, cached_ai, cached_read_only, entries)) =
+            palette.entries_cache.borrow().as_ref()
             && *cached_query == query
             && *cached_ai == ai_enabled
+            && *cached_read_only == read_only
         {
             return entries.clone();
         }
@@ -129,6 +133,8 @@ impl Editor {
         let entries: Vec<CommandEntry> = crate::commands::commands()
             .iter()
             .filter(|spec| !spec.requires_ai() || ai_enabled)
+            .filter(|spec| !spec.requires_writable_document() || !read_only)
+            // 只读视图里写命令点了没反应：不列出来，免得回车后静默 no-op。
             .map(|spec| CommandEntry::from_spec(spec, strings))
             .filter(|entry| query.is_empty() || entry.label.to_lowercase().contains(&query))
             .collect();
@@ -136,7 +142,7 @@ impl Editor {
         #[cfg(test)]
         command_palette_probe::note_entries(entries.len() as u64);
         let entries = std::rc::Rc::new(entries);
-        *palette.entries_cache.borrow_mut() = Some((query, ai_enabled, entries.clone()));
+        *palette.entries_cache.borrow_mut() = Some((query, ai_enabled, read_only, entries.clone()));
         entries
     }
 

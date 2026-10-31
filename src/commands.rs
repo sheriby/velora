@@ -47,6 +47,9 @@ pub(crate) struct CommandSpec {
     pub(crate) menu: CommandMenu,
     /// 在菜单中该条目之前插入分隔线（首个条目忽略）。
     pub(crate) separator_before: bool,
+    /// 只改缓冲区的命令：只读视图（阅读模式）里不出现在命令面板，
+    /// 避免回车后静默 no-op。
+    writable_only: bool,
     label: fn(&I18nStrings) -> String,
     action: fn() -> Box<dyn Action>,
 }
@@ -54,6 +57,10 @@ pub(crate) struct CommandSpec {
 impl CommandSpec {
     pub(crate) fn requires_ai(&self) -> bool {
         self.id == "open_ai_assistant" || self.id.starts_with("ai_")
+    }
+
+    pub(crate) fn requires_writable_document(&self) -> bool {
+        self.writable_only
     }
 
     /// 本地化文案。
@@ -67,19 +74,27 @@ impl CommandSpec {
     }
 }
 
-/// 登记一条命令；`sep` 形式在其前面插分隔线。
+/// 登记一条命令；`sep` 形式在其前面插分隔线，`write` 形式标记「只改
+/// 缓冲区」（阅读模式下面板隐藏）。
 macro_rules! command {
     ($id:literal, $menu:ident, $label:ident, $action:ident) => {
-        command!(@entry $id, $menu, false, $label, $action)
+        command!(@entry $id, $menu, false, false, $label, $action)
     };
     (sep $id:literal, $menu:ident, $label:ident, $action:ident) => {
-        command!(@entry $id, $menu, true, $label, $action)
+        command!(@entry $id, $menu, true, false, $label, $action)
     };
-    (@entry $id:literal, $menu:ident, $sep:expr, $label:ident, $action:ident) => {
+    (write $id:literal, $menu:ident, $label:ident, $action:ident) => {
+        command!(@entry $id, $menu, false, true, $label, $action)
+    };
+    (write sep $id:literal, $menu:ident, $label:ident, $action:ident) => {
+        command!(@entry $id, $menu, true, true, $label, $action)
+    };
+    (@entry $id:literal, $menu:ident, $sep:expr, $writable:expr, $label:ident, $action:ident) => {
         CommandSpec {
             id: $id,
             menu: CommandMenu::$menu,
             separator_before: $sep,
+            writable_only: $writable,
             label: |strings: &I18nStrings| strings.$label.clone(),
             action: || Box::new($action),
         }
@@ -91,11 +106,11 @@ static COMMANDS: &[CommandSpec] = &[
     command!("preferences", App, menu_preferences, OpenPreferences),
     command!("open_ai_assistant", View, ai_assistant, OpenAiAssistant),
     command!("ai_sidebar", View, ai_sidebar, ToggleAiSidebar),
-    CommandSpec { id: "ai_polish", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_polish), action: || Box::new(crate::components::AiPolish) },
-    CommandSpec { id: "ai_translate", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_translate), action: || Box::new(crate::components::AiTranslate) },
-    CommandSpec { id: "ai_summarize", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_summarize), action: || Box::new(crate::components::AiSummarize) },
-    CommandSpec { id: "ai_explain", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_explain), action: || Box::new(crate::components::AiExplain) },
-    CommandSpec { id: "ai_expand", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_expand), action: || Box::new(crate::components::AiExpand) },
+    CommandSpec { id: "ai_polish", menu: CommandMenu::Edit, separator_before: false, writable_only: false, label: |strings| format!("AI {}", strings.ai_action_polish), action: || Box::new(crate::components::AiPolish) },
+    CommandSpec { id: "ai_translate", menu: CommandMenu::Edit, separator_before: false, writable_only: false, label: |strings| format!("AI {}", strings.ai_action_translate), action: || Box::new(crate::components::AiTranslate) },
+    CommandSpec { id: "ai_summarize", menu: CommandMenu::Edit, separator_before: false, writable_only: false, label: |strings| format!("AI {}", strings.ai_action_summarize), action: || Box::new(crate::components::AiSummarize) },
+    CommandSpec { id: "ai_explain", menu: CommandMenu::Edit, separator_before: false, writable_only: false, label: |strings| format!("AI {}", strings.ai_action_explain), action: || Box::new(crate::components::AiExplain) },
+    CommandSpec { id: "ai_expand", menu: CommandMenu::Edit, separator_before: false, writable_only: false, label: |strings| format!("AI {}", strings.ai_action_expand), action: || Box::new(crate::components::AiExpand) },
 
     command!("check_updates", App, menu_check_updates, CheckForUpdates),
     command!(sep "quit", App, menu_quit, QuitApplication),
@@ -108,7 +123,7 @@ static COMMANDS: &[CommandSpec] = &[
     command!(sep "save", File, menu_save, SaveDocument),
     command!("save_as", File, menu_save_as, SaveDocumentAs),
     command!("file_history", File, menu_file_history, FileHistory),
-    command!(sep "format_document", File, menu_format_document, FormatDocument),
+    command!(write sep "format_document", File, menu_format_document, FormatDocument),
     // 下面两组只进命令面板、不进系统菜单栏：动作在右键菜单与选中工具栏里点得到，
     // 面板补的是「搜得到」这一条。id 与键位表里同一条命令的 id 一致。
     // 「选择全文」是这一族里唯一没有菜单行的那一条：正文右键菜单的「全选」行已在
@@ -116,7 +131,7 @@ static COMMANDS: &[CommandSpec] = &[
     // 与这条面板入口，报修「全文选择不直观」补的就是这一处。
     command!("select_document", Edit, command_select_document, SelectDocument),
     command!(
-        "paste_as_plain_text",
+        write "paste_as_plain_text",
         Edit,
         context_menu_paste_as_plain_text,
         PasteAsPlainText
@@ -133,42 +148,42 @@ static COMMANDS: &[CommandSpec] = &[
         context_menu_copy_as_plain_text,
         CopyAsPlainText
     ),
-    command!(sep "bold_selection", Format, format_bold, BoldSelection),
-    command!("italic_selection", Format, format_italic, ItalicSelection),
+    command!(write sep "bold_selection", Format, format_bold, BoldSelection),
+    command!(write "italic_selection", Format, format_italic, ItalicSelection),
     command!(
-        "underline_selection",
+        write "underline_selection",
         Format,
         format_underline,
         UnderlineSelection
     ),
     command!(
-        "strikethrough_selection",
+        write "strikethrough_selection",
         Format,
         format_strikethrough,
         StrikethroughSelection
     ),
-    command!("code_selection", Format, format_code, CodeSelection),
+    command!(write "code_selection", Format, format_code, CodeSelection),
     command!(
-        "highlight_selection",
+        write "highlight_selection",
         Format,
         format_highlight,
         HighlightSelection
     ),
     command!(
-        "superscript_selection",
+        write "superscript_selection",
         Format,
         format_superscript,
         SuperscriptSelection
     ),
     command!(
-        "subscript_selection",
+        write "subscript_selection",
         Format,
         format_subscript,
         SubscriptSelection
     ),
-    command!("link_selection", Format, insert_link, LinkSelection),
+    command!(write "link_selection", Format, insert_link, LinkSelection),
     command!(
-        "clear_format_selection",
+        write "clear_format_selection",
         Format,
         format_clear,
         ClearFormatSelection

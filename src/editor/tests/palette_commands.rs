@@ -67,9 +67,32 @@ fn open_palette(editor: &Entity<Editor>, cx: &mut VisualTestContext) {
     redraw(cx);
 }
 
+/// 阅读模式是只读视图：写命令在面板里回车只会静默 no-op，不该列出来；
+/// 复制、导出这类不改缓冲区的命令照旧可见。
 #[gpui::test]
-async fn closing_the_palette_releases_its_command_state(cx: &mut TestAppContext) {
+async fn palette_hides_write_commands_in_reading_mode(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
+    let (editor, cx) = open_editor(DOC, cx);
+    redraw(cx);
+    select(&editor, 0, 0..5, cx);
+    editor.update(cx, |editor, cx| editor.toggle_reading_mode(cx));
+    redraw(cx);
+    assert!(editor.read_with(cx, |editor, _| editor.is_read_only()));
+    open_palette(&editor, cx);
+    let ids = editor.update(cx, |editor, cx| {
+        editor
+            .filtered_commands(cx)
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>()
+    });
+    assert!(ids.contains(&"copy_as_markdown"), "非写命令仍应列出");
+    assert!(!ids.contains(&"bold_selection"), "只读视图不应列出写命令");
+    assert!(!ids.contains(&"format_document"), "格式文档也是写命令");
+}
+
+#[gpui::test]
+async fn closing_the_palette_releases_its_command_state(cx: &mut TestAppContext) {    init_editor_test_app(cx);
     let (editor, cx) = open_editor(DOC, cx);
     redraw(cx);
     select(&editor, 0, 0..5, cx);
