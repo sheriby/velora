@@ -89,12 +89,6 @@ pub(crate) fn read_document_string(path: &Path) -> io::Result<String> {
     Ok(load_document(path)?.text)
 }
 
-/// 只解码，不判定「能不能保存」：工作区搜索/索引用它读任意文件，读不出来的
-/// 字节按 lossy 呈现即可，反正那一趟不写盘。
-pub(crate) fn decode_document_bytes(bytes: Vec<u8>) -> String {
-    FileShape::detect_and_decode(&bytes).1
-}
-
 /// 与 [`load_document`] 同一条「能不能无损写回」判据的只要文本版。
 ///
 /// 消费方是「解码完还要写回磁盘」的链路（跨文件替换的确认计数与执行）：
@@ -103,6 +97,14 @@ pub(crate) fn decode_document_bytes(bytes: Vec<u8>) -> String {
 pub(crate) fn decode_document_bytes_lossless(bytes: Vec<u8>) -> Option<String> {
     let (shape, text) = FileShape::detect_and_decode(&bytes);
     shape.is_lossless().then_some(text)
+}
+
+/// 只解码，不判定「能不能保存」：测试夹具用它读任意文件，读不出来的字节
+/// 按 lossy 呈现。生产写路径一律走 [`decode_document_bytes_lossless`] 与
+/// [`load_document`] 的无损判据，不再有 lossy 消费方。
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn decode_document_bytes(bytes: Vec<u8>) -> String {
+    FileShape::detect_and_decode(&bytes).1
 }
 
 /// 拒绝打开的理由：说清楚「为什么不能打开」和「文件还在原地」。

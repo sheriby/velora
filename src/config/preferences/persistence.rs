@@ -785,10 +785,6 @@ where
     Ok(preferences)
 }
 
-pub(crate) fn save_app_preferences(preferences: &AppPreferences) -> anyhow::Result<()> {
-    save_app_preferences_with_dirs(preferences, &VeloraConfigDirs::from_system()?)
-}
-
 pub(crate) fn save_app_preferences_with_dirs(
     preferences: &AppPreferences,
     dirs: &VeloraConfigDirs,
