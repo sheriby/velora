@@ -532,6 +532,26 @@ impl Editor {
     /// 落笔按字节走：格子与格子之间在文件里隔着管道符，只能一格一段地删，从后往前删
     /// （前面的字节位置才不会失效），最后把新文字插在选区末尾那一段的落点上——一次
     /// 撤销组，其余字节一个不动。光标交回给落点那一格，不然删完没有下一次敲字的地方。
+    /// 表格选区是一组格内删除（从后往前）加一次落笔；每条编辑之后按
+    /// edit 平移源码区间账，表格自己的区间跟着改尾，别的根块整体平移。
+    fn adjust_spans_after_table_edit(
+        &mut self,
+        table_span: &mut Option<std::ops::Range<usize>>,
+        edit: &crate::editor::buffer::AppliedEdit,
+    ) {
+        let old_end = edit.new_range.start + edit.removed.len();
+        let delta = edit.new_range.len() as i64 - edit.removed.len() as i64;
+        if delta == 0 {
+            return;
+        }
+        let total = self.buffer.byte_len();
+        self.document.shift_source_spans_after(old_end, delta, total);
+        if let Some(span) = table_span {
+            let end = (span.end as i64 + delta).clamp(0, total as i64) as usize;
+            *span = span.start.min(total)..end.max(span.start.min(total));
+        }
+    }
+
     pub(crate) fn replace_table_text_selection_with_text(
         &mut self,
         new_text: &str,
@@ -569,17 +589,44 @@ impl Editor {
             .unwrap_or(insertion + inserted.len()..insertion + inserted.len());
 
         self.prepare_undo_capture(undo_kind, cx);
+        let table_block_id = self
+            .table_text_selection
+            .as_ref()
+            .map(|selection| selection.table_block_id);
+        let mut table_span = table_block_id.and_then(|id| self.document.source_span_of(id));
+        let table_root_index = table_block_id.and_then(|id| {
+            self.document
+                .root_blocks()
+                .iter()
+                .position(|root| root.entity_id() == id)
+        });
         self.table_text_selection = None;
         self.sync_table_text_selection_visuals(cx);
         for range in ranges.iter().rev() {
             let applied = self.buffer.edit(range.clone(), "");
+            self.adjust_spans_after_table_edit(&mut table_span, &applied);
             self.record_buffer_edit(applied);
         }
         if !inserted.is_empty() {
             let applied = self.buffer.edit(insertion..insertion, &inserted);
+            self.adjust_spans_after_table_edit(&mut table_span, &applied);
             self.record_buffer_edit(applied);
         }
-        self.rebuild_document_from_buffer(cx);
+        // 只重解析表格那一根根块；表格外的段落实体原样保留。表格运行时
+        // （格子实体）由收尾整篇刷新，但不重新解析任何根块。
+        let reprojected = match (table_block_id, table_root_index, table_span.clone()) {
+            (Some(table_id), Some(index), Some(span)) => {
+                self.document.set_source_span(table_id, span);
+                self.reproject_root_range(index, index, false, cx).is_some()
+            }
+            _ => false,
+        };
+        if reprojected {
+            self.rebuild_table_runtimes(cx);
+            self.sync_vim_block_carets(cx);
+        } else {
+            self.rebuild_document_from_buffer(cx);
+        }
         // 光标回到起点那一格新文字的末尾，不然删完/打完没有下一次敲字的地方。
         self.apply_selection_snapshot_in_current_mode(&UndoSelectionSnapshot { range: selected_source, reversed: false }, cx);
         if mark_inserted_text && !inserted.is_empty() {

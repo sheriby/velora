@@ -2113,3 +2113,66 @@ async fn ending_a_pointer_selection_only_touches_blocks_in_the_session(
         "40 段文档的一次点击清扫了 {updates} 个块（应只碰会话中的块）"
     );
 }
+/// 表格选区替换只重解析表格那一根根块：表格之外的段落实体保持不变。
+#[gpui::test]
+async fn table_selection_replace_reprojects_only_the_table(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "前段 __原文__\n\n| ab | cd |\n| --- | --- |\n| ef | gh |\n\n后段\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, source.to_string(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let before: Vec<_> = editor
+            .document
+            .root_blocks()
+            .iter()
+            .cloned()
+            .collect();
+        let table = before[1].clone();
+        let reprojected_before = editor.roots_reprojected.get();
+        editor.table_text_selection = Some(TableTextSelection {
+            table_block_id: table.entity_id(),
+            anchor: TableTextPosition {
+                cell: TableCellPosition { row: 0, column: 0 },
+                offset: 0,
+                whole_cell: false,
+            },
+            focus: TableTextPosition {
+                cell: TableCellPosition { row: 0, column: 1 },
+                offset: 2,
+                whole_cell: false,
+            },
+        });
+        assert!(editor.replace_table_text_selection_with_text(
+            "X",
+            None,
+            false,
+            UndoCaptureKind::NonCoalescible,
+            cx
+        ));
+        let after: Vec<_> = editor
+            .document
+            .root_blocks()
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(
+            after[0].entity_id(),
+            before[0].entity_id(),
+            "表格前的段落被换掉了"
+        );
+        assert_eq!(
+            after.last().map(|block| block.entity_id()),
+            before.last().map(|block| block.entity_id()),
+            "表格后的段落被换掉了"
+        );
+        let reprojected = editor.roots_reprojected.get() - reprojected_before;
+        assert!(reprojected >= 1, "表格根应区域重解析：{reprojected}");
+        assert!(
+            editor.buffer.text().contains("__原文__"),
+            "表格外的写法被洗了"
+        );
+    });
+}
+
