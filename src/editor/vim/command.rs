@@ -259,11 +259,30 @@ impl Editor {
         self.schedule_workspace_search(cx);
     }
 
+    /// 查询、选项与缓冲区代次都对得上现有命中表时不再重新调度整篇搜索：
+    /// 连续按 n / gn 每键重新搜索一遍是纯重复。
+    fn vim_ensure_search_applied(&mut self, query: &str, whole_word: bool, cx: &mut Context<Self>) {
+        let vim_options = crate::editor::workspace::SearchOptions {
+            match_case: true,
+            whole_word,
+            use_regex: false,
+            fuzzy: false,
+        };
+        if self.workspace.document_match_table_matches(
+            self.buffer.identity(),
+            query.trim(),
+            vim_options,
+        ) {
+            return;
+        }
+        self.vim_apply_search_query(query, whole_word, cx);
+    }
+
     pub(super) fn vim_search_next_inner(&mut self, opposite: bool, cx: &mut Context<Self>) {
         let Some(search) = self.vim.last_search.clone() else {
             return;
         };
-        self.vim_apply_search_query(&search.query, search.whole_word, cx);
+        self.vim_ensure_search_applied(&search.query, search.whole_word, cx);
         let reverse = search.reverse != opposite;
         self.vim_push_jump_before_leaving(cx);
         self.find_next_document_match(reverse, cx);
@@ -336,7 +355,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<std::ops::Range<usize>> {
         let search = self.vim.last_search.clone()?;
-        self.vim_apply_search_query(&search.query, search.whole_word, cx);
+        self.vim_ensure_search_applied(&search.query, search.whole_word, cx);
         let hits = self.document_matches(cx)?;
         if hits.is_empty() {
             return None;

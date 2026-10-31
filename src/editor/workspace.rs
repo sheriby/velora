@@ -717,6 +717,24 @@ impl WorkspaceState {
     pub(crate) fn open_document_sources(&self) -> impl Iterator<Item = &str> {
         self.open_documents.iter().map(|tab| tab.markdown.as_str())
     }
+
+    /// 搜索调度代数（每次 schedule_workspace_search +1）。测试用它钉住
+    /// 「条件没变的导航不再重新调度」。
+    pub(crate) fn search_generation(&self) -> u64 {
+        self.search_generation
+    }
+
+    /// 当前命中表是否已经对应该缓冲区、查询与选项（导航可直接复用）。
+    pub(crate) fn document_match_table_matches(
+        &self,
+        identity: u64,
+        query: &str,
+        options: crate::editor::workspace::SearchOptions,
+    ) -> bool {
+        self.document_matches.as_ref().is_some_and(|table| {
+            table.identity == identity && table.query == query && table.options == options
+        })
+    }
 }
 
 actions!(workspace_menu, [RenameWorkspaceEntry]);

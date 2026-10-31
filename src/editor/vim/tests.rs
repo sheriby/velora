@@ -3716,6 +3716,21 @@ async fn gv_survives_structural_edits_before_the_last_visual(cx: &mut TestAppCon
     assert_eq!(selected, "c", "gv 应重新选中原来的 c 块");
 }
 
+/// `.` 的超大 count 不能同步串行重放到底：与宏一样加步数护栏，
+/// 否则 `9999.` 会阻塞界面且没有任何熔断。
+#[gpui::test]
+async fn dot_replay_is_bounded_by_a_step_guard(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "");
+    cx.simulate_keystrokes("i x escape");
+    cx.simulate_keystrokes("3 0 0 .");
+    let text = document_text(&editor, &cx);
+    assert_eq!(
+        text.len(),
+        1 + super::VIM_DOT_REPLAY_LIMIT,
+        "重放步数应被护栏截断（旧实现 301 次全跑）"
+    );
+}
+
 /// `:s` 暂不支持的标志与替换语法要显式拒绝，不能静默按 g/i 之外的含义执行：
 /// c（逐处确认）、未知标志、`~`（复用上次替换串）。
 #[gpui::test]
@@ -3746,4 +3761,19 @@ async fn substitute_rejects_unsupported_flags_and_replacement(cx: &mut TestAppCo
             "{command} 不应落笔改写正文"
         );
     }
+}
+
+/// n 连续跳搜索命中：查询与缓冲区代次都没变时直接复用命中表，
+/// 不能每按一次就重新调度整篇工作区搜索。
+#[gpui::test]
+async fn search_next_reuses_the_existing_hit_table(cx: &mut TestAppContext) {
+    let (editor, cx) = vim_editor(cx, "needle\n\nneedle\n\nneedle");
+    cx.simulate_keystrokes("/");
+    cx.simulate_input("needle");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_keystrokes("n");
+    let generation = editor.read_with(cx, |editor, _| editor.workspace.search_generation());
+    cx.simulate_keystrokes("n");
+    let after = editor.read_with(cx, |editor, _| editor.workspace.search_generation());
+    assert_eq!(after, generation, "n 不该重新调度整篇搜索");
 }

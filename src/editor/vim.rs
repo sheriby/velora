@@ -213,6 +213,9 @@ pub(super) struct VimSearchState {
     pub whole_word: bool,
 }
 
+/// `.` 重放的步数护栏：超大 count 同步串行重放会卡死界面。
+pub(super) const VIM_DOT_REPLAY_LIMIT: usize = 256;
+
 /// 上次可视选区：按**实体 id + 块内偏移**记，结构编辑（增删块）后仍能
 /// 重定位；块下标会在结构编辑后整体位移，不能当身份用。
 #[derive(Clone, Copy)]
@@ -1290,7 +1293,8 @@ impl Editor {
                 let Some(record) = self.vim.dot.clone() else {
                     return;
                 };
-                let times = count.max(1);
+                // 与宏重放同一类兜底：超大 count 同步串行重放会卡死界面。
+                let times = count.max(1).min(VIM_DOT_REPLAY_LIMIT as u32);
                 for _ in 0..times {
                     self.vim_replay_record(&record, window, cx);
                 }
