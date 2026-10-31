@@ -636,8 +636,7 @@ pub(crate) struct WindowMenuMetrics {
     pub(crate) button_widths: Vec<f32>,
     pub(crate) hamburger_labels: Vec<SharedString>,
     pub(crate) hamburger_list_width: f32,
-    /// 一级菜单各自的面板条目标签与面板宽度（按菜单树顺序）。
-    pub(crate) item_labels: Vec<Vec<SharedString>>,
+    /// 一级菜单各自的面板宽度（按菜单树顺序）。
     pub(crate) item_panel_widths: Vec<f32>,
 }
 
@@ -653,25 +652,18 @@ pub(crate) fn build_window_menu_metrics(
         .collect();
     let hamburger_labels = hamburger_menu_labels(menus, strings);
     let hamburger_list_width = menu_panel_width_for_labels(&hamburger_labels, dimensions);
-    let item_labels: Vec<Vec<SharedString>> = menus
+    let item_panel_widths = menus
         .iter()
         .map(|menu| {
-            owned_menu_item_labels(&menu.items)
-                .into_iter()
-                .map(SharedString::from)
-                .collect()
+            let labels = owned_menu_item_labels(&menu.items);
+            menu_panel_width_for_labels(&labels, dimensions)
         })
-        .collect();
-    let item_panel_widths = item_labels
-        .iter()
-        .map(|labels| menu_panel_width_for_labels(labels, dimensions))
         .collect();
     WindowMenuMetrics {
         labels,
         button_widths,
         hamburger_labels,
         hamburger_list_width,
-        item_labels,
         item_panel_widths,
     }
 }
