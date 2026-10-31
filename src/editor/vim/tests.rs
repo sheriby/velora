@@ -3459,3 +3459,35 @@ async fn a_twelve_key_register_and_two_counts_sequence_is_not_dropped(
     );
     assert_eq!(first_block_caret(&editor, &cx), 0);
 }
+
+/// 空块（空行）是 b/ge 的独立停点：从下一段行首反向移动应先停在这个空块上，
+/// 不能越过它直接跳到上一段的词首/词尾。正向的 w/e 已有同一条判据。
+#[gpui::test]
+async fn b_and_ge_stop_on_empty_blocks(cx: &mut TestAppContext) {
+    for motion in ["b", "g e"] {
+        let (editor, cx) = vim_editor(cx, "one\n\n\n\ntwo");
+        let blocks = editor.read_with(cx, |editor, _| editor.document.visible_blocks().len());
+        assert!(blocks >= 3, "夹具应有空块：{blocks}");
+        for _ in 1..blocks {
+            cx.simulate_keystrokes("j");
+        }
+        assert_eq!(cursor_block(&editor, &cx), blocks - 1, "先落到末段");
+        cx.simulate_keystrokes(motion);
+        assert_eq!(
+            cursor_block(&editor, &cx),
+            blocks - 2,
+            "{motion} 应停在上一个空块，而不是越过它"
+        );
+        let caret = editor.read_with(cx, |editor, cx| {
+            let active = editor.active_entity_id.expect("活动块");
+            editor
+                .document
+                .block_entity_by_id(active)
+                .expect("活动块实体")
+                .read(cx)
+                .selected_range
+                .start
+        });
+        assert_eq!(caret, 0, "{motion} 应停在空块块首");
+    }
+}

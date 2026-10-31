@@ -243,8 +243,11 @@ impl<'a> VimDocStream<'a> {
                 previous = before;
             }
         }
-        // 越过空白，落在非空白词素上。
+        // 越过空白，落在非空白词素上；空块本身是停点，不能把它当空白越过。
         while self.class_at(previous, big) == 0 {
+            if self.at_block_start(previous) && self.block_is_empty(previous.block_index) {
+                return Some(previous);
+            }
             let Some(before) = self.prev_grapheme(previous) else {
                 return Some(previous);
             };
@@ -311,6 +314,10 @@ impl<'a> VimDocStream<'a> {
     ) -> Option<VimPosition> {
         let mut previous = self.prev_grapheme(position)?;
         while self.class_at(previous, big) == 0 {
+            // 与 b 同一条判据：空块是独立的 e/ge 停点。
+            if self.at_block_start(previous) && self.block_is_empty(previous.block_index) {
+                return Some(previous);
+            }
             let Some(before) = self.prev_grapheme(previous) else {
                 return Some(previous);
             };
