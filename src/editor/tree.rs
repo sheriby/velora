@@ -923,7 +923,7 @@ impl DocumentTree {
         }
     }
 
-    /// 与 [`Self::with_structure_mutation`] 相同，但只有 `anchor` 所在的根块
+    /// 结构 mutation 的通用入口：只有 `anchor` 所在的根块
     /// 及其后缀需要重排；前缀快照原样保留。
     pub(super) fn with_structure_mutation_from<R>(
         &mut self,
@@ -942,6 +942,20 @@ impl DocumentTree {
             None => self.rebuild_metadata_and_snapshot(cx),
         }
         result
+    }
+
+    /// 以 `entity_id` 所在根块为锚点做局部重排；算不出锚点时退回整棵。
+    pub(super) fn rebuild_metadata_and_snapshot_from_entity(
+        &mut self,
+        entity_id: EntityId,
+        cx: &mut Context<Editor>,
+    ) {
+        match self.dirty_region_for_entity(entity_id) {
+            Some((first_root, visible_from)) => {
+                self.rebuild_metadata_and_snapshot_from_root(first_root, visible_from, cx)
+            }
+            None => self.rebuild_metadata_and_snapshot(cx),
+        }
     }
 
     fn dirty_region_for_entity(&self, entity_id: EntityId) -> Option<(usize, usize)> {
@@ -1124,6 +1138,7 @@ impl DocumentTree {
         self.append_roots(roots, cx);
     }
 
+    #[cfg(test)]
     pub(super) fn with_structure_mutation<R>(
         &mut self,
         cx: &mut Context<Editor>,

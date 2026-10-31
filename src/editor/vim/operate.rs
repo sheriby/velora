@@ -1647,7 +1647,8 @@ impl Editor {
         let removed_entity_id = second.entity_id();
         let second_title = second.read(cx).record.title.clone();
 
-        self.document.with_structure_mutation(cx, |document, cx| {
+        self.document
+            .with_structure_mutation_from(first.entity_id(), cx, |document, cx| {
             first.update(cx, {
                 let second_title = second_title.clone();
                 let adopted_children = adopted_children.clone();

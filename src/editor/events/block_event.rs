@@ -711,9 +711,10 @@ impl Editor {
                 // no pre-cursor text to keep, so drop the now-empty paragraph
                 // rather than leaving a blank line above the pasted blocks.
                 if leading_empty {
-                    self.document.with_structure_mutation(cx, |document, cx| {
-                        document.remove_block_by_id_raw(block.entity_id(), cx);
-                    });
+                    self.document
+                        .with_structure_mutation_from(block.entity_id(), cx, |document, cx| {
+                            document.remove_block_by_id_raw(block.entity_id(), cx);
+                        });
                 }
 
                 // 先把整段（引用根 + 粘贴插入的新根）按区间写进缓冲区，再让

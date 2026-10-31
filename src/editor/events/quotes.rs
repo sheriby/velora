@@ -38,7 +38,8 @@ impl Editor {
         block.update(cx, |block, _cx| {
             block.quote_metadata_signature = Some(signature);
         });
-        self.document.rebuild_metadata_and_snapshot(cx);
+        self.document
+            .rebuild_metadata_and_snapshot_from_entity(block.entity_id(), cx);
     }
 
     pub(crate) fn rendered_quote_text_requires_reparse(block: &Entity<crate::editor::Block>, cx: &App) -> bool {
@@ -229,7 +230,8 @@ impl Editor {
 
         self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
         let roots_before = self.document.root_layout();
-        self.document.with_structure_mutation(cx, |document, cx| {
+        self.document
+            .with_structure_mutation_from(parent.entity_id(), cx, |document, cx| {
             let _ = document.remove_block_by_id_raw(block.entity_id(), cx);
             parent.update(cx, |parent, cx| {
                 parent.record.kind = BlockKind::Quote;

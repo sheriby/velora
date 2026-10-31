@@ -72,7 +72,16 @@ impl Editor {
             return false;
         }
 
-        self.document.rebuild_metadata_and_snapshot(cx);
+        let anchor = changed
+            .first()
+            .map(|block| block.entity_id())
+            .or_else(|| ids_before.first().copied());
+        match anchor {
+            Some(anchor) => self
+                .document
+                .rebuild_metadata_and_snapshot_from_entity(anchor, cx),
+            None => self.document.rebuild_metadata_and_snapshot(cx),
+        }
         // 写回按「第一块改到的根 … 最后一块改到的根」这一段算，前面那根的区间一起
         // 带上：块与块之间的空行接缝归前一块管，列表项换成标题要多空的那一行在这里。
         let written_back = self.write_back_block_kind_region(&ids_before, &changed, cx);

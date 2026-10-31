@@ -1491,9 +1491,10 @@ impl Editor {
             cx,
         );
         let table_id = table_block.entity_id();
-        self.document.with_structure_mutation(cx, |document, cx| {
-            let _ = document.remove_block_by_id_raw(table_id, cx);
-        });
+        self.document
+            .with_structure_mutation_from(table_id, cx, |document, cx| {
+                let _ = document.remove_block_by_id_raw(table_id, cx);
+            });
         self.rebuild_table_runtimes(cx);
         self.clear_table_axis_selection(cx);
         self.focus_block(paragraph.entity_id());

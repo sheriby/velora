@@ -135,9 +135,10 @@ impl Editor {
                 cursor,
                 cx,
             );
-            self.document.with_structure_mutation(cx, |document, cx| {
-                let _ = document.remove_block_by_id_raw(removed_id, cx);
-            });
+            self.document
+                .with_structure_mutation_from(prev.entity_id(), cx, |document, cx| {
+                    let _ = document.remove_block_by_id_raw(removed_id, cx);
+                });
             if let Some(heading_location) = self.document.find_block_location(prev.entity_id()) {
                 self.document.insert_blocks_at(
                     heading_location.parent,
@@ -222,10 +223,11 @@ impl Editor {
         let roots_before = self.document.root_layout();
         let table_block = Self::new_table_block(cx, table);
         let new_paragraph = Self::new_block(cx, BlockRecord::paragraph(String::new()));
-        self.document.with_structure_mutation(cx, |document, cx| {
-            let _ = document.remove_block_by_id_raw(removed_delimiter, cx);
-            let _ = document.remove_block_by_id_raw(removed_header, cx);
-        });
+        self.document
+            .with_structure_mutation_from(prev.entity_id(), cx, |document, cx| {
+                let _ = document.remove_block_by_id_raw(removed_delimiter, cx);
+                let _ = document.remove_block_by_id_raw(removed_header, cx);
+            });
         self.document.insert_blocks_at(
             None,
             header_index,
@@ -270,9 +272,10 @@ impl Editor {
 
         let removed_id = row_block.entity_id();
         let roots_before = self.document.root_layout();
-        self.document.with_structure_mutation(cx, |document, cx| {
-            let _ = document.remove_block_by_id_raw(removed_id, cx);
-        });
+        self.document
+            .with_structure_mutation_from(table_block.entity_id(), cx, |document, cx| {
+                let _ = document.remove_block_by_id_raw(removed_id, cx);
+            });
         let new_paragraph = Self::new_block(cx, BlockRecord::paragraph(String::new()));
         if let Some(table_location) = self.document.find_block_location(table_block.entity_id()) {
             self.document.insert_blocks_at(
