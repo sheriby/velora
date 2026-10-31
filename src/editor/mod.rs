@@ -221,6 +221,9 @@ pub struct Editor {
     /// 性能计数器：按单块取映射时走过的根块数。目标根块走完就该停，
     /// 表格/分隔线这些自身不产生文本映射的目标也不例外。
     source_mapping_roots_walked: std::cell::Cell<u64>,
+    /// 性能计数器：重投影时真正写回 `source_kind` 的块数。种类没变的块
+    /// 不该付一次实体写。
+    source_kind_writes: std::cell::Cell<u64>,
     /// 性能计数器：量「本块第一行的记号宽度」的次数。只有带子块的容器需要它
     /// 换算子块缩进，叶子块不该付这份行切片。
     measured_prefix_calls: std::cell::Cell<u64>,
@@ -1008,6 +1011,7 @@ impl Editor {
             source_mapping_builds: std::cell::Cell::default(),
             source_mapping_full_builds: std::cell::Cell::default(),
             source_mapping_roots_walked: std::cell::Cell::default(),
+            source_kind_writes: std::cell::Cell::default(),
             measured_prefix_calls: std::cell::Cell::default(),
             session_created_images: Vec::new(),
             word_count_scans: std::cell::Cell::default(),
@@ -2271,7 +2275,17 @@ impl Editor {
             spans_by_block.insert(*id, span.clone());
         }
         for block in roots {
-            block.update(cx, |block, _| block.record.source_kind = block.record.kind.clone());
+            // 种类没变的块不付实体写：重投影每次都把整棵树过一遍，写回只有在
+            // 块种类真的变了（重解析改了形状）时才有意义。
+            let kind_changed = {
+                let block_ref = block.read(cx);
+                block_ref.record.source_kind != block_ref.record.kind
+            };
+            if kind_changed {
+                self.source_kind_writes
+                    .set(self.source_kind_writes.get() + 1);
+                block.update(cx, |block, _| block.record.source_kind = block.record.kind.clone());
+            }
             // 一次查表算**一条候选**：今天每根块恰好一条，退回逐根块线性 `find` 时
             // 这里要改成「每比较一条候选自增一次」，闸门
             // `reattaching_root_spans_does_not_scan_candidates_per_block` 才认得出

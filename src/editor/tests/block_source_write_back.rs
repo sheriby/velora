@@ -3757,3 +3757,21 @@ async fn heading_prefix_measurement_strips_container_indent_first(cx: &mut TestA
         );
     });
 }
+
+
+/// 重投影只该给种类变了的块写回 `source_kind`：同一份文档连续重投影，
+/// 第一次之后每块种类都没变，不该再逐块付一次实体写。
+#[gpui::test]
+async fn reprojecting_twice_does_not_rewrite_unchanged_source_kinds(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..80)
+        .map(|index| format!("段落 {index}"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+    editor.update(cx, |editor, cx| editor.resync_buffer_from_projection(cx));
+    let before = editor.read_with(cx, |editor, _| editor.source_kind_writes.get());
+    editor.update(cx, |editor, cx| editor.resync_buffer_from_projection(cx));
+    let writes = editor.read_with(cx, |editor, _| editor.source_kind_writes.get()) - before;
+    assert_eq!(writes, 0, "种类没变的块又写了 {writes} 次 source_kind");
+}
