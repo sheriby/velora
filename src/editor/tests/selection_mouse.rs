@@ -2179,3 +2179,207 @@ async fn table_selection_replace_reprojects_only_the_table(cx: &mut TestAppConte
     });
 }
 
+/// 末块是没有文本几何的块（mermaid/表格/图片）时，点它下方的空白不能落空：
+/// 自动补一个尾段落并把光标放进去（整篇仅一个图表围栏时点图后空白无光标）。
+/// 图表本体与 ‹/› 按钮仍归块自己的交互，不能因为这次按下误开预览或误补段落。
+#[gpui::test]
+async fn clicking_below_a_textless_last_block_appends_a_focused_paragraph(
+    cx: &mut TestAppContext,
+) {
+    use gpui::MouseButton;
+    init_editor_test_app(cx);
+    let markdown = "```mermaid\nflowchart LR\n  a[甲] --> b[乙]\n```\n";
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.to_string(), None));
+    for _ in 0..3 {
+        redraw(cx);
+    }
+    // 测试构造器把首块聚焦了（真实打开文档不落焦点）；摘掉让 mermaid 块
+    // 回到阅读态渲染成图。
+    editor.update_in(cx, |_editor, window, _cx| window.blur(_cx));
+    editor.update(cx, |editor, _cx| {
+        editor.active_entity_id = None;
+    });
+    redraw(cx);
+    redraw(cx);
+    let diagram = cx
+        .debug_bounds("mermaid-diagram-image")
+        .expect("正文图表应挂载");
+    let blocks_before = editor.read_with(cx, |editor, _cx| editor.document.visible_blocks().len());
+    assert_eq!(blocks_before, 1, "现场应为单块文档");    // 点图表下方 40px 的空白：此前这片无人认领，光标落不了地。
+    let below = gpui::point(diagram.center().x, diagram.bottom() + gpui::px(40.0));
+    cx.simulate_mouse_down(below, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(below, MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks();
+        assert_eq!(visible.len(), 2, "点末块下方空白应补一个尾段落");
+        let trailing = visible.last().unwrap().entity.clone();
+        assert_eq!(
+            trailing.read(cx).kind(),
+            BlockKind::Paragraph,
+            "补上的应是段落"
+        );
+        assert_eq!(
+            trailing.read(cx).display_text(),
+            "",
+            "补上的应是空段落"
+        );
+        assert_eq!(
+            trailing.read(cx).selected_range,
+            0..0,
+            "光标应落在空段落开头"
+        );
+        assert_eq!(
+            editor.active_entity_id,
+            Some(trailing.entity_id()),
+            "尾段落应成为活动编辑目标"
+        );
+    });
+}
+
+/// 段落与下一块之间的行缝（行元素按 margin 留缝，缝不属于任何块 shell）
+/// 点击不能落空：内容层的 I 形光标暗示可编辑，按下应把光标映射到上一行的
+/// 块尾（README 正文与「界面预览」标题之间的空白可复现）。
+#[gpui::test]
+async fn clicking_in_the_gap_after_a_paragraph_places_the_caret_at_its_end(
+    cx: &mut TestAppContext,
+) {
+    use gpui::MouseButton;
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "第一段结尾。\n\n## 界面预览".to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+    let (gap, padding_y) = cx.update(|_window, cx| {
+        let theme = cx.global::<ThemeManager>().derived_theme(cx);
+        (
+            theme.dimensions.block_gap,
+            theme.dimensions.block_padding_y,
+        )
+    });
+    let (para_bottom, para_x, _heading_top) = editor.read_with(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks();
+        assert_eq!(visible.len(), 2, "现场应为两块");
+        let para_bounds = visible[0]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("段落应已绘制");
+        let heading_top = visible[1]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("标题应已绘制")
+            .top();
+        (
+            f32::from(para_bounds.bottom()),
+            f32::from(para_bounds.left()),
+            f32::from(heading_top),
+        )
+    });
+    // 摘掉构造器落在首块的焦点：断言「点击把光标送到段落末尾」才有判别力。
+    editor.update_in(cx, |_editor, window, cx| window.blur(cx));
+    editor.update(cx, |editor, _cx| {
+        editor.active_entity_id = None;
+    });
+    redraw(cx);
+
+    // 缝在上一行 shell 底（文本底 + padding）与下一行 shell 顶之间；x 取
+    // 段落文本范围内（窗口左侧是面板，不在编辑器命中链上）。
+    let press = gpui::point(
+        gpui::px(para_x + 50.0),
+        gpui::px(para_bottom + padding_y + gap / 2.0),
+    );
+    cx.simulate_mouse_down(press, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(press, MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks();
+        let para = &visible[0].entity;
+        assert_eq!(
+            editor.active_entity_id,
+            Some(para.entity_id()),
+            "缝里点击后光标应落回段落块"
+        );
+        let len = para.read(cx).display_text().len();
+        assert_eq!(
+            para.read(cx).selected_range,
+            len..len,
+            "缝里点击应把光标送到段落末尾"
+        );
+    });
+}
+
+/// 松列表条目之间的行缝同样不能落空（README「AI 文档助手」两个条目之间
+/// 条目之间的空白）：按下应把光标映射到上一条目的块尾。
+#[gpui::test]
+async fn clicking_in_the_gap_between_list_items_places_the_caret(cx: &mut TestAppContext) {
+    use gpui::MouseButton;
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(
+            cx,
+            "- 按需唤起的条目内容。\n\n- 围绕工作的条目内容。\n".to_string(),
+            None,
+        )
+    });
+    redraw(cx);
+    redraw(cx);
+    let (gap, padding_y) = cx.update(|_window, cx| {
+        let theme = cx.global::<ThemeManager>().derived_theme(cx);
+        (
+            theme.dimensions.block_gap,
+            theme.dimensions.block_padding_y,
+        )
+    });
+    let (item1_bottom, item1_x) = editor.read_with(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks();
+        assert!(visible.len() >= 2, "松列表至少两个条目：{}", visible.len());
+        let item1_bounds = visible[0]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("首条目应已绘制");
+        (f32::from(item1_bounds.bottom()), f32::from(item1_bounds.left()))
+    });
+    editor.update_in(cx, |_editor, window, cx| window.blur(cx));
+    editor.update(cx, |editor, _cx| {
+        editor.active_entity_id = None;
+    });
+    redraw(cx);
+
+    let press = gpui::point(
+        gpui::px(item1_x + 50.0),
+        gpui::px(item1_bottom + padding_y + gap / 2.0),
+    );
+    cx.simulate_mouse_down(press, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(press, MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks();
+        let item1 = &visible[0].entity;
+        let len = item1.read(cx).display_text().len();
+        let caret = visible
+            .iter()
+            .enumerate()
+            .find(|(_, block)| {
+                let block = block.entity.read(cx);
+                block.selected_range == (len..len)
+            })
+            .map(|(index, _)| index);
+        assert_eq!(
+            caret,
+            Some(0),
+            "条目间缝点击应把光标送到首条目末尾"
+        );
+    });
+}
+

@@ -34,17 +34,21 @@ impl Editor {
     /// 正文块自己的命中测试只看块内，块底以下那片空白（最后一行往下大约
     /// 半个屏幕）没有块接得住，点击不能落空。未聚焦的空段落不绘制文本，需要借用
     /// 已挂载行的边界；其他无文本几何的末块仍由各自的交互处理。
-    fn place_caret_below_document_end(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+    fn place_caret_below_document_end(
+        &mut self,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(last) = self
             .document
             .visible_blocks()
             .last()
             .map(|visible| visible.entity.clone())
         else {
-            return;
+            return false;
         };
         if !self.entity_is_mounted(last.entity_id()) {
-            return;
+            return false;
         }
         let bounds = last.read(cx).last_bounds.or_else(|| {
             if !last
@@ -70,15 +74,115 @@ impl Editor {
             Some(bounds)
         });
         let Some(bounds) = bounds else {
-            return;
+            return self.append_paragraph_below_textless_document_end(position, cx);
         };
         if position.y <= bounds.bottom() {
-            return;
+            return false;
         }
         let end = last.read(cx).display_text().len();
         Self::reset_block_cursor(&last, end, cx);
         self.focus_block(last.entity_id());
         cx.notify();
+        true
+    }
+
+    /// 行与行之间的按下：行元素按 margin 留缝，缝不属于任何块 shell，点击
+    /// 原本落空，而内容层的 I 形光标又暗示这里可编辑。把缝里的按下映射到
+    /// 最近的行端点（上一行块尾 / 下一行块首）落光标。落点在某一行之内时
+    /// 不掺和——行内的认领者（块 shell 重落光标、图片/格子/按钮的专用
+    /// 交互）都在行边界之内，由它们按自己的口径处理这一次按下。
+    fn place_caret_in_row_gap(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        if self.position_is_inside_mounted_rows(position) {
+            return;
+        }
+        let Some(endpoint) = self.cross_block_endpoint_for_point(position, None, cx) else {
+            return;
+        };
+        let Some(block) = self
+            .document
+            .block_entity_by_id(endpoint.entity_id)
+            .or_else(|| self.focusable_entity_by_id(endpoint.entity_id))
+        else {
+            return;
+        };
+        let display_offset = block.read(cx).clean_to_current_cursor_offset(endpoint.offset);
+        Self::reset_block_cursor(&block, display_offset, cx);
+        self.focus_block(endpoint.entity_id);
+        cx.notify();
+    }
+
+    /// 落点是否在某一行（含焦点岛）的边界之内。
+    fn position_is_inside_mounted_rows(&self, position: Point<Pixels>) -> bool {
+        let Some(run) = self
+            .prev_mounted_run
+            .filter(|run| self.mounted_run_is_addressable(*run))
+        else {
+            return false;
+        };
+        let scroll = self.scroll_handle.offset();
+        run.rows().any(|(_, child)| {
+            self.scroll_handle
+                .bounds_for_item(child)
+                .is_some_and(|mut bounds| {
+                    bounds.origin += scroll;
+                    bounds.contains(&position)
+                })
+        })
+    }
+
+    /// 末块没有文本几何（mermaid/表格/图片这类，阅读态不画文本元素）时，它
+    /// 下方的空白没有任何交互接得住，点击不能落空：补一个尾段落并把光标放进
+    /// 去。落点以挂载行边界为准——行内（图表本体、格子、按钮）仍归块自己的
+    /// 交互；本函数在 capture 阶段先于块内的 bubble 按下处理跑，不判行边界
+    /// 就会把点在图表上的按下也当成点空白。
+    fn append_paragraph_below_textless_document_end(
+        &mut self,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.is_read_only()
+            || self.view_mode != ViewMode::Rendered
+            || !self.writes_through_the_buffer()
+        {
+            return false;
+        }
+        let Some(last) = self
+            .document
+            .visible_blocks()
+            .last()
+            .map(|visible| visible.entity.clone())
+        else {
+            return false;
+        };
+        if !self.entity_is_mounted(last.entity_id()) {
+            return false;
+        }
+        let Some(row_bounds) = self.mounted_row_bounds(last.entity_id()) else {
+            return false;
+        };
+        if position.y <= row_bounds.bottom() {
+            return false;
+        }
+        self.flush_pending_materialization(cx);
+        self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
+        self.ensure_trailing_paragraph_after_structural(&last, cx);
+        // 补上了它就是新的末块；没补上（末块不是末兄弟等边角）就维持原状。
+        let trailing = self
+            .document
+            .visible_blocks()
+            .last()
+            .map(|visible| visible.entity.clone())
+            .filter(|block| block.entity_id() != last.entity_id());
+        let Some(trailing) = trailing else {
+            self.finalize_pending_undo_capture(cx);
+            return false;
+        };
+        Self::reset_block_cursor(&trailing, 0, cx);
+        self.focus_block(trailing.entity_id());
+        self.mark_dirty_written_back(cx);
+        self.finalize_pending_undo_capture(cx);
+        cx.notify();
+        true
     }
 
     /// shift+按下：从既有锚点扩选，而不是在按下处重新落锚。
@@ -245,7 +349,9 @@ impl Editor {
         let extended =
             event.modifiers.shift && self.extend_cross_block_selection_at_point(event.position, cx);
         if !extended {
-            self.place_caret_below_document_end(event.position, cx);
+            if !self.place_caret_below_document_end(event.position, cx) {
+                self.place_caret_in_row_gap(event.position, cx);
+            }
             self.begin_cross_block_drag_at_point(event.position, cx);
         }
         cx.propagate();
