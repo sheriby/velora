@@ -115,6 +115,11 @@ impl AiSession {
         self.settings_read_error.is_some()
     }
 
+    /// AI 侧栏当前是否以展开的侧边栏形态显示（状态栏开关的选中态口径）。
+    pub(in crate::editor) fn sidebar_expanded(&self) -> bool {
+        self.visible && self.expanded
+    }
+
     fn set_settings_read_error(&mut self, error: Option<String>) {
         if error.is_some() || self.error == self.settings_read_error {
             self.error = error.clone();

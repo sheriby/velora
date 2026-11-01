@@ -10,6 +10,8 @@ use gpui_kit::component::{
 use unicode_segmentation::UnicodeSegmentation;
 
 const VIEW_SOURCE_ICON: &str = "icon/workspace/view-source.svg";
+const SIDEBAR_TOGGLE_ICON: &str = "icon/workspace/panel-left.svg";
+const AI_TOGGLE_ICON: &str = "icon/editor/ai.svg";
 
 use super::Editor;
 use crate::config::preferences::{StatusBarButton, StatusBarPreferences};
@@ -208,6 +210,7 @@ impl Editor {
             .flex_shrink_0()
             .items_center()
             .gap_0p5()
+            .children(self.render_ai_toggle(theme, strings, cx))
             .child(self.render_reading_mode_toggle(theme, strings, cx));
         if !(self.code_document
             || self.source_mode_fallback_required
@@ -229,6 +232,7 @@ impl Editor {
                     .h(px(d.status_bar_height))
                     .py_0()
                     .px(rems(d.status_bar_padding_x / 16.0))
+                    .left(self.render_sidebar_toggle(theme, strings, cx))
                     .right(
                         div()
                             .flex()
@@ -388,6 +392,78 @@ fn render_word_count(
 
 /// 右下角的视图模式切换按钮：`</>` 图标，点击在渲染态/源码态之间切换（用户需求）。
 impl Editor {
+    /// 状态栏左端的左侧栏开关：侧栏收起后面板整体不渲染，这里是它唯一的
+    /// 常驻入口。点击派发与菜单、快捷键同一份动作（不变量 11）。
+    fn render_sidebar_toggle(
+        &self,
+        theme: &Theme,
+        strings: &I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let open = self.workspace.is_open;
+        let label = strings.command_toggle_sidebar.clone();
+        Button::new("status-bar-sidebar-toggle")
+            .debug_selector(|| "status-bar-sidebar-toggle".into())
+            .ghost()
+            .small()
+            .selected(open)
+            .accessibility_label(label.clone())
+            .tooltip(label)
+            .icon(
+                Icon::empty()
+                    .path(SIDEBAR_TOGGLE_ICON)
+                    .text_color(if open {
+                        theme.colors.text_link
+                    } else {
+                        theme.colors.status_bar_text_dim
+                    }),
+            )
+                .on_click(cx.listener(|_editor, _, window, cx| {
+                    window.dispatch_action(Box::new(crate::components::ToggleSidebar), cx);
+                }))
+            .into_any_element()
+    }
+
+    /// 状态栏右端的 AI 侧栏开关：AI 功能关闭时整颗按钮与 AI 侧栏一起不存在，
+    /// 开启后点击派发 ToggleAiSidebar，选中态跟随侧栏展开。
+    fn render_ai_toggle(
+        &self,
+        theme: &Theme,
+        strings: &I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !crate::ai::settings::AiFeature::enabled(cx) {
+            return None;
+        }
+        let expanded = self
+            .ai_session
+            .as_ref()
+            .is_some_and(super::ai_assistant::AiSession::sidebar_expanded);
+        let label = strings.ai_sidebar.clone();
+        Some(
+            Button::new("status-bar-ai-toggle")
+                .debug_selector(|| "status-bar-ai-toggle".into())
+                .ghost()
+                .small()
+                .selected(expanded)
+                .accessibility_label(label.clone())
+                .tooltip(label)
+                .icon(
+                    Icon::empty()
+                        .path(AI_TOGGLE_ICON)
+                        .text_color(if expanded {
+                            theme.colors.text_link
+                        } else {
+                            theme.colors.status_bar_text_dim
+                        }),
+                )
+                .on_click(cx.listener(|_editor, _, window, cx| {
+                    window.dispatch_action(Box::new(crate::components::ToggleAiSidebar), cx);
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn render_reading_mode_toggle(
         &self,
         theme: &Theme,
