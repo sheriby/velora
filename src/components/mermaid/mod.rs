@@ -29,11 +29,11 @@ const MERMAID_MEMORY_CACHE_LIMIT: usize = 256;
 /// 也要付 `create_dir_all`（两次）加 `fs::read_to_string`（两次：基础 SVG 与显示 SVG）。
 /// 形状照 `latex/mod.rs` 的 `LatexSvgCache`：`OnceLock<Mutex<..>>` + 条数上限 + 有序淘汰。
 ///
-/// 为什么不只缓存渲染结果：算显示缩放要用渲染器的**固有宽度**，它平时只能靠读基础
-/// SVG 得到。把固有宽度也按正文键记一份，命中那条路就一次磁盘都不碰。
+/// 为什么不只缓存渲染结果：算显示缩放要用渲染器的**固有尺寸**，它平时只能靠读基础
+/// SVG 得到。把固有尺寸也按正文键记一份，命中那条路就一次磁盘都不碰。
 #[derive(Default)]
 struct MermaidSvgMemoryCache {
-    intrinsic: HashMap<String, f32>,
+    intrinsic: HashMap<String, MermaidSvgSize>,
     renders: HashMap<String, MermaidSvgRender>,
     order: VecDeque<String>,
 }
@@ -54,11 +54,11 @@ fn memory_cached_render(
     base_key: &str,
     available_width: f32,
 ) -> Option<MermaidSvgRender> {
-    let width = {
+    let intrinsic = {
         let cache = lock_memory_cache()?;
         *cache.intrinsic.get(base_key)?
     };
-    let scale = mermaid_display_scale(width, available_width);
+    let scale = mermaid_display_scale(intrinsic.width, intrinsic.height, available_width);
     let display_key = display_cache_key(base_key, scale);
     let cache = lock_memory_cache()?;
     let rendered = cache.renders.get(&display_key)?.clone();
@@ -68,15 +68,15 @@ fn memory_cached_render(
     rendered.path.is_file().then_some(rendered)
 }
 
-fn remember_intrinsic(base_key: &str, width: f32) {
+fn remember_intrinsic(base_key: &str, size: MermaidSvgSize) {
     let Some(mut cache) = lock_memory_cache() else {
         return;
     };
     if cache.intrinsic.len() >= MERMAID_MEMORY_CACHE_LIMIT {
-        // 这张表每条只记宽度，超上限整张清掉：最坏多读一次基础 SVG。
+        // 这张表每条只记固有尺寸，超上限整张清掉：最坏多读一次基础 SVG。
         cache.intrinsic.clear();
     }
-    cache.intrinsic.insert(base_key.to_string(), width);
+    cache.intrinsic.insert(base_key.to_string(), size);
 }
 
 fn remember_render(display_key: &str, rendered: &MermaidSvgRender) {
@@ -222,8 +222,8 @@ fn render_mermaid_display_cached(source: &MermaidSource, available_width: f32, r
     let base_path = mermaid_base_cache_path(base_key)?;
     let base_svg = render_mermaid_to_svg_cached_with(&source.body, &base_path, renderer)?;
     let intrinsic = svg_intrinsic_size(&base_svg)?;
-    remember_intrinsic(base_key, intrinsic.width);
-    let scale = mermaid_display_scale(intrinsic.width, available_width);
+    remember_intrinsic(base_key, intrinsic);
+    let scale = mermaid_display_scale(intrinsic.width, intrinsic.height, available_width);
 
     let display_key = display_cache_key(base_key, scale);
     let display_path = mermaid_display_cache_path(&display_key)?;
@@ -485,9 +485,26 @@ fn write_svg_cache(path: &Path, svg: &str) -> anyhow::Result<()> {
         .with_context(|| format!("failed to install Mermaid SVG cache '{}'", path.display()))
 }
 
-/// Display scale used by the editor for rendered Mermaid diagrams.
-pub(crate) fn mermaid_display_scale(intrinsic_width: f32, available_width: f32) -> f32 {
-    (available_width.max(1.0) / intrinsic_width.max(1.0)).min(1.0)
+/// gpui 的 img 管线把 SVG 按双倍过采样栅格化，单边超过 8192 设备像素时会在
+/// `svg_renderer.rs:rasterize_tree` 里静默钳小位图、再由 GPU 拉伸回显示尺寸，
+/// 大图文字发虚（issue #12：656×11234.8 的图被钳成 478×8192 后放大 2.74 倍）。
+/// 显示尺寸乘 2 必须留在这条预算内，常量与 vendor gpui 的
+/// `SMOOTH_SVG_SCALE_FACTOR` × `MAX_SIZE` 对齐。
+const MERMAID_RASTER_MAX_DEVICE_PX: f32 = 8192.0;
+const MERMAID_SVG_OVERSAMPLE: f32 = 2.0;
+
+/// Display scale used by the editor for rendered Mermaid diagrams. The scale
+/// also keeps the doubled oversample raster within the device-pixel budget,
+/// so the binding constraint is the longer intrinsic side.
+pub(crate) fn mermaid_display_scale(
+    intrinsic_width: f32,
+    intrinsic_height: f32,
+    available_width: f32,
+) -> f32 {
+    let raster_budget = MERMAID_RASTER_MAX_DEVICE_PX / MERMAID_SVG_OVERSAMPLE;
+    let width_fit = available_width.max(1.0) / intrinsic_width.max(1.0);
+    let raster_fit = raster_budget / intrinsic_width.max(1.0).max(intrinsic_height.max(1.0));
+    width_fit.min(raster_fit).min(1.0)
 }
 
 /// Rewrites the root SVG element so GPUI sees the intended intrinsic size.
@@ -874,16 +891,36 @@ mod tests {
 
     #[test]
     fn display_scale_keeps_small_diagrams_at_natural_size() {
-        assert_eq!(mermaid_display_scale(240.0, 720.0), 1.0);
-        assert_eq!(mermaid_display_scale(260.0, 720.0), 1.0);
+        assert_eq!(mermaid_display_scale(240.0, 60.0, 720.0), 1.0);
+        assert_eq!(mermaid_display_scale(260.0, 60.0, 720.0), 1.0);
     }
 
     #[test]
     fn display_scale_fits_wide_diagrams_to_the_text_column() {
         for width in [1400.0, 14000.0] {
-            let scale = mermaid_display_scale(width, 720.0);
+            let scale = mermaid_display_scale(width, 400.0, 720.0);
             assert!(width * scale <= 720.001, "图表应适配正文列宽：{scale}");
         }
+    }
+
+    /// 显示尺寸乘 gpui img 管线的双倍过采样后不得超过 8192 设备像素的栅格预算，
+    /// 否则 rasterize_tree 会静默钳小位图、再由 GPU 拉伸回显示尺寸，文字发虚
+    /// （issue #12 实测：656×11234.8 的图被钳成 478×8192 后放大约 2.74 倍）。
+    #[test]
+    fn display_scale_caps_diagrams_within_the_svg_raster_budget() {
+        let raster_budget = 8192.0 / 2.0;
+        // issue #12 的实测固有尺寸：高 11234.8，远超预算。
+        let scale = mermaid_display_scale(656.08, 11234.8, 720.0);
+        assert!(
+            11234.8 * scale <= raster_budget,
+            "显示高度乘双倍过采样不得超过栅格预算：scale {scale}"
+        );
+        // 预算约束的是最长边：超宽的图同样受限，即便列宽装得下。
+        let wide = mermaid_display_scale(12000.0, 600.0, 20000.0);
+        assert!(
+            12000.0 * wide <= raster_budget,
+            "显示宽度乘双倍过采样同样不得超过栅格预算：scale {wide}"
+        );
     }
 
     #[test]
