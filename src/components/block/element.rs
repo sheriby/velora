@@ -474,6 +474,8 @@ mod probe {
         static HARD_LINE_RANGE_BUILDS: Cell<u64> = const { Cell::new(0) };
         static TEXT_RUNS_BUILDS: Cell<u64> = const { Cell::new(0) };
         static INLINE_CODE_SIZE: Cell<Option<Pixels>> = const { Cell::new(None) };
+        static MARK_BACKGROUND_QUADS: Cell<u64> = const { Cell::new(0) };
+        static LAST_MARK_BACKGROUND: Cell<Option<super::Bounds<Pixels>>> = const { Cell::new(None) };
     }
     pub(super) fn note_build() {
         HARD_LINE_RANGE_BUILDS.with(|counter| counter.set(counter.get() + 1));
@@ -494,6 +496,16 @@ mod probe {
     }
     pub(crate) fn inline_code_size() -> Option<Pixels> {
         INLINE_CODE_SIZE.with(|slot| slot.get())
+    }
+    pub(super) fn note_mark_background_quad(bounds: super::Bounds<Pixels>) {
+        MARK_BACKGROUND_QUADS.with(|counter| counter.set(counter.get() + 1));
+        LAST_MARK_BACKGROUND.with(|slot| slot.set(Some(bounds)));
+    }
+    pub(crate) fn mark_background_quads() -> u64 {
+        MARK_BACKGROUND_QUADS.with(|counter| counter.get())
+    }
+    pub(crate) fn last_mark_background() -> Option<super::Bounds<Pixels>> {
+        LAST_MARK_BACKGROUND.with(|slot| slot.get())
     }
 }
 

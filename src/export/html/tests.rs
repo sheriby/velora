@@ -408,6 +408,33 @@ mod tests {
         assert!(!html.contains("border-left-color:"));
     }
 
+    /// 现象：`mark_bg` 曾被填进 `--vlt-comment-bg` 的占位位置，导出 HTML 的
+    /// 注释块跟着被染成荧光黄，而 `mark` 仍借用注释底色。断言：两个变量各自
+    /// 取自己的 token，`mark` 标签使用专属变量。
+    #[test]
+    fn exports_mark_and_comment_backgrounds_from_their_own_tokens() {
+        let theme = Theme::default_theme();
+        let html = render_html("==x==\n\n<!-- note -->", &theme, "Doc");
+        assert!(
+            html.contains(&format!(
+                "--vlt-comment-bg: {};",
+                css_color(theme.colors.comment_bg)
+            )),
+            "注释块底色被别的 token 顶掉了：{html}"
+        );
+        assert!(
+            html.contains(&format!(
+                "--vlt-mark-bg: {};",
+                css_color(theme.colors.mark_bg)
+            )),
+            "标记文本应有专属底色变量：{html}"
+        );
+        assert!(
+            html.contains("background-color: var(--vlt-mark-bg);"),
+            "mark 标签应使用专属底色变量：{html}"
+        );
+    }
+
     #[test]
     fn light_theme_exports_light_color_scheme() {
         let theme = Theme::light_theme();

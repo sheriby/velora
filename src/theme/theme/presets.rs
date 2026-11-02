@@ -44,7 +44,7 @@ fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> The
     c.editor_background = color(palette.window);
     c.source_mode_block_bg = color(palette.code);
     c.comment_bg = color(palette.code);
-    c.mark_bg = color(palette.code);
+    c.mark_bg = color(if palette.dark { MARK_BG_DARK } else { MARK_BG_LIGHT });
     c.text_default = color(palette.text);
     c.text_placeholder = color(palette.muted);
     c.text_link = color(palette.accent);
@@ -133,8 +133,7 @@ impl Theme {
                 editor_background: Hsla::from(rgba(0x1b1d24ff)),
                 source_mode_block_bg: Hsla::from(rgba(0x292929ff)),
                 comment_bg: Hsla::from(rgba(0xfce10026)),
-                // 荧光黄 40%：暗底上可见的标记底色。
-                mark_bg: Hsla::from(rgba(0xffd60a66)),
+                mark_bg: Hsla::from(rgba(MARK_BG_DARK)),
                 text_default: Hsla::from(rgba(0xe8e9eeff)),
                 text_link: Hsla::from(rgba(0x75beffff)),
                 text_placeholder: Hsla::from(rgba(0x9c9c9cff)),
@@ -400,8 +399,7 @@ impl Theme {
                 editor_background: Hsla::from(rgba(0xffffffff)),
                 source_mode_block_bg: Hsla::from(rgba(0xf3f2f1ff)),
                 comment_bg: Hsla::from(rgba(0xfff4ce99)),
-                // 荧光黄 72%：白底上的标记笔触。
-                mark_bg: Hsla::from(rgba(0xffe066b8)),
+                mark_bg: Hsla::from(rgba(MARK_BG_LIGHT)),
                 text_default: Hsla::from(rgba(0x252832ff)),
                 text_link: Hsla::from(rgba(0x6558d3ff)),
                 text_placeholder: Hsla::from(rgba(0x8a8886cc)),

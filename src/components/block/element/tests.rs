@@ -1349,3 +1349,57 @@ fn shaping_failures_are_logged_and_keep_the_block_visible() {
         "按行与整块两条 shape 路径都要记录失败详情"
     );
 }
+
+/// 现象：`==x==` 的底色在正文里一直没画出来——run 上的 background_color
+/// 不被 GPUI 的 paint_line 消费，文本元素只显式画了行内代码底色。
+/// 断言：普通段落画一帧后，标记文本的底色四边形确实被绘制。
+#[gpui::test]
+async fn highlighted_span_paints_a_background_quad(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::ui::init(cx);
+    });
+    let (block, cx) = cx.add_window_view(|_, cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("前缀 ==标记文本== 后缀"),
+            ),
+        )
+    });
+    let before = super::probe::mark_background_quads();
+    for _ in 0..2 {
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        cx.run_until_parked();
+    }
+    let painted = super::probe::mark_background_quads() - before;
+    assert!(painted > 0, "==标记文本== 应铺出底色四边形，实际 {painted} 个");
+    let quad = super::probe::last_mark_background().expect("底色四边形的几何");
+    block.read_with(cx, |block, _| {
+        let line = block
+            .last_layout
+            .as_ref()
+            .and_then(|lines| lines.first())
+            .expect("正文应完成排版");
+        let start = "前缀 ".len();
+        let end = "前缀 标记文本".len();
+        let expected_width = line.unwrapped_layout.x_for_index(end)
+            - line.unwrapped_layout.x_for_index(start);
+        assert!(
+            (f32::from(quad.size.width) - f32::from(expected_width)).abs() < 1.0,
+            "底色要盖住 == 之间的文字：实际宽 {}，期望 {}",
+            f32::from(quad.size.width),
+            f32::from(expected_width)
+        );
+        assert!(
+            (f32::from(quad.size.height) - f32::from(block.last_line_height)).abs() < 0.5,
+            "底色应铺满一行高：实际 {}，期望 {}",
+            f32::from(quad.size.height),
+            f32::from(block.last_line_height)
+        );
+    });
+}

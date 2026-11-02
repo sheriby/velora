@@ -127,7 +127,7 @@ impl<'de> Deserialize<'de> for ThemeColors {
             comment_bg: raw
                 .comment_bg
                 .unwrap_or_else(|| Hsla::from(rgba(0xfbbf2426))),
-            mark_bg: raw.mark_bg.unwrap_or_else(|| Hsla::from(rgba(0xffd60a66))),
+            mark_bg: raw.mark_bg.unwrap_or_else(|| Hsla::from(rgba(MARK_BG_DARK))),
             text_default: raw.text_default,
             text_link: raw
                 .text_link

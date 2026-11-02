@@ -22,6 +22,7 @@ pub(crate) fn theme_css(theme: &Theme) -> String {
   --vlt-code-bg: {};
   --vlt-code-text: {};
   --vlt-comment-bg: {};
+  --vlt-mark-bg: {};
   --vlt-table-head-bg: {};
   --vlt-table-cell-bg: {};
   --vlt-quote-border: {};
@@ -113,9 +114,9 @@ strong code {{ font-weight: 700; }}
   background-color: var(--vlt-comment-bg);
   color: var(--vlt-text);
 }}
-/* 标记文本 `==x==` 导出为 mark 标签；配色与注释块同源，编辑态里的 `==` 底色也是这个。 */
+/* 标记文本 `==x==` 导出为 mark 标签；与编辑态同用荧光底色，不再借用注释块配色。 */
 mark {{
-  background-color: var(--vlt-comment-bg);
+  background-color: var(--vlt-mark-bg);
   color: inherit;
 }}
 .vlt-raw-html {{
@@ -213,6 +214,7 @@ hr {{ border: 0; border-top: 1px solid; border-color: var(--vlt-border); }}
         css_color(c.table_border),
         css_color(c.code_bg),
         css_color(c.code_text),
+        css_color(c.comment_bg),
         css_color(c.mark_bg),
         css_color(c.table_header_bg),
         css_color(c.table_cell_bg),

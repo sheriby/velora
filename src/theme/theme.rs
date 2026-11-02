@@ -56,6 +56,11 @@ impl FontWeightDef {
     }
 }
 
+/// 标记文本 `==x==` 的荧光底色：暗色主题用 40% 黄，亮色主题用 72% 黄。
+/// 内置色板与外置主题缺省值共用这两处，避免再被代码块底色覆盖成「纸面同色」。
+pub(crate) const MARK_BG_DARK: u32 = 0xffd60a66;
+pub(crate) const MARK_BG_LIGHT: u32 = 0xffe066b8;
+
 /// All configurable colors for the editor UI.
 #[derive(Debug, Clone, Serialize)]
 pub struct ThemeColors {

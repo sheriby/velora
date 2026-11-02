@@ -41,6 +41,8 @@ pub struct PrepaintState {
     bracket_highlights: Vec<PaintQuad>,
     selection: Vec<PaintQuad>,
     code_backgrounds: Vec<PaintQuad>,
+    /// 标记文本 `==x==` 的底色（画在文案下方，不加内边距）。
+    mark_backgrounds: Vec<PaintQuad>,
     search_highlights: Vec<PaintQuad>,
     line_height: Pixels,
     hitbox: Hitbox,
@@ -803,6 +805,29 @@ impl Element for BlockTextElement {
             }
         }
 
+        // 标记文本 `==x==`：GPUI 的 paint_line 不消费 run 上的 background_color，
+        // 与行内代码一样必须自己算四边形；否则正文里根本铺不出底色。
+        let mut mark_quads = Vec::new();
+        if !input.is_source_raw_mode() && !self.is_placeholder {
+            let shared_ranges = input.shared_hard_line_ranges();
+            let mark_color = theme.colors.mark_bg;
+            for span in input.inline_spans() {
+                if !span.style.highlight || span.range.is_empty() {
+                    continue;
+                }
+                for segment in range_segment_bounds(
+                    &lines,
+                    text_bounds,
+                    line_height,
+                    shared_ranges.as_slice(),
+                    span.range.clone(),
+                    text_align,
+                ) {
+                    mark_quads.push(fill(segment, mark_color));
+                }
+            }
+        }
+
         // In-document search matches (roadmap B2): translucent quads under
         // the text, computed like selection segments. 活动命中用更深的
         // search_active_highlight_bg，循环跳转时能看出当前在哪一个。
@@ -845,6 +870,7 @@ impl Element for BlockTextElement {
             bracket_highlights: bracket_quads,
             selection: selection_quads,
             code_backgrounds: code_quads,
+            mark_backgrounds: mark_quads,
             search_highlights,
             line_height,
             hitbox,
@@ -906,6 +932,13 @@ impl Element for BlockTextElement {
         // 当前行高亮垫底，选区叠上，括号匹配再上（都在文本之下）。
         for line_wash in prepaint.current_line.drain(..) {
             window.paint_quad(line_wash);
+        }
+
+        // 标记文本的荧光底色压在行高亮之上、选区之下，才不会被绿/灰色行带盖住。
+        for mark_background in prepaint.mark_backgrounds.drain(..) {
+            #[cfg(test)]
+            probe::note_mark_background_quad(mark_background.bounds);
+            window.paint_quad(mark_background);
         }
 
         for selection in prepaint.selection.drain(..) {

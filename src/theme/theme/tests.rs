@@ -57,6 +57,51 @@ mod tests {
         }
     }
 
+    /// 现象：`==x==` 的标记底色跟着代码块底色走，浅色内置主题下与纸面
+    /// 几乎同色（Forest 的 #eff5ea 铺在 #fdfffc 上），用户看起来像完全
+    /// 没有高亮。断言：每个内置主题把标记底色叠到编辑底色上后，至少有一个
+    /// 通道差达到 32/255，且标记底色不复用代码块底色。
+    #[test]
+    fn builtin_themes_give_mark_text_a_visible_highlighter_background() {
+        fn composite(color: Hsla, background: Hsla) -> Rgba {
+            let color = Rgba::from(color);
+            let background = Rgba::from(background);
+            Rgba {
+                r: color.r * color.a + background.r * (1.0 - color.a),
+                g: color.g * color.a + background.g * (1.0 - color.a),
+                b: color.b * color.a + background.b * (1.0 - color.a),
+                a: 1.0,
+            }
+        }
+        for theme in [
+            Theme::light_theme(),
+            Theme::forest_theme(),
+            Theme::paper_theme(),
+            Theme::default_theme(),
+            Theme::midnight_theme(),
+            Theme::ink_theme(),
+        ] {
+            let colors = &theme.colors;
+            let highlighted = composite(colors.mark_bg, colors.editor_background);
+            let page = Rgba::from(colors.editor_background);
+            let channel_delta = (highlighted.r - page.r)
+                .abs()
+                .max((highlighted.g - page.g).abs())
+                .max((highlighted.b - page.b).abs())
+                * 255.0;
+            assert!(
+                channel_delta >= 32.0,
+                "{} 的标记底色在编辑底色上看不出来：通道差 {channel_delta:.1}/255",
+                theme.name
+            );
+            assert_ne!(
+                colors.mark_bg, colors.code_bg,
+                "{} 的标记底色不能复用代码块底色",
+                theme.name
+            );
+        }
+    }
+
     #[test]
     fn image_scale_baseline_falls_back_for_legacy_themes_and_keeps_custom_limits() {
         // 旧主题未填写图片上限时，也应采用新的缩放基准；显式配置的尺寸继续保留。
