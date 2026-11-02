@@ -7,6 +7,7 @@ struct ThemeColorsDe {
     source_mode_block_bg: Option<Hsla>,
     block_focused_bg: Option<Hsla>,
     comment_bg: Option<Hsla>,
+    mark_bg: Option<Hsla>,
     text_default: Hsla,
     text_link: Option<Hsla>,
     text_placeholder: Hsla,
@@ -126,6 +127,7 @@ impl<'de> Deserialize<'de> for ThemeColors {
             comment_bg: raw
                 .comment_bg
                 .unwrap_or_else(|| Hsla::from(rgba(0xfbbf2426))),
+            mark_bg: raw.mark_bg.unwrap_or_else(|| Hsla::from(rgba(0xffd60a66))),
             text_default: raw.text_default,
             text_link: raw
                 .text_link

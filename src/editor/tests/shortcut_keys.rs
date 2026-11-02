@@ -231,3 +231,36 @@ async fn probe_heading3_keymap_and_dispatch(cx: &mut TestAppContext) {
     });
 }
 
+
+/// `==xx==` 应解析为标记文本并以荧光底色渲染（issue：用户报修没渲染）。
+/// 变体覆盖中日韩相邻（flanking 规则最可能吞掉 == 的场景）。
+#[gpui::test]
+async fn double_equal_signs_produce_highlight_spans(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for (label, source) in [
+        ("拉丁夹注", "前缀 ==标记文本== 后缀"),
+        ("行首独立", "==标记文本=="),
+        ("中文相邻", "一些文字==标记文本==一些文字"),
+        ("括号内", "（==标记文本==）"),
+        ("列表项", "- 列表里 ==标记文本== 继续写"),
+        ("纯ASCII", "some ==xx== text"),
+    ] {
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.to_string(), None));
+        redraw(cx);
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            let block = &visible[0].entity;
+            let spans = block.read(cx).inline_spans();
+            let highlighted: Vec<_> = spans
+                .iter()
+                .filter(|span| span.style.highlight)
+                .collect();
+            assert!(
+                !highlighted.is_empty(),
+                "{label}：==…== 应产生高亮 span，实际 spans：{spans:?}"
+            );
+        });
+    }
+}

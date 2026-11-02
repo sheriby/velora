@@ -279,7 +279,7 @@ impl Element for BlockTextElement {
                                 show_code_backgrounds,
                                 &fonts.code_family,
                                 code_size,
-                                theme.colors.comment_bg,
+                                theme.colors.mark_bg,
                             )
                         }
                     })

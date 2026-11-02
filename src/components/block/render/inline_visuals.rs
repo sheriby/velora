@@ -882,7 +882,7 @@ impl Block {
         }
         // 标记文本 `==x==`：只铺底色，不加内边距，避免和同一行里的普通文字错位。
         if span.style.highlight {
-            element = element.bg(theme.colors.comment_bg);
+            element = element.bg(theme.colors.mark_bg);
         }
         if let Some(style) = span.html_style
             && let Some(background) = style.background_color

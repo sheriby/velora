@@ -36,6 +36,7 @@
 | `callout_important_bg` | 颜色 | 提示块 Important：背景 |
 | `callout_important_border` | 颜色 | 提示块 Important：边框 |
 | `callout_warning_bg` | 颜色 | 提示块 Warning：背景 |
+| `mark_bg` | 颜色 | 标记文本 `==x==` 的荧光底色 |
 | `search_highlight_bg` | 颜色 | 搜索命中高亮 |
 | `search_active_highlight_bg` | 颜色 | 搜索当前活动命中高亮（比普通命中更深） |
 | `callout_warning_border` | 颜色 | 提示块 Warning：边框 |

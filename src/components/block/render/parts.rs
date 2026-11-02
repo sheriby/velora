@@ -356,7 +356,7 @@ pub(crate) fn html_node_visual_style(
             computed.font_size = t.code_size;
             background = Some(c.code_bg);
         }
-        "mark" => background = Some(c.comment_bg),
+        "mark" => background = Some(c.mark_bg),
         "figcaption" => {
             computed.color = c.image_caption_text;
             computed.font_size = t.code_size;

@@ -65,6 +65,8 @@ pub struct ThemeColors {
     pub source_mode_block_bg: Hsla,
     /// Background used for visible Markdown comment blocks.
     pub comment_bg: Hsla,
+    /// 荧光底色：标记文本 `==x==` 与 HTML `<mark>` 的高亮背景。
+    pub mark_bg: Hsla,
     /// Default paragraph / body text colour.
     pub text_default: Hsla,
     /// Inline link text colour in rendered mode.

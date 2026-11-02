@@ -213,7 +213,7 @@ hr {{ border: 0; border-top: 1px solid; border-color: var(--vlt-border); }}
         css_color(c.table_border),
         css_color(c.code_bg),
         css_color(c.code_text),
-        css_color(c.comment_bg),
+        css_color(c.mark_bg),
         css_color(c.table_header_bg),
         css_color(c.table_cell_bg),
         css_color(c.border_quote),

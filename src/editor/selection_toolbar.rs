@@ -577,7 +577,7 @@ impl Editor {
                                 .top(px(8.5))
                                 .h(px(7.0))
                                 .rounded(px(2.0))
-                                .bg(c.comment_bg),
+                                .bg(c.mark_bg),
                         )
                         .child("A"),
                 )
