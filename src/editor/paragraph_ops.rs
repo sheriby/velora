@@ -394,6 +394,40 @@ impl Editor {
     }
 }
 
+/// 引用与两种列表、代码块的快捷键处理器：动作只带目标种类，落到
+/// `apply_block_kind_to_selection`（与标题的 heading_capture! 同一模式）。
+macro_rules! block_kind_capture {
+    ($handler:ident, $action:ident, $target:expr) => {
+        impl Editor {
+            pub(crate) fn $handler(
+                &mut self,
+                _: &crate::components::$action,
+                _window: &mut Window,
+                cx: &mut Context<Self>,
+            ) {
+                self.apply_block_kind_to_selection($target, cx);
+            }
+        }
+    };
+}
+
+block_kind_capture!(on_quote_block_capture, QuoteBlock, BlockKindTarget::Quote);
+block_kind_capture!(
+    on_bullet_list_block_capture,
+    BulletListBlock,
+    BlockKindTarget::BulletList
+);
+block_kind_capture!(
+    on_numbered_list_block_capture,
+    NumberedListBlock,
+    BlockKindTarget::NumberedList
+);
+block_kind_capture!(
+    on_code_fence_block_capture,
+    CodeFenceBlock,
+    BlockKindTarget::CodeBlock
+);
+
 impl BlockKindTarget {
     /// 这一块换过去应该变成什么种类；不该动（已经一样、或本笔还不敢碰的种类）时 None。
     ///

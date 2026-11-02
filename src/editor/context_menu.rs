@@ -578,6 +578,21 @@ impl Editor {
         cx.notify();
     }
 
+    /// 快捷键路径的表格插入（⌘⌥T，issue #15）：没有右键菜单可取靶，
+    /// 靶点取光标所在的根块；光标不在任何块上时追加到文档末尾。
+    pub(super) fn open_table_insert_dialog_at_selection(&mut self, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+        let target = self
+            .selection_root_blocks(cx)
+            .last()
+            .map(|block| TableInsertTarget::After(self.root_ancestor_entity_id(block.entity_id())))
+            .unwrap_or(TableInsertTarget::Append);
+        self.table_insert_dialog = Some(TableInsertDialogState::new(target, 2, 2, cx));
+        cx.notify();
+    }
+
     pub(super) fn on_table_rows_decrement(
         &mut self,
         _event: &ClickEvent,

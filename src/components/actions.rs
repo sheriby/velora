@@ -70,6 +70,12 @@ actions!(
         Heading5,
         Heading6,
         ParagraphText,
+        QuoteBlock,
+        BulletListBlock,
+        NumberedListBlock,
+        CodeFenceBlock,
+        InsertMathBlock,
+        InsertTable,
         IndentBlock,
         OutdentBlock,
         ExitCodeBlock,
@@ -226,6 +232,19 @@ pub(crate) enum ShortcutCommand {
     ClearFormatSelection,
     LinkSelection,
     InsertImage,
+    Heading1,
+    Heading2,
+    Heading3,
+    Heading4,
+    Heading5,
+    Heading6,
+    ParagraphText,
+    QuoteBlock,
+    BulletListBlock,
+    NumberedListBlock,
+    CodeFenceBlock,
+    InsertMathBlock,
+    InsertTable,
     IndentBlock,
     OutdentBlock,
     ExitCodeBlock,
@@ -643,6 +662,100 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         id: "insert_image",
         category: ShortcutCategory::Formatting,
         default_keys: &["cmd-shift-i", "ctrl-shift-i"],
+        context: BLOCK_CONTEXT,
+    },
+    // 段落族对齐 Typora（issue #15）：mac 列 ⌘ 系、Windows 列 Ctrl 系，
+    // 两列差异大的命令把两种形式都列进同一份键位（引用/列表/代码块/表格/数学）。
+    // 标题的 ⌘1-6 让切标签让位到 ⌘⌥1-9（固定绑定），⌘0 让缩放重置让位到 ⌘⌥0。
+    ShortcutDefinition {
+        command: ShortcutCommand::Heading1,
+        id: "heading_1",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-1", "ctrl-1"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::Heading2,
+        id: "heading_2",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-2", "ctrl-2"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::Heading3,
+        id: "heading_3",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-3", "ctrl-3"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::Heading4,
+        id: "heading_4",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-4", "ctrl-4"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::Heading5,
+        id: "heading_5",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-5", "ctrl-5"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::Heading6,
+        id: "heading_6",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-6", "ctrl-6"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::ParagraphText,
+        id: "normal_text",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-0", "ctrl-0"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::QuoteBlock,
+        id: "quote_block",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-alt-q", "ctrl-shift-q"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::BulletListBlock,
+        id: "bullet_list_block",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-alt-u", "ctrl-shift-]"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::NumberedListBlock,
+        id: "numbered_list_block",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-alt-o", "ctrl-shift-["],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::CodeFenceBlock,
+        id: "code_fence_block",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-alt-c", "ctrl-shift-k"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::InsertTable,
+        id: "insert_table",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-alt-t", "ctrl-t"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::InsertMathBlock,
+        id: "insert_math_block",
+        category: ShortcutCategory::Block,
+        default_keys: &["cmd-alt-b", "ctrl-shift-m"],
         context: BLOCK_CONTEXT,
     },
     ShortcutDefinition {
@@ -1091,6 +1204,19 @@ fn key_binding_for(
         }
         ShortcutCommand::LinkSelection => KeyBinding::new(key, LinkSelection, context),
         ShortcutCommand::InsertImage => KeyBinding::new(key, InsertImage, context),
+        ShortcutCommand::Heading1 => KeyBinding::new(key, Heading1, context),
+        ShortcutCommand::Heading2 => KeyBinding::new(key, Heading2, context),
+        ShortcutCommand::Heading3 => KeyBinding::new(key, Heading3, context),
+        ShortcutCommand::Heading4 => KeyBinding::new(key, Heading4, context),
+        ShortcutCommand::Heading5 => KeyBinding::new(key, Heading5, context),
+        ShortcutCommand::Heading6 => KeyBinding::new(key, Heading6, context),
+        ShortcutCommand::ParagraphText => KeyBinding::new(key, ParagraphText, context),
+        ShortcutCommand::QuoteBlock => KeyBinding::new(key, QuoteBlock, context),
+        ShortcutCommand::BulletListBlock => KeyBinding::new(key, BulletListBlock, context),
+        ShortcutCommand::NumberedListBlock => KeyBinding::new(key, NumberedListBlock, context),
+        ShortcutCommand::CodeFenceBlock => KeyBinding::new(key, CodeFenceBlock, context),
+        ShortcutCommand::InsertTable => KeyBinding::new(key, InsertTable, context),
+        ShortcutCommand::InsertMathBlock => KeyBinding::new(key, InsertMathBlock, context),
         ShortcutCommand::IndentBlock => KeyBinding::new(key, IndentBlock, context),
         ShortcutCommand::OutdentBlock => KeyBinding::new(key, OutdentBlock, context),
         ShortcutCommand::ExitCodeBlock => KeyBinding::new(key, ExitCodeBlock, context),
@@ -1198,17 +1324,18 @@ pub(crate) fn resolved_keybindings(config: &BTreeMap<String, Vec<String>>) -> Ve
     bindings.push(KeyBinding::new("cmd-=", ZoomIn, None));
     bindings.push(KeyBinding::new("cmd-+", ZoomIn, None));
     bindings.push(KeyBinding::new("cmd--", ZoomOut, None));
-    bindings.push(KeyBinding::new("cmd-0", ZoomReset, None));
+    // 缩放重置让位给 Typora 的正文段落键 ⌘0（issue #15），平移到 ⌘⌥0。
+    bindings.push(KeyBinding::new("cmd-alt-0", ZoomReset, None));
     // Windows 上 cmd 规范化为 win（且 Win+= 被 OS 抢占为放大镜）：Ctrl 系
     // 必须成对给出，否则缩放在 Windows 键盘不可达。
     bindings.push(KeyBinding::new("ctrl-=", ZoomIn, None));
     bindings.push(KeyBinding::new("ctrl-+", ZoomIn, None));
     bindings.push(KeyBinding::new("ctrl--", ZoomOut, None));
-    bindings.push(KeyBinding::new("ctrl-0", ZoomReset, None));
-    // Fixed tab-switch bindings (⌘1-⌘9 / ⌃1-⌃9); intentionally outside the
-    // customizable shortcut table.
+    bindings.push(KeyBinding::new("ctrl-alt-0", ZoomReset, None));
+    // Fixed tab-switch bindings (⌘⌥1-⌘⌥9 / ⌃⌥1-⌃⌥9); intentionally outside the
+    // customizable shortcut table. ⌘1-9 让位给 Typora 的标题级别键（issue #15）。
     for index in 1u8..=9 {
-        for prefix in ["cmd", "ctrl"] {
+        for prefix in ["cmd-alt", "ctrl-alt"] {
             bindings.push(KeyBinding::new(
                 &format!("{prefix}-{index}"),
                 SelectTabIndex { index },

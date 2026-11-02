@@ -23,6 +23,8 @@ use crate::components::{
     ToggleFocusMode, ToggleFullscreen, ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, ToggleReadingMode,
     ToggleVimMode,
     UnderlineSelection, ZoomIn, ZoomOut, ZoomReset,
+    Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, ParagraphText, QuoteBlock,
+    BulletListBlock, NumberedListBlock, CodeFenceBlock, InsertMathBlock, InsertTable,
 };
 use crate::i18n::I18nStrings;
 
@@ -187,6 +189,41 @@ static COMMANDS: &[CommandSpec] = &[
         Format,
         format_clear,
         ClearFormatSelection
+    ),
+    // 段落族对齐 Typora（issue #15）：键位见 SHORTCUT_DEFINITIONS，动作处理器
+    // 落在 paragraph_ops / insert_ops 的既有机制上。Format 组只进命令面板。
+    command!(write sep "heading_1", Format, paragraph_heading1, Heading1),
+    command!(write "heading_2", Format, paragraph_heading2, Heading2),
+    command!(write "heading_3", Format, paragraph_heading3, Heading3),
+    command!(write "heading_4", Format, paragraph_heading4, Heading4),
+    command!(write "heading_5", Format, paragraph_heading5, Heading5),
+    command!(write "heading_6", Format, paragraph_heading6, Heading6),
+    command!(write "normal_text", Format, paragraph_normal_text, ParagraphText),
+    command!(write "quote_block", Format, paragraph_quote, QuoteBlock),
+    command!(
+        write "bullet_list_block",
+        Format,
+        paragraph_bullet_list,
+        BulletListBlock
+    ),
+    command!(
+        write "numbered_list_block",
+        Format,
+        paragraph_numbered_list,
+        NumberedListBlock
+    ),
+    command!(
+        write "code_fence_block",
+        Format,
+        paragraph_code_block,
+        CodeFenceBlock
+    ),
+    command!(write "insert_table", Format, context_menu_table, InsertTable),
+    command!(
+        write "insert_math_block",
+        Format,
+        insert_math_block,
+        InsertMathBlock
     ),
     // 导出
     command!("export_html", Export, menu_export_html, ExportHtml),
@@ -388,6 +425,19 @@ mod tests {
                 "subscript_selection",
                 "link_selection",
                 "clear_format_selection",
+                "heading_1",
+                "heading_2",
+                "heading_3",
+                "heading_4",
+                "heading_5",
+                "heading_6",
+                "normal_text",
+                "quote_block",
+                "bullet_list_block",
+                "numbered_list_block",
+                "code_fence_block",
+                "insert_table",
+                "insert_math_block",
             ]
         );
     }

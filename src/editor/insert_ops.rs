@@ -13,6 +13,29 @@ use super::Editor;
 use crate::components::{BlockKind, BlockRecord, CollapsedCaretAffinity, UndoCaptureKind};
 use crate::editor::{Block, ViewMode};
 
+/// ⌘⌥B：在选区后插入空的展示公式块（与右键菜单「插入→数学块」同一处理者）。
+impl Editor {
+    pub(crate) fn on_insert_math_block_action(
+        &mut self,
+        _: &crate::components::InsertMathBlock,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_block_after_selection(InsertBlockTarget::MathBlock, cx);
+    }
+
+    /// ⌘⌥T：打开表格插入对话框（靶点取光标所在根块；右键菜单路径
+    /// 走 open_table_insert_dialog_from_menu，从菜单状态取靶）。
+    pub(crate) fn on_insert_table_action(
+        &mut self,
+        _: &crate::components::InsertTable,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_table_insert_dialog_at_selection(cx);
+    }
+}
+
 /// 「插入」菜单的目标块。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InsertBlockTarget {

@@ -1030,8 +1030,8 @@ async fn resting_in_the_seam_between_the_panels_keeps_the_submenu_open(cx: &mut 
     );
 }
 
-/// 「格式」那一档十行的快捷键那一列都要显示出来，其中标记文本与清除格式这两行是
-/// FP9b 才补上键位的；段落与插入那一档还没有键位，留空但不换行宽。
+/// 「格式」那一档十行与段落族的快捷键那一列都要显示出来（段落族对齐 Typora，
+/// issue #15）；任务列表、插入代码块这些没有通行默认键的行留空但不换行宽。
 #[gpui::test]
 async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -1073,21 +1073,45 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
         "清除格式的键位要与方案里写的那一条一致"
     );
 
-    // 段落与插入那一档刻意不给键位：那一列留空，行序与行高都不受影响。
-    for command in [
+    // 段落族对齐 Typora（issue #15）：这些行在「段落」与「插入」两个二级面板里，
+    // 键位列随面板展开渲染；任务列表与插入代码块没有通行默认键，留空。
+    let paragraph_rows = [
         DocumentMenuCommand::Heading(2),
         DocumentMenuCommand::NormalText,
         DocumentMenuCommand::BulletList,
         DocumentMenuCommand::Quote,
         DocumentMenuCommand::CodeBlock,
-        DocumentMenuCommand::InsertTable,
+    ];
+    let insert_rows = [DocumentMenuCommand::InsertTable];
+    let keyless_rows = [
+        DocumentMenuCommand::TaskList,
         DocumentMenuCommand::InsertCodeBlock,
+    ];
+    for (submenu, rows, require_keys) in [
+        (DocumentSubmenu::Paragraph, &paragraph_rows[..], true),
+        (DocumentSubmenu::Insert, &insert_rows[..], true),
+        (DocumentSubmenu::Paragraph, &keyless_rows[..], false),
     ] {
-        assert_eq!(
-            shortcut_of(command, cx),
-            None,
-            "{command:?} 这一行还没有键位，不该凭空造一个"
-        );
+        editor.update(cx, |editor, cx| {
+            editor.set_document_menu_hover(true, Some(submenu), cx)
+        });
+        redraw(cx);
+        for command in rows {
+            let label = shortcut_of(*command, cx);
+            if require_keys {
+                let label = label
+                    .unwrap_or_else(|| panic!("{command:?} 对齐 Typora 后该有默认键位"));
+                assert!(
+                    cx.debug_bounds(shortcut_selector(&label)).is_some(),
+                    "{label} 这一列没渲染出来"
+                );
+            } else {
+                assert_eq!(
+                    label, None,
+                    "{command:?} 没有默认键位，不该凭空造一个"
+                );
+            }
+        }
     }
 
     // 有键位的主菜单行也一样显示。图标条那六颗没有键位列，键位写在悬停说明里（下面那条断言）。

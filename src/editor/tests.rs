@@ -46,6 +46,7 @@ mod source_selection;
 mod source_mapping_fidelity;
 mod source_highlight;
 mod selection_mouse;
+mod shortcut_keys;
 mod status_bar_toggles;
 mod table_runtime;
 mod tree_quick_open;

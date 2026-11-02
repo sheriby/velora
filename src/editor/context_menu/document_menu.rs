@@ -879,18 +879,26 @@ pub(crate) fn document_menu_shortcut(
         DocumentMenuCommand::InsertImage => ShortcutCommand::InsertImage,
         DocumentMenuCommand::ToggleSourceView => ShortcutCommand::ToggleViewMode,
         DocumentMenuCommand::ToggleReadingMode => ShortcutCommand::ToggleReadingMode,
-        // 段落与插入那一档不给默认键：标题的 ⌘1..⌘6 与本仓换标签的 ⌘1-9 撞车，列表、引用、
-        // 代码块与目录、分割线这些也没有通行的键位可以对齐，硬造一串反而要多记一件事。
-        DocumentMenuCommand::Heading(_)
-        | DocumentMenuCommand::NormalText
-        | DocumentMenuCommand::BulletList
-        | DocumentMenuCommand::NumberedList
-        | DocumentMenuCommand::TaskList
-        | DocumentMenuCommand::Quote
-        | DocumentMenuCommand::CodeBlock
-        | DocumentMenuCommand::InsertTable
+        // 段落族已对齐 Typora（issue #15）：标题 ⌘1-6、正文 ⌘0，换标签让位到 ⌘⌥1-9、
+        // 缩放重置让位到 ⌘⌥0。任务列表与插入代码块/分割线/目录/Front Matter 仍无
+        // 通行的默认键，走命令面板与自定义键位。
+        DocumentMenuCommand::Heading(level) => match level {
+            1 => ShortcutCommand::Heading1,
+            2 => ShortcutCommand::Heading2,
+            3 => ShortcutCommand::Heading3,
+            4 => ShortcutCommand::Heading4,
+            5 => ShortcutCommand::Heading5,
+            _ => ShortcutCommand::Heading6,
+        },
+        DocumentMenuCommand::NormalText => ShortcutCommand::ParagraphText,
+        DocumentMenuCommand::Quote => ShortcutCommand::QuoteBlock,
+        DocumentMenuCommand::BulletList => ShortcutCommand::BulletListBlock,
+        DocumentMenuCommand::NumberedList => ShortcutCommand::NumberedListBlock,
+        DocumentMenuCommand::CodeBlock => ShortcutCommand::CodeFenceBlock,
+        DocumentMenuCommand::InsertTable => ShortcutCommand::InsertTable,
+        DocumentMenuCommand::InsertMathBlock => ShortcutCommand::InsertMathBlock,
+        DocumentMenuCommand::TaskList
         | DocumentMenuCommand::InsertCodeBlock
-        | DocumentMenuCommand::InsertMathBlock
         | DocumentMenuCommand::InsertSeparator
         | DocumentMenuCommand::InsertToc
         | DocumentMenuCommand::InsertFrontMatter

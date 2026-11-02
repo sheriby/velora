@@ -145,6 +145,19 @@ impl PreferencesWindow {
             ShortcutCommand::ToggleFullscreen => {
                 strings.preferences_shortcut_toggle_fullscreen.clone()
             }
+            ShortcutCommand::Heading1 => strings.paragraph_heading1.clone(),
+            ShortcutCommand::Heading2 => strings.paragraph_heading2.clone(),
+            ShortcutCommand::Heading3 => strings.paragraph_heading3.clone(),
+            ShortcutCommand::Heading4 => strings.paragraph_heading4.clone(),
+            ShortcutCommand::Heading5 => strings.paragraph_heading5.clone(),
+            ShortcutCommand::Heading6 => strings.paragraph_heading6.clone(),
+            ShortcutCommand::ParagraphText => strings.paragraph_normal_text.clone(),
+            ShortcutCommand::QuoteBlock => strings.paragraph_quote.clone(),
+            ShortcutCommand::BulletListBlock => strings.paragraph_bullet_list.clone(),
+            ShortcutCommand::NumberedListBlock => strings.paragraph_numbered_list.clone(),
+            ShortcutCommand::CodeFenceBlock => strings.paragraph_code_block.clone(),
+            ShortcutCommand::InsertMathBlock => strings.insert_math_block.clone(),
+            ShortcutCommand::InsertTable => strings.context_menu_table.clone(),
         }
     }
 
