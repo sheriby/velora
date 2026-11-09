@@ -105,11 +105,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.outline_clicked_document_identity = None;
-        if self.typewriter_mode {
-            self.pending_scroll_active_block_into_view = false;
-            self.pending_scroll_recheck_after_layout = false;
-        }
-        // 用户自己滚了：挂着的交还作废，否则后续几帧会把视口拽回去。
+        // 用户自己滚了：挂着的滚动请求一律作废。跳转请求会每帧把视口拽回目标，
+        // 不清掉滚轮就抢不过它（issue#16）。
+        self.clear_scroll_request();
+        // 挂着的现场交还也作废，否则后续几帧会把视口拽回去。
         self.cancel_pending_scroll_restore();
         self.cancel_pending_view_mode_scroll();
         self.bump_scrollbar_visibility(cx);
@@ -172,8 +171,7 @@ impl Editor {
         self.scroll_handle.set_offset(offset);
         // A direct viewport scroll should stick, so cancel any queued pass that
         // would otherwise re-center the active block on the next frame.
-        self.pending_scroll_active_block_into_view = false;
-        self.pending_scroll_recheck_after_layout = false;
+        self.clear_scroll_request();
         self.cancel_pending_scroll_restore();
         self.cancel_pending_view_mode_scroll();
         self.bump_scrollbar_visibility(cx);
@@ -204,8 +202,7 @@ impl Editor {
             thumb_height,
             max_scroll_y,
         });
-        self.pending_scroll_active_block_into_view = false;
-        self.pending_scroll_recheck_after_layout = false;
+        self.clear_scroll_request();
         self.bump_scrollbar_visibility(cx);
         cx.notify();
     }

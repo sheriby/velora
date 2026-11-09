@@ -274,6 +274,13 @@ impl Editor {
     /// 「偏差达标即停」（见 apply），帧数只作防呆上限——此前 24 帧耗尽即弃，
     /// 命中停在视口边缘。
     const JUMP_SCROLL_SETTLE_FRAMES: u8 = 90;
+    /// 一条滚动请求的绝对帧数上限（~4.3s，16ms 一帧）。上面两条续期规则都看
+    /// 单帧动静，外部持续微动时（Windows 全屏点大纲后，issue#16）会把视口
+    /// 无限期地每帧拽一次；帧数只作最后一道闸。
+    const SCROLL_REQUEST_FRAME_CEILING: u16 = Self::JUMP_SCROLL_SETTLE_FRAMES as u16 * 3;
+    /// 一条请求里「布局重算后再校验」的次数：本意是等刚替换过的块拿到新布局，
+    /// 一次就够。视口尺寸每帧微动时它会不停续满校验预算，所以必须封顶。
+    pub(crate) const SCROLL_RECHECK_ALLOWANCE: u8 = 2;
     /// 跳转对齐收敛阈值：目标位置与视口边界的偏差 ≤ 此值即视为到位。
     const JUMP_ALIGN_TOLERANCE_PX: f32 = 2.0;
 
@@ -302,6 +309,12 @@ impl Editor {
         if !self.pending_scroll_active_block_into_view {
             return;
         }
+        // 绝对上限：任何一条请求都不能无限期挂着（详见帧上限常量的注释）。
+        self.scroll_request_frames = self.scroll_request_frames.saturating_add(1);
+        if self.scroll_request_frames > Self::SCROLL_REQUEST_FRAME_CEILING {
+            self.clear_scroll_request();
+            return;
+        }
         // 跳转请求自己带帧预算：目标未挂载时靠估算 + 爬行接近，只给一帧
         // 会停在半路（vim 的 gg/G 不经过搜索跳转的 recheck 路径）。
         let settle_budget = if self.pending_scroll_placement.is_aligned() {
@@ -322,13 +335,17 @@ impl Editor {
         // 布局再滚一次，之后再校验几帧直到测量落定。
         if self.pending_scroll_recheck_after_layout {
             self.pending_scroll_recheck_after_layout = false;
-            self.scroll_settle_frames = if self.pending_scroll_placement == ScrollPlacement::IntoView {
-                Self::SCROLL_SETTLE_FRAMES
-            } else {
-                Self::JUMP_SCROLL_SETTLE_FRAMES
-            };
-            self.schedule_followup_frame(cx);
-            return;
+            if self.scroll_recheck_allowance > 0 {
+                self.scroll_recheck_allowance -= 1;
+                self.scroll_settle_frames = if self.pending_scroll_placement == ScrollPlacement::IntoView {
+                    Self::SCROLL_SETTLE_FRAMES
+                } else {
+                    Self::JUMP_SCROLL_SETTLE_FRAMES
+                };
+                self.schedule_followup_frame(cx);
+                return;
+            }
+            // 额度用尽：这一帧别再空等，按现有几何照常校正，预算才会往下减。
         }
 
         // scroll_to_item indexed children by position, which the spacers break;
@@ -361,10 +378,19 @@ impl Editor {
                 return;
             }
         }
+        self.clear_scroll_request();
+    }
+
+    /// 收掉当前这条滚动请求（含已排的那帧续挂）。用户自己滚、请求超限都用它：
+    /// 判据只有这一处，免得某条入口忘了清而把视口一直攥着。
+    pub(crate) fn clear_scroll_request(&mut self) {
         self.pending_scroll_active_block_into_view = false;
+        self.pending_scroll_recheck_after_layout = false;
         self.pending_scroll_placement = ScrollPlacement::IntoView;
         self.scroll_request_moved_viewport = false;
         self.scroll_settle_frames = 0;
+        self.scroll_request_frames = 0;
+        self.scroll_recheck_allowance = Self::SCROLL_RECHECK_ALLOWANCE;
         self.scroll_recheck_task = None;
     }
 

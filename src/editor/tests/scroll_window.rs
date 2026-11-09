@@ -1538,3 +1538,127 @@ async fn cold_fill_cap_schedules_a_single_low_frequency_retry(cx: &mut TestAppCo
         );
     });
 }
+
+/// issue#16 的语料：长文档 + 一堆标题，行高不均匀（长短段落 + 代码块），
+/// 跳转落点既远又落在估计偏差大的区域。
+fn outline_jump_source(sections: usize) -> String {
+    let mut source = String::new();
+    for section in 0..sections {
+        source.push_str(&format!("# 第 {section} 节\n\n"));
+        for line in 0..(section % 7) {
+            source.push_str(&format!("正文第 {line} 行，用来制造不均匀的行高。\n\n"));
+        }
+        if section % 11 == 0 {
+            source.push_str("```\n");
+            for line in 0..12 {
+                source.push_str(&format!("let value_{line} = {line};\n"));
+            }
+            source.push_str("```\n\n");
+        }
+    }
+    source
+}
+
+/// 打开大纲面板并点「第 100 节」（走的是和大纲点击同一个入口）。
+fn click_outline_heading(editor: &mut Editor, source: &str, cx: &mut gpui::Context<Editor>) {
+    let target = "# 第 100 节";
+    let line = source.lines().position(|line| line == target).expect("目标标题");
+    editor.workspace.is_open = true;
+    editor.workspace.active_tab = crate::editor::workspace::WorkspaceTab::Outline;
+    editor.sync_workspace_outline(cx);
+    editor.open_outline_node(format!("outline:{line}"), line, cx);
+}
+
+/// issue#16：Windows 全屏下点大纲跳转后正文上下抖、滚轮像失灵。
+/// 视口尺寸持续微动时，「布局重算后再校验」会逐帧续满校验预算，跳转请求永远
+/// 收不掉，于是每帧都按跳转目标重新对齐一次。
+#[gpui::test]
+async fn an_outline_jump_settles_even_when_the_viewport_keeps_changing_size(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = outline_jump_source(120);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, source.clone(), None)
+    });
+    cx.simulate_resize(gpui::size(px(1600.0), px(1200.0)));
+    for _ in 0..2 {
+        redraw(cx);
+    }
+    editor.update(cx, |editor, cx| click_outline_heading(editor, &source, cx));
+    let mut moved_frames = 0;
+    let mut previous_offset: Option<f32> = None;
+    for frame in 0..120 {
+        redraw(cx);
+        let height = if frame % 2 == 0 { 1200.0 } else { 1200.6 };
+        editor.update(cx, |editor, cx| {
+            editor.sync_scroll_viewport(gpui::size(px(1600.0), px(height)), cx);
+        });
+        let offset = editor.read_with(cx, |editor, _| f32::from(editor.scroll_handle.offset().y));
+        if previous_offset.is_some_and(|previous| (previous - offset).abs() > 0.5) {
+            moved_frames += 1;
+        }
+        previous_offset = Some(offset);
+    }
+    editor.read_with(cx, |editor, _| {
+        // 视口每帧都变时，resize 会一直重新发起「让活动块可见」的请求（这是对的），
+        // 但落点口径必须已经退化：跳转的绝对对齐不能被无限续命，否则每一帧都按
+        // 跳转目标重新居中一次——用户看到的就是正文疯狂上下抖。
+        assert_eq!(
+            editor.pending_scroll_placement,
+            crate::editor::ScrollPlacement::IntoView,
+            "视口每帧微动时跳转对齐没退化成最小可见调整：每帧重新居中=正文抖"
+        );
+    });
+    assert!(
+        moved_frames <= 8,
+        "跳转后视口被反复拽动 {moved_frames} 帧（共 120 帧），用户看到的正是上下抖"
+    );
+}
+
+/// issue#16 的另一半：抖动期间滚轮完全无效。跳转请求还挂着时用户滚轮，
+/// 必须由用户接管（正文停在用户滚到的位置），不能下一帧又被拽回跳转目标。
+#[gpui::test]
+async fn wheel_scroll_takes_over_from_a_pending_outline_jump(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = outline_jump_source(120);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, source.clone(), None)
+    });
+    cx.simulate_resize(gpui::size(px(1600.0), px(1200.0)));
+    for _ in 0..2 {
+        redraw(cx);
+    }
+    editor.update(cx, |editor, cx| click_outline_heading(editor, &source, cx));
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.pending_scroll_active_block_into_view,
+            "跳转请求应处于挂起状态（用户此刻滚轮要能接管）"
+        );
+    });
+    let position = editor.read_with(cx, |editor, _| editor.scroll_handle.bounds().center());
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position,
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-600.0))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            !editor.pending_scroll_active_block_into_view,
+            "滚轮必须当场作废挂着的跳转请求，否则下一帧又被拽回目标（滚轮看着像失灵）"
+        );
+    });
+    redraw(cx);
+    let after_wheel = editor.read_with(cx, |editor, _| f32::from(editor.scroll_handle.offset().y));
+    for _ in 0..6 {
+        redraw(cx);
+    }
+    editor.read_with(cx, |editor, _| {
+        let settled = f32::from(editor.scroll_handle.offset().y);
+        assert!(
+            (settled - after_wheel).abs() <= 1.0,
+            "滚轮之后视口又被跳转拽走：{after_wheel} → {settled}"
+        );
+    });
+}
