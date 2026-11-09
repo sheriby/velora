@@ -114,6 +114,7 @@ fn without_cache_breakpoints(value: &Value) -> Value {
 }
 
 fn verify_protocol(protocol: Protocol, suffix: &str) {
+    crate::test_support::bypass_system_proxy_for_loopback();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     listener.set_nonblocking(true).unwrap();
@@ -386,6 +387,7 @@ fn chat_text_events(text: &str) -> String {
 
 /// 按顺序回应；请求没来齐时安静退出，让失败落在断言而不是夹具线程上。
 fn serve_sse(responses: Vec<String>) -> (String, std::thread::JoinHandle<Vec<Value>>) {
+    crate::test_support::bypass_system_proxy_for_loopback();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     listener.set_nonblocking(true).unwrap();

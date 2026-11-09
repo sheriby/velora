@@ -670,6 +670,7 @@ fn native_ui_chain(cx: &mut TestAppContext, command: AiCommand) {
     std::fs::create_dir_all(&directory).unwrap();
     let source_path = directory.join("note.md");
     std::fs::write(&source_path, "# 原文\n\n保留的内容").unwrap();
+    crate::test_support::bypass_system_proxy_for_loopback();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     listener.set_nonblocking(true).unwrap();
@@ -2824,6 +2825,7 @@ fn ai_instruction_conversation_keeps_its_http_prefix_after_language_and_preferen
     cx: &mut TestAppContext,
 ) {
     use std::io::Write;
+    crate::test_support::bypass_system_proxy_for_loopback();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     listener.set_nonblocking(true).unwrap();

@@ -101,6 +101,9 @@ impl ReqwestTransportHttpClient {
         if let Some(proxy) = proxy {
             builder = builder.proxy(proxy);
         }
+        // mock server 在 127.0.0.1 上：reqwest 默认按系统代理转发，本地请求必须直连。
+        #[cfg(test)]
+        let builder = builder.no_proxy();
         let client = builder
             .redirect(reqwest::redirect::Policy::limited(10))
             .connect_timeout(std::time::Duration::from_secs(5))
@@ -255,6 +258,30 @@ mod tests {
         client
     }
 
+    /// 等 mock client 连上来，但要限期：客户端没连到本机时阻塞的 `accept()` 会让
+    /// `join()` 无限等下去。
+    fn accept_mock_connection(listener: &std::net::TcpListener) -> std::net::TcpStream {
+        listener.set_nonblocking(true).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match listener.accept() {
+                Ok((socket, _)) => {
+                    socket.set_nonblocking(false).unwrap();
+                    socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+                    return socket;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "mock server 10s 内没等到连接：客户端没连到 127.0.0.1"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("mock server accept 失败：{error}"),
+            }
+        }
+    }
+
     fn image_request(url: &str) -> gpui::http_client::Request<gpui::http_client::AsyncBody> {
         gpui::http_client::Request::builder().uri(url).body(gpui::http_client::AsyncBody::empty()).unwrap()
     }
@@ -267,7 +294,7 @@ mod tests {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let url = format!("http://{}/image.png", listener.local_addr().unwrap());
             let server = std::thread::spawn(move || {
-                let (mut socket, _) = listener.accept().unwrap();
+                let mut socket = accept_mock_connection(&listener);
                 let mut request = [0; 4096]; socket.read(&mut request).unwrap();
                 let payload = "x".repeat(1025);
                 let response = if chunked {
@@ -293,7 +320,7 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/image.png", listener.local_addr().unwrap());
         let server = std::thread::spawn(move || {
-            let (mut socket, _) = listener.accept().unwrap();
+            let mut socket = accept_mock_connection(&listener);
             let mut request = [0; 4096]; socket.read(&mut request).unwrap();
             std::thread::sleep(std::time::Duration::from_millis(400));
         });
