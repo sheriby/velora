@@ -224,6 +224,17 @@ impl Editor {
         // 多留了半屏，末尾内容也能对齐；越界时钳到滚动范围两端。
         if placement.is_aligned() {
             let delta = Self::alignment_delta(viewport, active_bounds, placement);
+            // 校正量落在「已对齐」判据以内就不写：bounds 是上一帧布局量下来的
+            // 位置，算出的校正带着量化余数，写下去下一帧又反号——两帧抵消，就
+            // 成了每帧都拽视口一次的两态震荡（issue#16：Windows 全屏下实测
+            // 0.33/0.67 两个值来回 179 帧）。收敛判据本来就认这个区间为到位，
+            // 两边同一个阈值，视口才不会为看不见的残差每帧互搏。
+            if !Self::alignment_correction_is_worth_applying(delta) {
+                return CaretScroll {
+                    has_bounds: true,
+                    moved: false,
+                };
+            }
             let mut offset = self.scroll_handle.offset();
             offset.y += px(delta);
             let max_offset_y = self.scroll_handle.max_offset().y.max(px(0.0));
@@ -283,6 +294,13 @@ impl Editor {
     pub(crate) const SCROLL_RECHECK_ALLOWANCE: u8 = 2;
     /// 跳转对齐收敛阈值：目标位置与视口边界的偏差 ≤ 此值即视为到位。
     const JUMP_ALIGN_TOLERANCE_PX: f32 = 2.0;
+
+    /// 对齐校正是否值得写进视口：落在收敛判据（`JUMP_ALIGN_TOLERANCE_PX`）以内
+    /// 就当到位。与收敛判据共用同一个阈值是刻意的——写作方比校验方更严格时，
+    /// 视口会为看不见的残差每帧写一次，两帧抵消成抖动（issue#16）。
+    pub(crate) fn alignment_correction_is_worth_applying(delta: f32) -> bool {
+        delta.abs() > Self::JUMP_ALIGN_TOLERANCE_PX
+    }
 
     /// 目标块按口径对齐到视口所需的纵向位移（像素）。
     fn alignment_delta(

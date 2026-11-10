@@ -1662,3 +1662,18 @@ async fn wheel_scroll_takes_over_from_a_pending_outline_jump(cx: &mut TestAppCon
         );
     });
 }
+
+/// issue#16 的实际形态：对齐残差是布局量化来的 0.3px 级余数，每帧反号。
+/// 写下去就是两帧互相抵消的两态震荡——正文每帧挪半个设备像素、请求永远收不掉
+/// （Windows 全屏那次取证日志里实测 0.33/0.67 两个值来回 179 帧）。
+#[test]
+fn sub_pixel_alignment_residual_counts_as_aligned() {
+    // 取证日志里来回的就是这两个值
+    assert!(!Editor::alignment_correction_is_worth_applying(0.34));
+    assert!(!Editor::alignment_correction_is_worth_applying(-0.34));
+    // 一直到收敛判据边界都不写
+    assert!(!Editor::alignment_correction_is_worth_applying(1.9));
+    // 真正需要跳的那一截照常写
+    assert!(Editor::alignment_correction_is_worth_applying(2.1));
+    assert!(Editor::alignment_correction_is_worth_applying(31.0));
+}
