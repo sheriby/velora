@@ -696,3 +696,66 @@ async fn pasting_a_clipboard_item_with_text_and_an_image_prefers_the_text(
         );
     });
 }
+
+/// 缩进式代码块（四空格 / Tab，没有围栏）的默认复制必须是文件里的那几个字节。
+/// 可见文本在缩进块里是被剥掉行首缩进的版本：复制出去再粘贴回来，代码块就掉成
+/// 普通段落，用户看到的就是「每行前面的缩进复制不到」。
+#[gpui::test]
+async fn copying_an_indented_code_block_keeps_each_lines_indentation(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    for (indent, body) in [
+        ("    ", "四格缩进的第一行\n四格第二行"),
+        ("\t", "制表符的第一行\n制表符第二行"),
+    ] {
+        let expected = format!("{indent}{}", body.replace('\n', &format!("\n{indent}")));
+        let markdown = format!("前文\n\n{expected}\n");
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown, None));
+        redraw(cx);
+        let (code_id, len) = editor.read_with(cx, |editor, cx| {
+            let block = editor.document.visible_blocks()[1].entity.clone();
+            let len = block.read(cx).clean_visible_len();
+            (block.entity_id(), len)
+        });
+        editor.update(cx, |editor, cx| {
+            editor.cross_block_selection = Some(crate::editor::CrossBlockSelection {
+                anchor: crate::editor::CrossBlockSelectionEndpoint {
+                    entity_id: code_id,
+                    offset: 0,
+                },
+                focus: crate::editor::CrossBlockSelectionEndpoint {
+                    entity_id: code_id,
+                    offset: len,
+                },
+            });
+            cx.notify();
+        });
+        cx.dispatch_action(Copy);
+        assert_eq!(
+            clipboard_text(cx).as_deref(),
+            Some(expected.as_str()),
+            "缩进式代码块的默认复制丢了行首缩进（缩进 {indent:?}）"
+        );
+        cx.dispatch_action(CopyAsMarkdown);
+        assert_eq!(
+            clipboard_text(cx).as_deref(),
+            Some(expected.as_str()),
+            "缩进式代码块没有围栏可去，两条复制入口该给同一份字节"
+        );
+        // 同一块的块内选区（在代码块里直接拖鼠标）走的是另一条入口：状态上它是
+        // 块自己的 selected_range，不经跨块选区。
+        editor.update(cx, |editor, cx| {
+            editor.cross_block_selection = None;
+            cx.notify();
+        });
+        select(&editor, 1, 0..len, cx);
+        cx.dispatch_action(Copy);
+        assert_eq!(
+            clipboard_text(cx).as_deref(),
+            Some(expected.as_str()),
+            "块内选区复制缩进式代码块也要保住行首缩进"
+        );
+    }
+}

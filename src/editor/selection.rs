@@ -98,12 +98,15 @@ impl Editor {
             cx.stop_propagation();
             return;
         }
-        // 代码正文的边界映射会包含不可见的围栏；普通复制应和代码块复制按钮一致。
+        // 围栏代码块的边界映射会包含不可见的围栏；普通复制应和代码块复制按钮一致。
+        // 缩进式代码块没有围栏可去：它的可见文本连行首缩进（四空格 / Tab）一起被
+        // 剥了，按可见文本复制等于改内容——粘回去就从代码块掉成普通段落。
         if self.view_mode == ViewMode::Rendered
             && let Some(selection) = self.normalized_cross_block_selection(cx)
             && selection.start.entity_id == selection.end.entity_id
             && let Some(block) = self.focusable_entity_by_id(selection.start.entity_id)
             && block.read(cx).kind().is_code_block()
+            && !block.read(cx).record.code_is_indented
             && let Some(text) = self.selected_visible_text(cx)
         {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -1185,17 +1188,28 @@ impl Editor {
         if let Some(active_id) = self.active_entity_id.or(self.pending_focus) {
             return self
                 .focusable_entity_by_id(active_id)
-                .and_then(|entity| Self::single_block_markdown_selection(&entity, cx));
+                .and_then(|entity| self.single_block_markdown_selection(&entity, cx));
         }
         self.single_block_selection_candidates()
-            .find_map(|entity| Self::single_block_markdown_selection(entity, cx))
+            .find_map(|entity| self.single_block_markdown_selection(entity, cx))
     }
 
     /// 一块自己的选区对应的 Markdown 源码；空选区或换算不出区间时 `None`。
-    fn single_block_markdown_selection(entity: &Entity<Block>, cx: &App) -> Option<String> {
+    fn single_block_markdown_selection(&self, entity: &Entity<Block>, cx: &App) -> Option<String> {
         let block = entity.read_untracked(cx);
         if block.selected_range.is_empty() {
             return None;
+        }
+        // 缩进式代码块的模型文本是剥掉行首缩进的（四空格 / Tab 只记在源码映射的
+        // 行前缀里），按显示文本或模型 Markdown 取都会把内容改掉——粘回去就从
+        // 代码块掉成普通段落。这一种只能回推映射，取文件里的那几个字节。
+        if block.record.code_is_indented {
+            let mapping = self.source_mapping_for_entity(entity.entity_id(), cx)?;
+            let clean = block.current_to_clean_range(block.selected_range.clone());
+            let start = self.mapping_source_range_endpoint(&mapping, clean.start, false, cx)?;
+            let end = self.mapping_source_range_endpoint(&mapping, clean.end, true, cx)?;
+            let range = self.clamp_source_range_to_boundaries(start..end);
+            return (!range.is_empty()).then(|| self.buffer.slice(range));
         }
         // 源码/代码块编的就是原文：可见文本逐字节就是文件里那几个。再走一遍
         // Markdown 序列化会把 `\.` 翻成 `\\.`、`\_` 翻成 `\\_`（那层转义
