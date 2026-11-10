@@ -170,6 +170,13 @@ impl Editor {
                 let max_offset_y = f32::from(self.scroll_handle.max_offset().y).max(0.0);
                 let target_y = target_y.min(0.0).max(-max_offset_y);
                 let current = f32::from(offset.y);
+                // 换目标或换落点口径就是一条新请求：距离基线必须重来，否则新目标
+                // 第一帧就比旧距离远，会被当成「没有进展」当场丢弃。
+                let estimate_target = (focused_block.entity_id(), placement);
+                if self.scroll_estimate_target != Some(estimate_target) {
+                    self.scroll_estimate_target = Some(estimate_target);
+                    self.scroll_estimate_distance = f32::INFINITY;
+                }
                 // 估算的落点跟着中间行的实测高度逐帧漂，一旦它不再往目标靠
                 // （顶到滚动范围端点、比例估算与实测互相拉扯），再挪只会来回
                 // 蹭，且「这一帧动过」会一路续预算到帧数上限。距离不缩小就
@@ -449,6 +456,7 @@ impl Editor {
         self.scroll_request_frames = 0;
         self.scroll_recheck_allowance = Self::SCROLL_RECHECK_ALLOWANCE;
         self.scroll_estimate_distance = f32::INFINITY;
+        self.scroll_estimate_target = None;
         self.scroll_recheck_task = None;
     }
 

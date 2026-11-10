@@ -1559,14 +1559,26 @@ fn outline_jump_source(sections: usize) -> String {
     source
 }
 
-/// 打开大纲面板并点「第 100 节」（走的是和大纲点击同一个入口）。
-fn click_outline_heading(editor: &mut Editor, source: &str, cx: &mut gpui::Context<Editor>) {
-    let target = "# 第 100 节";
-    let line = source.lines().position(|line| line == target).expect("目标标题");
+/// 打开大纲面板并点指定标题（走的是和大纲点击同一个入口）。
+fn click_outline_heading_named(
+    editor: &mut Editor,
+    source: &str,
+    heading: &str,
+    cx: &mut gpui::Context<Editor>,
+) {
+    let line = source
+        .lines()
+        .position(|line| line == heading)
+        .expect("目标标题");
     editor.workspace.is_open = true;
     editor.workspace.active_tab = crate::editor::workspace::WorkspaceTab::Outline;
     editor.sync_workspace_outline(cx);
     editor.open_outline_node(format!("outline:{line}"), line, cx);
+}
+
+/// 打开大纲面板并点「第 100 节」（走的是和大纲点击同一个入口）。
+fn click_outline_heading(editor: &mut Editor, source: &str, cx: &mut gpui::Context<Editor>) {
+    click_outline_heading_named(editor, source, "# 第 100 节", cx);
 }
 
 /// issue#16：Windows 全屏下点大纲跳转后正文上下抖、滚轮像失灵。
@@ -1689,4 +1701,39 @@ fn estimate_stops_when_the_distance_stops_shrinking() {
     assert!(!Editor::estimate_made_progress(100.0, 100.0));
     assert!(!Editor::estimate_made_progress(100.0, 100.5));
     assert!(!Editor::estimate_made_progress(0.0, 0.0));
+}
+
+/// 跳转可以在上一条请求收掉之前换目标（连着点两个大纲标题）。估算距离若跨请求
+/// 沿用，新目标第一帧就比旧距离远，`estimate_made_progress` 判成「没有进展」、
+/// 请求当帧被收掉——用户点了大纲，正文一动不动。
+///
+/// 夹具里一条请求跑不满两帧估算（paint 会先把目标块挂上来，之后走精确对齐），
+/// 所以这里直接把「上一条请求留下的距离」写进去，复现用户连点时的那一帧。
+#[gpui::test]
+async fn a_new_jump_does_not_inherit_the_previous_estimate_distance(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = outline_jump_source(400);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.clone(), None));
+    cx.simulate_resize(gpui::size(px(1600.0), px(800.0)));
+    for _ in 0..2 {
+        redraw(cx);
+    }
+    editor.update(cx, |editor, cx| {
+        editor.scroll_estimate_distance = 40.0;
+        click_outline_heading_named(editor, &source, "# 第 300 节", cx);
+    });
+    for _ in 0..10 {
+        redraw(cx);
+    }
+    editor.read_with(cx, |editor, _| {
+        let offset = f32::from(editor.scroll_handle.offset().y);
+        assert!(
+            offset < -10_000.0,
+            "新跳转沿用了上一条请求的估算距离，正文没滚过去（offset={offset}）"
+        );
+        assert!(
+            !editor.pending_scroll_active_block_into_view,
+            "跳转结束后请求应当收掉"
+        );
+    });
 }

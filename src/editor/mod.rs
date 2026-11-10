@@ -351,6 +351,10 @@ pub struct Editor {
     /// 估算随中间行测量逐帧漂移，靠「这一帧动过」续预算会一直续下去，所以按
     /// 「距离有没有缩小」判是否还值得再挪一帧（issue#16）。
     scroll_estimate_distance: f32,
+    /// 上面那个距离属于哪一次跳转（目标块 + 落点口径）。跳转可以在上一条请求
+    /// 收掉之前换目标，此时旧的估算距离若被沿用，新目标第一帧就比它远，会被
+    /// 判成「没有进展」当场丢弃（点了大纲，正文一动不动）。
+    scroll_estimate_target: Option<(EntityId, ScrollPlacement)>,
     /// 冷启动续挂已排的帧数（上限 COLD_FILL_MAX_FRAMES，避免每帧重排）。
     cold_fill_frames: u8,
     /// 高频续挂到达上限后的低频重试任务：每 250ms 刷一帧直到视口铺满，
@@ -1080,6 +1084,7 @@ impl Editor {
             scroll_request_frames: 0,
             scroll_recheck_allowance: Editor::SCROLL_RECHECK_ALLOWANCE,
             scroll_estimate_distance: f32::INFINITY,
+            scroll_estimate_target: None,
             cold_fill_frames: 0,
             cold_fill_retry_task: None,
             close_guard_installed: false,
