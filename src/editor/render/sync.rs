@@ -8,6 +8,9 @@ pub(crate) struct CaretScroll {
     has_bounds: bool,
     /// 这一帧真的移动了视口。稳定帧（未移动）才允许清掉滚动请求。
     moved: bool,
+    /// 目标块没挂载、估算也不再逼近：这条请求已经无事可做，可以当场收掉。
+    /// 与「没拿到几何」区分开——后者还要给块留几帧挂载的机会。
+    estimate_exhausted: bool,
 }
 
 impl Editor {
@@ -167,6 +170,18 @@ impl Editor {
                 let max_offset_y = f32::from(self.scroll_handle.max_offset().y).max(0.0);
                 let target_y = target_y.min(0.0).max(-max_offset_y);
                 let current = f32::from(offset.y);
+                // 估算的落点跟着中间行的实测高度逐帧漂，一旦它不再往目标靠
+                // （顶到滚动范围端点、比例估算与实测互相拉扯），再挪只会来回
+                // 蹭，且「这一帧动过」会一路续预算到帧数上限。距离不缩小就
+                // 当到位，本轮不再动视口，由调用方收掉请求（issue#16）。
+                let distance = (current - target_y).abs();
+                if !Self::estimate_made_progress(self.scroll_estimate_distance, distance) {
+                    return CaretScroll {
+                        estimate_exhausted: true,
+                        ..CaretScroll::default()
+                    };
+                }
+                self.scroll_estimate_distance = distance;
                 let mut moved = false;
                 if (current - target_y).abs() <= viewport_height * 1.5 {
                     // 接近：每帧半屏单调爬向目标，永不出冲。
@@ -189,7 +204,11 @@ impl Editor {
                         moved = true;
                     }
                 }
-                return CaretScroll { has_bounds: false, moved };
+                return CaretScroll {
+                    has_bounds: false,
+                    moved,
+                    ..CaretScroll::default()
+                };
             }
             return CaretScroll::default();
         };
@@ -218,7 +237,11 @@ impl Editor {
                     .set(self.caret_scroll_applications.get() + 1);
                 self.scroll_handle.set_offset(offset);
             }
-            return CaretScroll { has_bounds: true, moved };
+            return CaretScroll {
+                has_bounds: true,
+                moved,
+                ..CaretScroll::default()
+            };
         }
         // 跳转落点：按口径把目标贴到视口上沿、下沿或中线。滚动范围在文末
         // 多留了半屏，末尾内容也能对齐；越界时钳到滚动范围两端。
@@ -233,6 +256,7 @@ impl Editor {
                 return CaretScroll {
                     has_bounds: true,
                     moved: false,
+                    ..CaretScroll::default()
                 };
             }
             let mut offset = self.scroll_handle.offset();
@@ -245,7 +269,11 @@ impl Editor {
                     .set(self.caret_scroll_applications.get() + 1);
             }
             self.scroll_handle.set_offset(offset);
-            return CaretScroll { has_bounds: true, moved };
+            return CaretScroll {
+                has_bounds: true,
+                moved,
+                ..CaretScroll::default()
+            };
         }
 
         let padding = px(20.0);
@@ -275,6 +303,7 @@ impl Editor {
         CaretScroll {
             has_bounds: true,
             moved: self.scroll_handle.offset().y != before.y,
+            ..CaretScroll::default()
         }
     }
 
@@ -300,6 +329,13 @@ impl Editor {
     /// 视口会为看不见的残差每帧写一次，两帧抵消成抖动（issue#16）。
     pub(crate) fn alignment_correction_is_worth_applying(delta: f32) -> bool {
         delta.abs() > Self::JUMP_ALIGN_TOLERANCE_PX
+    }
+
+    /// 估算路径是否还值得再挪一帧：到目标的距离比上一帧小才算有进展。
+    /// 估算落点随实测行高漂移，没有这条判据时「动过就续预算」会把请求拖到
+    /// 帧数上限（issue#16）。1px 容差吸收测量噪声。
+    pub(crate) fn estimate_made_progress(previous_distance: f32, distance: f32) -> bool {
+        distance < previous_distance - 1.0
     }
 
     /// 目标块按口径对齐到视口所需的纵向位移（像素）。
@@ -381,7 +417,10 @@ impl Editor {
             || (caret.has_bounds
                 && placement == ScrollPlacement::Reveal
                 && !caret.moved
-                && !self.scroll_request_moved_viewport);
+                && !self.scroll_request_moved_viewport)
+            // 目标块始终没挂载、估算也不再逼近：这一帧既拿不到几何又没挪视口，
+            // 再等只是空排续帧（IntoView 除外：初始加载要靠这几帧等块挂上来）。
+            || caret.estimate_exhausted;
         if !settled {
             // 还在移动就续满预算：跳转后行高逐帧补测，块会继续漂；停稳
             // 若干帧才算收敛，否则会停在半路。IntoView 不续：初始加载的
@@ -409,6 +448,7 @@ impl Editor {
         self.scroll_settle_frames = 0;
         self.scroll_request_frames = 0;
         self.scroll_recheck_allowance = Self::SCROLL_RECHECK_ALLOWANCE;
+        self.scroll_estimate_distance = f32::INFINITY;
         self.scroll_recheck_task = None;
     }
 

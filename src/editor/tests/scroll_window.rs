@@ -1677,3 +1677,16 @@ fn sub_pixel_alignment_residual_counts_as_aligned() {
     assert!(Editor::alignment_correction_is_worth_applying(2.1));
     assert!(Editor::alignment_correction_is_worth_applying(31.0));
 }
+
+/// issue#16 的另一半：目标块没挂载时落点只能靠估算，估算随中间行的实测
+/// 行高逐帧漂移。距离不再缩小就当到位——否则「这一帧动过就续预算」会把
+/// 请求一路拖到帧数上限，每帧半屏地来回蹭。
+#[test]
+fn estimate_stops_when_the_distance_stops_shrinking() {
+    assert!(Editor::estimate_made_progress(f32::INFINITY, 500.0));
+    assert!(Editor::estimate_made_progress(500.0, 100.0));
+    // 停在原处、反向漂移都不算进展
+    assert!(!Editor::estimate_made_progress(100.0, 100.0));
+    assert!(!Editor::estimate_made_progress(100.0, 100.5));
+    assert!(!Editor::estimate_made_progress(0.0, 0.0));
+}

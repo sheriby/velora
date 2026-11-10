@@ -347,6 +347,10 @@ pub struct Editor {
     /// 这条请求还剩几次「布局重算后再校验」的额度。视口尺寸一变就重新发起请求，
     /// 若每次都允许再等一帧，请求永远收不掉；额度用尽后按现有几何照常校正。
     scroll_recheck_allowance: u8,
+    /// 目标块未挂载时上一次估算落点与当前偏移的距离（f32::INFINITY 表示还没算过）。
+    /// 估算随中间行测量逐帧漂移，靠「这一帧动过」续预算会一直续下去，所以按
+    /// 「距离有没有缩小」判是否还值得再挪一帧（issue#16）。
+    scroll_estimate_distance: f32,
     /// 冷启动续挂已排的帧数（上限 COLD_FILL_MAX_FRAMES，避免每帧重排）。
     cold_fill_frames: u8,
     /// 高频续挂到达上限后的低频重试任务：每 250ms 刷一帧直到视口铺满，
@@ -1075,6 +1079,7 @@ impl Editor {
             scroll_settle_frames: 0,
             scroll_request_frames: 0,
             scroll_recheck_allowance: Editor::SCROLL_RECHECK_ALLOWANCE,
+            scroll_estimate_distance: f32::INFINITY,
             cold_fill_frames: 0,
             cold_fill_retry_task: None,
             close_guard_installed: false,
