@@ -16,7 +16,7 @@ pub(super) use gpui::*;
 pub(super) use super::{Editor, InfoDialogKind, MountedRun, ScrollPlacement, tree::VisibleTreeAnchors};
 pub(super) use crate::app_menu::{dispatch_menu_action_for_editor, welcome_recent_entries};
 pub(super) use crate::components::CalloutVariant;
-pub(super) use crate::components::{AddLanguageConfig, AddThemeConfig, Block, BlockKind, NoRecentFiles};
+pub(super) use crate::components::{AddLanguageConfig, AddThemeConfig, Block, BlockKind, NoRecentFiles, parse_standalone_image};
 pub(super) use crate::i18n::{I18nManager, I18nStrings};
 pub(super) use crate::theme::{Theme, ThemeDimensions, ThemeManager};
 pub(super) use crate::window_chrome::{
@@ -95,6 +95,7 @@ pub(crate) struct RenderedRowSpacingInfo {
     pub(crate) is_toc: bool,
     /// 这一块手上是不是挂着目录条目（上一趟 `[TOC]` 留下的，需要清掉）。
     pub(crate) had_toc: bool,
+    pub(crate) dynamic_height: bool,
     pub(crate) source_document_lines: usize,
 }
 
@@ -123,6 +124,7 @@ impl RenderedRowSpacingInfo {
             is_list_item: kind.is_list_item(),
             is_toc,
             had_toc,
+            dynamic_height: *kind == BlockKind::Table,
             source_document_lines,
         }
     }
@@ -186,8 +188,8 @@ pub(crate) struct RenderedRowPlan {
     /// 每行 footprint；学习更新原地写回，未变更帧免 160k 次哈希查找。
     strides: std::rc::Rc<std::cell::RefCell<Vec<f32>>>,
     /// 滚动条坐标使用固定的行权重；首次测量行高只改变布局，不改变文档进度。
-    pub scrollbar_strides: Vec<f32>,
-    pub(super) scrollbar_prefix: Vec<f32>,
+    pub scrollbar_strides: std::cell::RefCell<Vec<f32>>,
+    pub(super) scrollbar_prefix: std::cell::RefCell<Vec<f32>>,
     stride_prefix: std::cell::RefCell<StridePrefix>,
 }
 
@@ -209,12 +211,56 @@ impl RenderedRowPlan {
         {
             *previous = stride;
             self.stride_prefix.borrow_mut().invalidate_from(row);
+
+            // 源码分块按行数维持稳定权重；图片、表格等渲染行则必须把实测高度
+            // 传给滚动条，否则首次排版后的真实高度永远不会进入拖动映射。
+            if self.rows.get(row).is_some_and(RenderedRowPlanRow::has_dynamic_height)
+            {
+                if let Some(weight) = self.scrollbar_strides.borrow_mut().get_mut(row) {
+                    *weight = stride;
+                }
+                self.refresh_scrollbar_prefix_from(row);
+            }
+
         }
     }
 
     pub(super) fn fill_strides(&self, stride: f32) {
         self.strides.borrow_mut().fill(stride);
         self.stride_prefix.borrow_mut().invalidate_from(0);
+    }
+
+    pub(super) fn reset_scrollbar_strides(&self, estimate: f32) {
+        let strides = self.strides.borrow();
+        let mut scrollbar_strides = self.scrollbar_strides.borrow_mut();
+        for (row, weight) in scrollbar_strides.iter_mut().enumerate() {
+            *weight = self
+                .rows
+                .get(row)
+                .map(|row_plan| {
+                    let source_lines = row_plan.first_spacing().source_document_lines;
+                    if source_lines > 0 {
+                        estimate * source_lines as f32
+                    } else {
+                        strides.get(row).copied().unwrap_or(estimate)
+                    }
+                })
+                .unwrap_or(estimate);
+        }
+        drop(scrollbar_strides);
+        self.refresh_scrollbar_prefix_from(0);
+    }
+
+    fn refresh_scrollbar_prefix_from(&self, row: usize) {
+        let scrollbar_strides = self.scrollbar_strides.borrow();
+        let mut scrollbar_prefix = self.scrollbar_prefix.borrow_mut();
+        let row = row.min(scrollbar_strides.len());
+        scrollbar_prefix.truncate(row + 1);
+        let mut total = scrollbar_prefix.last().copied().unwrap_or(0.0);
+        for &weight in scrollbar_strides.iter().skip(row) {
+            total += weight.max(1.0);
+            scrollbar_prefix.push(total);
+        }
     }
 }
 
@@ -223,6 +269,7 @@ pub(crate) struct RenderedRowPlanRow {
     pub visible_start: usize,
     pub visible_end: usize,
     pub first_id: EntityId,
+    pub dynamic_height: bool,
     pub body: RenderedRowBody,
 }
 
@@ -245,6 +292,10 @@ pub(crate) struct RenderedGroupMember {
 }
 
 impl RenderedRowPlanRow {
+    fn has_dynamic_height(&self) -> bool {
+        self.dynamic_height
+    }
+
     pub(super) fn entities(&self) -> impl Iterator<Item = &Entity<Block>> {
         let (ordinary, members): (Option<&Entity<Block>>, &[RenderedGroupMember]) = match &self.body {
             RenderedRowBody::Ordinary { entity, .. } => (Some(entity), &[]),
@@ -253,7 +304,7 @@ impl RenderedRowPlanRow {
         ordinary.into_iter().chain(members.iter().map(|member| &member.entity))
     }
 
-    fn first_spacing(&self) -> RenderedRowSpacingInfo {
+    pub(crate) fn first_spacing(&self) -> RenderedRowSpacingInfo {
         match &self.body {
             RenderedRowBody::Ordinary { spacing, .. } => *spacing,
             RenderedRowBody::Group { members, .. } => members[0].spacing,
@@ -865,6 +916,7 @@ impl Editor {
                     visible_start: first_index,
                     visible_end,
                     first_id,
+                    dynamic_height: false,
                     body: RenderedRowBody::Group {
                         callout_variant: Some(callout_variant),
                         members,
@@ -894,6 +946,7 @@ impl Editor {
                     visible_start: first_index,
                     visible_end,
                     first_id,
+                    dynamic_height: false,
                     body: RenderedRowBody::Group {
                         callout_variant: None,
                         members,
@@ -907,12 +960,23 @@ impl Editor {
                 visible_start: first_index,
                 visible_end: first_index + 1,
                 first_id,
+                dynamic_height: false,
                 body: RenderedRowBody::Ordinary {
                     entity: entity_of(first_index),
                     spacing: first_spacing,
                 },
             });
             position += 1;
+        }
+
+        for row in &mut rows {
+            let dynamic_height = row.entities().any(|entity| {
+                let block = entity.read(cx);
+                block.kind() == BlockKind::Table
+                    || (block.kind() == BlockKind::Paragraph
+                        && parse_standalone_image(&block.record.title.visible_text()).is_some())
+            });
+            row.dynamic_height = dynamic_height;
         }
 
         // P7：行元数据与 stride 初值在构建期一次算好，未变更帧零重算。
@@ -982,8 +1046,8 @@ impl Editor {
             gaps,
             first_ids,
             strides,
-            scrollbar_strides,
-            scrollbar_prefix,
+            scrollbar_strides: std::cell::RefCell::new(scrollbar_strides),
+            scrollbar_prefix: std::cell::RefCell::new(scrollbar_prefix),
             stride_prefix: std::cell::RefCell::new(StridePrefix::new()),
         }
     }

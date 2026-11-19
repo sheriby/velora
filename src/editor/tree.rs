@@ -1313,6 +1313,7 @@ impl DocumentTree {
                 is_empty_paragraph,
                 had_toc,
                 is_toc,
+                is_standalone_image,
                 list_start,
                 source_document_lines,
             ) = {
@@ -1336,6 +1337,9 @@ impl DocumentTree {
                     title_visible
                         .as_deref()
                         .is_some_and(|text| text.trim().eq_ignore_ascii_case("[toc]")),
+                    title_visible
+                        .as_deref()
+                        .is_some_and(|text| parse_standalone_image(text).is_some()),
                     block_ref.record.list_start,
                     block_ref.source_document_line_count(),
                 )
@@ -1409,7 +1413,7 @@ impl DocumentTree {
             snapshot.visible.push(VisibleBlock {
                 entity: block.clone(),
             });
-            snapshot.row_spacing.push(
+            let mut row_spacing =
                 super::render::RenderedRowSpacingInfo::from_visible_tree_sync(
                     &kind,
                     VisibleTreeAnchors {
@@ -1422,8 +1426,9 @@ impl DocumentTree {
                     is_toc,
                     had_toc,
                     source_document_lines,
-                ),
-            );
+                );
+            row_spacing.dynamic_height = is_standalone_image;
+            snapshot.row_spacing.push(row_spacing);
             if is_toc {
                 snapshot.toc_rows += 1;
             }

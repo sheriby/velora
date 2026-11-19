@@ -315,6 +315,34 @@ async fn scrollbar_reaches_the_end_when_the_last_source_line_is_visible(cx: &mut
 }
 
 #[gpui::test]
+async fn scrollbar_weights_follow_measured_table_height(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let table = format!(
+        "| cell | value |\n| --- | --- |\n{}",
+        (0..12)
+            .map(|index| format!("| cell {index} | value {index} |\n"))
+            .collect::<String>()
+    );
+    let source = format!("intro\n\n{table}\n\nend\n");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source, None));
+    for _ in 0..8 { redraw(cx); }
+
+    editor.read_with(cx, |editor, cx| {
+        let plan = editor.rendered_row_plan.as_ref().expect("应有行计划");
+        let table_row = plan
+            .rows
+            .iter()
+            .position(|row| row.entities().any(|entity| entity.read(cx).kind() == crate::components::BlockKind::Table))
+            .expect("表格行应标记为动态高度");
+        let stride = plan.strides().get(table_row).copied().expect("表格应有实测高度");
+        let scrollbar_weight = plan.scrollbar_strides.borrow()[table_row];
+        assert_eq!(scrollbar_weight, stride, "表格实测高度必须进入滚动条权重");
+        assert!(stride > 30.0, "测试表格应实际占据多行高度");
+        let _ = cx;
+    });
+}
+
+#[gpui::test]
 async fn source_scrollbar_weights_refresh_after_inserting_a_line(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let path = temp_markdown_path("scrollbar-source-edit").with_extension("rs");
@@ -329,7 +357,7 @@ async fn source_scrollbar_weights_refresh_after_inserting_a_line(cx: &mut TestAp
     redraw(cx);
     let before = editor.read_with(cx, |editor, _cx| {
         let plan = editor.rendered_row_plan.as_ref().expect("应有行计划");
-        (plan.row_meta_version, plan.scrollbar_strides[0])
+        (plan.row_meta_version, plan.scrollbar_strides.borrow()[0])
     });
     cx.simulate_keystrokes("enter");
     redraw(cx);
@@ -338,7 +366,7 @@ async fn source_scrollbar_weights_refresh_after_inserting_a_line(cx: &mut TestAp
         let plan = editor.rendered_row_plan.as_ref().expect("应有行计划");
         assert!(plan.row_meta_version > before.0, "源码增删行应使行计划失效");
         assert_eq!(
-            plan.scrollbar_strides[0],
+            plan.scrollbar_strides.borrow()[0],
             before.1 * 1.5,
             "两行变三行后滑块权重应按行数更新"
         );

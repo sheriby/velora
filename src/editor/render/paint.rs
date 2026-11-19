@@ -275,7 +275,9 @@ impl Render for Editor {
             self.row_stride_cache_clears
                 .set(self.row_stride_cache_clears.get() + 1);
             self.row_stride_cache.clear();
+            self.row_scrollbar_stride_cache.clear();
             rendered_row_plan.fill_strides(d.block_min_height.max(1.0));
+            rendered_row_plan.reset_scrollbar_strides(d.block_min_height.max(1.0));
             self.row_stride_width = Some(centered_width);
             self.row_stride_theme = Some(layout_theme.clone());
         }

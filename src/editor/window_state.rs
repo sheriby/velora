@@ -92,16 +92,18 @@ impl Editor {
         };
         let prefix = plan.stride_prefix();
         let strides = plan.strides();
+        let scrollbar_strides = plan.scrollbar_strides.borrow();
+        let scrollbar_prefix = plan.scrollbar_prefix.borrow();
         // 文末预留半屏：以视口中心定位，滚动终点就是文档末尾，
         // 不会因最后几行首次量高而改变进度分母。
         let half_viewport = f32::from(self.scroll_handle.bounds().size.height) * 0.5;
-        let origin = Self::map_scroll_prefix(half_viewport, &prefix.positive, &plan.scrollbar_prefix, &strides, &plan.scrollbar_strides);
+        let origin = Self::map_scroll_prefix(half_viewport, &prefix.positive, &scrollbar_prefix, &strides, &scrollbar_strides);
         if inverse {
-            (Self::map_scroll_prefix(scroll_y + origin, &plan.scrollbar_prefix, &prefix.positive, &plan.scrollbar_strides, &strides)
+            (Self::map_scroll_prefix(scroll_y + origin, &scrollbar_prefix, &prefix.positive, &scrollbar_strides, &strides)
                 - half_viewport)
                 .max(0.0)
         } else {
-            (Self::map_scroll_prefix(scroll_y + half_viewport, &prefix.positive, &plan.scrollbar_prefix, &strides, &plan.scrollbar_strides)
+            (Self::map_scroll_prefix(scroll_y + half_viewport, &prefix.positive, &scrollbar_prefix, &strides, &scrollbar_strides)
                 - origin)
                 .max(0.0)
         }
