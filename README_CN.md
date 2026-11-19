@@ -151,6 +151,7 @@ cargo test
 ## 🙏 致谢
 
 - **[Zed](https://github.com/zed-industries/zed)**: 提供 GPUI 框架，支撑原生界面与 GPU 渲染。
+- **[GPUI Kit](https://crates.io/crates/gpui-kit)**: 提供应用框架与组件库，Velora 的按钮、输入框、选择器、菜单、表单、对话框、列表与树等界面组件均由此组装。
 - **[Velotype](https://github.com/manyougz/velotype)**: 编辑器早期实现的参考项目。
 - **[Merman](https://github.com/Latias94/merman)**: 原生 Mermaid 解析、布局与 SVG 渲染。
 - **[RaTeX](https://github.com/erweixin/RaTeX)**: LaTeX 公式解析、布局与 SVG 渲染。
