@@ -317,6 +317,27 @@ async fn small_code_files_stay_single_chunk(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn large_unknown_extension_opens_as_chunked_source_document(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = format!("{{\"value\":\"{}\"}}\n", "x".repeat(2 * 1024 * 1024));
+    let path = temp_fixture_dir().join(format!("velora-large-{}.abc", temp_fixture_token()));
+    let (editor, cx) =
+        cx.add_window_view(move |_window, cx| Editor::from_file_source(cx, source, Some(path)));
+
+    editor.read_with(cx, |editor, cx| {
+        assert!(editor.code_document, "非 Markdown 文本必须按源码文档打开，避免整篇 Markdown 解析");
+        assert!(
+            editor.document.visible_blocks()[0]
+                .entity
+                .read(cx)
+                .kind()
+                .is_code_block(),
+            "未知扩展名的首块必须是代码块"
+        );
+    });
+}
+
+#[gpui::test]
 #[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn progressive_import_blocks_render_after_streaming(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

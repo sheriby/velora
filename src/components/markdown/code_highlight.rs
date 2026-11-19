@@ -638,6 +638,15 @@ pub(crate) fn highlight_code_block(
     CODE_HIGHLIGHT_CALLS.with(|count| count.set(count.get() + 1));
     let key = resolve_code_language_key(language)?;
 
+    // 排版层会把超长源码行折叠到可视窗口内；高亮也必须遵守同一预算，
+    // 否则打开一个几十 MB 的 JSON/JS 单行文件时，tree-sitter 会先扫描整块。
+    if source.len() > crate::components::LONG_BLOCK_SOURCE_LIMIT {
+        return Some(CodeHighlightResult {
+            language: key,
+            spans: Vec::new(),
+        });
+    }
+
     #[cfg(feature = "code-highlight-core")]
     if let Some(config) = CODE_HIGHLIGHT_REGISTRY.config_for(key) {
         return CODE_HIGHLIGHTER.with(|highlighter| {
@@ -941,6 +950,14 @@ mod tests {
             .expect("plain text should still produce a result");
         assert_eq!(text.language, CodeLanguageKey::PlainText);
         assert!(text.spans.is_empty());
+    }
+
+    #[test]
+    fn oversized_known_language_skips_full_source_highlighting() {
+        let source = "x".repeat(crate::components::LONG_BLOCK_SOURCE_LIMIT + 1);
+        let result = highlight_code_block(Some("json"), &source)
+            .expect("known language should retain a plain-text result");
+        assert!(result.spans.is_empty());
     }
 
     #[test]

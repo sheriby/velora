@@ -1427,12 +1427,12 @@ impl Editor {
         source: String,
         file_path: Option<PathBuf>,
     ) -> Self {
-        if file_path
+        if let Some(path) = file_path
             .as_ref()
-            .is_some_and(|path| workspace::is_code_file(path))
+            .filter(|path| !workspace::is_markdown_document(path))
         {
             let mut editor = Self::from_markdown(cx, String::new(), None);
-            editor.replace_document_from_code_source(source, file_path.unwrap(), cx);
+            editor.replace_document_from_code_source(source, path.clone(), cx);
             editor
         } else {
             Self::from_markdown(cx, source, file_path)
